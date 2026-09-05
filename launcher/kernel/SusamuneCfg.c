@@ -4751,6 +4751,26 @@ static void ApplyMetadataStyleKey(struct SusamuneMetadataStyleCfg *cfg,
 		cfg->padding = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_PADDING;
 	}
+	else if (strcmp(key, "field_gap") == 0 && v8 <= 32)
+	{
+		cfg->reserved0[0] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_FIELD_GAP;
+	}
+	else if (strcmp(key, "row_gap") == 0 && v8 <= 16)
+	{
+		cfg->reserved0[1] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_ROW_GAP;
+	}
+	else if (strcmp(key, "columns") == 0 && v8 <= 11)
+	{
+		cfg->reserved0[2] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_COLUMNS;
+	}
+	else if (strcmp(key, "compact") == 0 && v8 <= 1)
+	{
+		cfg->reserved0[3] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_COMPACT;
+	}
 }
 
 static bool ParseCreationWordKey(const char *key, u32 *word, const char **field)
@@ -4806,6 +4826,15 @@ static void ApplyCreationKey(struct SusamuneCreationCfg *cfg,
 			cfg->colorPresent |= SUSAMUNE_CREATION_COLOR(i);
 			return;
 		}
+	}
+	if ((strcmp(key, "health_rgb") == 0 || strcmp(key, "air_rgb") == 0) &&
+	    ParseQftRgb(text, rgb))
+	{
+		const u32 health = strcmp(key, "air_rgb") == 0;
+		memcpy(cfg->healthRgb[health], rgb, 3);
+		cfg->healthStyleMagic = SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC;
+		cfg->colorPresent |= SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_HEALTH_COLOR + health);
+		return;
 	}
 	if (strcmp(key, "show_timer_label") == 0 && ParseQftU8(text, &v8))
 	{
@@ -5110,6 +5139,53 @@ static void ApplyMovementStyleKey(struct SusamuneMovementStyleCfg *cfg,
 	                             SUSAMUNE_DUST_STYLE_COLOR_COUNT);
 }
 
+static bool ParseNativeTimerOffset(const char *text, u16 bias, u16 *out)
+{
+	u16 magnitude;
+	const bool negative = *text == '-';
+	if (*text == '-' || *text == '+') text++;
+	if (!ParseU16(text, &magnitude) || magnitude > bias) return false;
+	*out = negative ? bias - magnitude : bias + magnitude;
+	return true;
+}
+
+static void ApplyNativeTimerStyleKey(struct SusamuneNativeTimerStyleCfg *cfg,
+	                                 const char *key, const char *text)
+{
+	u16 position;
+	u8 value;
+	if (strcmp(key, "native_timer_offset_x") == 0 &&
+	    ParseNativeTimerOffset(text, SUSAMUNE_NATIVE_TIMER_X_BIAS, &position))
+	{
+		cfg->x = position;
+		cfg->present |= SUSAMUNE_NATIVE_TIMER_PRESENT_X;
+	}
+	else if (strcmp(key, "native_timer_offset_y") == 0 &&
+	         ParseNativeTimerOffset(text, SUSAMUNE_NATIVE_TIMER_Y_BIAS, &position))
+	{
+		cfg->y = position;
+		cfg->present |= SUSAMUNE_NATIVE_TIMER_PRESENT_Y;
+	}
+	else if (ParseQftU8(text, &value))
+	{
+		if (strcmp(key, "native_timer_scale") == 0 && value >= 50 && value <= 200)
+		{
+			cfg->scale = value;
+			cfg->present |= SUSAMUNE_NATIVE_TIMER_PRESENT_SCALE;
+		}
+		else if (strcmp(key, "native_timer_alpha") == 0)
+		{
+			cfg->textA = value;
+			cfg->present |= SUSAMUNE_NATIVE_TIMER_PRESENT_ALPHA;
+		}
+		else if (strcmp(key, "native_timer_brightness") == 0 && value >= 25 && value <= 200)
+		{
+			cfg->textBrightness = value;
+			cfg->present |= SUSAMUNE_NATIVE_TIMER_PRESENT_BRIGHTNESS;
+		}
+	}
+}
+
 // Whether the file already carries settings for this game version. When it does
 // not, the mod is asked to author them (SUSAMUNE_CFG_FLAG_NO_CONFIG).
 static bool SawSettingsSection = false;
@@ -5199,6 +5275,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyCreationKey(&cfg->creation, Trim(line), Trim(eq + 1));
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
+			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
 		}
 
 		line = next;
@@ -5426,6 +5503,14 @@ static void EmitMetadataDisplaySection(FIL *f, int *err, const struct SusamuneCf
 	                    SUSAMUNE_METADATA_STYLE_BRIGHTNESS);
 	EmitMetadataStyleU8(f, err, "padding", s->padding, s->present,
 	                    SUSAMUNE_METADATA_STYLE_PADDING);
+	EmitMetadataStyleU8(f, err, "field_gap", s->reserved0[0], s->present,
+	                    SUSAMUNE_METADATA_STYLE_FIELD_GAP);
+	EmitMetadataStyleU8(f, err, "row_gap", s->reserved0[1], s->present,
+	                    SUSAMUNE_METADATA_STYLE_ROW_GAP);
+	EmitMetadataStyleU8(f, err, "columns", s->reserved0[2], s->present,
+	                    SUSAMUNE_METADATA_STYLE_COLUMNS);
+	EmitMetadataStyleU8(f, err, "compact", s->reserved0[3], s->present,
+	                    SUSAMUNE_METADATA_STYLE_COMPACT);
 	for (i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++)
 	{
 		if (s->slotPresent[i >> 3] & (1u << (i & 7)))
@@ -5526,6 +5611,24 @@ static void EmitMovementOverlayStyle(
 			style->rgb[i][0], style->rgb[i][1], style->rgb[i][2]));
 }
 
+static void EmitNativeTimerStyle(FIL *f, int *err,
+	                             const struct SusamuneNativeTimerStyleCfg *cfg)
+{
+	char line[64];
+	if (cfg->present & SUSAMUNE_NATIVE_TIMER_PRESENT_X)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_offset_x = %d\r\n",
+		     (int)cfg->x - SUSAMUNE_NATIVE_TIMER_X_BIAS));
+	if (cfg->present & SUSAMUNE_NATIVE_TIMER_PRESENT_Y)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_offset_y = %d\r\n",
+		     (int)cfg->y - SUSAMUNE_NATIVE_TIMER_Y_BIAS));
+	if (cfg->present & SUSAMUNE_NATIVE_TIMER_PRESENT_SCALE)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_scale = %u\r\n", cfg->scale));
+	if (cfg->present & SUSAMUNE_NATIVE_TIMER_PRESENT_ALPHA)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_alpha = %u\r\n", cfg->textA));
+	if (cfg->present & SUSAMUNE_NATIVE_TIMER_PRESENT_BRIGHTNESS)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_brightness = %u\r\n", cfg->textBrightness));
+}
+
 static void EmitCreationSection(FIL *f, int *err,
 	                            const struct SusamuneCfg *cfg)
 {
@@ -5548,6 +5651,11 @@ static void EmitCreationSection(FIL *f, int *err,
 	if (d->timerLabelVisiblePresent)
 		Emit(f, err, line, (u32)_sprintf(line, "show_timer_label = %u\r\n",
 			d->timerLabelVisible));
+	if (d->healthStyleMagic == SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC)
+		for (i = 0; i < 2; ++i)
+			if (d->colorPresent & SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_HEALTH_COLOR + i))
+				Emit(f, err, line, (u32)_sprintf(line, "%s_rgb = %u,%u,%u\r\n",
+				     i ? "air" : "health", d->healthRgb[i][0], d->healthRgb[i][1], d->healthRgb[i][2]));
 	if (d->recentIlPositionPresent)
 	{
 		Emit(f, err, line, (u32)_sprintf(line, "recent_ils_x = %u\r\n",
@@ -5665,6 +5773,7 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitMovementOverlayStyle(
 		f, err, "dust", &cfg->movementStyle.dust,
 		SUSAMUNE_DUST_STYLE_COLOR_COUNT);
+	EmitNativeTimerStyle(f, err, &cfg->nativeTimerStyle);
 	for (word = 0; word < SUSAMUNE_CREATION_WORD_COUNT; word++)
 	{
 		const struct SusamuneCreationWordCfg *w = &d->words[word];
@@ -5945,7 +6054,7 @@ static void InitCreationDefaults(struct SusamuneCreationCfg *cfg)
 	cfg->recentIlPositionPresent = 0;
 	cfg->timerLabelVisible = 1;
 	cfg->timerLabelVisiblePresent = 0;
-	cfg->reserved1 = 0;
+	cfg->healthStyleMagic = 0;
 	cfg->recentIlTextRgb[0] = 255;
 	cfg->recentIlTextRgb[1] = 255;
 	cfg->recentIlTextRgb[2] = 255;
@@ -5956,7 +6065,7 @@ static void InitCreationDefaults(struct SusamuneCreationCfg *cfg)
 	cfg->recentIlBgA = 205;
 	cfg->recentIlTextBrightness = 100;
 	cfg->recentIlPadding = 10;
-	memset(cfg->reserved2, 0, sizeof(cfg->reserved2));
+	memset(cfg->healthRgb, 0, sizeof(cfg->healthRgb));
 	cfg->savestateStyleMagic = SUSAMUNE_CREATION_SAVESTATE_STYLE_MAGIC;
 	cfg->savestateX = 30;
 	cfg->savestateY = 418;
@@ -6179,7 +6288,8 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_INPUT_STYLE |
 	                 SUSAMUNE_CFG_FLAG_CREATION |
 	                 SUSAMUNE_CFG_FLAG_WALLKICK_STYLE |
-	                 SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE;
+	                 SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE |
+	                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE;
 	if (InitPbFiles(cfg, region))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_ILING_PBS |
 		              SUSAMUNE_CFG_FLAG_ILING_PROFILES;
@@ -6305,7 +6415,8 @@ void SusamuneCfgService(void)
 	                 sizeof(cfg->qftDisplay) + sizeof(cfg->metadataStyle) +
 	                 sizeof(cfg->inputStyle) + sizeof(cfg->creation) +
 	                 sizeof(cfg->wallkickStyle));
-	sync_before_read(&cfg->movementStyle, sizeof(cfg->movementStyle));
+	sync_before_read(&cfg->movementStyle,
+	                 sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
 	seq = cfg->saveSeq;
 
 	ret = WriteIniFile(cfg);

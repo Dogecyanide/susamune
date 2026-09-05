@@ -85,7 +85,8 @@ class NestedMenuContracts(unittest.TestCase):
                 for setting, setting_cat in setting_category.items()
                 if setting_cat == category
             }
-            self.assertEqual(set(actual), expected, category)
+            shortcuts = {"SETTING_TIMER_SUNSHINE_VISIBILITY"} if category == "SETTING_CAT_UI" else set()
+            self.assertEqual(set(actual), expected | shortcuts, category)
 
     def test_timer_freezes_are_one_nested_page(self) -> None:
         menu = text("src/menu.cpp")
@@ -277,9 +278,9 @@ class MovementStylePersistenceContracts(unittest.TestCase):
         self.assertIn("SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE 0x4000u", cfg)
         self.assertIn("sizeof(struct SusamuneMovementStyleCfg) == 88", cfg)
         self.assertIn("movementStyle) == 5056", cfg)
-        self.assertIn("sizeof(struct SusamuneCfg) == 5144", cfg)
+        self.assertIn("sizeof(struct SusamuneCfg) == 5152", cfg)
         self.assertIn("SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET 0x1420u", cfg)
-        self.assertLess(5144, 0x1420)
+        self.assertEqual(5152, 0x1420)
 
     def test_console_save_and_reload_cover_every_field(self) -> None:
         kernel = text("launcher/kernel/SusamuneCfg.c")
@@ -310,13 +311,14 @@ class MovementStylePersistenceContracts(unittest.TestCase):
         self.assertIn("gCreationExtras.stageMovementInto(&cfg->movementStyle)", settings)
         self.assertIn("DCStoreRange((void *)&cfg->movementStyle", settings)
 
-    def test_dolphin_v5_migrates_to_v6(self) -> None:
+    def test_dolphin_v5_migrates_to_v7(self) -> None:
         emulator = text("src/emulator_persistence.cpp")
-        self.assertIn("constexpr u16 kRecordVersion = 6;", emulator)
+        self.assertIn("constexpr u16 kRecordVersion = 7;", emulator)
         self.assertIn("struct RecordV5", emulator)
         self.assertIn("u8 cfg[5016];", emulator)
         self.assertIn("bool validV5", emulator)
-        self.assertIn("const bool v5 = !current && validV5(record);", emulator)
+        self.assertIn("const bool v5 = !current && !v6 && validV5(record);", emulator)
+        self.assertIn("migrateRecordV6(&sState->cfg, &record->cfg)", emulator)
         self.assertIn("sizeof(((RecordV5 *)0)->cfg)", emulator)
         self.assertIn("migrateRecordCfg(&sState->cfg", emulator)
         self.assertIn("oldCfg + kMovementOffsetV5", emulator)

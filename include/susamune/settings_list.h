@@ -197,7 +197,8 @@
     X(SETTING_SPLIT_COMPARISON,              "split_comparison")             \
     X(SETTING_NATIVE_TIMER_X,                "native_timer_x")               \
     X(SETTING_NATIVE_TIMER_Y,                "native_timer_y")               \
-    X(SETTING_NATIVE_TIMER_SCALE,            "native_timer_scale")
+    X(SETTING_NATIVE_TIMER_SCALE,            "native_timer_scale")           \
+    X(SETTING_FREE_CAMERA_SPEED,             "free_camera_speed")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

@@ -38,10 +38,10 @@ CARD_MAGIC = 0x53554346
 CFG_MAGIC = 0x53434647
 CFG_VERSION = 2
 CARD_VERSION_V5 = 5
-CARD_VERSION = 6
+CARD_VERSION = 7
 CARD_SECTOR_SIZE = 0x2000
 CFG_V5_SIZE = 5016
-CFG_SIZE = 5144
+CFG_SIZE = 5152
 PROFILE_CFG_OFFSET = 2784
 OLD_MOVEMENT_OFFSET = 4928
 MOVEMENT_OFFSET = 5056
@@ -297,7 +297,7 @@ class PersistenceSourceContracts(unittest.TestCase):
             "SUSAMUNE_ILING_PROFILE_VERSION    2u",
             "sizeof(struct SusamuneILingProfilesFileV1) == 2112",
             "sizeof(struct SusamuneILingProfilesFile) == 2240",
-            "sizeof(struct SusamuneCfg) == 5144",
+            "sizeof(struct SusamuneCfg) == 5152",
         ):
             self.assertIn(contract, self.header)
 
@@ -320,7 +320,7 @@ class PersistenceSourceContracts(unittest.TestCase):
 
     def test_dolphin_v5_migration_has_explicit_shifted_fields(self) -> None:
         for contract in (
-            "constexpr u16 kRecordVersion = 6;",
+            "constexpr u16 kRecordVersion = 7;",
             "struct RecordV5",
             "u8 cfg[5016];",
             "kProfilesOffsetV1 = 2784",

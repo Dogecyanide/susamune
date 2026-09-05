@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · First build
+V2.3.0 pre-release · Feedback update
 
 FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
 
@@ -18,7 +18,7 @@ Open the mod menu with your configured menu combo (default Y + Start). Use L/R f
 
 - **Quick:** your Shined favourites.
 - **Practice:** frames/camera/inputs, savestates, practice rules, RNG and gameplay options.
-- **Runs:** ILs, playlists/streaks, records, and PB Safety.
+- **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
 - **Ghosts:** race, watch, save and manage ghost tracks.
 - **Display:** layout editors, HUD overlays, timer/split display and appearance.
 - **System:** button binds and the built-in quick guide.
@@ -38,11 +38,15 @@ Practice pause stops actor movement, animation and collision work. A step releas
 
 Without free camera, you can hold jump or other gameplay buttons alongside the Step combo. Those gameplay inputs apply to the step; the configured Step combo itself is removed. When choosing Step or Resume from the menu, release A to continue.
 
+For spins, pause and choose **Queue clockwise spin** or **Queue counterclockwise spin** in the same Practice page. Each Step supplies the next stick direction, completing one circle in nine steps. Hold A on the step where you want to jump. Free camera must be off. Optional spin binds are initially unassigned. Resume, Stop, a state load or a scene change clears the queue.
+
 ## Free camera
 
-Enter ordinary retail pause, or enable practice pause, then toggle free camera. Move with the main stick, look with the C-stick, and use L/R analog pressure to descend/ascend. Hold X to move faster. Recenter from the Practice page. Toggle it off to restore the retail view.
+Enter ordinary retail pause, or enable practice pause, then toggle free camera. Move with the main stick, look with the C-stick, and use L/R analog pressure to descend/ascend. **Free camera speed** on the Practice page saves a speed from 0.25x to 4x; hold X for a temporary boost. Recenter from the Practice page. Toggle it off to restore the retail view.
 
 Free camera remains usable while stepping. Steps use neutral gameplay input while camera control is active. The camera is temporary drawing state; it is restored before gameplay and savestate operations. It closes on a scene transition.
+
+Practice pause, stepping and free camera also work in Ghost Watch and Watch2. The ghost playhead stays still while paused. You can keep free camera active when resuming Watch. B or Start exits Watch; opening the mod menu with its full combo leaves Watch active.
 
 ## Record and replay an input take
 
@@ -60,15 +64,25 @@ Playback is experimental. It compares a small fingerprint of Mario, RNG and coun
 
 New ghost files can include the inputs actually consumed during the attempt, plus timestamps for existing supported split endpoints. Earlier pose-only ghost files remain readable and show unavailable input data honestly.
 
-In Display > HUD and displays > Other HUD, choose **Ghost inputs**: Off, Ghost, or Both inputs. Both shows live and ghost input while racing, and both ghost controllers in Watch2. Ghost input is a teaching overlay; imported tracks do not control Mario.
+In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same control is available in Display > Layout editor > Controller inputs and Display > HUD and displays > Other HUD. Both ghosts shows both ghost controllers in Watch2, or the live and ghost controller while racing. Ghost input is a teaching overlay; imported tracks do not control Mario.
+
+Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits held time, so pausing to arrange a camera or plan the next input does not create a long pause in the saved ghost. The game timer itself keeps its original behavior. TAS ghosts are for practice and cannot earn an ordinary PB.
 
 In Display > Timer and splits > Timer and splits, choose the comparison: **Off → PB → SOB → Ghost**. SOB means the cumulative sum of your best recorded segments. Ghost uses the selected race target's compatible split timestamps. Missing or incompatible timestamps show `--`; no checkpoint timing is guessed.
 
+These controls are also under Runs > Timer and splits. **Level splits** is the overlay toggle on the first page.
+
 Exported shareable ghosts live under `susamune_ghosts/share/` on the launcher's device. Put incoming `.smsghost` files in `susamune_ghosts/import/`, then import them from Ghosts. Keep internal `.sgh` files in their existing folders. The included Full Reds ILs remain available through Runs: choose the full-level route when you want the approach and secret reds timed together.
 
-## Native timer layout
+## Layout and colours
 
-Display > HUD and displays > Native timer layout adjusts horizontal and vertical offsets in 10-pixel steps and size from 50% to 150%. Defaults are 0 px, 0 px, 100%. The original timer artwork and time calculation are retained. The transform exists only during HUD drawing.
+Display > Layout editor has separate groups for Timers, Controller inputs, Metadata, Native HUD colours, Custom text, Practice feedback, and Menu and notifications. Rollout and dust editors are also beside their settings in HUD and displays > Movement feedback.
+
+**Timers > Sunshine timer** opens the full editor: position, size, opacity, brightness, all 13 characters, TIME/TEMPO and the streak. Its position range spans the full screen. Colours including blue, purple and white no longer multiply against the original yellow artwork. Timer calculations stay unchanged.
+
+**Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours. In RGB controls, hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
+
+**Metadata** adds Field gap, Row gap, Fields per row and Value widths. C-stick left/right decreases or increases these values. Choose horizontal layout to arrange several fields per row; Fields per row limits the number before wrapping. Auto wraps at the screen edge. Stable widths keep values aligned as digits change; Compact reduces empty space. Per-character colours remain attached to their original fields.
 
 ## Dolphin
 

@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 プレリリース・初回ビルド
+V2.3.0 プレリリース・フィードバック更新
 
 FOXTROT は、動きの確認や走行の比較に使う練習機能を追加します。新しいレベル内スプリットは追加していません。チェックポイントは今後、一つずつ手作業で定義・検証します。
 
@@ -18,7 +18,7 @@ Homebrew Channel から Moonshine Launcher FOXTROT を開きます。**Version**
 
 - **Quick**：Shined に登録したお気に入り。
 - **Practice**：コマ送り、カメラ、入力、ステート、練習ルール、乱数、ゲーム設定。
-- **Runs**：IL、プレイリスト・連続成功、記録、PB Safety。
+- **Runs**：IL、プレイリスト・連続成功、記録、PB Safety、タイマー・スプリット設定。
 - **Ghosts**：ゴーストとの競走、観察、保存、管理。
 - **Display**：表示位置、HUD、タイマー・スプリット、外見。
 - **System**：ボタン割り当てと簡易ガイド。
@@ -38,11 +38,15 @@ System > Button binds で変更できます。Z の既存機能は維持しま�
 
 フリーカメラが無効なら、コマ送り用コンボと同時にジャンプなどのゲーム用ボタンを押せます。ゲーム用の入力だけがコマ送りに反映され、コンボ自体は除かれます。メニューから Step または Resume を選んだ場合は、A を離すと進みます。
 
+スピン入力は、一時停止中に Practice の **Queue clockwise spin** または **Queue counterclockwise spin** で予約します。Step ごとに次のスティック方向を入力し、9回で一周します。ジャンプしたいコマで A を押してください。フリーカメラは無効にします。スピン用のボタン割り当ては初期状態では未設定です。再開、Stop、ステート読み込み、場面変更で予約を解除します。
+
 ## フリーカメラ
 
-ゲーム本来のポーズ画面、または練習用一時停止中に切り替えます。メインスティックで移動、C スティックで視点、L/R のアナログ入力で下降・上昇します。X を押しながら移動すると速くなります。Practice の Recenter で視点を戻せます。無効化するとゲーム本来の視点へ戻ります。
+ゲーム本来のポーズ画面、または練習用一時停止中に切り替えます。メインスティックで移動、C スティックで視点、L/R のアナログ入力で下降・上昇します。Practice の **Free camera speed** で0.25～4倍の速度を保存できます。X は一時的な加速です。Recenter で視点を戻せます。無効化するとゲーム本来の視点へ戻ります。
 
 フリーカメラを使いながらコマ送りもできます。その場合、ゲーム側の入力はニュートラルになります。カメラの変更は一時的な描画状態で、ゲーム処理やステート操作前に復元されます。場面が変わると終了します。
+
+Ghost Watch と Watch2 でも一時停止・コマ送り・フリーカメラを使用できます。一時停止中はゴーストの再生位置も止まります。Watch を再開してもフリーカメラを維持できます。B または Start で Watch を終了します。メニュー用コンボで mod メニューを開いた場合は終了しません。
 
 ## 入力の録画と再生
 
@@ -60,15 +64,25 @@ System > Button binds で変更できます。Z の既存機能は維持しま�
 
 新しいゴーストには、その試行で使われた入力と、既存の対応スプリットの時刻を保存できます。以前の位置情報だけのゴーストも読み込めます。入力情報がなければ、利用不可として表示します。
 
-Display > HUD and displays > Other HUD の **Ghost inputs** で Off、Ghost、Both inputs を選びます。Both inputs は競走中には自分とゴースト、Watch2 では二つのゴーストの入力を表示します。インポートしたゴーストがマリオを操作する機能ではありません。
+**Ghosts > Ghost inputs** で Off、Ghost、**Both ghosts** を選びます。Display > Layout editor > Controller inputs と、従来の Other HUD にも同じ設定があります。Both ghosts は競走中には自分とゴースト、Watch2 では二つのゴーストの入力を表示します。インポートしたゴーストがマリオを操作する機能ではありません。
+
+練習用一時停止、フリーカメラ、コマ送りを使用したゴーストは **TAS** と表示します。停止していた時間を再生から除くため、カメラ調整や入力の検討中の待ち時間は記録に入りません。ゲーム本来のタイマー動作は変更しません。TAS ゴーストは通常の PB 対象外です。
 
 Display > Timer and splits > Timer and splits の比較対象は **Off → PB → SOB → Ghost** です。SOB は保存済みの各区間ベストの累計です。Ghost は選択した競走相手の互換性のあるスプリット時刻を使います。情報が欠ける場合は `--` と表示し、時刻を推測しません。
 
+同じ設定を Runs > Timer and splits からも開けます。最初のページの **Level splits** が表示のオン・オフです。
+
 共有用に書き出したゴーストは、ランチャーのデバイスの `susamune_ghosts/share/` 以下に保存されます。受け取った `.smsghost` は `susamune_ghosts/import/` に入れ、Ghosts からインポートします。内部保存用の `.sgh` は元のフォルダーに残してください。既存の Full Reds IL は Runs から選べます。秘密コースまでの移動と赤コインをまとめて計測する場合は、フルレベルのルートを選んでください。
 
-## ゲーム本来のタイマー表示
+## レイアウトと色
 
-Display > HUD and displays > Native timer layout で横・縦位置を10ピクセル単位、サイズを50～150%で変更できます。標準は0 px、0 px、100%です。タイマーの絵と時間計算は元のままで、HUD の描画中だけ位置・サイズを変更します。
+Display > Layout editor は、Timers、Controller inputs、Metadata、Native HUD colours、Custom text、Practice feedback、Menu and notifications に分かれています。Rollout と Dust は Practice feedback にあり、HUD and displays > Movement feedback からも編集できます。
+
+**Timers > Sunshine timer** で位置・サイズ・不透明度・明るさ、13文字、TIME/TEMPO、背景の帯を編集します。位置は画面全体に移動でき、青・紫・白も元の黄色に影響されず設定できます。時間計算は変更しません。
+
+**Native HUD colours** の Health counter colour と Underwater air colour は独立した色設定です。リセットすると元の色へ戻ります。RGB 編集中に **Y** を押しながら C スティックを操作すると、4ではなく1ずつ調整できます。A で保存、B で破棄、Z で選択項目のリセットを確認します。
+
+**Metadata** では Field gap、Row gap、Fields per row、Value widths を C スティック左右で調整できます。横並びで Fields per row を設定すると、指定した項目数で折り返します。Auto は画面端で折り返します。Stable は桁数が変わっても位置を保ち、Compact は空白を詰めます。文字ごとの色は元の項目に対応したままです。
 
 ## Dolphin
 

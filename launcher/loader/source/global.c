@@ -265,8 +265,10 @@ void FreeLauncherFont(void)
  */
 void Initialise(void)
 {
+	int graphicsStatus;
 	CheckForGecko();
-	gprintf("GRRLIB_Init = %i\r\n", GRRLIB_Init());
+	graphicsStatus = GRRLIB_Init();
+	gprintf("GRRLIB_Init = %i\r\n", graphicsStatus);
 	VIDEO_SetBlack(TRUE);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
@@ -275,6 +277,7 @@ void Initialise(void)
 	{
 		gprintf("Decompressed font.ttf with %i bytes\r\n", font_ttf_size);
 		myFont = GRRLIB_LoadTTF(font_ttf, font_ttf_size);
+		gprintf("Launcher text: %s\n", myFont ? "TrueType ready" : "built-in fallback");
 	}
 	else
 	{

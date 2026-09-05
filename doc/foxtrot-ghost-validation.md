@@ -38,3 +38,35 @@ native HUD returned: both Watch2 panels and the legacy label remain clear of
 FLUDD and coin artwork. The original mod sections are byte-identical to that
 release image. All owned test processes were closed. Updated captures and
 instrumentation are in `build/foxtrot-ghost-live-layout/proof.json`.
+
+## Feedback validation
+
+The reported PAL Bianco 3 Secret export is a valid V5 file with both split
+timestamps intact: route 15, schema `1AF7E430`, checkpoints 712 and 1700 QF.
+Its SHA-256 is
+`39efa2355ef50ae3c02f5e3614d41f76e6cd29fd9b1a15e989309ae4ee2c7c74`.
+The comparison cache had rejected a matching route solely because its source
+region differed. Comparison now uses the route, endpoint and schema; exporting
+an imported ghost also preserves its split records. Automatic race references
+can supply splits without becoming eligible for race awards.
+
+An isolated Dolphin 2606a JP run used image `672D17BE` (private fixture
+`922C096B`) and that exact PAL payload. An ordinary movement frame crossed the
+existing Bianco checkpoint after a private position/heading seed. The captured
+216-QF checkpoint displayed `-4.137` against the file's 712-QF checkpoint.
+No timer or split-event state was written. This exercises the production race
+cache, detector and renderer, but installs an already host-validated runtime
+track: it does not exercise ARM storage or the emulator's omitted import path.
+
+Practice hold kept 49 poses, 40 inputs and ghost time 308 unchanged while raw
+QFT advanced. One Step produced 50 poses, 41 inputs and ghost time 312, then
+held again; the recording carried the assisted and TAS flags. Watch2 similarly
+held both cursors at 22 and ghost time 176, then advanced both to 23/time 180
+for one Step. Free camera moved while that ghost time stayed fixed. Observer
+cleanup restored ordinary gameplay and the owned process was stopped. Saving
+and reloading a completed TAS take was not exercised live.
+
+Evidence and inspected screenshots are in
+`build/foxtrot-cross-region-live/proof.json`. The final JP image `63C843C7`
+contains a subsequent health-only rebuild; these ghost checks apply to the
+tested `672D17BE` image and were not repeated on that final image.

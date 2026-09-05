@@ -15,18 +15,19 @@ int clampi(int value, int lo, int hi) {
 
 namespace LayoutEditor {
 
-bool updatePositionScale(u32 rapid, u16 &x, u16 &y, u8 &scale, int maxScale) {
+bool updatePositionScale(u32 rapid, u16 &x, u16 &y, u8 &scale, int maxScale,
+                         int maxX, int maxY) {
     if (rapid & TMarioGamePad::DPAD_LEFT) {
-        x = (u16)clampi((int)x - 2, 0, 640);
+        x = (u16)clampi((int)x - 2, 0, maxX);
     }
     if (rapid & TMarioGamePad::DPAD_RIGHT) {
-        x = (u16)clampi((int)x + 2, 0, 640);
+        x = (u16)clampi((int)x + 2, 0, maxX);
     }
     if (rapid & TMarioGamePad::DPAD_UP) {
-        y = (u16)clampi((int)y - 2, 0, 480);
+        y = (u16)clampi((int)y - 2, 0, maxY);
     }
     if (rapid & TMarioGamePad::DPAD_DOWN) {
-        y = (u16)clampi((int)y + 2, 0, 480);
+        y = (u16)clampi((int)y + 2, 0, maxY);
     }
     if (rapid & TMarioGamePad::L) {
         scale = (u8)clampi((int)scale - 2, 50, maxScale);

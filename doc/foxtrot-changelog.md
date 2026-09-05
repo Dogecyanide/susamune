@@ -1,6 +1,17 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release, first build.
+V2.3.0 pre-release, feedback update.
+
+- Layout editor groups for timers, inputs, metadata, native HUD colours, custom text, practice feedback and menu appearance.
+- Full Sunshine timer editor, accurate blue/purple/white colours, and independent health/underwater-air colours.
+- Hold Y for one-unit RGB adjustments; metadata field/row spacing, column limits and compact widths.
+- Corrected free-camera strafe direction, five saved speeds and an X speed boost.
+- Pause, step and free camera during ghost Watch; queued spin inputs while frame advancing.
+- Assisted ghost recordings omit held time and carry a TAS label; ordinary PB eligibility stays separate.
+- Ghost input controls in the Ghosts page and Layout editor, with the clearer Both ghosts label.
+- Rollout and dust editors now appear beside their movement settings; timer/split controls also appear under Runs.
+- Exported ghosts retain split comparisons across JP, US and PAL when their route and checkpoint schema match. Automatic last-attempt/success targets also supply split deltas.
+- Launcher text now has a built-in fallback if its normal font cannot initialize or render, with explicit drawing state and corrected bitmap sampling.
 
 - Practice pause and single rendered-frame advance, with configurable controls.
 - Free camera during retail pause and frame advance.

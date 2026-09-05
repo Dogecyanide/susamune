@@ -60,6 +60,7 @@ struct TMarDirector { enum { STATE_NORMAL = 4 }; unsigned mCurState; };
 static TMarDirector director;
 static TMarDirector *gpMarDirector;
 static bool running, sObserverMarioBaselineFinalized, sObserverMarioOwned;
+static bool sFrameFrozen;
 static unsigned released;
 bool observerRunning() { return running; }
 void releaseObserverMario(bool) { ++released; }
@@ -82,6 +83,7 @@ extern "C" __declspec(dllexport) unsigned observerRelease(int state, unsigned ow
     running = (ownership & 1u) != 0;
     sObserverMarioBaselineFinalized = (ownership & 2u) != 0;
     sObserverMarioOwned = (ownership & 4u) != 0;
+    sFrameFrozen = (ownership & 8u) != 0;
     director.mCurState = stage;
     gpMarDirector = stage == 0xff ? 0 : &director;
     released = 0;
@@ -130,6 +132,12 @@ extern "C" __declspec(dllexport) unsigned observerRelease(int state, unsigned ow
             self.assertEqual(library.observerRelease(state, 7, stage), 1)
         for ownership in (0, 1, 3, 5, 6):
             self.assertEqual(library.observerRelease(5, ownership, 4), 0)
+
+    def test_observer_pause_keeps_mario_owned_until_a_real_transition(self):
+        for library in self.libraries:
+            self.assertEqual(library.observerRelease(0, 15, 12), 0)
+            self.assertEqual(library.observerRelease(1, 15, 5), 0)
+            self.assertEqual(library.observerRelease(2, 15, 12), 1)
 
 
 if __name__ == "__main__":

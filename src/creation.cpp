@@ -269,7 +269,7 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                     mStyle->scale = defaults.scale;
             }
             mConfirm = CONFIRM_NONE;
-            return UPDATE_CHANGED;
+            return UPDATE_CHANGED | (mOption <= OPTION_TEXT_B ? UPDATE_COLOR_CHANGED : 0);
         }
         if (pressed & TMarioGamePad::B) mConfirm = CONFIRM_NONE;
         return UPDATE_NONE;
@@ -306,7 +306,9 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
              ? repeat & (TMarioGamePad::L | TMarioGamePad::R)
              : 0);
     if (LayoutEditor::updatePositionScale(
-            layout, mStyle->x, mStyle->y, mStyle->scale, 200)) {
+            layout, mStyle->x, mStyle->y, mStyle->scale, 200,
+            (mCapabilities & CAP_OFFSET_POSITION) ? 1280 : 640,
+            (mCapabilities & CAP_OFFSET_POSITION) ? 960 : 480)) {
         result |= UPDATE_CHANGED;
     }
 
@@ -317,8 +319,9 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
     }
 
     int delta = 0;
-    if (repeat & TMarioGamePad::CSTICK_LEFT) delta = -4;
-    if (repeat & TMarioGamePad::CSTICK_RIGHT) delta = 4;
+    const int step = (pad->mButtons.mInput & TMarioGamePad::Y) ? 1 : 4;
+    if (repeat & TMarioGamePad::CSTICK_LEFT) delta = -step;
+    if (repeat & TMarioGamePad::CSTICK_RIGHT) delta = step;
     if (!delta || !optionEnabled(mOption)) return result;
 
     if (mOption <= OPTION_TEXT_B) {
@@ -339,19 +342,21 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         const int hi = mOption == OPTION_TEXT_BRIGHTNESS ? 200 : 255;
         value = (u8)clampi((int)value + delta, lo, hi);
     }
-    return result | UPDATE_CHANGED;
+    return result | UPDATE_CHANGED | (mOption <= OPTION_TEXT_B ? UPDATE_COLOR_CHANGED : 0);
 }
 
 void CreationEditor::draw(Menu *menu, const char *title, const char *preview) const {
     if (!menu || !mStyle) return;
 
-    const int panelY = mStyle->y < 224 ? 264 : 8;
+    const bool offsets = mCapabilities & CAP_OFFSET_POSITION;
+    const int previewY = offsets ? (int)mStyle->y - 480 + 419 : mStyle->y;
+    const int panelY = previewY < 224 ? 264 : 8;
     int optionCount = 0;
     for (int i = 0; i < OPTION_COUNT; i++)
         if (optionEnabled((u8)i)) optionCount++;
     const bool layoutControls = mCapabilities & (CAP_POSITION | CAP_SCALE);
     const int optionRows = optionCount > 5 ? 5 : optionCount;
-    const int panelH = 80 + optionRows * 14 + (layoutControls ? 17 : 0);
+    const int panelH = 92 + optionRows * 14 + (layoutControls ? 17 : 0);
     menu->fillBox(8, panelY, 624, panelH, Color(0, 0, 0, 215));
 
     menu->drawText(title, 18, panelY + 9, 16, 16,
@@ -378,8 +383,9 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
 
     int infoY = panelY + 29;
     if (layoutControls) {
-        snprintf(status, sizeof(status), "Position X:%u Y:%u   Size:%u pct",
-                 mStyle->x, mStyle->y, mStyle->scale);
+        snprintf(status, sizeof(status), "Position X:%d Y:%d   Size:%u pct",
+                 offsets ? (int)mStyle->x - 640 : mStyle->x,
+                 offsets ? (int)mStyle->y - 480 : mStyle->y, mStyle->scale);
         menu->drawText(status, 18, infoY, 12, 12,
                        Color(190, 220, 255, 255));
         infoY += 17;
@@ -457,7 +463,10 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
                                SUSAMUNE_GLYPH_SLASH
                                "R Adjust   START: Next   " SUSAMUNE_GLYPH_X
                                "+START: Previous";
-        menu->drawText(controls, 18, panelY + panelH - 32, 9, 9,
+        menu->drawText(controls, 18, panelY + panelH - 44, 9, 9,
+                       Color(150, 170, 205, 255));
+        menu->drawText("Hold " SUSAMUNE_GLYPH_Y " while adjusting: step 1 (normal 4)",
+                       18, panelY + panelH - 32, 9, 9,
                        Color(150, 170, 205, 255));
     }
     if (layoutControls)

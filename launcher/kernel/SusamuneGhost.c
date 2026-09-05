@@ -421,6 +421,8 @@ static enum ValidateResult ValidateCanonicalHeader(const u8 *header,
 	payloadSize = ReadBe32(header + 72);
 	sampleCount = ReadBe32(header + 68);
 	required = ReadBe32(header + 24);
+	if (!SusamuneGhostRunFlagsValid(ReadBe32(header + 28)))
+		return VALIDATE_INVALID;
 	if ((required & ~(version == SUSAMUNE_GHOST_FILE_VERSION_V5
 	                    ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5
 	                    : version == SUSAMUNE_GHOST_FILE_VERSION_V4

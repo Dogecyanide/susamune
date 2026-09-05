@@ -34,6 +34,7 @@ public:
         CAP_PADDING    = 1 << 5,
         CAP_TEXT_COLOR = 1 << 6,
         CAP_ALL        = 0x7f,
+        CAP_OFFSET_POSITION = 1 << 7,
     };
 
     enum UpdateResult {
@@ -41,6 +42,7 @@ public:
         UPDATE_CHANGED   = 1,
         UPDATE_FINISHED  = 2,
         UPDATE_CANCELLED = 4,
+        UPDATE_COLOR_CHANGED = 8,
     };
 
     void reset();

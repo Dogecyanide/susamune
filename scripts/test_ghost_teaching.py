@@ -58,6 +58,16 @@ class TeachingTests(unittest.TestCase):
         self.assertEqual([s["qf"] for s in result["teaching"]["splits"]], [102, 104])
         storage.validate_slot_file(envelope(data), game_id=0x474D534A, profile=0, slot=0)
 
+    def test_tas_flag_requires_assisted_and_preserves_legacy_flags(self):
+        for version in (3, 4):
+            base = build_ghost(version=version, run_flags=0x21)
+            data = teaching_file(base=base) if version == 4 else base
+            self.assertEqual(ghost.validate_ghost(data)["run_flags"], 0x21)
+        with self.assertRaisesRegex(ghost.FormatError, "TAS ghost must"):
+            ghost.validate_ghost(teaching_file(base=build_ghost(version=4, run_flags=0x20)))
+        self.assertEqual(ghost.validate_ghost(build_ghost(version=4, run_flags=0x80000000))[
+            "run_flags"], 0x80000000)
+
     def test_legacy_ghosts_do_not_invent_inputs(self):
         for version in (3, 4):
             result = ghost.validate_ghost(build_ghost(version=version))
@@ -158,6 +168,7 @@ class TeachingTests(unittest.TestCase):
             decoder.validate.restype = ctypes.c_int
             try:
                 valid = [build_ghost(version=3), build_ghost(version=4), teaching_file(),
+                         teaching_file(base=build_ghost(version=4, run_flags=0x21)),
                          teaching_file(inputs=[], splits=[]),
                          teaching_file(inputs=[], splits=[(104, 1, 0, 0, 0)])]
                 samples = [(0, 0, 0, 0, 0, 0, 0)] + [(0, 0, 0, 0, 4, 0, 0)] * 26973
@@ -166,7 +177,8 @@ class TeachingTests(unittest.TestCase):
                                            build_ghost(version=4, samples=samples, start_qf=0)))
                 for data in valid:
                     self.assertEqual(decoder.validate(data, len(data)), 1)
-                bad = [mutate_section(teaching_file(), 48, struct.pack(">I", 100)),
+                bad = [teaching_file(base=build_ghost(version=4, run_flags=0x20)),
+                       mutate_section(teaching_file(), 48, struct.pack(">I", 100)),
                        mutate_section(teaching_file(), 15, b"\x07"),
                        mutate_section(teaching_file(), 32 + 3 * 16 + 12 + 10, b"\x00")]
                 for data in bad:

@@ -398,12 +398,10 @@ bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
         else pbElapsed += pb;
     }
     if (comparison == 3) {
-        s32 target = -1;
-        havePb = Ghost::comparisonSplit(routeId, local, &target) && target >= 0;
-        if (havePb) pbElapsed = (u32)target;
+        havePb = Ghost::comparisonDelta(routeId, local, absoluteQf, &delta);
     }
     if (havePb) {
-        delta = absoluteQf - (s32)pbElapsed;
+        if (comparison != 3) delta = absoluteQf - (s32)pbElapsed;
         if (color != OVERLAY_GOLD) {
             color = delta < 0 ? OVERLAY_GREEN
                               : delta > 0 ? OVERLAY_RED : OVERLAY_WHITE;

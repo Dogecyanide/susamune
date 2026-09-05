@@ -41,8 +41,8 @@ __declspec(dllexport) void basis(float *m,int p) { SusamuneTimerScaleBasis(m,p);
         cls.dll.basis.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int]
 
     def test_clip_rounding_encloses_both_signed_edges(self):
-        for percent in range(50, 151, 10):
-            for value in range(-640, 641):
+        for percent in range(50, 201, 2):
+            for value in range(-1280, 1281):
                 self.assertEqual(self.dll.floorScale(value, percent),
                                  math.floor(value * percent / 100))
                 self.assertEqual(self.dll.ceilScale(value, percent),
@@ -50,7 +50,7 @@ __declspec(dllexport) void basis(float *m,int p) { SusamuneTimerScaleBasis(m,p);
 
     def test_scale_composes_with_rotation_preserving_translation_and_depth(self):
         original = [0, -1, 0, 200, 1, 0, 0, 30, 0, 0, 1, 4]
-        for percent in range(50, 151, 10):
+        for percent in range(50, 201, 2):
             matrix = (ctypes.c_float * 12)(*original)
             self.dll.basis(matrix, percent)
             for i, value in enumerate(original):

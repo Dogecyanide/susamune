@@ -6,6 +6,7 @@
 #include "JSystem/J2D/J2DPicture.hxx"
 #include "SMS/Player/MarioGamePad.hxx"
 #include "SMS/System/MarDirector.hxx"
+#include "SMS/System/Application.hxx"
 #include "susamune/glyphs.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/packed_text.hxx"
@@ -59,6 +60,20 @@ constexpr char kTimerNames[] =
     "Normal digit 1\0Normal digit 2\0Normal digit 3\0Normal digit 4\0"
     "Normal digit 5\0Normal digit 6\0Countdown digit 1\0Countdown digit 2\0"
     "Countdown digit 3\0Countdown digit 4\0Separator 1\0Separator 2\0Separator 3";
+constexpr char kNativeTimerNames[] =
+    "Normal digit 1\0Normal digit 2\0Normal digit 3\0Normal digit 4\0"
+    "Normal digit 5\0Normal digit 6\0Countdown digit 1\0Countdown digit 2\0"
+    "Countdown digit 3\0Countdown digit 4\0Separator 1\0Separator 2\0Separator 3\0"
+    "TIME image\0Background streak";
+
+int nativeTimerColorSlot(int target) {
+    return target < 14 ? SUSAMUNE_CREATION_TIMER_CHAR_FIRST + target
+                       : SUSAMUNE_CREATION_TIMER_BG;
+}
+
+CreationStyle defaultNativeTimerStyle() {
+    return CreationStyle{640, 480, 100, 255, 0, 0, 0, 0, 100, 0xff};
+}
 
 constexpr char kMenuText[] =
     "HUD\0FLUDD water\0Coin streak\0Red coin streak\0Blue coin streak\0"
@@ -77,6 +92,32 @@ u8 sHudBeforeWarning[CreationExtras::HUD_PANE_COUNT][2][3];
 u8 sWaterBeforeWarning[2][3];
 bool sHudWarningApplied;
 bool sHudWarningSnapshotValid;
+
+struct HealthPaneState {
+    J2DPicture *picture;
+    Color white;
+    Color black;
+    bool visible;
+    u8 alphaCopy;
+};
+struct HealthDrawState {
+    HealthPaneState panes[19];
+    J2DPane *root;
+    J2DPane *group;
+    J2DPane *background;
+    u8 rootAlpha;
+    u8 rootAlphaCopy;
+    u8 groupAlphaCopy;
+    u8 backgroundAlphaCopy;
+    bool rootVisible;
+    bool groupVisible;
+    bool active;
+};
+HealthDrawState sHealthDraw __attribute__((section(".foxtrot.bss")));
+static_assert(__builtin_offsetof(TGCConsole2, mHealthPoints) == 0x17C,
+              "retail health picture pairs moved");
+
+const u8 kHealthDefaults[2][3] = {{255, 255, 255}, {0, 255, 255}};
 
 constexpr int packedEntries(const char *pool, u32 bytes) {
     int count = 1;
@@ -340,6 +381,8 @@ void CreationExtras::resetDefaults() {
     mToastStyle = defaultToastStyle();
     mPbBannerStyle = defaultPbBannerStyle();
     mStageSessionStyle = defaultStageSessionStyle();
+    mNativeTimerStyle = defaultNativeTimerStyle();
+    memcpy(mHealthRgb, kHealthDefaults, sizeof(mHealthRgb));
     for (u32 i = 0; i < sizeof(mHudPictures) / sizeof(mHudPictures[0]); i++)
         mHudPictures[i] = nullptr;
     mHudScreen = nullptr;
@@ -379,6 +422,15 @@ void CreationExtras::adopt(const volatile SusamuneCreationCfg *src) {
     }
     mColorPresent = src->colorPresent &
                     ((1u << SUSAMUNE_CREATION_COLOR_COUNT) - 1u);
+    if (src->healthStyleMagic == SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC) {
+        for (int i = 0; i < 2; ++i) {
+            const u32 bit = SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_HEALTH_COLOR + i);
+            if (src->colorPresent & bit) {
+                memcpy(mHealthRgb[i], (const void *)src->healthRgb[i], 3);
+                mColorPresent |= bit;
+            }
+        }
+    }
     mColorPresent &=
         ~SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_LEGACY_WATER_TEXT) &
         ~SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_LEGACY_MARIO_HAT);
@@ -440,6 +492,8 @@ void CreationExtras::stageInto(volatile SusamuneCreationCfg *dst) const {
     dst->version = SUSAMUNE_CREATION_CFG_VERSION;
     dst->reserved0 = SUSAMUNE_CREATION_RECENT_STYLE_MAGIC;
     dst->colorPresent = mColorPresent;
+    dst->healthStyleMagic = SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC;
+    memcpy((void *)dst->healthRgb, mHealthRgb, sizeof(mHealthRgb));
     dst->recentIlScale = mRecentIlStyle.scale;
     dst->recentIlX = mRecentIlStyle.x;
     dst->recentIlY = mRecentIlStyle.y;
@@ -539,6 +593,44 @@ void CreationExtras::stageMovementInto(
                          SUSAMUNE_ROLLOUT_STYLE_COLOR_COUNT);
     storeMovementOverlay(&dst->dust, mDustStyle, mDustRgb,
                          SUSAMUNE_DUST_STYLE_COLOR_COUNT);
+}
+
+void CreationExtras::adoptNativeTimer(
+    const volatile SusamuneNativeTimerStyleCfg *src) {
+    mNativeTimerStyle = defaultNativeTimerStyle();
+    const int x = gSettings.get(SETTING_NATIVE_TIMER_X);
+    const int y = gSettings.get(SETTING_NATIVE_TIMER_Y);
+    const int scale = gSettings.get(SETTING_NATIVE_TIMER_SCALE);
+    mNativeTimerStyle.x += (clampi(x, 0, 32) - 16) * 10;
+    mNativeTimerStyle.y += (clampi(y, 0, 24) - 12) * 10;
+    mNativeTimerStyle.scale = 50 + clampi(scale, 0, 10) * 10;
+    if (!src) return;
+    if (src->present & SUSAMUNE_NATIVE_TIMER_PRESENT_X)
+        mNativeTimerStyle.x = (u16)clampi(src->x, 0, 1280);
+    if (src->present & SUSAMUNE_NATIVE_TIMER_PRESENT_Y)
+        mNativeTimerStyle.y = (u16)clampi(src->y, 0, 960);
+    if (src->present & SUSAMUNE_NATIVE_TIMER_PRESENT_SCALE)
+        mNativeTimerStyle.scale = (u8)clampi(src->scale, 50, 200);
+    if (src->present & SUSAMUNE_NATIVE_TIMER_PRESENT_ALPHA)
+        mNativeTimerStyle.textA = src->textA;
+    if (src->present & SUSAMUNE_NATIVE_TIMER_PRESENT_BRIGHTNESS)
+        mNativeTimerStyle.textBrightness = (u8)clampi(src->textBrightness, 25, 200);
+}
+
+void applyPictureRgb(J2DPicture *picture, const u8 rgb[3], bool replaceHue) {
+    loadRgb(picture->mColorMask, rgb);
+    // Equal RGB endpoints replace texture hue; their alpha stays retail.
+    if (replaceHue) loadRgb(picture->mColorOverlay, rgb);
+}
+
+void CreationExtras::stageNativeTimerInto(
+    volatile SusamuneNativeTimerStyleCfg *dst) const {
+    dst->x = mNativeTimerStyle.x;
+    dst->y = mNativeTimerStyle.y;
+    dst->scale = mNativeTimerStyle.scale;
+    dst->textA = mNativeTimerStyle.textA;
+    dst->textBrightness = mNativeTimerStyle.textBrightness;
+    dst->present = SUSAMUNE_NATIVE_TIMER_PRESENT_ALL;
 }
 
 void CreationExtras::onStageSetup() {
@@ -660,20 +752,13 @@ void CreationExtras::applyHud() {
     for (u32 i = 0; i < HUD_PANE_COUNT; i++) {
         J2DPicture *picture = mHudPictures[i];
         if (!picture) continue;
+        if (i == 0 || i >= 11) continue;  // Native timer colour is lent only during draw.
         if (!(mColorPresent &
               SUSAMUNE_CREATION_COLOR(kHudPaneColors[i]))) continue;
         const u8 *rgb = mColors[kHudPaneColors[i]];
-        picture->mColorMask.r = rgb[0];
-        picture->mColorMask.g = rgb[1];
-        picture->mColorMask.b = rgb[2];
         const u8 color = kHudPaneColors[i];
-        // Retail streaks encode their hue in both black/white endpoints.
-        if (color >= SUSAMUNE_CREATION_TIMER_BG &&
-            color <= SUSAMUNE_CREATION_SHINES_BG) {
-            picture->mColorOverlay.r = rgb[0];
-            picture->mColorOverlay.g = rgb[1];
-            picture->mColorOverlay.b = rgb[2];
-        }
+        applyPictureRgb(picture, rgb, i >= 11 ||
+            (color >= SUSAMUNE_CREATION_TIMER_BG && color <= SUSAMUNE_CREATION_SHINES_BG));
     }
 
     if (!mTimerLabelVisible && mHudPictures[HUD_PANE_COUNT - 1])
@@ -782,6 +867,128 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
     beginHudPreview(first);
 }
 
+bool CreationExtras::nativeTimerColorsEnabled() const {
+    return (mColorPresent & (((1u << 14) - 1u) << 9 | (1u << 2))) != 0;
+}
+
+const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane) const {
+    if (rngControlInvalidatesIl()) return nullptr;
+    for (unsigned i = 0; i < 15; ++i) {
+        const unsigned picture = i == 14 ? 0 : i + 11;
+        const unsigned slot = nativeTimerColorSlot(i);
+        if (mHudPictures[picture] == pane &&
+            (mColorPresent & SUSAMUNE_CREATION_COLOR(slot))) return mColors[slot];
+    }
+    return nullptr;
+}
+
+bool CreationExtras::beginHudDraw(J2DScreen *screen) {
+    if (sHealthDraw.active || !screen || screen != mHudScreen ||
+        gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE ||
+        !gpMarDirector || !gpMarDirector->_260 || !gpMarDirector->mGCConsole)
+        return false;
+    TGCConsole2 *console = gpMarDirector->mGCConsole;
+    if (console->mMainScreen != screen) return false;
+    // Retail console mode selects the air palette even during its transitions.
+    const u32 mode = reinterpret_cast<const u32 *>(console)[0x18 / 4];
+    const bool preview = mEditMode == EDIT_HEALTH && mEditor.editing();
+    const unsigned color = preview ? mEditFirst :
+        (mode == 4 || mode == 5 || mode == 6 || mode == 8 || mode == 9);
+    if (!preview && !(mColorPresent & SUSAMUNE_CREATION_COLOR(
+                          SUSAMUNE_CREATION_HEALTH_COLOR + color))) return false;
+    J2DPane *root = screen->search('\0l_0');
+    J2DPane *label = screen->search('l_tx');
+    J2DPane *group = screen->search('lm_0');
+    J2DPane *background = screen->search('l_ba');
+    if (!root || (!root->mIsVisible && !preview) || !label || label->mTypeMagic != 'PIC1' ||
+        !group || !background)
+        return false;
+    for (unsigned i = 0; i < 19; ++i) {
+        J2DPicture *picture = i == 18 ? static_cast<J2DPicture *>(label) :
+            (i & 1) ? console->mHealthPoints[i / 2].mInactivePicture :
+                      console->mHealthPoints[i / 2].mActivePicture;
+        if (!picture || picture->mTypeMagic != 'PIC1') return false;
+        sHealthDraw.panes[i].picture = picture;
+    }
+    sHealthDraw.root = root;
+    sHealthDraw.group = group;
+    sHealthDraw.background = background;
+    sHealthDraw.rootAlpha = root->mAlpha;
+    sHealthDraw.rootAlphaCopy = root->mAlphaCopy;
+    sHealthDraw.rootVisible = root->mIsVisible;
+    sHealthDraw.groupVisible = group->mIsVisible;
+    sHealthDraw.groupAlphaCopy = group->mAlphaCopy;
+    sHealthDraw.backgroundAlphaCopy = background->mAlphaCopy;
+    sHealthDraw.active = true;
+    for (unsigned i = 0; i < 19; ++i) {
+        HealthPaneState &saved = sHealthDraw.panes[i];
+        J2DPicture *picture = saved.picture;
+        saved.white = picture->mColorMask;
+        saved.black = picture->mColorOverlay;
+        saved.visible = picture->mIsVisible;
+        saved.alphaCopy = picture->mAlphaCopy;
+        if (!(i & 1)) applyPictureRgb(picture, mHealthRgb[color], true);
+        if (preview) picture->mIsVisible = !(i & 1);
+    }
+    if (preview) {
+        root->mIsVisible = true;
+        group->mIsVisible = true;
+        root->mAlpha = 255;
+    }
+    return true;
+}
+
+void CreationExtras::endHudDraw() {
+    if (!sHealthDraw.active) return;
+    for (unsigned i = 0; i < 19; ++i) {
+        const HealthPaneState &saved = sHealthDraw.panes[i];
+        saved.picture->mColorMask = saved.white;
+        saved.picture->mColorOverlay = saved.black;
+        saved.picture->mIsVisible = saved.visible;
+        saved.picture->mAlphaCopy = saved.alphaCopy;
+    }
+    sHealthDraw.root->mAlpha = sHealthDraw.rootAlpha;
+    sHealthDraw.root->mAlphaCopy = sHealthDraw.rootAlphaCopy;
+    sHealthDraw.root->mIsVisible = sHealthDraw.rootVisible;
+    sHealthDraw.group->mIsVisible = sHealthDraw.groupVisible;
+    sHealthDraw.group->mAlphaCopy = sHealthDraw.groupAlphaCopy;
+    sHealthDraw.background->mAlphaCopy = sHealthDraw.backgroundAlphaCopy;
+    sHealthDraw.active = false;
+}
+
+void CreationExtras::beginHealthEditor(bool underwater) {
+    if (editing()) return;
+    mDirtyBeforeEdit = mDirty;
+    mColorPresentBeforeEdit = mColorPresent;
+    mEditMode = EDIT_HEALTH;
+    mEditFirst = underwater ? 1 : 0;
+    mEditCount = 1;
+    mEditTitle = underwater ? "Underwater air colour" : "Health colour";
+    mColorStyle.y = 50;
+    mEditor.begin(&mColorStyle, mHealthRgb + mEditFirst, mColorBackup, 1, 1,
+                  mEditTitle, CreationEditor::CAP_TEXT_COLOR);
+}
+
+void CreationExtras::beginNativeTimerEditor() {
+    if (editing()) return;
+    mDirtyBeforeEdit = mDirty;
+    mColorPresentBeforeEdit = mColorPresent;
+    // Word scratch is idle while this editor owns the shared Creation editor.
+    for (int i = 0; i < 15; ++i) {
+        copyRgb(mWordBackup[i], mColors[nativeTimerColorSlot(i)]);
+        copyRgb(mWordBackup[15 + i], mDefaultColors[nativeTimerColorSlot(i)]);
+    }
+    mEditFirst = 0;
+    mEditCount = 15;
+    mEditMode = EDIT_NATIVE_TIMER;
+    mEditTitle = "Sunshine timer";
+    mEditor.begin(&mNativeTimerStyle, mWordBackup, mColorBackup, 15, 15,
+                  kNativeTimerNames, CreationEditor::CAP_POSITION |
+                  CreationEditor::CAP_SCALE | CreationEditor::CAP_TEXT_ALPHA |
+                  CreationEditor::CAP_BRIGHTNESS | CreationEditor::CAP_TEXT_COLOR |
+                  CreationEditor::CAP_OFFSET_POSITION);
+}
+
 void CreationExtras::beginTimerCharacterEditor() {
     if (editing()) return;
     beginColorEditor(SUSAMUNE_CREATION_TIMER_CHAR_FIRST,
@@ -796,6 +1003,7 @@ void CreationExtras::restoreHudDefaults() {
         gpMarDirector->mGCConsole->mMainScreen != mHudScreen) return;
     memcpy(mColors, mDefaultColors, sizeof(mColors));
     mColorPresent = (1u << SUSAMUNE_CREATION_COLOR_COUNT) - 1u;
+    mColorPresent &= ~((((1u << 14) - 1u) << 9) | (1u << 2));
     mTimerLabelVisible = 1;
     applyHud();
     if (mHudPictures[HUD_PANE_COUNT - 1])
@@ -1064,6 +1272,43 @@ void CreationExtras::updateEditor(TMarioGamePad *pad) {
         return;
     }
     if (!mEditor.editing()) return;
+    if (mEditMode == EDIT_HEALTH) {
+        const u8 result = mEditor.update(pad, mColorStyle, kHealthDefaults + mEditFirst);
+        if (result & CreationEditor::UPDATE_CHANGED) {
+            mColorPresent |= SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_HEALTH_COLOR + mEditFirst);
+            mDirty = true;
+        }
+        if (result & CreationEditor::UPDATE_CANCELLED) {
+            mColorPresent = mColorPresentBeforeEdit;
+            mDirty = mDirtyBeforeEdit;
+        }
+        if (!mEditor.editing()) {
+            mColorStyle.y = 0xffff;
+            mEditMode = EDIT_NONE;
+        }
+        return;
+    }
+    if (mEditMode == EDIT_NATIVE_TIMER) {
+        const u8 result = mEditor.update(pad, defaultNativeTimerStyle(),
+                                         mWordBackup + 15, 15);
+        if (result & (CreationEditor::UPDATE_CHANGED | CreationEditor::UPDATE_CANCELLED)) {
+            for (int i = 0; i < 15; ++i) {
+                const int slot = nativeTimerColorSlot(i);
+                if ((result & CreationEditor::UPDATE_COLOR_CHANGED) &&
+                    (!mEditor.target() || mEditor.target() == i + 1))
+                    mColorPresent |= SUSAMUNE_CREATION_COLOR(slot);
+                copyRgb(mColors[slot], mWordBackup[i]);
+            }
+            mDirty = true;
+            if (result & CreationEditor::UPDATE_CANCELLED) {
+                mDirty = mDirtyBeforeEdit;
+                mColorPresent = mColorPresentBeforeEdit;
+            }
+            applyHud();
+        }
+        if (!mEditor.editing()) mEditMode = EDIT_NONE;
+        return;
+    }
     static const u8 kOverlayDefaults[1][3] = {{255, 255, 255}};
     const bool overlayStyle = mEditMode == EDIT_RECENT_ILS ||
                               mEditMode == EDIT_SAVESTATE_FEEDBACK ||

@@ -153,6 +153,9 @@ struct SusamuneInputStyleCfg {
 #define SUSAMUNE_CREATION_TIMER_LABEL      22u
 #define SUSAMUNE_CREATION_LEGACY_MARIO_HAT  23u
 #define SUSAMUNE_CREATION_MENU_BG           24u
+#define SUSAMUNE_CREATION_HEALTH_COLOR      25u
+#define SUSAMUNE_CREATION_AIR_COLOR         26u
+#define SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC 0x48u
 #define SUSAMUNE_CREATION_RECENT_STYLE_MAGIC 0x5249u  // 'RI'
 #define SUSAMUNE_CREATION_SAVESTATE_STYLE_MAGIC 0x5353u  // 'SS'
 #define SUSAMUNE_CREATION_ACHIEVEMENT_STYLE_MAGIC 0x4150u  // 'AP'
@@ -200,7 +203,7 @@ struct SusamuneCreationCfg {
     unsigned char  recentIlPositionPresent;
     unsigned char  timerLabelVisible;
     unsigned char  timerLabelVisiblePresent;
-    unsigned char  reserved1;
+    unsigned char  healthStyleMagic;
     struct SusamuneCreationWordCfg words[SUSAMUNE_CREATION_WORD_COUNT];
     // Optional V1 tail. reserved0 carries RECENT_STYLE_MAGIC, so a new mod can
     // safely ignore uninitialised tail bytes from an older launcher.
@@ -212,7 +215,7 @@ struct SusamuneCreationCfg {
     unsigned char  recentIlBgA;
     unsigned char  recentIlTextBrightness;
     unsigned char  recentIlPadding;
-    unsigned char  reserved2[6];
+    unsigned char  healthRgb[2][3];
     // Optional cache-line-sized tail for the savestate feedback overlay.
     unsigned short savestateStyleMagic;
     unsigned short savestateX;
@@ -289,6 +292,24 @@ struct SusamuneMovementStyleCfg {
     unsigned short reserved0;
     struct SusamuneMovementOverlayStyleCfg rollout;
     struct SusamuneMovementOverlayStyleCfg dust;
+};
+
+#define SUSAMUNE_NATIVE_TIMER_X_BIAS 640u
+#define SUSAMUNE_NATIVE_TIMER_Y_BIAS 480u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_X 1u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_Y 2u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_SCALE 4u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_ALPHA 8u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_BRIGHTNESS 16u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_ALL 31u
+
+struct SusamuneNativeTimerStyleCfg {
+    unsigned short x;
+    unsigned short y;
+    unsigned char scale;
+    unsigned char textA;
+    unsigned char textBrightness;
+    unsigned char present;
 };
 
 // Metadata Display keeps a compact in-game configuration plus an optional
@@ -396,7 +417,11 @@ struct SusamuneQftDisplayCfg {
 #define SUSAMUNE_METADATA_STYLE_BG_A        (1u << 7)
 #define SUSAMUNE_METADATA_STYLE_BRIGHTNESS  (1u << 8)
 #define SUSAMUNE_METADATA_STYLE_PADDING     (1u << 9)
-#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 10) - 1u)
+#define SUSAMUNE_METADATA_STYLE_FIELD_GAP   (1u << 10)
+#define SUSAMUNE_METADATA_STYLE_ROW_GAP     (1u << 11)
+#define SUSAMUNE_METADATA_STYLE_COLUMNS     (1u << 12)
+#define SUSAMUNE_METADATA_STYLE_COMPACT     (1u << 13)
+#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 14) - 1u)
 
 struct SusamuneMetadataStyleCfg {
     unsigned int   magic;
@@ -454,6 +479,7 @@ struct SusamuneMetadataStyleCfg {
 #define SUSAMUNE_CFG_FLAG_STAGE_TARGETS 0x2000u
 // Kernel/backend understands Rollout and Dust Creation styles.
 #define SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE 0x4000u
+#define SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE 0x10000u
 // The ini existed (or storage recovery was attempted), but it could not be
 // read completely and safely. The mod must keep this boot's defaults
 // read-only rather than regenerating a possibly valid file from them.
@@ -1159,6 +1185,7 @@ struct SusamuneCfg {
     struct SusamuneILingProfilesCfg ilingProfiles;
     // Optional tail: older launchers stop at ilingProfiles.
     struct SusamuneMovementStyleCfg movementStyle;
+    struct SusamuneNativeTimerStyleCfg nativeTimerStyle;
 };
 
 #define SUSAMUNE_CFG_PPC_PTR  ((struct SusamuneCfg *)SUSAMUNE_MEM2_CFG_PPC_BASE)
@@ -1288,7 +1315,9 @@ typedef char susamune_iling_profiles_v1_file_names_check[(__builtin_offsetof(str
 typedef char susamune_iling_profiles_v1_file_size_check[(sizeof(struct SusamuneILingProfilesFileV1) == 2112) ? 1 : -1];
 typedef char susamune_cfg_iling_profiles_check[(__builtin_offsetof(struct SusamuneCfg, ilingProfiles) == 2784) ? 1 : -1];
 typedef char susamune_cfg_movement_style_check[(__builtin_offsetof(struct SusamuneCfg, movementStyle) == 5056) ? 1 : -1];
-typedef char susamune_cfg_expanded_size_check[(sizeof(struct SusamuneCfg) == 5144) ? 1 : -1];
+typedef char susamune_native_timer_style_size_check[(sizeof(struct SusamuneNativeTimerStyleCfg) == 8) ? 1 : -1];
+typedef char susamune_cfg_native_timer_style_check[(__builtin_offsetof(struct SusamuneCfg, nativeTimerStyle) == 5144) ? 1 : -1];
+typedef char susamune_cfg_expanded_size_check[(sizeof(struct SusamuneCfg) == 5152) ? 1 : -1];
 typedef char susamune_progress_cfg_ack_check[(__builtin_offsetof(struct SusamuneProgressCfg, ackSeq) == 32) ? 1 : -1];
 typedef char susamune_progress_cfg_achievements_check[(__builtin_offsetof(struct SusamuneProgressCfg, achievements) == 64) ? 1 : -1];
 typedef char susamune_progress_cfg_stats_check[(__builtin_offsetof(struct SusamuneProgressCfg, stats) == 128) ? 1 : -1];

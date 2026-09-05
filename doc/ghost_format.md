@@ -36,9 +36,11 @@ ID (`u16`), endpoint ordinal (`u8`), and reserved zero (`u8`). Splits must share
 nonzero schema and route, have consecutive ordinals beginning at zero, and have
 nondecreasing QF timestamps within the track. Equal timestamps are allowed.
 Only endpoints already accepted by the existing split capture are recorded.
-Ghost comparison requires the current region, route, endpoint and schema to
-match; legacy files supply no ghost comparison values. Re-export under another
-region omits the original region's split records.
+Ghost comparison requires the route, endpoint and schema to match. Validated
+portable imports keep their recorded QF timestamps across JP, US and PAL, and
+re-export preserves their split records. Legacy files supply no intermediate
+ghost comparison values. Automatic last-attempt and last-success ghosts use
+the same checkpoint comparison as a selected library target.
 
 The main payload/file checksums also cover the complete appended section.
 Maximum V5 size is 1,297,992 bytes: 433,888 bytes of V4 data, 32 bytes of section

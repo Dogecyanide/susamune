@@ -15,7 +15,8 @@ namespace EmulatorPersistence {
 namespace {
 
 constexpr u32 kRecordMagic = 0x53554346u;  // 'SUCF'
-constexpr u16 kRecordVersion = 6;
+constexpr u16 kRecordVersion = 7;
+constexpr u32 kCfgSizeV6 = 5144;
 constexpr u32 kSectorSize = 0x2000;
 constexpr u32 kFileSize = kSectorSize * 2;
 constexpr char kFileName[] = "susamune_settings";
@@ -151,7 +152,8 @@ void initBlank(SusamuneCfg *cfg) {
                  SUSAMUNE_CFG_FLAG_CREATION |
                  SUSAMUNE_CFG_FLAG_WALLKICK_STYLE |
                  SUSAMUNE_CFG_FLAG_ILING_PROFILES |
-                 SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE;
+                 SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE |
+                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE;
     cfg->ilingPbs.magic = SUSAMUNE_ILING_PB_MAGIC;
     cfg->ilingPbs.version = SUSAMUNE_ILING_PB_VERSION;
     cfg->ilingPbs.count = SUSAMUNE_ILING_PB_LEGACY_SLOT_COUNT;
@@ -266,7 +268,8 @@ void migrateRecordCfg(SusamuneCfg *cfg, const u8 *oldCfg, u32 oldSize,
                   SUSAMUNE_CFG_FLAG_CREATION |
                   SUSAMUNE_CFG_FLAG_WALLKICK_STYLE |
                   SUSAMUNE_CFG_FLAG_ILING_PROFILES |
-                  SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE;
+                  SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE |
+                  SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE;
 }
 
 u32 checksum(Record *record) {
@@ -330,6 +333,23 @@ bool validV4(const Record *source) {
            record->cfg.magic == SUSAMUNE_CFG_MAGIC &&
            record->cfg.version == SUSAMUNE_CFG_VERSION &&
            checksum(record) == record->checksum;
+}
+
+bool validV6(const Record *source) {
+    Record *record = const_cast<Record *>(source);
+    return record->magic == kRecordMagic && record->version == 6 &&
+           record->payloadSize == kCfgSizeV6 &&
+           record->gameVersion == SUSAMUNE_GAME_VERSION &&
+           record->cfg.magic == SUSAMUNE_CFG_MAGIC &&
+           record->cfg.version == SUSAMUNE_CFG_VERSION &&
+           checksum(record) == record->checksum;
+}
+
+void migrateRecordV6(SusamuneCfg *cfg, const SusamuneCfg *old) {
+    initBlank(cfg);
+    memcpy(cfg, old, kCfgSizeV6);
+    // V6 padding is checksum-covered but never an initialized style payload.
+    cfg->flags |= SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE;
 }
 
 bool validV5(const Record *source) {
@@ -488,16 +508,19 @@ s32 loadRecords(void *mountWork, Record *record) {
                           slot * kSectorSize);
         if (result != CARD_ERROR_READY) break;
         const bool current = valid(record);
-        const bool v5 = !current && validV5(record);
+        const bool v6 = !current && validV6(record);
+        const bool v5 = !current && !v6 && validV5(record);
         const bool v4 = !current && !v5 && validV4(record);
         const bool v3 = !current && !v5 && !v4 && validV3(record);
         const bool v2 = !current && !v5 && !v4 && !v3 && validV2(record);
         const bool v1 =
             !current && !v5 && !v4 && !v3 && !v2 && validV1(record);
-        if ((current || v5 || v4 || v3 || v2 || v1) &&
+        if ((current || v6 || v5 || v4 || v3 || v2 || v1) &&
             (!haveRecord || newer(record->generation, bestGeneration))) {
             if (current) {
                 memcpy(&sState->cfg, &record->cfg, sizeof(sState->cfg));
+            } else if (v6) {
+                migrateRecordV6(&sState->cfg, &record->cfg);
             } else {
                 const u32 oldSize =
                     v1 ? sizeof(((RecordV1 *)0)->cfg)

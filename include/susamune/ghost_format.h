@@ -174,6 +174,12 @@
 #define SUSAMUNE_GHOST_RUN_FAST_FORWARD_USED 0x00000004u
 #define SUSAMUNE_GHOST_RUN_INCOMPLETE        0x00000008u
 #define SUSAMUNE_GHOST_RUN_CUSTOM_ROUTE      0x00000010u
+#define SUSAMUNE_GHOST_RUN_TAS               0x00000020u
+
+static inline int SusamuneGhostRunFlagsValid(unsigned int flags) {
+    return !(flags & SUSAMUNE_GHOST_RUN_TAS) ||
+           (flags & SUSAMUNE_GHOST_RUN_ASSISTED);
+}
 
 #define SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE 0x01u
 #define SUSAMUNE_GHOST_ROUTE_PARENT_START   0x02u

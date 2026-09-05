@@ -1267,6 +1267,10 @@ public:
                 targetValue(target, sizeof(target));
                 drawValueRow(menu, x, ry, w, "Race target", target,
                              mSel == TARGET_ROW, false, true);
+            } else if (row == 8) {
+                drawValueRow(menu, x, ry, w, "Ghost inputs",
+                             gSettings.valueLabel(SETTING_GHOST_INPUTS),
+                             mSel == INPUTS_ROW, false, true);
             } else if (row == PERSONAL_SUMMARY_DISPLAY) {
                 char summary[48];
                 catalogSummary(summary, sizeof(summary));
@@ -1305,7 +1309,7 @@ public:
         const bool settingRow = mSel == DISPLAY_ROW || mSel == OPACITY_ROW ||
                                 mSel == APPEARANCE_ROW ||
                                 mSel == AUTO_TARGET_ROW ||
-                                mSel == PB_SAVE_ROW;
+                                mSel == PB_SAVE_ROW || mSel == INPUTS_ROW;
         const char *footer = mChoice == CHOICE_SECOND
             ? SUSAMUNE_GLYPH_A " Choose ghost 2  " SUSAMUNE_GLYPH_C
               " L" SUSAMUNE_GLYPH_SLASH "R Section  "
@@ -1323,6 +1327,8 @@ public:
 
 private:
     const char *selectionHelp() const {
+        if (mSel == INPUTS_ROW)
+            return "Show recorded inputs; Both ghosts compares both tracks in Watch2.";
         if (mSel == DISPLAY_ROW)
             return "Shows or hides the selected ghost while racing or watching.";
         if (mSel == OPACITY_ROW)
@@ -1381,7 +1387,8 @@ private:
         PB_SAVE_ROW = 4,
         PROFILE_ROW = 5,
         TARGET_ROW = 6,
-        PERSONAL_SELECTION_FIRST = 7,
+        INPUTS_ROW = 7,
+        PERSONAL_SELECTION_FIRST = 8,
         PERSONAL_SELECTION_COUNT = SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES,
         IMPORT_SCAN_SELECTION = PERSONAL_SELECTION_FIRST +
                                 PERSONAL_SELECTION_COUNT,
@@ -1394,7 +1401,7 @@ private:
             (PERSONAL_SELECTION_COUNT + RANGE_SIZE - 1) / RANGE_SIZE,
         IMPORTED_RANGE_COUNT =
             (IMPORTED_SELECTION_COUNT + RANGE_SIZE - 1) / RANGE_SIZE,
-        PERSONAL_SUMMARY_DISPLAY = 8,
+        PERSONAL_SUMMARY_DISPLAY = 9,
         PERSONAL_DISPLAY_FIRST = PERSONAL_SUMMARY_DISPLAY + 1,
         PERSONAL_DISPLAY_COUNT = PERSONAL_SELECTION_COUNT +
                                  PERSONAL_RANGE_COUNT,
@@ -1948,6 +1955,10 @@ private:
     }
 
     void activate(Menu *menu) {
+        if (mSel == INPUTS_ROW) {
+            gSettings.cycle(SETTING_GHOST_INPUTS, 1);
+            return;
+        }
         if (mSel == DISPLAY_ROW) {
             gSettings.cycle(SETTING_GHOST_DISPLAY, 1);
             return;
@@ -2109,6 +2120,11 @@ private:
             strncpy(out, "None", size);
         }
         if (size) out[size - 1] = '\0';
+        if (size && (Ghost::playbackIsTas() ||
+                     (Ghost::observerGhostCount() == 2 && Ghost::playbackIsTas(true)))) {
+            const u32 used = strlen(out);
+            if (used + 4 < size) strcpy(out + used, " TAS");
+        }
     }
 
     static void catalogSummary(char *out, u32 size) {
@@ -2192,12 +2208,14 @@ private:
             snprintf(label, sizeof(label), "%02d %s", index + 1, name);
             ILing::formatTime(static_cast<s32>(info->durationQf), value,
                               sizeof(value));
+            const bool tas = info->runFlags & SUSAMUNE_GHOST_RUN_TAS;
+            if (tas) strcat(value, " TAS");
             shownValue = value;
             if (GhostStorage::loadedSlot() == index && Ghost::playbackPinned())
-                shownValue = "RACING";
+                shownValue = tas ? "RACING TAS" : "RACING";
             if (mChoice == CHOICE_SECOND &&
                 mPrimaryRef.selection == PERSONAL_SELECTION_FIRST + index) {
-                shownValue = "GHOST 1";
+                shownValue = tas ? "GHOST 1 TAS" : "GHOST 1";
             }
         } else {
             snprintf(label, sizeof(label), "%02d (empty)", index + 1);
@@ -2228,14 +2246,16 @@ private:
                      regionTag(info->region), name);
             ILing::formatTime(static_cast<s32>(info->durationQf), value,
                               sizeof(value));
+            const bool tas = info->runFlags & SUSAMUNE_GHOST_RUN_TAS;
+            if (tas) strcat(value, " TAS");
             shownValue = value;
             if (GhostStorage::loadedImportedSlot() == index &&
                 Ghost::playbackPinned()) {
-                shownValue = "RACING";
+                shownValue = tas ? "RACING TAS" : "RACING";
             }
             if (mChoice == CHOICE_SECOND &&
                 mPrimaryRef.selection == IMPORTED_SELECTION_FIRST + index) {
-                shownValue = "GHOST 1";
+                shownValue = tas ? "GHOST 1 TAS" : "GHOST 1";
             }
         } else {
             snprintf(label, sizeof(label), "%02d (empty)", index + 1);
@@ -3412,7 +3432,7 @@ const u8 kDisplayPracticeSettings[] = {
     SETTING_RICCO_RACE_CHECKPOINTS,
 };
 const u8 kDisplayNativeSettings[] = {
-    SETTING_NATIVE_TIMER_X, SETTING_NATIVE_TIMER_Y, SETTING_NATIVE_TIMER_SCALE,
+    SETTING_TIMER_SUNSHINE_VISIBILITY,
 };
 const u8 kDisplayOtherSettings[] = {
     SETTING_GHOST_INPUTS,
@@ -3420,7 +3440,7 @@ const u8 kDisplayOtherSettings[] = {
     SETTING_RESTART_QUEUED_FEEDBACK,
 };
 const SettingPage kDisplayPages[] = {
-    {"Native timer layout", "Move or resize the original Sunshine timer artwork.",
+    {"Sunshine timer", "Visibility and the full native timer layout editor.",
      kDisplayNativeSettings, sizeof(kDisplayNativeSettings)},
     {"Movement displays", "Frame feedback for movement practice.",
      kDisplayMovementSettings,
@@ -3652,6 +3672,8 @@ public:
             if (rapid & TMarioGamePad::A) {
                 if (hasFeedbackEditor())
                     gCreationExtras.beginSavestateFeedbackEditor();
+                else if (hasNativeTimerEditor())
+                    gCreationExtras.beginNativeTimerEditor();
                 else if (hasMovementEditors()) {
                     const int editor = mSel - settings;
                     if (editor == 0) gCreationExtras.beginWallkickEditor();
@@ -3755,6 +3777,7 @@ public:
                 val = gSettings.valueLabel(id);
             } else {
                 name = hasFeedbackEditor() ? "Feedback display"
+                     : hasNativeTimerEditor() ? "Sunshine timer editor"
                      : hasMovementEditors()
                            ? movementEditorName(i - settings)
                      : i == settings ? "Factory reset"
@@ -3804,15 +3827,20 @@ private:
         return mCat == SETTING_CAT_SAVESTATE;
     }
     bool hasMovementEditors() const {
-        return isDisplay() && (!hasPages() || mMode == 1);
+        return isDisplay() && mMode &&
+               currentPage().ids == kDisplayMovementSettings;
+    }
+    bool hasNativeTimerEditor() const {
+        return isDisplay() && mMode &&
+               currentPage().ids == kDisplayNativeSettings;
     }
     bool hasVisualEditor() const {
-        return hasFeedbackEditor() || hasMovementEditors();
+        return hasFeedbackEditor() || hasMovementEditors() || hasNativeTimerEditor();
     }
     bool hasFactoryReset() const { return mCat == SETTING_CAT_MISC; }
     int extraRows() const {
         return hasFactoryReset() ? 2 : hasMovementEditors() ? 3
-             : hasFeedbackEditor() ? 1 : 0;
+             : (hasFeedbackEditor() || hasNativeTimerEditor()) ? 1 : 0;
     }
 
     const SettingPage *pages() const {
@@ -3850,8 +3878,9 @@ private:
             return page == 1 ? "ROUTE SETUP" : "WORLD";
         }
         if (isDisplay()) {
-            if (page == 0) return "MOVEMENT";
-            return page == 1 ? "PRACTICE VISUALS" : "GENERAL HUD";
+            if (page == 0) return "NATIVE TIMER";
+            if (page == 1) return "MOVEMENT";
+            return page == 2 ? "PRACTICE VISUALS" : "GENERAL HUD";
         }
         return page == 0 ? "MARIO" : "WORLD AND AUDIO";
     }
@@ -3887,6 +3916,7 @@ private:
     const char *selectionHelp(const u8 *ids, int settings) const {
         if (mSel < settings) return settingHelp((SettingId)ids[mSel]);
         if (hasFeedbackEditor()) return "Changes the savestate status popup layout.";
+        if (hasNativeTimerEditor()) return "Move, resize and style the original Sunshine timer.";
         if (hasMovementEditors()) return "Changes this display's position, size and colours.";
         return mSel == settings
                    ? "Restores settings, binds and layouts to defaults."
@@ -3939,6 +3969,7 @@ private:
             return nullptr;
         }
         if (hasFeedbackEditor()) return "FEEDBACK STYLE";
+        if (hasNativeTimerEditor()) return "LAYOUT AND STYLE";
         if (hasMovementEditors())
             return logical == settings ? "DISPLAY STYLE" : nullptr;
         if (hasFactoryReset()) return logical == settings ? "RESET" : nullptr;
@@ -3981,7 +4012,7 @@ static_assert(sizeof(CategorySettingsTab) == 8, "category tab must stay one slot
 // ---------------------------------------------------------------------
 class CreationTab final : public MenuTab {
 public:
-    CreationTab() : mSel(ROW_QFT_EDITOR) {}
+    CreationTab() : mSel(0), mPage(0) { mInput.begin(JUTGamePad::A); }
 
     const char *title() const override { return "Layout editor"; }
     const char *summary() const override {
@@ -3997,6 +4028,15 @@ public:
         return (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::A) != 0;
     }
     bool fullScreen() const override { return grabsInput(); }
+
+    void focus() override { mInput.begin(JUTGamePad::A); }
+    bool back() override {
+        if (!mPage) return false;
+        mSel = mPage - 1;
+        mPage = 0;
+        mInput.begin(JUTGamePad::A | JUTGamePad::B);
+        return true;
+    }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
         if (gQftDisplay.editing()) {
@@ -4016,18 +4056,25 @@ public:
             return;
         }
         const u32 rapid = menu->navigationInput(pad);
-        if (rapid & TMarioGamePad::CSTICK_UP) {
-            moveSelection(-1);
-        } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            moveSelection(+1);
+        const u16 pressed = mInput.update();
+        if (!mPage) {
+            if (rapid & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, PAGE_COUNT);
+            else if (rapid & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, PAGE_COUNT);
+            if (pressed & JUTGamePad::A) {
+                mPage = mSel + 1;
+                mSel = pageFirst();
+                mInput.begin(JUTGamePad::A);
+            }
+            return;
         }
-        if (rapid & TMarioGamePad::CSTICK_LEFT) {
-            jumpSection(-1);
-        } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
-            jumpSection(+1);
-        } else if (rapid & TMarioGamePad::A) {
-            activate(+1);
+        if (rapid & TMarioGamePad::CSTICK_UP) moveSelection(-1);
+        else if (rapid & TMarioGamePad::CSTICK_DOWN) moveSelection(+1);
+        if (mSel >= ROW_METADATA_FIRST && mSel < ROW_METADATA_END &&
+            metadataRow(mSel) >= 5 + MetadataDisplay::FIELD_COUNT) {
+            if (rapid & TMarioGamePad::CSTICK_LEFT) activate(-1);
+            else if (rapid & TMarioGamePad::CSTICK_RIGHT) activate(+1);
         }
+        if (pressed & JUTGamePad::A) activate(+1);
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
@@ -4048,34 +4095,35 @@ public:
             return;
         }
 
+        if (!mPage) {
+            for (int page = 0; page < PAGE_COUNT; ++page)
+                drawValueRow(menu, x, y + page * ROW_H, w,
+                             pageName(page), nullptr, page == mSel, false, true);
+            drawHelpLine(menu, x, y, w, h, "Choose a group, then select the element to edit.");
+            return;
+        }
+        drawSectionHeader(menu, x, y, w, pageName(mPage - 1));
+        y += ROW_H;
+        h -= ROW_H;
         const int hintY = y + h - FOOT_SZ;
         const int listH = h - ROW_H - HELP_H;
-        const int count = ROW_COUNT;
+        const int count = pageEnd() - pageFirst();
         const int maxRows = listH / ROW_H;
-        const int start = listScrollStart(mSel, count, maxRows);
+        const int start = listScrollStart(mSel - pageFirst(), count, maxRows);
         int end = start + maxRows;
         if (end > count) end = count;
 
         int ry = y;
-        for (int row = start; row < end; row++) {
-            if (isSeparator(row)) {
-                const char *label = row == ROW_QFT_HEADER ? "QFT"
-                    : row == ROW_INPUT_HEADER ? "INPUT DISPLAY"
-                    : row == ROW_METADATA_HEADER ? "METADATA"
-                    : gCreationExtras.menuRowName(extraRow(row));
-                drawSectionHeader(menu, x, ry, w, label);
-            } else {
-                const bool selected = row == mSel;
-                drawValueRow(menu, x, ry, w, rowName(row), rowValue(row),
-                             selected, false, false);
-            }
+        for (int local = start; local < end; local++) {
+            const int row = pageFirst() + local;
+            drawValueRow(menu, x, ry, w, rowName(row), rowValue(row),
+                         row == mSel, false, false);
             ry += ROW_H;
         }
         drawScrollHints(menu, x, y, w, listH, start, end, count);
         drawHelpLine(menu, x, y, w, h - ROW_H, rowHelp(mSel));
         menu->drawText(SUSAMUNE_GLYPH_A " Open" SUSAMUNE_GLYPH_SLASH
-                       "Change   " SUSAMUNE_GLYPH_C " L"
-                       SUSAMUNE_GLYPH_SLASH "R Section   Saved on close",
+                       "Change   Saved on close",
                        x + 4, hintY, FOOT_SZ, FOOT_SZ, cFooter());
     }
 
@@ -4084,6 +4132,7 @@ private:
         ROW_QFT_HEADER,
         ROW_QFT_EDITOR,
         ROW_QFT_LEADING_ZERO,
+        ROW_SUNSHINE_TIMER_EDITOR,
         ROW_SUNSHINE_TIMER_CHARACTERS,
         ROW_SUNSHINE_TIMER_STREAK,
         ROW_SUNSHINE_TIMER_LABEL,
@@ -4091,63 +4140,42 @@ private:
         ROW_INPUT_HEADER,
         ROW_INPUT_FIRST,
         ROW_INPUT_END = ROW_INPUT_FIRST + InputDisplay::MENU_ROW_COUNT,
-        ROW_METADATA_HEADER = ROW_INPUT_END,
+        ROW_GHOST_INPUTS = ROW_INPUT_END,
+        ROW_METADATA_HEADER,
         ROW_METADATA_FIRST,
         ROW_METADATA_END = ROW_METADATA_FIRST + MetadataDisplay::menuRowCount(),
         ROW_EXTRAS_FIRST = ROW_METADATA_END,
-        ROW_COUNT = ROW_EXTRAS_FIRST + CreationExtras::MENU_ROW_COUNT,
+        ROW_HEALTH_EDITOR = ROW_EXTRAS_FIRST + 8,
+        ROW_AIR_EDITOR,
+        ROW_EXTRAS_END = ROW_EXTRAS_FIRST + CreationExtras::MENU_ROW_COUNT + 2,
+        ROW_WALLKICK_EDITOR = ROW_EXTRAS_END,
+        ROW_ROLLOUT_EDITOR,
+        ROW_DUST_EDITOR,
+        ROW_SAVESTATE_EDITOR,
+        ROW_RECENT_IL_EDITOR,
+        ROW_COUNT,
+        PAGE_COUNT = 7,
     };
 
-    static bool isSeparator(int row) {
-        return row == ROW_QFT_HEADER || row == ROW_INPUT_HEADER ||
-               row == ROW_METADATA_HEADER ||
-               (row >= ROW_EXTRAS_FIRST &&
-                gCreationExtras.menuRowSeparator(extraRow(row)));
+    static const char *pageName(int page) {
+        static const char names[] = "Timers\0Controller inputs\0Metadata\0"
+            "Native HUD colours\0Custom text\0Practice feedback\0Menu and notifications";
+        return PackedText::at(names, page);
     }
-
+    int pageFirst() const {
+        const u8 first[] = {ROW_QFT_EDITOR, ROW_INPUT_FIRST, ROW_METADATA_FIRST,
+            ROW_EXTRAS_FIRST + 1, ROW_EXTRAS_FIRST + 11,
+            ROW_WALLKICK_EDITOR, ROW_EXTRAS_FIRST + 21};
+        return first[mPage - 1];
+    }
+    int pageEnd() const {
+        const u8 end[] = {ROW_INPUT_HEADER, ROW_METADATA_HEADER, ROW_METADATA_END,
+            ROW_EXTRAS_FIRST + 10, ROW_EXTRAS_FIRST + 20,
+            ROW_COUNT, ROW_EXTRAS_END};
+        return end[mPage - 1];
+    }
     void moveSelection(int dir) {
-        do {
-            mSel = (u8)wrap(mSel + dir, ROW_COUNT);
-        } while (isSeparator(mSel));
-    }
-
-    void jumpSection(int dir) {
-        if (dir > 0) {
-            for (int row = mSel + 1; row < ROW_COUNT; row++) {
-                if (isSeparator(row)) {
-                    mSel = (u8)row;
-                    moveSelection(+1);
-                    return;
-                }
-            }
-            mSel = 0;
-            moveSelection(+1);
-            return;
-        }
-
-        int current = -1;
-        for (int row = 0; row < mSel; row++) {
-            if (isSeparator(row)) current = row;
-        }
-        if (current >= 0 && mSel > current + 1) {
-            mSel = (u8)current;
-            moveSelection(+1);
-            return;
-        }
-        for (int row = current - 1; row >= 0; row--) {
-            if (isSeparator(row)) {
-                mSel = (u8)row;
-                moveSelection(+1);
-                return;
-            }
-        }
-        for (int row = ROW_COUNT - 1; row >= 0; row--) {
-            if (isSeparator(row)) {
-                mSel = (u8)row;
-                moveSelection(+1);
-                return;
-            }
-        }
+        mSel = pageFirst() + wrap(mSel - pageFirst() + dir, pageEnd() - pageFirst());
     }
 
     void activate(int dir) {
@@ -4155,6 +4183,8 @@ private:
             gQftDisplay.beginEditor();
         } else if (mSel == ROW_QFT_LEADING_ZERO) {
             gQftDisplay.toggleLeadingZero();
+        } else if (mSel == ROW_SUNSHINE_TIMER_EDITOR) {
+            gCreationExtras.beginNativeTimerEditor();
         } else if (mSel == ROW_SUNSHINE_TIMER_CHARACTERS) {
             gCreationExtras.beginTimerCharacterEditor();
         } else if (mSel == ROW_SUNSHINE_TIMER_STREAK) {
@@ -4170,13 +4200,36 @@ private:
             gInputDisplay.adjustMenuRow(inputRow(mSel), dir);
         } else if (mSel >= ROW_METADATA_FIRST && mSel < ROW_METADATA_END) {
             gMetadataDisplay.adjustMenuRow(metadataRow(mSel), dir);
-        } else if (mSel >= ROW_EXTRAS_FIRST) {
+        } else if (mSel == ROW_GHOST_INPUTS) {
+            gSettings.cycle(SETTING_GHOST_INPUTS, dir);
+        } else if (mSel == ROW_HEALTH_EDITOR || mSel == ROW_AIR_EDITOR) {
+            gCreationExtras.beginHealthEditor(mSel == ROW_AIR_EDITOR);
+        } else if (mSel == ROW_WALLKICK_EDITOR) {
+            gCreationExtras.beginWallkickEditor();
+        } else if (mSel == ROW_ROLLOUT_EDITOR) {
+            gCreationExtras.beginRolloutEditor();
+        } else if (mSel == ROW_DUST_EDITOR) {
+            gCreationExtras.beginDustEditor();
+        } else if (mSel == ROW_SAVESTATE_EDITOR) {
+            gCreationExtras.beginSavestateFeedbackEditor();
+        } else if (mSel == ROW_RECENT_IL_EDITOR) {
+            gCreationExtras.beginRecentIlEditor();
+        } else if (mSel >= ROW_EXTRAS_FIRST && mSel < ROW_EXTRAS_END) {
             gCreationExtras.adjustMenuRow(extraRow(mSel), dir);
         }
     }
 
     const char *rowName(int row) const {
         if (row == ROW_QFT_EDITOR) return "QFT timer";
+        if (row == ROW_SUNSHINE_TIMER_EDITOR) return "Sunshine timer";
+        if (row == ROW_HEALTH_EDITOR) return "Health counter colour";
+        if (row == ROW_AIR_EDITOR) return "Underwater air colour";
+        if (row == ROW_GHOST_INPUTS) return Settings::name(SETTING_GHOST_INPUTS);
+        if (row == ROW_WALLKICK_EDITOR) return "Wallkick display";
+        if (row == ROW_ROLLOUT_EDITOR) return "Rollout display";
+        if (row == ROW_DUST_EDITOR) return "Dust display";
+        if (row == ROW_SAVESTATE_EDITOR) return "Savestate feedback";
+        if (row == ROW_RECENT_IL_EDITOR) return "Recent IL results";
         if (row == ROW_QFT_LEADING_ZERO) return "QFT leading zero";
         if (row == ROW_SUNSHINE_TIMER_CHARACTERS)
             return "Sunshine timer characters";
@@ -4194,7 +4247,10 @@ private:
     }
 
     const char *rowValue(int row) const {
-        if (row == ROW_QFT_EDITOR) return "Edit";
+        if (row == ROW_QFT_EDITOR || row == ROW_SUNSHINE_TIMER_EDITOR ||
+            row == ROW_HEALTH_EDITOR || row == ROW_AIR_EDITOR ||
+            row >= ROW_WALLKICK_EDITOR) return "Edit";
+        if (row == ROW_GHOST_INPUTS) return gSettings.valueLabel(SETTING_GHOST_INPUTS);
         if (row == ROW_QFT_LEADING_ZERO)
             return gQftDisplay.leadingZero() ? "On" : "Off";
         if (row >= ROW_SUNSHINE_TIMER_CHARACTERS &&
@@ -4212,6 +4268,14 @@ private:
     const char *rowHelp(int row) const {
         if (row == ROW_QFT_EDITOR)
             return "Moves, resizes and recolours the compact QFT display.";
+        if (row == ROW_SUNSHINE_TIMER_EDITOR)
+            return "Full position, size, opacity and colour controls for the native timer.";
+        if (row == ROW_HEALTH_EDITOR || row == ROW_AIR_EDITOR)
+            return "Recolours this meter independently; reset restores its retail colours.";
+        if (row == ROW_GHOST_INPUTS)
+            return "Show recorded inputs; Both ghosts compares both tracks in Watch2.";
+        if (row >= ROW_WALLKICK_EDITOR)
+            return "Moves, resizes and recolours this practice overlay.";
         if (row == ROW_QFT_LEADING_ZERO)
             return "Shows a leading zero before single-digit QFT values.";
         if (row == ROW_SUNSHINE_TIMER_CHARACTERS)
@@ -4239,9 +4303,17 @@ private:
             if (local >= 2 && local < 2 + MetadataDisplay::FIELD_COUNT)
                 return "Shows or hides this value in the metadata overlay.";
             if (local == 2 + MetadataDisplay::FIELD_COUNT)
-                return "Stacks metadata vertically or lays it out in one row.";
+                return "Stacks metadata vertically or arranges fields across rows.";
             if (local == 3 + MetadataDisplay::FIELD_COUNT)
                 return "Moves, resizes and recolours the metadata overlay.";
+            if (local == 5 + MetadataDisplay::FIELD_COUNT)
+                return "C-stick left/right decreases/increases the horizontal field gap.";
+            if (local == 6 + MetadataDisplay::FIELD_COUNT)
+                return "C-stick left/right adjusts the space between metadata rows.";
+            if (local == 7 + MetadataDisplay::FIELD_COUNT)
+                return "C-stick left/right sets fields per row; Auto wraps at the screen edge.";
+            if (local == 8 + MetadataDisplay::FIELD_COUNT)
+                return "C-stick left/right: Compact fits current values; Stable keeps fields steady.";
             return "Restores the metadata overlay's default layout.";
         }
         const int local = extraRow(row);
@@ -4273,12 +4345,16 @@ private:
         const int style = 3 + MetadataDisplay::FIELD_COUNT;
         if (local == 0) return style;
         if (local <= style) return local - 1;
-        return style + 1;
+        return local;
     }
 
-    static int extraRow(int row) { return row - ROW_EXTRAS_FIRST; }
+    static int extraRow(int row) {
+        return row - ROW_EXTRAS_FIRST - (row >= ROW_AIR_EDITOR ? 2 : 0);
+    }
 
     u8 mSel;
+    u8 mPage;
+    RawPromptInput mInput;
 };
 
 // ---------------------------------------------------------------------
@@ -4318,7 +4394,8 @@ static_assert(BIND_REGRAB_OBJECT == 0 &&
                   BIND_WARP_WHEEL < BIND_TOGGLE_INPUT_DISPLAY &&
                   BIND_TOGGLE_INPUT_DISPLAY < BIND_ATTEMPT_SHOW &&
                   BIND_ATTEMPT_SHOW < BIND_POSITION_SAVE &&
-                  BIND_POSITION_SAVE < BIND_COUNT,
+                  BIND_POSITION_SAVE < BIND_PRACTICE_PAUSE &&
+                  BIND_PRACTICE_PAUSE < BIND_COUNT,
               "bind section starts must be ordered and in bounds");
 
 }  // namespace
@@ -5422,37 +5499,52 @@ public:
     bool suppressesBinds() const override { return true; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         u32 nav = menu->navigationInput(pad);
-        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, 7);
-        if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, 7);
+        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, 10);
+        if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, 10);
+        if (mSel == 3 && (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
+            gSettings.cycle(SETTING_FREE_CAMERA_SPEED,
+                (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
         if (!(mInput.update() & JUTGamePad::A)) return;
         bool close = false;
         switch (mSel) {
         case 0: close = PracticeSession::requestPauseToggle(true); break;
         case 1: close = PracticeSession::requestStep(true); break;
         case 2: close = PracticeSession::requestFreeCameraToggle(); break;
-        case 3: PracticeSession::recenterCamera(); break;
-        case 4: close = PracticeSession::requestRecord(); break;
-        case 5: close = PracticeSession::requestPlayback(); break;
-        case 6: PracticeSession::requestStop(); break;
+        case 3: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
+        case 4: PracticeSession::recenterCamera(); break;
+        case 5: close = PracticeSession::requestSpin(true, true); break;
+        case 6: close = PracticeSession::requestSpin(false, true); break;
+        case 7: close = PracticeSession::requestRecord(); break;
+        case 8: close = PracticeSession::requestPlayback(); break;
+        case 9: PracticeSession::requestStop(); break;
         }
         if (close) menu->hide();
         menu->toast(PracticeSession::status());
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         const char *labels[] = {"Practice pause", "Advance one frame", "Free camera",
-            "Recenter free camera", "Record inputs from savestate", "Replay recorded inputs",
+            "Free camera speed", "Recenter free camera", "Queue clockwise spin",
+            "Queue counterclockwise spin", "Record inputs from savestate", "Replay recorded inputs",
             "Stop recording or replay"};
         const char *values[] = {PracticeSession::paused() ? "Paused" : "Live", "Step",
-            PracticeSession::freeCamera() ? "On" : "Off", "Reset view", "Start", "Play", "Stop"};
-        for (int i = 0; i < 7; ++i)
-            drawValueRow(menu, x, y + i * ROW_H, w, labels[i], values[i], i == mSel, false, true);
+            PracticeSession::freeCamera() ? "On" : "Off",
+            gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED), "Reset view", "Queue", "Queue",
+            "Start", "Play", "Stop"};
+        const int listH = h - HELP_H - ROW_H;
+        const int start = listScrollStart(mSel, 10, listH / ROW_H);
+        const int end = clampi(start + listH / ROW_H, 0, 10);
+        for (int i = start; i < end; ++i)
+            drawValueRow(menu, x, y + (i - start) * ROW_H, w, labels[i], values[i], i == mSel, false, true);
+        drawScrollHints(menu, x, y, w, listH, start, end, 10);
         char take[64];
-        snprintf(take, sizeof(take), "Local take: %lu / %lu frames", PracticeSession::recordedFrames(),
-                 PracticeSession::capacityFrames());
-        menu->drawText(take, x + 4, y + 8 * ROW_H, 14, 14, cValue());
+        snprintf(take, sizeof(take), "Take: %lu frames   Spin: %lu steps queued",
+                 PracticeSession::recordedFrames(), PracticeSession::queuedSpinFrames());
+        menu->drawText(take, x + 4, y + listH, 14, 14, cValue());
         drawHelpLine(menu, x, y, w, h,
-            mSel >= 4 ? "Experimental replay: save a state first; same scene and settings." :
-            "Free camera works in retail pause or practice pause. Clocks stay live.");
+            mSel >= 7 ? "Experimental replay: save a state first; same scene and settings." :
+            (mSel == 5 || mSel == 6) ? "Step through the stick circle; hold A on the step where you want to jump." :
+            mSel == 3 ? "Saved movement speed. Hold X for a temporary boost." :
+            "Works during gameplay and ghost Watch. Free camera moves independently.");
     }
 private:
     u8 mSel;
@@ -5467,18 +5559,26 @@ public:
     const char *summary() const override { return "Controls, recording limits and pre-release information."; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         u32 nav = menu->navigationInput(pad);
-        if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 3);
-        if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 3);
+        if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 5);
+        if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 5);
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         static const char *const pages[][8] = {
             {"FRAME CONTROLS", "L + D-Up: practice pause / resume", "L + D-Right: advance one game frame",
              "L + D-Down: free camera toggle", "Sticks: move / look. L / R: height.",
-             "Free camera: retail pause or practice pause.", "Change combos in System > Button binds.", "Game clocks stay unchanged; practice is assisted."},
+             "Camera speed: Practice menu; hold X for boost.", "Also works while watching ghosts.", "Change combos in System > Button binds."},
             {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Frames, camera and inputs > Record.",
              "Stop keeps the local take. Replay loads its seed.", "New savestate or scene invalidates the take.",
              "Up to 4096 frames, held in memory this session.", "A state mismatch stops experimental playback.", "Imported ghosts show inputs; they do not drive Mario."},
-            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Ghost inputs: Display > HUD and displays.",
+            {"SPINS AND TAS GHOSTS", "Practice menu: queue a clockwise / reverse spin.",
+             "Advance the stick circle one Step at a time.", "Hold A on the step where you want to jump.",
+             "Free camera must be off to supply spin input.", "Assisted ghosts are marked TAS; pauses are cut.",
+             "TAS ghosts cannot earn ordinary PB credit.", "Ghosts > Ghost inputs > Both ghosts for Watch2."},
+            {"LAYOUT EDITOR", "Display > Layout editor > choose a group.",
+             "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",
+             "Metadata: field gap, row gap, columns, width.", "Practice feedback: wallkick, rollout and dust.",
+             "Hold Y while adjusting RGB for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
+            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Timer and splits is under Runs and Display.",
              "Split comparison: Off / PB / SOB / Ghost.", "Existing checkpoints only; new splits are handmade.",
              "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
         };
@@ -5753,14 +5853,14 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     MenuTab *frame = new (sMenuRuntime.practiceControls) PracticeControlsTab();
     MenuTab *guide = new (sMenuRuntime.guide) GuideTab();
     MenuTab *practiceChildren[] = { frame, savestate, practice, rng, gameplay };
-    MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety };
+    MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety, timer };
     MenuTab *displayChildren[] = { creation, display, timer, cosmetics };
     MenuTab *systemChildren[] = { binds, guide };
     mTabs[mNumTabs++] = starred;
     mTabs[mNumTabs++] = new (sSettingsHubBuf) NestedMenuTab(
         "Practice", practiceChildren, 5);
     mTabs[mNumTabs++] = new (sILsHubBuf) NestedMenuTab(
-        "Runs", runChildren, 4);
+        "Runs", runChildren, 5);
     mTabs[mNumTabs++] = ghosts;
     mTabs[mNumTabs++] = new (sMenuRuntime.displayHub) NestedMenuTab(
         "Display", displayChildren, 4);

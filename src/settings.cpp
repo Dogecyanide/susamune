@@ -50,6 +50,7 @@ enum ChoiceSet {
     CHOICES_NATIVE_X,
     CHOICES_NATIVE_Y,
     CHOICES_NATIVE_SCALE,
+    CHOICES_FREE_CAMERA_SPEED,
     CHOICES_COUNT,
 };
 
@@ -80,7 +81,8 @@ const char kChoiceLabels[] =
     "Durians only\0"
     "Pattern 1\0Pattern 2\0Pattern 3\0Pattern 4\0"
     "Both\0Fruit\0Coins\0Wireframe\0Transparent\0Solid\0"
-    "All enemies\0Eely teeth only\0Ghost\0Both inputs\0PB\0SOB";
+    "All enemies\0Eely teeth only\0Ghost\0Both ghosts\0PB\0SOB\0"
+    "0.25x\0" "0.5x\0" "1x\0" "2x\0" "4x";
 
 const u8 kChoiceMap[] = {
     0, 1,              // bool
@@ -106,13 +108,14 @@ const u8 kChoiceMap[] = {
     0, 53, 54,            // ghost inputs
     0, 55, 56, 53,        // split comparison
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // numeric presentation values
+    57, 58, 59, 60, 61,  // free camera speed
 };
 const u8 kChoiceFirst[CHOICES_COUNT + 1] = {
     0, 2, 5, 9, 12, 15, 21, 24, 27, 31, 34, 36, 39, 42, 44, 50, 52, 57,
-    61, 65, 67, 70, 74, 107, 132, 143
+    61, 65, 67, 70, 74, 107, 132, 143, 148
 };
 
-static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 143,
+static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 148,
               "choice map size changed");
 static_assert(SETTING_HELMET_APPEARANCE == SETTING_GHOST_OPACITY + 1 &&
                   SETTING_CAP_APPEARANCE == SETTING_HELMET_APPEARANCE + 1 &&
@@ -308,7 +311,8 @@ void Settings::save() {
                  sizeof(cfg->qftDisplay) + sizeof(cfg->metadataStyle) +
                  sizeof(cfg->inputStyle) + sizeof(cfg->creation) +
                  sizeof(cfg->wallkickStyle));
-    DCStoreRange((void *)&cfg->movementStyle, sizeof(cfg->movementStyle));
+    DCStoreRange((void *)&cfg->movementStyle,
+                 sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
 
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
@@ -434,6 +438,9 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
     if (cfg->flags & SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE) {
         gCreationExtras.adoptMovement(&cfg->movementStyle);
     }
+    gCreationExtras.adoptNativeTimer(
+        (cfg->flags & SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE)
+            ? &cfg->nativeTimerStyle : nullptr);
 
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
@@ -459,6 +466,7 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
     gCreationExtras.stageInto(&cfg->creation);
     gCreationExtras.stageWallkickInto(&cfg->wallkickStyle);
     gCreationExtras.stageMovementInto(&cfg->movementStyle);
+    gCreationExtras.stageNativeTimerInto(&cfg->nativeTimerStyle);
     gCreationExtras.clearDirty();
 }
 

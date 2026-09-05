@@ -2,10 +2,11 @@
 
 #include "Dolphin/mem.h"
 #include "JSystem/J2D/J2DScreen.hxx"
+#include "JSystem/J2D/J2DPicture.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/MarDirector.hxx"
 #include "susamune/native_timer_transform.h"
-#include "susamune/settings.hxx"
+#include "susamune/creation_extras.hxx"
 
 extern "C" void *retailPaneVtable[] asm("__vt__7J2DPane");
 extern "C" void *retailPictureVtable[] asm("__vt__10J2DPicture");
@@ -27,6 +28,10 @@ struct PaneState {
     void **vtable;
     u8 geometry[kGeometryBytes];
     u8 alphaCopy;
+    u8 alpha;
+    bool visible;
+    JUtility::TColor white;
+    JUtility::TColor black;
 };
 
 struct DrawState {
@@ -46,7 +51,15 @@ static_assert(__builtin_offsetof(J2DPane, mScreenMtx) == 0x54,
               "J2DPane local matrix moved");
 static_assert(__builtin_offsetof(J2DPane, _B4) == 0xB4,
               "J2DPane global matrix end moved");
-static_assert(sizeof(DrawState) <= 0x1500, "timer draw snapshot grew");
+static_assert(sizeof(DrawState) <= 0x1600, "timer draw snapshot grew");
+
+void applyBrightness(JUtility::TColor &color, unsigned percent) {
+    u8 *rgb = &color.r;
+    for (unsigned i = 0; i < 3; ++i) {
+        const unsigned value = rgb[i] * percent / 100;
+        rgb[i] = value > 255 ? 255 : value;
+    }
+}
 
 void makeDrawMatrix(J2DPane *pane, int x, int y) {
     for (unsigned i = 0; i < sDraw.count; ++i) {
@@ -97,20 +110,21 @@ bool collect(J2DPane *root) {
 
 bool beginDraw(J2DScreen *screen) {
     if (sDraw.active) return false;
-    const unsigned x = gSettings.get(SETTING_NATIVE_TIMER_X);
-    const unsigned y = gSettings.get(SETTING_NATIVE_TIMER_Y);
-    const unsigned scale = gSettings.get(SETTING_NATIVE_TIMER_SCALE);
-    if (x > 32 || y > 24 || scale > 10 ||
-        (x == 16 && y == 12 && scale == 5) || !screen ||
+    const CreationStyle &style = gCreationExtras.nativeTimerStyle();
+    const bool preview = gCreationExtras.editingNativeTimer();
+    if (style.x > 1280 || style.y > 960 || style.scale < 50 || style.scale > 200 ||
+        (!preview && !gCreationExtras.nativeTimerColorsEnabled() &&
+         style.x == 640 && style.y == 480 && style.scale == 100 &&
+         style.textA == 255 && style.textBrightness == 100) || !screen ||
         gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE ||
         !gpMarDirector || !gpMarDirector->_260 ||
         !gpMarDirector->mGCConsole ||
         gpMarDirector->mGCConsole->mMainScreen != screen) return false;
     J2DPane *root = screen->search('\0t_0');
-    if (!root || !root->mIsVisible || !collect(root)) return false;
+    if (!root || (!root->mIsVisible && !preview) || !collect(root)) return false;
 
     memcpy(sDraw.rootRect, &root->mRect, sizeof(sDraw.rootRect));
-    sDraw.percent = 50 + scale * 10;
+    sDraw.percent = style.scale;
     void **const originals[] = {
         retailPaneVtable, retailPictureVtable, retailTextVtable,
     };
@@ -123,10 +137,35 @@ bool beginDraw(J2DScreen *screen) {
         saved.vtable = *reinterpret_cast<void ***>(saved.pane);
         memcpy(saved.geometry, &saved.pane->mCRect, sizeof(saved.geometry));
         saved.alphaCopy = saved.pane->mAlphaCopy;
+        saved.alpha = saved.pane->mAlpha;
+        saved.visible = saved.pane->mIsVisible;
+        if (saved.vtable == retailPictureVtable) {
+            J2DPicture *picture = static_cast<J2DPicture *>(saved.pane);
+            saved.white = picture->mColorMask;
+            saved.black = picture->mColorOverlay;
+            const u8 *rgb = gCreationExtras.nativeTimerRgb(picture);
+            if (rgb) {
+                for (unsigned c = 0; c < 3; ++c) {
+                    (&picture->mColorMask.r)[c] = rgb[c];
+                    (&picture->mColorOverlay.r)[c] = rgb[c];
+                }
+            }
+            applyBrightness(picture->mColorMask, style.textBrightness);
+            applyBrightness(picture->mColorOverlay, style.textBrightness);
+            picture->mAlpha = (u8)((unsigned)picture->mAlpha * style.textA / 255);
+        }
+        if (preview) {
+            const unsigned target = gCreationExtras.nativeTimerTarget();
+            const bool countdown = target >= 7 && target <= 10;
+            saved.pane->mIsVisible =
+                saved.pane->mTag == '\0t_1' ? !countdown :
+                saved.pane->mTag == '\0t_2' ? countdown : true;
+            if (saved.pane->mTag == 't_tx' && target != 14)
+                saved.pane->mIsVisible = gCreationExtras.timerLabelVisible();
+        }
     }
     sDraw.active = true;
-    root->add((static_cast<int>(x) - 16) * 10,
-              (static_cast<int>(y) - 12) * 10);
+    root->add(static_cast<int>(style.x) - 640, static_cast<int>(style.y) - 480);
     // Retail draw rebuilds matrices before clipping and walking children.
     // Lend each pane its original vtable with only that draw step wrapped.
     for (unsigned i = 0; i < sDraw.count; ++i) {
@@ -145,6 +184,13 @@ void endDraw() {
         *reinterpret_cast<void ***>(saved.pane) = saved.vtable;
         memcpy(&saved.pane->mCRect, saved.geometry, sizeof(saved.geometry));
         saved.pane->mAlphaCopy = saved.alphaCopy;
+        saved.pane->mAlpha = saved.alpha;
+        saved.pane->mIsVisible = saved.visible;
+        if (saved.vtable == retailPictureVtable) {
+            J2DPicture *picture = static_cast<J2DPicture *>(saved.pane);
+            picture->mColorMask = saved.white;
+            picture->mColorOverlay = saved.black;
+        }
     }
     memcpy(&sDraw.panes[0].pane->mRect, sDraw.rootRect, sizeof(sDraw.rootRect));
     sDraw.active = false;

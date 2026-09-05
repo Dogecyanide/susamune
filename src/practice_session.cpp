@@ -39,6 +39,7 @@ const u32 kHitClear = SUSAMUNE_MEM1_ADDR(0x80114dd8u, 0x8021b4e0u, 0x80213434u);
 const u32 kHitCheckCall = SUSAMUNE_MEM1_ADDR(0x800ed07cu, 0x80299af8u, 0x80291990u);
 const u32 kHitClearCall = SUSAMUNE_MEM1_ADDR(0x800ed088u, 0x80299b04u, 0x8029199cu);
 const u32 kMaxFrames = 4096;
+const u8 kSpinFrames = 9;
 
 struct Frame {
     SusamunePracticeInput input;
@@ -97,6 +98,9 @@ bool sReplay;
 bool sOwnLoad;
 bool sSeedValid;
 bool sFrameInjected;
+bool sSpinApplied;
+bool sSpinClockwise;
+u8 sSpinRemaining;
 u8 sLoadKind;
 u8 sMenuAction;
 u16 sLoadWait;
@@ -159,6 +163,10 @@ bool controlStage() {
     return stageReady() &&
            (gpMarDirector->mCurState == TMarDirector::STATE_NORMAL ||
             gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU);
+}
+
+bool observerTransition() {
+    return Ghost::observerLoading() || Ghost::observerCleanupPending();
 }
 
 void message(const char *text) {
@@ -319,6 +327,22 @@ f32 axis(s8 value) {
     return static_cast<f32>(value) / 80.0f;
 }
 
+f32 cameraSpeedScale() {
+    static const f32 scales[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+    const u8 choice = gSettings.get(SETTING_FREE_CAMERA_SPEED);
+    return scales[choice < 5 ? choice : 2];
+}
+
+void spinInput(u8 index, bool clockwise, SusamunePracticeInput &input) {
+    static const s8 directions[8][2] = {
+        {0, 80}, {57, 57}, {80, 0}, {57, -57},
+        {0, -80}, {-57, -57}, {-80, 0}, {-57, 57},
+    };
+    const u8 direction = clockwise ? index & 7u : (8u - index) & 7u;
+    input.stickX = directions[direction][0];
+    input.stickY = directions[direction][1];
+}
+
 void updateCamera() {
     if (!sFreeCamera || sModal || !controlStage()) return;
     if (sCameraWaitButtons) {
@@ -333,11 +357,13 @@ void updateCamera() {
     sPitch = Clamp(sPitch, -1.45f, 1.45f);
     const f32 forwardX = sinf(sYaw);
     const f32 forwardZ = cosf(sYaw);
-    const f32 speed = (sPhysical.buttons & JUTGamePad::X) ? 75.0f : 20.0f;
+    const f32 speed = cameraSpeedScale() *
+                     ((sPhysical.buttons & JUTGamePad::X) ? 75.0f : 20.0f);
     const f32 advance = axis(sPhysical.stickY) * speed;
     const f32 strafe = axis(sPhysical.stickX) * speed;
-    sCameraView.position.x += forwardX * advance + forwardZ * strafe;
-    sCameraView.position.z += forwardZ * advance - forwardX * strafe;
+    // LookAt's screen-right is forward crossed with world-up.
+    sCameraView.position.x += forwardX * advance - forwardZ * strafe;
+    sCameraView.position.z += forwardZ * advance + forwardX * strafe;
     sCameraView.position.y += (static_cast<int>(sPhysical.triggerR) -
                               static_cast<int>(sPhysical.triggerL)) * speed / 255.0f;
     sCameraView.position.x = Clamp(sCameraView.position.x, -1000000.0f, 1000000.0f);
@@ -474,6 +500,7 @@ void beforeStageSetup() {
     sCamera = nullptr;
     sPaused = false;
     sStepQueued = false;
+    sSpinRemaining = 0;
     sMenuAction = 0;
     sFreeze = false;
     sAssisted = false;
@@ -491,12 +518,14 @@ void beforeDirect(bool modalOwnsInput) {
     restoreCamera();
     sConsumedFrame = false;
     sStepping = false;
+    sSpinApplied = false;
     sModal = modalOwnsInput;
     const bool injectedBeforeDirect = sFrameInjected;
     if (!controlStage()) {
         sCameraWaitButtons = false;
         sPaused = false;
         sStepQueued = false;
+        sSpinRemaining = 0;
         sMenuAction = 0;
         sFreeze = false;
         sFreeCamera = false;
@@ -521,7 +550,8 @@ void beforeDirect(bool modalOwnsInput) {
         if (sMenuAction == 2) {
             sPaused = false;
             sStepQueued = false;
-            sFreeCamera = false;
+            sSpinRemaining = 0;
+            if (!Ghost::observerActive()) sFreeCamera = false;
             message("Gameplay resumed");
             CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, 0, sSteps);
         }
@@ -533,11 +563,15 @@ void beforeDirect(bool modalOwnsInput) {
         sStepQueued = false;
         sMenuAction = 0;
     }
-    if (sStripButtons && !sModal && sHaveRead &&
+    if ((sStripButtons || (sStepping && sSpinRemaining)) && !sModal && sHaveRead &&
         sReadPad == gpApplication.mGamePads[0] && !sReplay) {
         sConsumed.buttons &= ~sStripButtons;
         if (sStripButtons & JUTGamePad::L) sConsumed.triggerL = 0;
         if (sStripButtons & JUTGamePad::R) sConsumed.triggerR = 0;
+        if (sStepping && sSpinRemaining && !sFreeCamera) {
+            spinInput(kSpinFrames - sSpinRemaining, sSpinClockwise, sConsumed);
+            sSpinApplied = true;
+        }
         inject(sConsumed, sReadPad);
         sReadPad->updateMeaning();
     }
@@ -547,7 +581,8 @@ void beforeDirect(bool modalOwnsInput) {
         restorePad(sBeforeRead, sReadPad);
     }
     if (sFreeCamera && !sPaused &&
-        gpMarDirector->mCurState != TMarDirector::STATE_PAUSE_MENU)
+        gpMarDirector->mCurState != TMarDirector::STATE_PAUSE_MENU &&
+        !Ghost::observerActive())
         sFreeCamera = false;
     updateCamera();
 }
@@ -564,6 +599,7 @@ void afterDirect(s32 appState, bool gameplayActive) {
         sFreeCamera = false;
         sPaused = false;
         sStepQueued = false;
+        sSpinRemaining = 0;
         sMenuAction = 0;
         sFreeze = false;
         return;
@@ -585,6 +621,7 @@ void afterDirect(s32 appState, bool gameplayActive) {
         if (sRecord || sReplay) stopTape("Controller disconnected - input stopped");
         return;
     }
+    if (sSpinApplied && sSpinRemaining) --sSpinRemaining;
     if (sRecord) {
         if (sCount == kMaxFrames) {
             stopTape("Input recording full");
@@ -670,14 +707,14 @@ void onSavestateLoaded() {
     sCamera = nullptr;
     sFreeCamera = false;
     sStepQueued = false;
+    sSpinRemaining = 0;
     sHaveRead = false;
     if (!sOwnLoad) stopTape(nullptr);
     invalidate();
 }
 
 bool requestPauseToggle(bool fromMenu) {
-    if (!available() || !sCollisionHooksReady || !normalStage() ||
-        Ghost::observerStatsSuppressed()) {
+    if (!available() || !sCollisionHooksReady || !normalStage() || observerTransition()) {
         message("Frame advance needs normal gameplay");
         return false;
     }
@@ -693,7 +730,10 @@ bool requestPauseToggle(bool fromMenu) {
     if (gBinds.wasPressed(BIND_PRACTICE_PAUSE))
         sStripButtons |= gBinds.get(BIND_PRACTICE_PAUSE);
     sStepQueued = false;
-    if (!sPaused) { sFreeCamera = false; restoreCamera(); }
+    if (!sPaused) {
+        sSpinRemaining = 0;
+        if (!Ghost::observerActive()) { sFreeCamera = false; restoreCamera(); }
+    }
     else invalidate();
     message(sPaused ? "Frame advance paused - clocks stay live" : "Gameplay resumed");
     CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, sPaused ? 1 : 0, sSteps);
@@ -701,7 +741,7 @@ bool requestPauseToggle(bool fromMenu) {
 }
 
 bool requestStep(bool fromMenu) {
-    if (!sPaused || !normalStage()) {
+    if (!sPaused || !normalStage() || observerTransition()) {
         message("Pause frame advance first");
         return false;
     }
@@ -711,6 +751,21 @@ bool requestStep(bool fromMenu) {
     if (gBinds.wasPressedSubset(BIND_PRACTICE_STEP))
         sStripButtons |= gBinds.get(BIND_PRACTICE_STEP);
     invalidate();
+    return true;
+}
+
+bool requestSpin(bool clockwise, bool fromMenu) {
+    if (!sPaused || !normalStage() || sFreeCamera || Ghost::observerActive() ||
+        observerTransition()) {
+        message("Queue spin needs frame hold without free camera");
+        return false;
+    }
+    sSpinClockwise = clockwise;
+    sSpinRemaining = kSpinFrames;
+    sStepQueued = false;
+    sMenuAction = fromMenu ? 1 : 0;
+    invalidate();
+    message("Spin queued: Step each direction; hold A to jump");
     return true;
 }
 
@@ -740,17 +795,18 @@ bool requestFreeCameraToggle() {
         CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, 2, 0);
         return true;
     }
-    if (!sCameraHookReady || !controlStage() ||
-        (!sPaused && gpMarDirector->mCurState != TMarDirector::STATE_PAUSE_MENU) ||
-        Ghost::observerStatsSuppressed() || !mem1(gpCamera, sizeof(CPolarSubCamera))) {
-        message("Free camera needs Pause or frame advance");
+    if (!sCameraHookReady || !controlStage() || observerTransition() ||
+        (!sPaused && gpMarDirector->mCurState != TMarDirector::STATE_PAUSE_MENU &&
+         !Ghost::observerActive()) || !mem1(gpCamera, sizeof(CPolarSubCamera))) {
+        message("Free camera needs Pause, frame advance or Watch");
         return false;
     }
     recenterCamera();
     sFreeCamera = true;
+    sSpinRemaining = 0;
     sCameraWaitButtons = true;
     invalidate();
-    message("Free camera: sticks move/look, L/R height");
+    message("Free camera: sticks move/look, L/R height, X boost");
     CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, 2, 1);
     return true;
 }
@@ -795,6 +851,7 @@ bool requestPlayback() {
 }
 
 void requestStop() {
+    sSpinRemaining = 0;
     stopTape("Input session stopped");
     gBinds.suppressUntilRelease();
 }
@@ -812,6 +869,7 @@ void releaseForDeparture() {
     sPaused = false;
     sFreeCamera = false;
     sStepQueued = false;
+    sSpinRemaining = 0;
     sStepping = false;
     sFreeze = false;
     sConsumedFrame = false;
@@ -828,6 +886,7 @@ bool replaying() { return sReplay; }
 bool assisted() { return sAssisted; }
 bool available() { return sPadHookReady; }
 u32 stepCount() { return sSteps; }
+u32 queuedSpinFrames() { return sSpinRemaining; }
 u32 recordedFrames() { return sCount; }
 u32 replayFrame() { return sCursor; }
 u32 capacityFrames() { return kMaxFrames; }
@@ -845,7 +904,11 @@ void draw(Menu *menu) {
     char text[96];
     if (sRecord) snprintf(text, sizeof(text), "INPUT REC  %lu / %lu", sCount, kMaxFrames);
     else if (sReplay) snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu", sCursor, sCount);
-    else if (sFreeCamera) snprintf(text, sizeof(text), "FREE CAMERA  %s", sPaused ? "Step uses neutral input" : "Retail pause");
+    else if (sFreeCamera) snprintf(text, sizeof(text), "FREE CAMERA  %.2fx  X boost  %s",
+                                  cameraSpeedScale(), sPaused ? "Step: neutral input" :
+                                  (Ghost::observerActive() ? "Watch" : "Retail pause"));
+    else if (sSpinRemaining) snprintf(text, sizeof(text), "SPIN %s  %u directions left  Step + A: jump",
+                                     sSpinClockwise ? "CW" : "CCW", sSpinRemaining);
     else snprintf(text, sizeof(text), "FRAME ADVANCE  %lu   Playback %lu", sSteps, sCursor);
     menu->fillBox(42, 388, 556, 40, JUtility::TColor(8, 17, 31, 225));
     menu->drawText(text, 50, 394, 16, 16, JUtility::TColor(130, 225, 255, 255));

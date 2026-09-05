@@ -355,7 +355,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         gpApplication.mGamePads[0]->mButtons.mRapidInput = 0;
     }
     const bool practiceModal = creationEditing || sessionBlocksNewInput ||
-        menuOwnsRetailPad || wheelOwnsInputBeforeDirect || Ghost::observerActive();
+        menuOwnsRetailPad || wheelOwnsInputBeforeDirect;
     if (!practiceModal) {
         if (gBinds.wasPressed(BIND_PRACTICE_PAUSE)) PracticeSession::requestPauseToggle();
         if (gBinds.wasPressedSubset(BIND_PRACTICE_STEP)) PracticeSession::requestStep();
@@ -363,6 +363,8 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
         if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
         if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
+        if (gBinds.wasPressed(BIND_PRACTICE_SPIN_CW)) PracticeSession::requestSpin(true);
+        if (gBinds.wasPressed(BIND_PRACTICE_SPIN_CCW)) PracticeSession::requestSpin(false);
     }
     PracticeSession::beforeDirect(practiceModal);
     gQFTTimer.beginFrame();
@@ -393,6 +395,9 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool marioActive = gpMarDirector &&
                              gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
                              !freeze;
+    Ghost::frameControl(freeze || (gpMarDirector &&
+        gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU),
+        PracticeSession::assisted());
     WallkickDisplay::beforeDirect(marioActive);
     MovementDisplay::beforeDirect(marioActive);
     GameplayPolish::beforeDirect();
@@ -460,11 +465,11 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     // Runs every frame like the gecko handler; no-ops when nothing changed.
     featuresApply();
 
-    actionsApply(!creationEditing && !sessionOwnsInput &&
+    actionsApply(!observerFrame && !creationEditing && !sessionOwnsInput &&
                  !PracticeSession::ownsGameplayInput());
     gCreationExtras.update();
 
-    if (gSavestateMgr && !creationEditing && !sessionOwnsInput) {
+    if (gSavestateMgr && !observerFrame && !creationEditing && !sessionOwnsInput) {
         gSavestateMgr->updateHook();
     }
     const bool allowExistingMenuToClose =
@@ -487,7 +492,7 @@ extern "C" void afterDraw() {
     THPPlayerDrawDone();
     if (gSavestateMgr && !gQftDisplay.editing() && !gInputDisplay.editing() &&
         !gMetadataDisplay.editing() && !gCreationExtras.editing() &&
-        !StageLoader::resultOwnsInput())
+        !StageLoader::resultOwnsInput() && !Ghost::observerStatsSuppressed())
         gSavestateMgr->processPendingLoad();
     PracticeSession::afterDraw();
     // gpPollution is stale until the async setup thread reaches onSetup.

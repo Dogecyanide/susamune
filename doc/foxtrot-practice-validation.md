@@ -41,9 +41,13 @@ director results 0 (WAIT) and 1 (DEFAULT) both continue the current scene.
 
 ## Free camera
 
-Free camera works with practice hold or ordinary retail pause. The main stick
-moves, C-stick looks, L/R change height, and X moves faster. The initial view
+Free camera works with practice hold, ordinary retail pause, or a settled
+ghost Watch. The main stick moves, C-stick looks, L/R change height, and X
+moves faster. Movement speed has persistent 0.25x, 0.5x, 1x, 2x and 4x choices;
+X multiplies the selected movement speed by 3.75. The initial view
 uses the retail final eye and target, including camera interpolation.
+Screen-right is the camera's forward direction crossed with world-up. The
+activation buttons must be released before camera movement starts.
 
 The camera wrapper uses retail render cues 4 and 16. Those cues copy cached
 matrices; they do not rebuild them from the base eye and target. The wrapper
@@ -51,6 +55,43 @@ therefore saves the camera's render state and rebuilds its projection and
 look-at matrices before those cues. It restores the gameplay camera before
 collision, movement, subsequent pad sampling, and after the director returns.
 Stage generation and pointer checks prevent stale camera restoration.
+
+The September 5 visible US session (Dolphin 2606a JIT, image CRC `5FF0C16B`)
+measured screen-right displacement +243.75 units and the matching left input
+-243.75. Changing the menu speed from 1x to 2x gave +487.50; X increased the
+2x movement further. Mario's position stayed identical throughout. The same
+rightward movement worked in native pause, and A returned to normal gameplay
+after disabling free camera. The camera was also unchanged during a neutral
+hold after releasing its activation combo. Results are recorded in
+`build/foxtrot-smoke/feedback-visible-controls.json`; this fixture changes only
+the private raw-pad read site, not simulation state.
+
+## Queued spin inputs
+
+While gameplay is held, Queue clockwise/counterclockwise rotation prepares
+nine real main-stick samples: Up, the seven remaining 45-degree directions,
+then Up again. Each successful Step consumes one sample; held rendering,
+menus and failed steps consume none. Other controller fields remain the
+player's input. Hold A on the ninth Step for a spin jump, or choose an earlier
+jump point manually. Menu entry waits for A release. Resume, load, departure,
+Stop and enabling free camera clear the queue. Spin queuing is unavailable
+while Watch owns Mario.
+
+The game itself builds and recognizes the angle history. No Mario angle
+history, action or spin flag is written by the mod. The pinned decomp's
+[`makeHistory` and `checkStickRotate`](https://github.com/doldecomp/sms/blob/a56e1cf00289fc6467af7d2c32ed428b44d2d2f8/src/Player/MarioMove.cpp#L1595)
+describe the path; the three retail functions were checked independently.
+
+The September 5 US live fixture used Dolphin 2606a JIT and release-image CRC
+`5FF0C16B`, with only the private PADRead-call substitution used to feed raw
+controller packets. Clockwise reached retail Mario state `0x895` and
+counterclockwise `0x896`, both on the ninth Step with A. Each step consumed
+exactly one queued direction and incremented the practice step count once.
+This US scene used four retail history samples per displayed step; after
+nine steps the game held 36 samples within its live 40-sample window.
+The trace is `build/foxtrot-smoke/feedback-show-controls.json` and the captured
+symbol map is `feedback-show-symbols.txt` beside it. This is emulator evidence,
+not a Wii spin-input validation.
 
 ## Local input takes
 

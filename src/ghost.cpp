@@ -17,6 +17,7 @@
 #include "susamune/binds.hxx"
 #include "susamune/checksum.hxx"
 #include "susamune/ghost_format.h"
+#include "susamune/ghost_clock.h"
 #include "susamune/ghost_model.hxx"
 #include "susamune/ghost_storage.h"
 #include "susamune/iling.hxx"
@@ -148,6 +149,9 @@ Track sPlayback;
 Track sObserverSecondary;
 u32 sAttemptSerial;
 s32 sLastSampleQf;
+SusamuneGhostClock sRecordClock;
+bool sFrameFrozen;
+bool sFrameAssisted;
 u32 sPlaybackCursor;
 s32 sPlaybackCursorQf;
 u16 sPlaybackSegment;
@@ -168,6 +172,7 @@ bool sRaceContextValid;
 SusamuneGhostSplitSample sRaceSplits[SUSAMUNE_GHOST_SPLIT_MAX_COUNT];
 u8 sRaceSplitCount;
 u32 sRaceSplitSerial;
+u32 sRaceSplitPlaybackToken;
 s32 sVisualQf;
 ClockPhase sClockPhase;
 u16 sClockObservations;
@@ -204,6 +209,7 @@ s32 sObserverSecondaryCursorQf;
 s32 sObserverBaseQf;
 s32 sObserverEndQf;
 s32 sObserverLastQf;
+s32 sObserverLastLiveQf;
 s32 sObserverQfOffset;
 s32 sObserverStageAnchorQf;
 bool sObserverClockReady;
@@ -337,7 +343,22 @@ void clearRaceContext() {
     if (sRaceSplitSerial != gQFTTimer.attemptSerial()) sRaceSplitCount = 0;
 }
 
+void captureComparisonSplits() {
+    sRaceSplitCount = 0;
+    sRaceSplitSerial = sAttemptSerial;
+    sRaceSplitPlaybackToken = sPlaybackToken;
+    if (!sPlayback.valid ||
+        sPlayback.splitCount > SUSAMUNE_GHOST_SPLIT_MAX_COUNT ||
+        !playbackOwnsCourse(sLiveArea, sLiveEpisode, sLiveParentEpisode,
+                            sLiveRouteParentArea)) return;
+    sRaceSplitCount = sPlayback.splitCount;
+    memcpy(sRaceSplits, sPlayback.splits,
+           sRaceSplitCount * sizeof(sRaceSplits[0]));
+}
+
 void captureRaceContext() {
+    // Automatic last-run ghosts also supply checkpoints, without race awards.
+    captureComparisonSplits();
     if (!sPlaybackPinned || !sPlayback.valid || !sPlayback.completed ||
         sPlaybackRaceSource == RACE_SOURCE_NONE ||
         sPlaybackRaceToken != sPlaybackToken ||
@@ -357,11 +378,6 @@ void captureRaceContext() {
     sRaceContext.source = sPlaybackRaceSource;
     sRaceContextPlaybackToken = sPlaybackToken;
     sRaceContextValid = true;
-    sRaceSplitCount = sPlayback.sourceRegion == runningRegion()
-        ? sPlayback.splitCount : 0;
-    sRaceSplitSerial = sAttemptSerial;
-    memcpy(sRaceSplits, sPlayback.splits,
-           sRaceSplitCount * sizeof(sRaceSplits[0]));
 }
 
 void settlePlaybackPin() {
@@ -505,6 +521,15 @@ bool observerRunning() {
            sObserverPhase == OBSERVER_WARPING_TWO ||
            sObserverPhase == OBSERVER_ACTIVE_ONE ||
            sObserverPhase == OBSERVER_ACTIVE_TWO;
+}
+
+s32 recordQf(s32 liveQf) {
+    const bool tas = sFrameAssisted ||
+        (sAttemptSerial == gQFTTimer.attemptSerial() &&
+         (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS));
+    SusamuneGhostClockObserve(&sRecordClock, gQFTTimer.attemptSerial(),
+                             liveQf, sFrameFrozen && tas);
+    return SusamuneGhostClockMap(&sRecordClock, liveQf);
 }
 
 void releaseObserverMario(bool restore) {
@@ -918,6 +943,7 @@ void dropLastEmptySegment() {
 }
 
 bool appendSample(s32 qf) {
+    qf = SusamuneGhostClockMap(&sRecordClock, qf);
     if (!gpMarioOriginal) {
         failRecording(RECORD_FAILURE_MARIO,
                       "Ghost: Mario disappeared");
@@ -1163,14 +1189,15 @@ bool finishTrackAt(s32 qf) {
 }
 
 void finishRecording(s32 qf, bool completed) {
+    const s32 storedQf = SusamuneGhostClockMap(&sRecordClock, qf);
     const bool clockWasActive = sClockPhase == CLOCK_ACTIVE;
     if (sRecording && sRecord.count != 0) {
         bool bounded = clockWasActive;
-        if (bounded && completed) bounded = finishTrackAt(qf);
+        if (bounded && completed) bounded = finishTrackAt(storedQf);
         sRecord.valid = bounded && sRecord.count >= 2;
         sRecord.completed = completed && sRecord.valid;
         if (sRecord.completed) {
-            sRecord.resultQf = static_cast<u32>(qf);
+            sRecord.resultQf = static_cast<u32>(storedQf);
             sRecord.runFlags &= ~SUSAMUNE_GHOST_RUN_INCOMPLETE;
         } else {
             sRecord.resultQf = SUSAMUNE_GHOST_RESULT_QF_NONE;
@@ -1298,6 +1325,7 @@ void selectPlaybackSegment(u16 index) {
 }
 
 void updatePlayback(s32 qf) {
+    qf = recordQf(qf);
     sVisualQf = qf;
     sGhostVisible = false;
     sGhostHeldObjectId = 0;
@@ -1453,6 +1481,9 @@ s32 observerQf(bool *pastEnd = nullptr) {
         return sObserverLastQf;
     }
 
+    if (liveQf >= sObserverLastLiveQf && sFrameFrozen)
+        sObserverQfOffset -= liveQf - sObserverLastLiveQf;
+    sObserverLastLiveQf = liveQf;
     s64 absoluteQf = static_cast<s64>(liveQf) + sObserverQfOffset;
     if (pastEnd) {
         // A stopped shared clock cannot reach a later Watch 2 endpoint.
@@ -1613,6 +1644,7 @@ void startObserverClock(s32 liveQf) {
     }
     sObserverContinuousClock = false;
     sObserverClockReady = true;
+    sObserverLastLiveQf = liveQf;
     sObserverPastEnd = false;
     // Intro-skip presses are viewer input, not exit requests. An active-state
     // release must be observed before B or Start can end this segment.
@@ -1887,11 +1919,13 @@ void formatTrackName(const Track &track, char *out, u32 size) {
     }
 
     if (route[0]) {
-        snprintf(out, size, "%s - %lu:%02lu.%03lu", route,
+        snprintf(out, size, "%s%s - %lu:%02lu.%03lu",
+                 (track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : "", route,
                  millis / 60000u, (millis / 1000u) % 60u,
                  millis % 1000u);
     } else {
-        snprintf(out, size, "Area %u Episode %u - %lu:%02lu.%03lu",
+        snprintf(out, size, "%sArea %u Episode %u - %lu:%02lu.%03lu",
+                 (track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : "",
                  static_cast<unsigned>(track.area),
                  static_cast<unsigned>(track.episode) + 1u,
                  millis / 60000u, (millis / 1000u) % 60u,
@@ -2057,6 +2091,7 @@ bool validCanonicalFile(const void *data, u32 size,
         size > (v5 ? SUSAMUNE_GHOST_V5_MAX_FILE_SIZE
                    : SUSAMUNE_GHOST_V4_MAX_FILE_SIZE) ||
         header.checksumKind != SUSAMUNE_GHOST_CHECKSUM_CRC32 ||
+        !SusamuneGhostRunFlagsValid(header.runFlags) ||
         (header.requiredFeatures & ~supportedFeatures) ||
         (v4 && header.requiredFeatures != supportedFeatures) ||
         !validGameRegionPair(header.gameId, header.region) ||
@@ -2457,6 +2492,9 @@ void init() {
     bumpPlaybackToken();
     sAttemptSerial = gQFTTimer.attemptSerial();
     sLastSampleQf = 0;
+    memset(&sRecordClock, 0, sizeof(sRecordClock));
+    sFrameFrozen = false;
+    sFrameAssisted = false;
     sPlaybackCursor = 0;
     sPlaybackCursorQf = 0;
     sPlaybackSegment = 0xffff;
@@ -2586,9 +2624,16 @@ void onStageSetup(TMarDirector *director) {
     sClockPhase = CLOCK_WAIT_STAGE;
 }
 
+void frameControl(bool frozen, bool assisted) {
+    sFrameFrozen = frozen;
+    sFrameAssisted = assisted;
+    s32 qf;
+    if (!observerRunning() && gQFTTimer.currentQf(&qf)) recordQf(qf);
+}
+
 void beforeDirect() {
     if (!observerRunning() || !sObserverStageReady) return;
-    if (sObserverMarioBaselineFinalized && gpMarDirector &&
+    if (!sFrameFrozen && sObserverMarioBaselineFinalized && gpMarDirector &&
         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
         // Restore the actor while its stage heap is still alive. A replacement
         // Mario can reuse the same address without reinitialising every flag.
@@ -2609,7 +2654,8 @@ void afterDirect(s32 appState) {
         return;
     }
     if (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP || !gpMarDirector ||
-        gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
+        (!sFrameFrozen &&
+         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL)) {
         // direct() can begin teardown on the same frame as the loading-zone
         // hit. Restore before the next director reuses this stage heap.
         releaseObserverMario(true);
@@ -2678,13 +2724,14 @@ void update() {
     }
     if (sObserverPhase == OBSERVER_ACTIVE_ONE ||
         sObserverPhase == OBSERVER_ACTIVE_TWO) {
-        gBinds.suppressUntilRelease();
         if (gSettings.getBool(SETTING_DISABLE_WARPS) ||
             !gSettings.getBool(SETTING_GHOST_DISPLAY)) {
             endObserver(false, "Ghost watch ended");
             return;
         }
-        const u16 exitHeld = static_cast<u16>(
+        const bool menuOwnsExit = gMenu && (gMenu->shown() ||
+            gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
+        const u16 exitHeld = menuOwnsExit ? 0 : static_cast<u16>(
             JUTGamePad::mPadStatus[0].mButton &
             (JUTGamePad::B | JUTGamePad::START));
         if (!sObserverExitArmed) {
@@ -2719,6 +2766,8 @@ void update() {
         sGhostVisible = false;
         return;
     }
+
+    recordQf(qf);
 
     const u32 serial = gQFTTimer.attemptSerial();
     if (serial != sAttemptSerial) {
@@ -2920,12 +2969,17 @@ void draw(Menu *menu) {
     if (sSecondaryGhostVisible && !GhostModel::submitted(true)) {
         drawMarker(menu, sSecondaryGhostPosition, true, alpha);
     }
+    if ((sGhostVisible && playbackIsTas()) ||
+        (sSecondaryGhostVisible && playbackIsTas(true))) {
+        menu->drawText("TAS ghost", 460, 198, 12, 12,
+                       JUtility::TColor(255, 210, 120, 255));
+    }
 }
 
 void invalidateForAssist() {
     if (!sRecording || sAttemptSerial != gQFTTimer.attemptSerial() ||
-        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_ASSISTED)) return;
-    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED;
+        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS)) return;
+    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED | SUSAMUNE_GHOST_RUN_TAS;
     bumpRecordToken();
 }
 
@@ -2936,6 +2990,7 @@ void captureInput(const SusamunePracticeInput &input) {
         sAttemptSerial != gQFTTimer.attemptSerial() ||
         input.flags != 0 || !gQFTTimer.currentQf(&qf) || qf < 0 ||
         sRecord.segmentCount == 0) return;
+    qf = SusamuneGhostClockMap(&sRecordClock, qf);
     if (sRecord.inputCount &&
         sRecord.inputs[sRecord.inputCount - 1].qf >= (u32)qf) return;
     if (!sRecording && (u32)qf != sRecord.endQf) return;
@@ -2954,6 +3009,7 @@ void captureSplit(u16 route, u8 endpoint, s32 absoluteQf) {
         route >= SUSAMUNE_SPLIT_STATS_ROUTE_COUNT ||
         endpoint != sRecord.splitCount ||
         endpoint >= SUSAMUNE_GHOST_SPLIT_MAX_COUNT) return;
+    absoluteQf = SusamuneGhostClockMap(&sRecordClock, absoluteQf);
     if (sRecord.splitCount &&
         (sRecord.splits[0].route != route ||
          sRecord.splits[sRecord.splitCount - 1].qf > (u32)absoluteQf)) return;
@@ -2967,7 +3023,10 @@ void captureSplit(u16 route, u8 endpoint, s32 absoluteQf) {
 
 bool comparisonSplit(u16 route, u8 endpoint, s32 *out) {
     if (!out || sRaceSplitSerial != gQFTTimer.attemptSerial() ||
-        endpoint >= sRaceSplitCount) return false;
+        sRaceSplitPlaybackToken != sPlaybackToken) return false;
+    // A stage's route flags can settle after the first QFT observation.
+    if (!sRaceSplitCount) captureComparisonSplits();
+    if (endpoint >= sRaceSplitCount) return false;
     const SusamuneGhostSplitSample &split = sRaceSplits[endpoint];
     if (split.route != route || split.endpoint != endpoint ||
         split.schema != SUSAMUNE_SPLIT_STATS_SCHEMA_HASH) return false;
@@ -2998,7 +3057,8 @@ void drawInputs(Menu *menu, u8 mode) {
     const int panelY = 218;
     SusamunePracticeInput input;
     if (playbackInput(sPlayback, sPlaybackSegment, &input)) {
-        gInputDisplay.drawSnapshot(menu, input, 460, panelY, 65, "Ghost 1");
+        gInputDisplay.drawSnapshot(menu, input, 460, panelY, 65,
+                                   playbackIsTas() ? "TAS 1" : "Ghost 1");
     } else {
         menu->drawText("Inputs not recorded", 438, panelY, 12, 12,
                        JUtility::TColor(220, 240, 255, 255));
@@ -3007,7 +3067,8 @@ void drawInputs(Menu *menu, u8 mode) {
     if (observerHasTwo()) {
         if (sSecondaryGhostVisible &&
             playbackInput(sObserverSecondary, sObserverSecondarySegment, &input))
-            gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65, "Ghost 2");
+            gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65,
+                                       playbackIsTas(true) ? "TAS 2" : "Ghost 2");
     } else if (!observerActive()) {
         const PADStatus &raw = JUTGamePad::mPadStatus[0];
         input.buttons = raw.mButton;
@@ -3060,8 +3121,7 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
     while (firstInput < inputCount &&
            track->inputs[firstInput].qf < track->startQf) ++firstInput;
     inputCount -= firstInput;
-    // Console exports adopt the running region; foreign split schemas do not.
-    u8 splitCount = track->sourceRegion == runningRegion() ? track->splitCount : 0;
+    u8 splitCount = track->splitCount;
     while (splitCount && track->splits[splitCount - 1].qf > track->endQf)
         --splitCount;
     if (splitCount && track->splits[0].qf < track->startQf) splitCount = 0;
@@ -3375,7 +3435,21 @@ bool playbackInfo(PlaybackInfo *out) {
     out->episode = sPlayback.episode;
     out->completed = sPlayback.completed;
     out->pinned = sPlaybackPinned;
+    out->runFlags = sPlayback.runFlags;
     return true;
+}
+
+bool comparisonDelta(u16 route, u8 endpoint, s32 absoluteQf, s32 *out) {
+    s32 target;
+    if (!out || absoluteQf < 0 || !comparisonSplit(route, endpoint, &target))
+        return false;
+    *out = SusamuneGhostClockMap(&sRecordClock, absoluteQf) - target;
+    return true;
+}
+
+bool playbackIsTas(bool secondary) {
+    const Track &track = secondary ? sObserverSecondary : sPlayback;
+    return track.valid && (track.runFlags & SUSAMUNE_GHOST_RUN_TAS);
 }
 
 bool raceContext(RaceContext *out) {
@@ -3582,7 +3656,8 @@ bool discardUnsavedPB(u32 token) {
 
 bool markCurrentRecordingPB(s32 resultQf) {
     if (resultQf < 0 || !sRecord.valid || !sRecord.completed ||
-        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_ASSISTED) ||
+        (sRecord.runFlags & (SUSAMUNE_GHOST_RUN_ASSISTED |
+                             SUSAMUNE_GHOST_RUN_TAS)) ||
         sRecord.resultQf != static_cast<u32>(resultQf)) {
         return false;
     }
@@ -3646,6 +3721,7 @@ void releaseSavedRecording(u32 recordToken) {
 }
 
 void onSavestateLoaded() {
+    memset(&sRecordClock, 0, sizeof(sRecordClock));
     sRaceSplitCount = 0;
     clearRaceContext();
     if (sObserverPhase != OBSERVER_OFF) {

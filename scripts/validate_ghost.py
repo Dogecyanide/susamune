@@ -87,6 +87,8 @@ SUPPORTED_REQUIRED_FEATURES_V3 = 0
 SUPPORTED_REQUIRED_FEATURES_V4 = REQUIRED_EXTENDED_CODEC
 SUPPORTED_REQUIRED_FEATURES = SUPPORTED_REQUIRED_FEATURES_V4
 RUN_INCOMPLETE = 0x00000008
+RUN_ASSISTED = 0x00000001
+RUN_TAS = 0x00000020
 ROUTE_FLAGS_V1 = 0x03
 ROUTE_INTERNAL_SCENE = 0x01
 ROUTE_PARENT_START = 0x02
@@ -471,6 +473,8 @@ def validate_ghost(data: bytes) -> dict:
     _require(sample_codec == expected_codec, "unsupported sample codec")
     _require(sample_stride == SAMPLE_SIZE, "invalid sample stride")
     _require(sample_interval_qf == SAMPLE_INTERVAL_QF, "invalid sample interval")
+    _require(not (run_flags & RUN_TAS) or (run_flags & RUN_ASSISTED),
+             "TAS ghost must be marked assisted")
     _require(source_profile < PROFILE_COUNT, "invalid source profile")
     region_name = _game_region(game_id, region, disc_revision)
     _validate_route(route_area, route_episode, route_parent_area, route_flags,
