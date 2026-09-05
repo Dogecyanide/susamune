@@ -43,7 +43,13 @@
     X(BIND_SUCCESS_DEC,          "success_decrease")                         \
     X(BIND_SUCCESS_INC,          "success_increase")                         \
     X(BIND_POSITION_SAVE,        "position_save")                            \
-    X(BIND_POSITION_LOAD,        "position_load")
+    X(BIND_POSITION_LOAD,        "position_load")                            \
+    X(BIND_PRACTICE_PAUSE,       "practice_pause")                           \
+    X(BIND_PRACTICE_STEP,        "practice_step")                            \
+    X(BIND_FREE_CAMERA,          "free_camera")                              \
+    X(BIND_PRACTICE_RECORD,      "practice_record")                          \
+    X(BIND_PRACTICE_REPLAY,      "practice_replay")                          \
+    X(BIND_PRACTICE_STOP,        "practice_stop")
 
 // The bindable buttons, as (GameCube button bit, ini token, menu glyph). The
 // mod defines the regional glyph macros in glyphs.hxx; the launcher ignores

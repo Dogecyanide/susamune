@@ -113,11 +113,9 @@
     SUSAMUNE_MEM1_ADDR(0x817f00b3u, 0x817f00b3u, 0x817f00b3u)
 
 // Scratch for the mod's asm caves. A cave can only reach a *fixed* address --
-// it has no way to find a mod global -- so this is the final 64 bytes of the
-// mod's own reserved arena window, [arena_lo, arena_lo + mod_region_size) from
-// scripts/patches.py, which getArenaLo() keeps the game's heap out of. The
-// The build ceiling is deliberately lower than this physical tail. The blob
-// still cannot grow into scratch, and link_mod.py checks both shared values.
+// it has no way to find a mod global. The original 512 KiB boundary stays
+// fixed even though FOXTROT extends the reservation to 768 KiB. Neither image
+// span enters these bytes; link_mod.py checks the shared offsets.
 //
 // Do NOT put mod scratch in the practice codes' region at 0x817f0000+: that
 // sits ABOVE __ArenaHi (0x81700000), where the apploader's FST and, on

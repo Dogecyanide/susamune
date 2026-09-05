@@ -1,3 +1,4 @@
+#include "susamune/practice_session.hxx"
 #include "susamune/iling.hxx"
 
 #include "Dolphin/OS.h"
@@ -1336,7 +1337,7 @@ void captureGhostRace(int entry) {
 
 u8 liveGlobalAssistReasons() {
     return (gSettings.getBool(SETTING_STAGE_INTRO_SKIP) ||
-            actionsFastForwardActive())
+            actionsFastForwardActive() || PracticeSession::assisted())
                ? Assist::OTHER
                : 0;
 }

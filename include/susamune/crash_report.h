@@ -30,6 +30,27 @@
 #define SUSAMUNE_CRASH_EVENT_SETUP_ENTER    3u
 #define SUSAMUNE_CRASH_EVENT_SETUP_RETURN   4u
 #define SUSAMUNE_CRASH_EVENT_STAGE_READY    5u
+#define SUSAMUNE_CRASH_EVENT_PRACTICE       6u
+#define SUSAMUNE_CRASH_EVENT_REPLAY         7u
+#define SUSAMUNE_CRASH_EVENT_SAVESTATE      8u
+#define SUSAMUNE_CRASH_EVENT_GHOST          9u
+#define SUSAMUNE_CRASH_EVENT_STORAGE       10u
+#define SUSAMUNE_CRASH_EVENT_DRAW          11u
+
+#define SUSAMUNE_CRASH_CORE_MAGIC       0x53434352u /* 'SCCR' */
+#define SUSAMUNE_CRASH_CORE_VERSION     1u
+#define SUSAMUNE_CRASH_CORE_OFFSET      0x800u
+#define SUSAMUNE_CRASH_CORE_SIZE        0x200u
+#define SUSAMUNE_CRASH_ACK_OFFSET       0xA00u
+#define SUSAMUNE_CRASH_ACK_MAGIC        0x5343414bu /* 'SCAK' */
+#define SUSAMUNE_CRASH_ACK_UNAVAILABLE  1u
+#define SUSAMUNE_CRASH_ACK_PENDING      2u
+#define SUSAMUNE_CRASH_ACK_SAVED        3u
+#define SUSAMUNE_CRASH_ACK_FAILED       4u
+#define SUSAMUNE_CRASH_ACK_CORE_ONLY    5u
+#define SUSAMUNE_CRASH_SAVED_CORE       1u
+#define SUSAMUNE_CRASH_SAVED_FULL       2u
+#define SUSAMUNE_CRASH_SAVED_TEXT       4u
 
 struct SusamuneCrashBreadcrumb {
     unsigned int event;
@@ -122,6 +143,51 @@ struct SusamuneCrashReport {
 
     unsigned char reserved[48];
 };
+
+/* Immutable once READY, even if optional full capture faults afterwards. */
+struct SusamuneCrashCore {
+    unsigned int magic;
+    unsigned short version;
+    unsigned short reportSize;
+    unsigned int state;
+    unsigned int captureSeq;
+    unsigned int checksum;
+    unsigned int gameId;
+    unsigned int modFileCrc32;
+    unsigned int exception;
+    unsigned int gpr[32];
+    unsigned int cr, lr, ctr, xer, srr0, srr1, dsisr, dar;
+    unsigned int appContext, currentScene, prevScene, nextScene;
+    unsigned int timeBaseHigh, timeBaseLow, lastEvent, lastArg0;
+    unsigned int lastArg1, contextValid;
+    char build[64];
+    unsigned char reserved[216];
+};
+
+/* ARM owns this line; PPC only invalidates/reads it. */
+struct SusamuneCrashAck {
+    unsigned int magic, captureSeq, status, error;
+    unsigned int attempts, savedFlags, reserved[2];
+};
+
+#define SUSAMUNE_CRASH_CORE_PPC_PTR ((struct SusamuneCrashCore *) \
+    (SUSAMUNE_MEM2_CRASH_PPC_BASE + SUSAMUNE_CRASH_CORE_OFFSET))
+#define SUSAMUNE_CRASH_CORE_PHYS_PTR ((struct SusamuneCrashCore *) \
+    (SUSAMUNE_MEM2_CRASH_PHYS_BASE + SUSAMUNE_CRASH_CORE_OFFSET))
+#define SUSAMUNE_CRASH_ACK_PPC_PTR ((struct SusamuneCrashAck *) \
+    (SUSAMUNE_MEM2_CRASH_PPC_BASE + SUSAMUNE_CRASH_ACK_OFFSET))
+#define SUSAMUNE_CRASH_ACK_PHYS_PTR ((struct SusamuneCrashAck *) \
+    (SUSAMUNE_MEM2_CRASH_PHYS_BASE + SUSAMUNE_CRASH_ACK_OFFSET))
+
+typedef char susamune_crash_core_size_check[
+    (sizeof(struct SusamuneCrashCore) == SUSAMUNE_CRASH_CORE_SIZE) ? 1 : -1];
+typedef char susamune_crash_ack_size_check[
+    (sizeof(struct SusamuneCrashAck) == 32) ? 1 : -1];
+typedef char susamune_crash_regions_check[
+    (SUSAMUNE_CRASH_REPORT_SIZE <= SUSAMUNE_CRASH_CORE_OFFSET &&
+     SUSAMUNE_CRASH_CORE_OFFSET + SUSAMUNE_CRASH_CORE_SIZE <=
+        SUSAMUNE_CRASH_ACK_OFFSET &&
+     SUSAMUNE_CRASH_ACK_OFFSET + 32 <= SUSAMUNE_MEM2_CRASH_SIZE) ? 1 : -1];
 
 #define SUSAMUNE_CRASH_PPC_PTR \
     ((struct SusamuneCrashReport *)SUSAMUNE_MEM2_CRASH_PPC_BASE)

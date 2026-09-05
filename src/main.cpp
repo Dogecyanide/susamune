@@ -31,6 +31,7 @@
 #include "susamune/qft_display.hxx"
 #include "susamune/records.hxx"
 #include "susamune/practice_visuals.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/records_persistence.hxx"
 #include "susamune/ricco_fruit.hxx"
 #include "susamune/rng_control.hxx"
@@ -106,7 +107,7 @@ SavestateManager* gSavestateMgr = nullptr;
 //
 // The reserve is SUSAMUNE_ARENA_RESERVE_SIZE, not the region size: __OSArenaLo
 // sits a debug stack below the __ArenaLo the blob links at. Adding only the
-// region size puts the heap floor at MOD_BASE + 0x1E000, inside the blob.
+// region size leaves the top 8 KiB exposed to heap allocations.
 // SUSAMUNE_ARENA_RESERVE_SIZE must match arena_reserve in scripts/patches.py.
 extern "C" void* getArenaLo() {
     return (void*)(*(volatile u32*)SUSAMUNE_ADDR_OS_ARENA_LO +
@@ -122,6 +123,7 @@ extern "C" void onAppInit(TApplication* app) {
     app->initialize();
     CrashReport::init();
     gSettings.init();
+    PracticeSession::init();
     rngControlInit();
     riccoFruitControlInit();
     gQFTTimer.init();
@@ -224,6 +226,7 @@ extern "C" void onSetup(TMarDirector* director) {
     // destructor never clears that global. Stages without a pollution manager
     // would otherwise inherit a pointer into the previous stage's freed heap.
     gpPollution = nullptr;
+    PracticeSession::beforeStageSetup();
     GhostModel::beforeStageSetup();
     SplitEvents::beforeStageSetup();
     if (Ghost::observerCleanupPending())
@@ -329,8 +332,12 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool menuOwnsRetailPad = menuOpenBeforeDirect ||
         (gMenu && gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
     const bool wheelOpenBeforeDirect = WarpWheel::shown();
+    const bool wheelToggleBeforeDirect = !creationEditing &&
+        !sessionResultBeforeDirect && !menuOwnsRetailPad &&
+        !gSettings.getBool(SETTING_DISABLE_WARPS) &&
+        gBinds.wasPressed(BIND_WARP_WHEEL);
     const bool wheelOwnsInputBeforeDirect =
-        wheelOpenBeforeDirect || WarpWheel::promptPending();
+        wheelOpenBeforeDirect || WarpWheel::promptPending() || wheelToggleBeforeDirect;
     // A pending result must block new consumers without trapping an overlay
     // that was already open before the finish was recorded.
     const bool sessionBlocksNewInput = sessionModalBeforeDirect ||
@@ -347,6 +354,17 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         gpApplication.mGamePads[0]->mButtons.mFrameInput = 0;
         gpApplication.mGamePads[0]->mButtons.mRapidInput = 0;
     }
+    const bool practiceModal = creationEditing || sessionBlocksNewInput ||
+        menuOwnsRetailPad || wheelOwnsInputBeforeDirect || Ghost::observerActive();
+    if (!practiceModal) {
+        if (gBinds.wasPressed(BIND_PRACTICE_PAUSE)) PracticeSession::requestPauseToggle();
+        if (gBinds.wasPressedSubset(BIND_PRACTICE_STEP)) PracticeSession::requestStep();
+        if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
+        if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
+        if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
+        if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
+    }
+    PracticeSession::beforeDirect(practiceModal);
     gQFTTimer.beginFrame();
     SplitStats::beginFrame();
     gQFTTimer.update();
@@ -371,7 +389,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool freeze = gpMarDirector &&
                         gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
                         ((gMenu && gMenu->shown()) || WarpWheel::shown() ||
-                         sessionModalBeforeDirect);
+                         sessionModalBeforeDirect || PracticeSession::freezeRequested());
     const bool marioActive = gpMarDirector &&
                              gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
                              !freeze;
@@ -385,15 +403,17 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     SplitEvents::beginFrame();
     TMarioGamePad *const retailPad = gpApplication.mGamePads[0];
     RetailPadInputSnapshot retailInput;
-    if (menuOwnsRetailPad && retailPad)
+    const bool suppressPad = menuOwnsRetailPad || PracticeSession::freeCamera();
+    if (suppressPad && retailPad)
         suppressRetailPad(retailPad, retailInput);
     int state = director->direct();
-    if (menuOwnsRetailPad && retailPad)
+    if (suppressPad && retailPad)
         restoreRetailPad(retailPad, retailInput);
     if (freeze) {
         gpMarDirector->mCurState = TMarDirector::STATE_NORMAL;
         state = 0;
     }
+    PracticeSession::afterDirect(state, marioActive);
     Ghost::afterDirect(state);
     WallkickDisplay::afterDirect(marioActive);
     MovementDisplay::afterDirect(marioActive);
@@ -419,6 +439,10 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     SplitEvents::update();
     const bool observerFrame = Ghost::observerStatsSuppressed();
     Ghost::update();
+    if (PracticeSession::assisted()) Ghost::invalidateForAssist();
+    SusamunePracticeInput consumedInput;
+    if (PracticeSession::consumedInput(&consumedInput))
+        Ghost::captureInput(consumedInput);
     Records::update(creationEditing, observerFrame);
     ILing::update();
     StageLoader::update();
@@ -436,7 +460,8 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     // Runs every frame like the gecko handler; no-ops when nothing changed.
     featuresApply();
 
-    actionsApply(!creationEditing && !sessionOwnsInput);
+    actionsApply(!creationEditing && !sessionOwnsInput &&
+                 !PracticeSession::ownsGameplayInput());
     gCreationExtras.update();
 
     if (gSavestateMgr && !creationEditing && !sessionOwnsInput) {
@@ -464,6 +489,7 @@ extern "C" void afterDraw() {
         !gMetadataDisplay.editing() && !gCreationExtras.editing() &&
         !StageLoader::resultOwnsInput())
         gSavestateMgr->processPendingLoad();
+    PracticeSession::afterDraw();
     // gpPollution is stale until the async setup thread reaches onSetup.
     if (gpMarDirector && gpMarDirector->_260 != 0 &&
         gpMarDirector->mCurState >= TMarDirector::STATE_GAME_STARTING) {
@@ -484,6 +510,9 @@ extern "C" void afterDraw() {
         if (gMenu)
             gMenu->draw(&ortho);
         GameplayPolish::draw(gMenu);
+        PracticeSession::draw(gMenu);
+        if (gMenu && !gMenu->shown())
+            Ghost::drawInputs(gMenu, gSettings.get(SETTING_GHOST_INPUTS));
         if (gSavestateMgr)
             gSavestateMgr->draw(gMenu);
 #if ENABLE_MEM_DIAGNOSTICS

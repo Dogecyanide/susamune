@@ -67,6 +67,7 @@ class NestedMenuContracts(unittest.TestCase):
                 "kTimerFreezeSettings",
             ),
             "SETTING_CAT_UI": (
+                "kDisplayNativeSettings",
                 "kDisplayMovementSettings",
                 "kDisplayPracticeSettings",
                 "kDisplayOtherSettings",
@@ -121,8 +122,8 @@ class NestedMenuContracts(unittest.TestCase):
 
     def test_settings_hub_is_grouped_coherently(self) -> None:
         menu = text("src/menu.cpp")
-        self.assertIn("gameplay, practice, rng, savestate,", menu)
-        self.assertIn("timer, display, cosmetics, creation, binds,", menu)
+        self.assertIn("{ frame, savestate, practice, rng, gameplay }", menu)
+        self.assertIn("{ creation, display, timer, cosmetics }", menu)
         self.assertIn('return "GAMEPLAY AND PRACTICE"', menu)
         self.assertIn('return "TIMING AND HUD"', menu)
         self.assertIn('return "LAYOUT AND CONTROLS"', menu)

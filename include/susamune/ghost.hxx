@@ -2,6 +2,7 @@
 #define _SUSAMUNE_GHOST_HXX
 
 #include <Dolphin/types.h>
+#include "susamune/practice_input.h"
 
 class Menu;
 class TMarDirector;
@@ -59,6 +60,11 @@ void afterDirect(s32 appState);
 void update();
 void draw(Menu *menu);
 void onSavestateLoaded();
+void invalidateForAssist();
+void captureInput(const SusamunePracticeInput &input);
+void captureSplit(u16 route, u8 endpoint, s32 absoluteQf);
+bool comparisonSplit(u16 route, u8 endpoint, s32 *out);
+void drawInputs(Menu *menu, u8 mode);
 
 // Canonical SGHF bridge used by the asynchronous ARM storage service.
 // Import validates the complete file before replacing the active playback.

@@ -12,6 +12,7 @@
 // =====================================================================
 
 #include "susamune/menu.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
@@ -52,6 +53,9 @@
 #include "SMS/System/Application.hxx"
 #include "SMS/System/MarDirector.hxx"
 #include "JKernel/JKRHeap.hxx"  // placement new (operator new(size_t, void*))
+
+// Presentation occupies the added arena span; fixed timer scratch stays below it.
+#pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
 // Objects are placement-new'd into BSS buffers so the menu needs no heap.
 
@@ -2767,7 +2771,7 @@ private:
                         ? "Switch Records between this region and all regions."
                         : "Shows a popup and chime when an achievement unlocks.";
         drawHelpLine(menu, x, y, w, h - 52, help);
-        menu->drawText("Moonshine V2.2.0",
+        menu->drawText("Moonshine FOXTROT",
                        x + 4, y + h - 44, FOOT_SZ, FOOT_SZ, cRowDim());
         menu->drawText(storageStatus(), x + 4, y + h - 24,
                        FOOT_SZ, FOOT_SZ,
@@ -3263,7 +3267,7 @@ namespace {
 
 const char kCategoryTitles[] =
     "Gameplay and QoL\0Savestates\0Practice tools\0Appearance\0"
-    "HUD and displays\0Timer and splits\0RNG controls\0Shined";
+    "HUD and displays\0Timer and splits\0RNG controls\0Quick";
 
 enum CategoryTitleOffset {
     TITLE_QOL       = 0,
@@ -3276,7 +3280,7 @@ enum CategoryTitleOffset {
     TITLE_STARRED   = TITLE_RNG + sizeof("RNG controls"),
 };
 
-static_assert(TITLE_STARRED + sizeof("Shined") == sizeof(kCategoryTitles),
+static_assert(TITLE_STARRED + sizeof("Quick") == sizeof(kCategoryTitles),
               "category title offsets changed");
 static_assert(SETTING_COUNT <= 0x100, "setting ids no longer fit in a byte");
 static_assert(SETTING_CAT_COUNT <= 0x100, "setting categories no longer fit in a byte");
@@ -3327,6 +3331,7 @@ const u8 kTimerDisplaySettings[] = {
     SETTING_TIMER_QFT_VISIBILITY,
     SETTING_TIMER_SECTIONS,
     SETTING_LEVEL_SPLITS,
+    SETTING_SPLIT_COMPARISON,
 };
 const u8 kTimerFreezeSettings[] = {
     SETTING_TIMER_FREEZE_DURATION,
@@ -3406,11 +3411,17 @@ const u8 kDisplayPracticeSettings[] = {
     SETTING_HURTBOX_TARGET,
     SETTING_RICCO_RACE_CHECKPOINTS,
 };
+const u8 kDisplayNativeSettings[] = {
+    SETTING_NATIVE_TIMER_X, SETTING_NATIVE_TIMER_Y, SETTING_NATIVE_TIMER_SCALE,
+};
 const u8 kDisplayOtherSettings[] = {
+    SETTING_GHOST_INPUTS,
     SETTING_SHOW_BGM_SLOTS,
     SETTING_RESTART_QUEUED_FEEDBACK,
 };
 const SettingPage kDisplayPages[] = {
+    {"Native timer layout", "Move or resize the original Sunshine timer artwork.",
+     kDisplayNativeSettings, sizeof(kDisplayNativeSettings)},
     {"Movement displays", "Frame feedback for movement practice.",
      kDisplayMovementSettings,
      sizeof(kDisplayMovementSettings)},
@@ -3511,6 +3522,11 @@ const char *settingHelp(SettingId id) {
     case SETTING_TIMER_QFT_VISIBILITY: return "Chooses when the bottom-left QFT is shown.";
     case SETTING_TIMER_FREEZE_DURATION: return "Sets how long event-triggered QFT freezes remain.";
     case SETTING_TIMER_SECTIONS: return "Shows the recent QFT section history.";
+    case SETTING_GHOST_INPUTS: return "Shows the selected ghost input, or two controllers for comparison.";
+    case SETTING_SPLIT_COMPARISON: return "Compare existing splits with PB, sum of best, or the selected ghost.";
+    case SETTING_NATIVE_TIMER_X: return "Horizontal offset from the original timer position.";
+    case SETTING_NATIVE_TIMER_Y: return "Vertical offset from the original timer position.";
+    case SETTING_NATIVE_TIMER_SCALE: return "Scales the original timer artwork without changing its timing.";
     case SETTING_LEVEL_SPLITS: return "Shows route splits during supported ILs.";
     case SETTING_PATTERN_SELECTOR: return "Enables repeatable patterns for supported practice.";
     case SETTING_ILING_FANFARE: return "Plays a fanfare when an IL personal best is accepted.";
@@ -4285,14 +4301,15 @@ const u8 kBindSectionStarts[] = {
     BIND_TOGGLE_INPUT_DISPLAY,
     BIND_ATTEMPT_SHOW,
     BIND_POSITION_SAVE,
+    BIND_PRACTICE_PAUSE,
 };
 const char kBindSectionNames[] =
-    "ACTIONS\0MENU\0SAVESTATES\0WARPS AND RESTARTS\0DISPLAY\0ATTEMPT COUNTER\0POSITION";
+    "ACTIONS\0MENU\0SAVESTATES\0WARPS AND RESTARTS\0DISPLAY\0ATTEMPT COUNTER\0POSITION\0FRAME AND CAMERA";
 enum {
     kBindSectionCount =
         sizeof(kBindSectionStarts) / sizeof(kBindSectionStarts[0]),
 };
-static_assert(kBindSectionCount == 7,
+static_assert(kBindSectionCount == 8,
               "bind section metadata must be validated together");
 static_assert(BIND_REGRAB_OBJECT == 0 &&
                   BIND_REGRAB_OBJECT < BIND_MENU_TOGGLE &&
@@ -5384,6 +5401,85 @@ private:
 static_assert(sizeof(NestedMenuTab) <= 64,
               "nested menu router grew unexpectedly");
 
+class PracticeControlsTab final : public MenuTab {
+public:
+    PracticeControlsTab() : mSel(0) { mInput.begin(JUTGamePad::A); }
+    const char *title() const override { return "Frames, camera and inputs"; }
+    const char *summary() const override { return "Pause precisely, explore the view, record and replay a take."; }
+    void focus() override { mInput.begin(JUTGamePad::A); }
+    bool suppressesBinds() const override { return true; }
+    void update(Menu *menu, TMarioGamePad *pad) override {
+        u32 nav = menu->navigationInput(pad);
+        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, 7);
+        if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, 7);
+        if (!(mInput.update() & JUTGamePad::A)) return;
+        bool close = false;
+        switch (mSel) {
+        case 0: close = PracticeSession::requestPauseToggle(true); break;
+        case 1: close = PracticeSession::requestStep(true); break;
+        case 2: close = PracticeSession::requestFreeCameraToggle(); break;
+        case 3: PracticeSession::recenterCamera(); break;
+        case 4: close = PracticeSession::requestRecord(); break;
+        case 5: close = PracticeSession::requestPlayback(); break;
+        case 6: PracticeSession::requestStop(); break;
+        }
+        if (close) menu->hide();
+        menu->toast(PracticeSession::status());
+    }
+    void draw(Menu *menu, int x, int y, int w, int h) override {
+        const char *labels[] = {"Practice pause", "Advance one frame", "Free camera",
+            "Recenter free camera", "Record inputs from savestate", "Replay recorded inputs",
+            "Stop recording or replay"};
+        const char *values[] = {PracticeSession::paused() ? "Paused" : "Live", "Step",
+            PracticeSession::freeCamera() ? "On" : "Off", "Reset view", "Start", "Play", "Stop"};
+        for (int i = 0; i < 7; ++i)
+            drawValueRow(menu, x, y + i * ROW_H, w, labels[i], values[i], i == mSel, false, true);
+        char take[64];
+        snprintf(take, sizeof(take), "Local take: %lu / %lu frames", PracticeSession::recordedFrames(),
+                 PracticeSession::capacityFrames());
+        menu->drawText(take, x + 4, y + 8 * ROW_H, 14, 14, cValue());
+        drawHelpLine(menu, x, y, w, h,
+            mSel >= 4 ? "Experimental replay: save a state first; same scene and settings." :
+            "Free camera works in retail pause or practice pause. Clocks stay live.");
+    }
+private:
+    u8 mSel;
+    RawPromptInput mInput;
+};
+static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
+
+class GuideTab final : public MenuTab {
+public:
+    GuideTab() : mPage(0) {}
+    const char *title() const override { return "FOXTROT guide"; }
+    const char *summary() const override { return "Controls, recording limits and pre-release information."; }
+    void update(Menu *menu, TMarioGamePad *pad) override {
+        u32 nav = menu->navigationInput(pad);
+        if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 3);
+        if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 3);
+    }
+    void draw(Menu *menu, int x, int y, int w, int h) override {
+        static const char *const pages[][8] = {
+            {"FRAME CONTROLS", "L + D-Up: practice pause / resume", "L + D-Right: advance one game frame",
+             "L + D-Down: free camera toggle", "Sticks: move / look. L / R: height.",
+             "Free camera: retail pause or practice pause.", "Change combos in System > Button binds.", "Game clocks stay unchanged; practice is assisted."},
+            {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Frames, camera and inputs > Record.",
+             "Stop keeps the local take. Replay loads its seed.", "New savestate or scene invalidates the take.",
+             "Up to 4096 frames, held in memory this session.", "A state mismatch stops experimental playback.", "Imported ghosts show inputs; they do not drive Mario."},
+            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Ghost inputs: Display > HUD and displays.",
+             "Split comparison: Off / PB / SOB / Ghost.", "Existing checkpoints only; new splits are handmade.",
+             "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
+        };
+        drawSectionHeader(menu, x, y, w, pages[mPage][0]);
+        for (int i = 1; i < 8; ++i)
+            menu->drawText(pages[mPage][i], x + 4, y + 20 + i * 25, 15, 15, cRow());
+        drawHelpLine(menu, x, y, w, h, "C-stick: previous / next page");
+    }
+private:
+    u8 mPage;
+};
+static_assert(sizeof(GuideTab) <= 16, "guide menu storage");
+
 // =====================================================================
 // Menu
 // =====================================================================
@@ -5529,12 +5625,16 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 stageLoader[sizeof(StageLoaderTab)] __attribute__((aligned(8)));
     u8 settingsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 ilsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
+    u8 practiceControls[64] __attribute__((aligned(8)));
+    u8 guide[16] __attribute__((aligned(8)));
+    u8 displayHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
+    u8 systemHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 menu[sizeof(Menu)] __attribute__((aligned(8)));
 };
 
 MenuRuntime &sMenuRuntime = *reinterpret_cast<MenuRuntime *>(
     SUSAMUNE_MEM2_MENU_RUNTIME_PPC_BASE);
-static_assert(sizeof(MenuRuntime) <= SUSAMUNE_MENU_RUNTIME_SIZE,
+static_assert(sizeof(MenuRuntime) <= SUSAMUNE_FOXTROT_MENU_RUNTIME_SIZE,
               "menu state exceeds its MEM2 runtime window");
 
 #if ENABLE_DEBUG_WARPS
@@ -5558,7 +5658,12 @@ static_assert(sizeof(MenuRuntime) <= SUSAMUNE_MENU_RUNTIME_SIZE,
 #define sStageLoaderBuf sMenuRuntime.stageLoader
 #define sSettingsHubBuf sMenuRuntime.settingsHub
 #define sILsHubBuf sMenuRuntime.ilsHub
+#if IS_EMULATOR
+// Retail paired-single matrix loads cannot read Dolphin's fake MEM2 safely.
+alignas(8) u8 sMenuBuf[sizeof(Menu)];
+#else
 #define sMenuBuf sMenuRuntime.menu
+#endif
 }  // namespace
 
 Menu::Menu() : mText(gpSystemFont->mFont, " ") {
@@ -5633,29 +5738,22 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     MenuTab *stageLoader = new (sStageLoaderBuf) StageLoaderTab();
     MenuTab *records = new (sRecordsBuf) RecordsTab();
 
-    MenuTab *settingsChildren[] = {
-        pbSafety, gameplay, practice, rng, savestate,
-        timer, display, cosmetics, creation, binds,
-    };
-    MenuTab *ilChildren[] = {
-        iling, ghosts, stageLoader,
-    };
-    static_assert(sizeof(settingsChildren) / sizeof(settingsChildren[0]) <= 10,
-                  "Settings hub exceeds nested menu capacity");
-    static_assert(sizeof(ilChildren) / sizeof(ilChildren[0]) <= 8,
-                  "IL hub exceeds nested menu capacity");
-
+    MenuTab *frame = new (sMenuRuntime.practiceControls) PracticeControlsTab();
+    MenuTab *guide = new (sMenuRuntime.guide) GuideTab();
+    MenuTab *practiceChildren[] = { frame, savestate, practice, rng, gameplay };
+    MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety };
+    MenuTab *displayChildren[] = { creation, display, timer, cosmetics };
+    MenuTab *systemChildren[] = { binds, guide };
     mTabs[mNumTabs++] = starred;
-    mTabs[mNumTabs++] =
-        new (sSettingsHubBuf) NestedMenuTab(
-            "Settings", settingsChildren,
-            sizeof(settingsChildren) / sizeof(settingsChildren[0]),
-            NestedMenuTab::SECTIONS_SETTINGS);
-    mTabs[mNumTabs++] =
-        new (sILsHubBuf) NestedMenuTab(
-            "ILs", ilChildren, sizeof(ilChildren) / sizeof(ilChildren[0]),
-            NestedMenuTab::SECTIONS_ILS);
-    mTabs[mNumTabs++] = records;
+    mTabs[mNumTabs++] = new (sSettingsHubBuf) NestedMenuTab(
+        "Practice", practiceChildren, 5);
+    mTabs[mNumTabs++] = new (sILsHubBuf) NestedMenuTab(
+        "Runs", runChildren, 4);
+    mTabs[mNumTabs++] = ghosts;
+    mTabs[mNumTabs++] = new (sMenuRuntime.displayHub) NestedMenuTab(
+        "Display", displayChildren, 4);
+    mTabs[mNumTabs++] = new (sMenuRuntime.systemHub) NestedMenuTab(
+        "System", systemChildren, 2);
 }
 
 bool Menu::openGhostPBSave(u32 token) {
@@ -6111,9 +6209,11 @@ void Menu::draw(J2DOrthoGraph *ortho) {
     fillBox(PANEL_X, PANEL_Y, PANEL_W, 3, cAccent());
 
     // Title + accent underline.
-    drawText("Moonshine", PANEL_X + PAD - 2, PANEL_Y + 12,
+    drawText("Moonshine FOXTROT", PANEL_X + PAD - 2, PANEL_Y + 12,
              TITLE_SZ, TITLE_SZ, cTitle());
-    fillBox(PANEL_X + PAD, PANEL_Y + 12 + TITLE_SZ + 1, 150, 2, cAccent());
+    drawText("V2.3.0 PRE-RELEASE", PANEL_X + PANEL_W - PAD - textWidth("V2.3.0 PRE-RELEASE", 11),
+             PANEL_Y + 21, 11, 11, col(255, 196, 90, 255));
+    fillBox(PANEL_X + PAD, PANEL_Y + 12 + TITLE_SZ + 1, 260, 2, cAccent());
 
     drawTabStrip(PANEL_X + PAD, TAB_STRIP_Y, PANEL_W - PAD * 2);
 

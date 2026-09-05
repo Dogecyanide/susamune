@@ -8,18 +8,15 @@
 // side owns a separate cache line; the request payload stays immutable until
 // ackSeq catches requestSeq.
 #define SUSAMUNE_GHOST_STORAGE_MAGIC        0x53475354u  // 'SGST'
-#define SUSAMUNE_GHOST_STORAGE_VERSION      3u
+#define SUSAMUNE_GHOST_STORAGE_VERSION      4u
 #define SUSAMUNE_GHOST_STORAGE_HEADER_SIZE \
     SUSAMUNE_GHOST_TRANSFER_MAILBOX_HEADER_SIZE
 #define SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE \
-    (SUSAMUNE_GHOST_SLOT_SIZE - SUSAMUNE_GHOST_STORAGE_HEADER_SIZE)
+    SUSAMUNE_GHOST_FILE_TRANSFER_SIZE
 #define SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE   0x4000u
 
-#if SUSAMUNE_GHOST_STORAGE_HEADER_SIZE + SUSAMUNE_GHOST_MAX_FILE_SIZE > SUSAMUNE_GHOST_SECONDARY_HEAP_OFFSET
-#error "ghost transfer payload overlaps the secondary model heap"
-#endif
-#if ((SUSAMUNE_GHOST_STORAGE_HEADER_SIZE + SUSAMUNE_GHOST_MAX_FILE_SIZE) & 31u) != 0
-#error "ghost transfer payload end must be cache-line aligned"
+#if SUSAMUNE_GHOST_MAX_FILE_SIZE > SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE
+#error "ghost file exceeds the dedicated transfer allocation"
 #endif
 
 // V3 keeps the 48-row wire catalog; only the first 45 personal rows are live.
@@ -149,8 +146,15 @@ struct SusamuneGhostStorageMailbox {
     struct SusamuneGhostStorageRequest request;
     struct SusamuneGhostStorageResponse response;
     unsigned char reserved[SUSAMUNE_GHOST_STORAGE_HEADER_SIZE - 64u];
-    unsigned char payload[SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE];
+    unsigned char payload[SUSAMUNE_GHOST_SLOT_SIZE -
+                          SUSAMUNE_GHOST_STORAGE_HEADER_SIZE];
 };
+
+/* Protocol 4 keeps doorbells in place; only this fixed payload bank moves. */
+#define SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR \
+    ((volatile unsigned char *)SUSAMUNE_GHOST_FILE_TRANSFER_PPC_BASE)
+#define SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR \
+    ((volatile unsigned char *)SUSAMUNE_GHOST_FILE_TRANSFER_PHYS_BASE)
 
 #define SUSAMUNE_GHOST_STORAGE_PHYS_PTR \
     ((volatile struct SusamuneGhostStorageMailbox *) \

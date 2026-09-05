@@ -1,5 +1,9 @@
 # Moonshine — a Super Mario Sunshine practice mod
 
+This branch contains **Moonshine Launcher FOXTROT — V2.3.0 pre-release**.
+See the [English guide](doc/foxtrot-guide-en.md), [日本語ガイド](doc/foxtrot-guide-ja.md),
+[changes](doc/foxtrot-changelog.md), and [testing checklist](doc/foxtrot-testing.md).
+
 It implements most of the [GCT generator](https://gct.zint.ch/) practice codes, adds emulator-like savestates to console (Wii through Nintendont), and more. It supports JP 1.0, US, and PAL versions. Vibe coded software, use at your own risk.
 
 <p align="center">

@@ -1,3 +1,4 @@
+#include "Dolphin/printf.h"
 // =====================================================================
 // settings.cpp
 //
@@ -44,6 +45,11 @@ enum ChoiceSet {
     CHOICES_HIDDEN_ITEMS,
     CHOICES_HURTBOX_MODE,
     CHOICES_HURTBOX_TARGET,
+    CHOICES_GHOST_INPUTS,
+    CHOICES_SPLIT_COMPARISON,
+    CHOICES_NATIVE_X,
+    CHOICES_NATIVE_Y,
+    CHOICES_NATIVE_SCALE,
     CHOICES_COUNT,
 };
 
@@ -74,7 +80,7 @@ const char kChoiceLabels[] =
     "Durians only\0"
     "Pattern 1\0Pattern 2\0Pattern 3\0Pattern 4\0"
     "Both\0Fruit\0Coins\0Wireframe\0Transparent\0Solid\0"
-    "All enemies\0Eely teeth only";
+    "All enemies\0Eely teeth only\0Ghost\0Both inputs\0PB\0SOB";
 
 const u8 kChoiceMap[] = {
     0, 1,              // bool
@@ -97,13 +103,16 @@ const u8 kChoiceMap[] = {
     0, 45, 46, 47,       // hidden items
     0, 48, 49, 50,       // hurtbox mode
     51, 52,               // hurtbox target
+    0, 53, 54,            // ghost inputs
+    0, 55, 56, 53,        // split comparison
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // numeric presentation values
 };
 const u8 kChoiceFirst[CHOICES_COUNT + 1] = {
     0, 2, 5, 9, 12, 15, 21, 24, 27, 31, 34, 36, 39, 42, 44, 50, 52, 57,
-    61, 65, 67
+    61, 65, 67, 70, 74, 107, 132, 143
 };
 
-static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 67,
+static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 143,
               "choice map size changed");
 static_assert(SETTING_HELMET_APPEARANCE == SETTING_GHOST_OPACITY + 1 &&
                   SETTING_CAP_APPEARANCE == SETTING_HELMET_APPEARANCE + 1 &&
@@ -200,9 +209,8 @@ const u32 kFatFsInternalError = 2;
 }  // namespace
 
 Settings &gSettings = *reinterpret_cast<Settings *>(
-    SUSAMUNE_MEM2_CONFIG_RUNTIME_PPC_BASE +
-    SUSAMUNE_CONFIG_SETTINGS_OFFSET);
-static_assert(sizeof(Settings) <= SUSAMUNE_CONFIG_SETTINGS_SIZE,
+    SUSAMUNE_MEM2_SETTINGS_RUNTIME_PPC_BASE);
+static_assert(sizeof(Settings) <= SUSAMUNE_FOXTROT_SETTINGS_SIZE,
               "settings exceed their MEM2 runtime slot");
 
 void Settings::resetDefaults() {
@@ -516,6 +524,14 @@ void Settings::cycle(SettingId id, int dir) {
 }
 
 const char *Settings::valueLabel(SettingId id) const {
+    static char numeric[16];
+    if (id >= SETTING_NATIVE_TIMER_X && id <= SETTING_NATIVE_TIMER_SCALE) {
+        int value = id == SETTING_NATIVE_TIMER_X ? ((int)mValues[id] - 16) * 10 :
+                    id == SETTING_NATIVE_TIMER_Y ? ((int)mValues[id] - 12) * 10 :
+                    50 + (int)mValues[id] * 10;
+        snprintf(numeric, sizeof(numeric), id == SETTING_NATIVE_TIMER_SCALE ? "%d pct" : "%d px", value);
+        return numeric;
+    }
     const SettingDesc &d = kSettingDescs[id];
     u8 index = kChoiceFirst[d.choices] + mValues[id] % choiceCount(d);
     return PackedText::at(kChoiceLabels, kChoiceMap[index]);

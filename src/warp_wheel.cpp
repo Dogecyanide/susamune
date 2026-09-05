@@ -21,6 +21,7 @@
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/packed_text.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/raw_prompt_input.hxx"
 #include "susamune/settings.hxx"
@@ -860,6 +861,7 @@ void prepareArmedDeparture() {
 
 __attribute__((noinline)) void armWarp(const LevelWarp::Dest &dest,
                                        bool keepSpawn, bool overrideSource) {
+    PracticeSession::releaseForDeparture();
     sDest = dest;
     sArmed = true;
     sWaitForRetailDeathTail = false;

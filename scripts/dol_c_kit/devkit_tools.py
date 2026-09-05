@@ -374,6 +374,8 @@ class Project(object):
         # is copied to base_addr as one contiguous image, so this is what keeps
         # it out of whatever follows the reserved region.
         self.blob_max_size = None
+        self.allowed_spans = None
+        self.image_segments = []
         # Filled in by __process_project: (name, addr, size) per SHF_ALLOC
         # section, in address order.
         self.section_layout = []
@@ -549,18 +551,21 @@ class Project(object):
                 print(hook.dump_info())
 
         if len(datablob) > 0:
-            new_section: Section
-            if len(dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.base_addr, datablob)
-            elif len(dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.base_addr, datablob)
-            else:
-                raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
-            dol.append_section(new_section)
-            
+            images = self.image_segments or [{"offset": 0, "code": datablob.hex(), "memory_size": len(datablob)}]
+            for image in images:
+                data = bytes.fromhex(image["code"])
+                data += bytes(image["memory_size"] - len(data))
+                address = self.base_addr + image["offset"]
+                if len(dol.textSections) < DolFile.MaxTextSections:
+                    new_section = TextSection(address, data)
+                elif len(dol.dataSections) < DolFile.MaxDataSections:
+                    new_section = DataSection(address, data)
+                else:
+                    raise RuntimeError("DOL is full! Cannot allocate image spans.")
+                dol.append_section(new_section)
             if self.osarena_patcher:
                 self.osarena_patcher(dol, self.base_addr + len(datablob))
-        
+
         with open(out_dol_path, "wb") as f:
             dol.save(f)
     
@@ -584,9 +589,13 @@ class Project(object):
                 print("[GeckoCode]   {:12s} ${}".format("ENABLED" if gecko_code.is_enabled() else "DISABLED", gecko_code.name))
             # Create Program Data megacode
             if datablob:
-                gecko_command = WriteString(datablob, self.base_addr)
-                f.write("* Program Data\n")
-                f.write(gecko_command.as_text() + "\n")
+                images = self.image_segments or [{"offset": 0, "code": datablob.hex(), "memory_size": len(datablob)}]
+                for image in images:
+                    data = bytes.fromhex(image["code"])
+                    data += bytes(image["memory_size"] - len(data))
+                    gecko_command = WriteString(data, self.base_addr + image["offset"])
+                    f.write("* Program Data span\n")
+                    f.write(gecko_command.as_text() + "\n")
             # Create Hooks
             f.write("* Hooks\n")
             for hook in self.hooks:
@@ -621,6 +630,7 @@ class Project(object):
             "base_addr": self.base_addr,
             "size": len(datablob),
             "memory_size": self.blob_size,
+            "segments": self.image_segments,
             # The arena reservation (mod_region_size) is the amount every
             # bottom-anchored heap allocation shifts up by once the mod is
             # active. The launcher needs it to relocate hardcoded-heap-address
@@ -820,19 +830,27 @@ class Project(object):
             args.append(flag)
         if self.print_commands:
             print(args)
-        subprocess.call(args)
+        subprocess.check_call(args)
         return True
     
     def __process_project(self):
         with open(self.obj_dir+self.project_name+".o", 'rb') as f:
             elf = ELFFile(f)
             self.section_layout = []
+            alloc_sections = []
             initialized_end = self.base_addr
             runtime_end = self.base_addr
             with open(self.obj_dir+self.project_name+".bin", "wb") as bin:
                 for iter in elf.iter_sections():
                     # Filter out sections without SHF_ALLOC attribute
-                    if iter.header["sh_flags"] & 0x2:
+                    if iter.header["sh_flags"] & 0x2 and iter.header["sh_size"]:
+                        offset = iter.header["sh_addr"] - self.base_addr
+                        size = iter.header["sh_size"]
+                        if self.allowed_spans and not any(
+                                start <= offset and offset + size <= start + cap
+                                for start, cap in self.allowed_spans):
+                            raise RuntimeError(f"section {iter.name} enters a protected MEM1 hole")
+                        alloc_sections.append((offset, size, iter.header["sh_type"] != "SHT_NOBITS"))
                         section_end = (iter.header["sh_addr"] +
                                        iter.header["sh_size"])
                         runtime_end = max(runtime_end, section_end)
@@ -850,7 +868,24 @@ class Project(object):
             self.initialized_size = ((initialized_end - self.base_addr + 3) & ~3)
             if self.initialized_size > self.blob_size:
                 raise RuntimeError("initialized mod span exceeds runtime span")
+            self.image_segments = []
+            if self.allowed_spans:
+                with open(self.obj_dir+self.project_name+".bin", "rb") as image:
+                    for start, cap in self.allowed_spans:
+                        sections = [(off, size, init) for off, size, init in alloc_sections
+                                    if start <= off < start + cap]
+                        mem_end = max([start] + [off + size for off, size, init in sections])
+                        init_end = max([start] + [off + size for off, size, init in sections if init])
+                        mem_size = (mem_end - start + 3) & ~3
+                        init_size = (init_end - start + 3) & ~3
+                        image.seek(start)
+                        self.image_segments.append({"offset": start, "memory_size": mem_size,
+                            "code": image.read(init_size).hex()})
             self.__report_layout()
+            if self.image_segments:
+                used = sum(s["memory_size"] for s in self.image_segments)
+                cap = sum(size for start, size in self.allowed_spans)
+                print(f"  usable spans: {used} / {cap} bytes; {cap-used} bytes free")
 
             symtab = elf.get_section_by_name(".symtab")
             for iter in symtab.iter_symbols():

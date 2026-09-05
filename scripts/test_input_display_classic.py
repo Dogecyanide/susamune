@@ -44,10 +44,22 @@ class ClassicInputDisplayContracts(unittest.TestCase):
 
     def test_sticks_use_the_reference_processed_travel(self) -> None:
         source = SOURCE.read_text(encoding="utf-8")
-        self.assertIn("JUTGamePad::mPadMStick[0]", source)
-        self.assertIn("JUTGamePad::mPadSStick[0]", source)
-        self.assertIn("main.mStickX * 14.0f", source)
-        self.assertIn("sub.mStickY * 14.0f", source)
+        live = source.split("void InputDisplay::draw(Menu", 1)[1].split(
+            "void InputDisplay::drawSnapshot", 1)[0]
+        self.assertIn("JUTGamePad::mPadMStick[0]", live)
+        self.assertIn("JUTGamePad::mPadSStick[0]", live)
+        self.assertIn("drawState(menu, raw, main.mStickX, main.mStickY,", live)
+        self.assertIn("sub.mStickX, sub.mStickY, true)", live)
+        painter = source.split("void InputDisplay::drawState", 1)[1]
+        for axis in ("mainStickX", "mainStickY", "subStickX", "subStickY"):
+            self.assertIn(f"clampi((int)({axis} * 14.0f), -14, 14)", painter)
+        snapshot = source.split("void InputDisplay::drawSnapshot", 1)[1].split(
+            "void InputDisplay::drawState", 1)[0]
+        self.assertIn("main.update(input.stickX, input.stickY, JUTGamePad::Clamped", snapshot)
+        self.assertIn("sub.update(input.substickX, input.substickY, JUTGamePad::Clamped", snapshot)
+        self.assertNotIn("JUTGamePad::mPad", snapshot)
+        self.assertIn("view.drawState(menu, raw, main.mStickX, main.mStickY,", snapshot)
+        self.assertIn("sub.mStickX, sub.mStickY, false)", snapshot)
         self.assertNotIn("raw.mStickX, -100, 100", source)
 
     def test_small_start_press_has_a_visible_center(self) -> None:

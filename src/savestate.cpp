@@ -1,3 +1,5 @@
+#include "susamune/practice_session.hxx"
+#include "susamune/crash_report.hxx"
 // =====================================================================
 // savestate.cpp
 //
@@ -593,6 +595,8 @@ bool SavestateManager::saveState() {
 
     gQFTTimer.onSavestateSaved();
     ILing::onSavestateSaved();
+    PracticeSession::onSavestateSaved();
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, 0);
     feedback("saved", "Savestate saved");
     return true;
 }
@@ -742,6 +746,8 @@ bool SavestateManager::loadState() {
     LevelWarp::cancelPending();
     ILing::onSavestateLoaded();
     Records::onSavestateLoaded();
+    PracticeSession::onSavestateLoaded();
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 2, 0);
     feedback("loaded", "Savestate loaded");
     return true;
 }

@@ -18,6 +18,7 @@ GHOST_VERSION_V1 = 1
 GHOST_VERSION_V2 = 2
 GHOST_VERSION_V3 = 3
 GHOST_VERSION_V4 = 4
+GHOST_VERSION_V5 = 5
 GHOST_VERSION = GHOST_VERSION_V4
 GHOST_HEADER_SIZE = 0x100
 INDEX_HEADER_SIZE = 0x80
@@ -71,7 +72,11 @@ V4_ATTACHMENT_DESCRIPTOR_SIZE = 6
 V4_ATTACHMENT_HELD_OVERFLOW = 0x0001
 V4_ATTACHMENT_FLAGS = V4_ATTACHMENT_HELD_OVERFLOW
 MAX_PAYLOAD_SIZE = V4_MAX_PAYLOAD_SIZE
-MAX_GHOST_FILE_SIZE = V4_MAX_GHOST_FILE_SIZE
+V5_MAX_INPUT_COUNT = 54_000
+V5_MAX_SPLIT_COUNT = 6
+V5_TEACHING_HEADER_SIZE = 32
+V5_MAX_GHOST_FILE_SIZE = V4_MAX_GHOST_FILE_SIZE + 32 + 54_000 * 16 + 6 * 12
+MAX_GHOST_FILE_SIZE = V5_MAX_GHOST_FILE_SIZE
 MAX_INDEX_FILE_SIZE = 0x1880
 RESULT_QF_NONE = 0xFFFFFFFF
 RECORDING_POSE_QF = 2
@@ -351,13 +356,50 @@ def _read_bounded(path: Path, expected_magic: bytes | None = None) -> bytes:
     return data
 
 
+def _validate_teaching(data: bytes, start_qf: int, end_qf: int) -> dict:
+    _require(len(data) >= 32, "truncated teaching header")
+    magic, version, header_size, inputs, splits, flags, checksum, r0, r1 = struct.unpack_from(
+        ">IHH6I", data)
+    _require(magic == 0x53475449 and version == 1 and header_size == 32,
+             "invalid teaching header")
+    _require(inputs <= V5_MAX_INPUT_COUNT and splits <= V5_MAX_SPLIT_COUNT,
+             "teaching count exceeds bound")
+    _require(not flags & ~1 and r0 == r1 == 0, "unknown teaching flags/reserved")
+    _require(len(data) == 32 + inputs * 16 + splits * 12, "teaching size mismatch")
+    _require(_crc32(data[32:]) == checksum, "teaching checksum mismatch")
+    previous = None
+    for index in range(inputs):
+        offset = 32 + index * 16
+        qf, buttons = struct.unpack_from(">IH", data, offset)
+        _require(start_qf <= qf <= end_qf and (previous is None or qf > previous),
+                 "input timestamps outside timeline or unordered")
+        _require(not buttons & ~0x1F7F and data[offset + 15] == 0,
+                 "input reserved button/flag bits")
+        previous = qf
+    result = []
+    previous = None
+    identity = None
+    for index in range(splits):
+        qf, schema, route, endpoint, reserved = struct.unpack_from(
+            ">IIHBB", data, 32 + inputs * 16 + index * 12)
+        _require(start_qf <= qf <= end_qf and (previous is None or qf >= previous),
+                 "split timestamps outside timeline or unordered")
+        _require(schema != 0 and route != 0xFFFF and endpoint == index and reserved == 0,
+                 "invalid split identity/ordinal")
+        _require(identity is None or identity == (schema, route), "mixed split schemas/routes")
+        result.append({"qf": qf, "schema": schema, "route": route, "endpoint": endpoint})
+        identity = (schema, route)
+        previous = qf
+    return {"input_count": inputs, "splits": result, "input_truncated": bool(flags & 1)}
+
+
 def validate_ghost(data: bytes) -> dict:
     _require(len(data) >= 8, "truncated ghost prefix")
     _require(data[:4] == GHOST_MAGIC, "bad ghost magic")
     version = struct.unpack_from(">H", data, 4)[0]
-    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4):
+    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4, GHOST_VERSION_V5):
         raise UnsupportedVersion(
-            f"unsupported ghost version {version}; reader supports 3 and 4"
+            f"unsupported ghost version {version}; reader supports 3, 4 and 5"
         )
     _require(len(data) >= GHOST_HEADER_SIZE, "truncated ghost header")
     fields = _GHOST_PREFIX.unpack_from(data)
@@ -402,7 +444,7 @@ def validate_ghost(data: bytes) -> dict:
 
     _require(header_size == GHOST_HEADER_SIZE, "invalid ghost header size")
     _require(file_size == len(data), "ghost file size does not match bytes")
-    _require(file_size <= V4_MAX_GHOST_FILE_SIZE,
+    _require(file_size <= (V5_MAX_GHOST_FILE_SIZE if version == 5 else V4_MAX_GHOST_FILE_SIZE),
              "ghost exceeds canonical file limit")
     if checksum_kind != CHECKSUM_CRC32:
         raise UnsupportedFeature(f"unsupported checksum kind {checksum_kind}")
@@ -412,20 +454,20 @@ def validate_ghost(data: bytes) -> dict:
     expected_file_crc = _crc32_zeroed(data, (12, 16))
     _require(file_checksum == expected_file_crc, "ghost file checksum mismatch")
 
-    supported_features = (SUPPORTED_REQUIRED_FEATURES_V4
+    supported_features = (3 if version == GHOST_VERSION_V5 else SUPPORTED_REQUIRED_FEATURES_V4
                           if version == GHOST_VERSION_V4
                           else SUPPORTED_REQUIRED_FEATURES_V3)
     if required_features & ~supported_features:
         raise UnsupportedFeature(
             f"unsupported required features {required_features:#010x}"
         )
-    _require(version != GHOST_VERSION_V4 or
-             required_features == REQUIRED_EXTENDED_CODEC,
+    _require(version < GHOST_VERSION_V4 or
+             required_features == supported_features,
              "V4 attachment codec lacks its required feature")
     _require(recording_mode == RECORDING_POSE_QF,
              "unsupported recording mode")
     expected_codec = (CODEC_POSE_ATTACHMENTS
-                      if version == GHOST_VERSION_V4 else CODEC_RAW)
+                      if version >= GHOST_VERSION_V4 else CODEC_RAW)
     _require(sample_codec == expected_codec, "unsupported sample codec")
     _require(sample_stride == SAMPLE_SIZE, "invalid sample stride")
     _require(sample_interval_qf == SAMPLE_INTERVAL_QF, "invalid sample interval")
@@ -508,12 +550,15 @@ def validate_ghost(data: bytes) -> dict:
              f"invalid {label} payload offsets")
     _require(sample_data_size == sample_count * sample_stride,
              f"{label} sample-data size does not match sample count")
-    _require(payload_size == segment_table_size + sample_data_size,
-             f"{label} payload size does not match table and samples")
-    _require(payload_size <= V4_MAX_PAYLOAD_SIZE,
-             f"payload exceeds {label} limit")
-    _require(file_size == sample_data_offset + sample_data_size,
-             f"{label} ghost contains trailing or missing bytes")
+    teaching = {"input_count": 0, "splits": [], "input_truncated": False}
+    _require(payload_size == file_size - header_size,
+             f"{label} payload size disagrees with file")
+    pose_end = sample_data_offset + sample_data_size
+    if version == GHOST_VERSION_V5:
+        teaching = _validate_teaching(data[pose_end:], start_qf, end_qf)
+    else:
+        _require(file_size == pose_end,
+                 f"{label} ghost contains trailing or missing bytes")
 
     table = data[segment_table_offset:sample_data_offset]
     _require(len(table) == V4_SEGMENT_TABLE_SIZE,
@@ -522,7 +567,7 @@ def validate_ghost(data: bytes) -> dict:
              f"{label} segment table checksum mismatch")
     _require(not any(table[segment_count * segment_size:]),
              f"nonzero unused {label} segment descriptors")
-    sample_data = data[sample_data_offset:file_size]
+    sample_data = data[sample_data_offset:pose_end]
 
     expected_sample = 0
     previous_end = None
@@ -625,6 +670,7 @@ def validate_ghost(data: bytes) -> dict:
     created_unix = (created_hi << 32) | created_lo
     return {
         "kind": "ghost",
+        "teaching": teaching,
         "version": version,
         "file_size": file_size,
         "file_checksum": file_checksum,

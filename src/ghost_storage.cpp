@@ -3,6 +3,7 @@
 #include "Dolphin/OS.h"
 #include "Dolphin/mem.h"
 #include "susamune/ghost.hxx"
+#include "susamune/crash_report.hxx"
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
@@ -286,6 +287,10 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
         raw.requiredFeatures ==
             SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4 &&
         raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
+    const bool canonicalV5 =
+        raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
+        raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5 &&
+        raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
     const bool foreign = raw.gameId != kGameId;
     const bool namespaceSane = imported
         ? (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) != 0 &&
@@ -298,14 +303,16 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
     const bool sane = raw.generation != 0 && raw.status == 0 &&
         namespaceSane &&
         raw.discRevision == SUSAMUNE_GHOST_DISC_REVISION &&
-        (canonicalV3 || canonicalV4) &&
+        (canonicalV3 || canonicalV4 || canonicalV5) &&
         raw.recordingMode == SUSAMUNE_GHOST_RECORDING_POSE_QF &&
         raw.sampleIntervalQf == SUSAMUNE_GHOST_TRANSFORM_INTERVAL_QF &&
         raw.sampleCount >= SUSAMUNE_GHOST_MIN_SAMPLE_COUNT &&
         raw.sampleCount <= SUSAMUNE_GHOST_MAX_SAMPLE_COUNT &&
         raw.durationQf > 0 &&
         raw.durationQf <= SUSAMUNE_GHOST_MAX_DURATION_QF &&
-        raw.payloadSize == expectedCanonicalSize &&
+        (canonicalV5 ? raw.payloadSize >= expectedCanonicalSize +
+                                          SUSAMUNE_GHOST_TEACHING_HEADER_SIZE
+                     : raw.payloadSize == expectedCanonicalSize) &&
         raw.payloadSize <= SUSAMUNE_GHOST_MAX_FILE_SIZE &&
         (raw.resultQf == SUSAMUNE_GHOST_RESULT_QF_NONE ||
          raw.resultQf <= SUSAMUNE_GHOST_QF_MAX) &&
@@ -343,7 +350,7 @@ bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
         : SUSAMUNE_GHOST_PROFILE_MAX_DURATION_QF;
     SusamuneGhostSlotInfo *catalog = imported
         ? sImportedCatalog : sCatalog;
-    DCInvalidateRange((void *)mailbox->payload, catalogBytes);
+    DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, catalogBytes);
 
     if (imported) {
         // Never carry a lexical row identity across catalog adoption.
@@ -355,7 +362,7 @@ bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
     u16 count = 0;
     for (u32 i = 0; i < capacity; i++) {
         SusamuneGhostSlotInfo raw;
-        memcpy(&raw, (const void *)(mailbox->payload +
+        memcpy(&raw, (const void *)(SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR +
                    i * sizeof(SusamuneGhostSlotInfo)), sizeof(raw));
         if (!imported &&
             i >= SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES) {
@@ -442,6 +449,8 @@ void beginRequest(u16 command, u16 profile, u16 slot, u32 payloadSize,
         SUSAMUNE_GHOST_STORAGE_PPC_PTR;
     sSequence++;
     if (sSequence == 0) sSequence++;
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_STORAGE, command,
+                      (static_cast<u32>(profile) << 16) | slot);
 
     mailbox->request.requestMagic = SUSAMUNE_GHOST_STORAGE_MAGIC;
     mailbox->request.protocolVersion = SUSAMUNE_GHOST_STORAGE_VERSION;
@@ -632,14 +641,14 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
 #if !IS_EMULATOR
         volatile SusamuneGhostStorageMailbox *mailbox =
             SUSAMUNE_GHOST_STORAGE_PPC_PTR;
-        DCInvalidateRange((void *)mailbox->payload, response.payloadSize);
+        DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, response.payloadSize);
         const bool imported = loadDestination == LOAD_DESTINATION_RACE
-            ? Ghost::importPlayback((const void *)mailbox->payload,
+            ? Ghost::importPlayback((const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
                                     response.payloadSize,
                                     requestProfile ==
                                         SUSAMUNE_GHOST_IMPORTED_PROFILE)
             : Ghost::importObserverTrack(
-                  (const void *)mailbox->payload, response.payloadSize,
+                  (const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, response.payloadSize,
                   loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY);
         if (!imported) {
             cancelFailedObserverLoad(loadDestination);
@@ -939,7 +948,7 @@ bool save(int slot, u32 expectedSelectionToken) {
         SUSAMUNE_GHOST_STORAGE_PPC_PTR;
     u32 size = 0;
     u32 recordToken = 0;
-    if (!Ghost::exportLatest((void *)mailbox->payload,
+    if (!Ghost::exportLatest((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
                              SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile,
                              ILing::pbProfileName(sProfile), &size,
                              &recordToken) ||
@@ -948,9 +957,9 @@ bool save(int slot, u32 expectedSelectionToken) {
         sStatus = kExportFailed;
         return false;
     }
-    DCFlushRange((void *)mailbox->payload, size);
+    DCFlushRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, size);
     const SusamuneGhostFileHeader *header =
-        (const SusamuneGhostFileHeader *)(const void *)mailbox->payload;
+        (const SusamuneGhostFileHeader *)(const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR;
     beginRequest(SUSAMUNE_GHOST_CMD_SAVE, sProfile,
                  static_cast<u16>(slot), size, recordToken, kSaving,
                  header->durationQf);

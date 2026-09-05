@@ -1,3 +1,4 @@
+#include "susamune/ghost.hxx"
 #include "susamune/split_stats.hxx"
 
 #include <Dolphin/mem.h>
@@ -328,6 +329,7 @@ void formatDelta(s32 deltaQf, char *out, u32 size) {
 
 void armOverlay(OverlayColor color, bool havePb, s32 deltaQf,
                 s32 absoluteQf) {
+    if (!gSettings.get(SETTING_SPLIT_COMPARISON)) { clearOverlay(); return; }
     u8 choice = gSettings.get(SETTING_TIMER_FREEZE_DURATION);
     if (choice >= sizeof(kFreezeFrames)) choice = 0;
     const u8 frames = kFreezeFrames[choice];
@@ -367,6 +369,7 @@ bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
         return false;
     }
 
+    Ghost::captureSplit(routeId, local, absoluteQf);
     const u16 segment = kRoutes[routeId].firstSegment + local;
     const u32 duration = (u32)(absoluteQf - sState->lastSplitQf);
     sState->attemptQf[local] = duration;
@@ -381,20 +384,23 @@ bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
         color = OVERLAY_GOLD;
     }
 
-    bool havePb = sState->activeProfile <
-                          SUSAMUNE_SPLIT_STATS_PROFILE_COUNT &&
-                      sState->activeProfile == ILing::pbProfile();
+    const u8 comparison = gSettings.get(SETTING_SPLIT_COMPARISON);
+    bool havePb = comparison == 2 || (comparison == 1 &&
+        sState->activeProfile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT &&
+        sState->activeProfile == ILing::pbProfile());
     s32 delta = 0;
     u32 pbElapsed = 0;
     for (u8 prior = 0; havePb && prior <= local; prior++) {
-        const u32 pb = sState->payload.pbQf[kRegion][sState->activeProfile]
-                                               [kRoutes[routeId].firstSegment +
-                                                prior];
-        if (pb == SUSAMUNE_SPLIT_STATS_QF_UNSET) {
-            havePb = false;
-        } else {
-            pbElapsed += pb;
-        }
+        const u16 index = kRoutes[routeId].firstSegment + prior;
+        const u32 pb = comparison == 2 ? sState->payload.bestQf[kRegion][index] :
+            sState->payload.pbQf[kRegion][sState->activeProfile][index];
+        if (pb == SUSAMUNE_SPLIT_STATS_QF_UNSET) havePb = false;
+        else pbElapsed += pb;
+    }
+    if (comparison == 3) {
+        s32 target = -1;
+        havePb = Ghost::comparisonSplit(routeId, local, &target) && target >= 0;
+        if (havePb) pbElapsed = (u32)target;
     }
     if (havePb) {
         delta = absoluteQf - (s32)pbElapsed;

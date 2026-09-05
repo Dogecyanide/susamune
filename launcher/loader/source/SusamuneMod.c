@@ -34,26 +34,7 @@ extern char launch_dir[MAXPATHLEN];
 static bool ValidModFile(const struct SusamuneModHeader *header, u32 gameID,
 	u32 fileSize)
 {
-	u32 payloadSize;
-
-	if (fileSize < SUSAMUNE_MOD_HEADER_SIZE ||
-		header->magic != SUSAMUNE_MOD_MAGIC ||
-		header->version != SUSAMUNE_MOD_VERSION ||
-		header->gameId != gameID ||
-		header->baseAddr != SUSAMUNE_MOD_BASE_FOR_GAME_ID(gameID) ||
-		header->arenaReserve != SUSAMUNE_ARENA_RESERVE_SIZE ||
-		header->codeSize > header->memSize ||
-		header->memSize > SUSAMUNE_MOD_BLOB_MAX_SIZE ||
-		(header->codeSize & 3) || (header->memSize & 3))
-		return false;
-
-	payloadSize = fileSize - SUSAMUNE_MOD_HEADER_SIZE;
-	if (header->codeSize > payloadSize)
-		return false;
-	payloadSize -= header->codeSize;
-	if (header->writeCount > payloadSize / 8)
-		return false;
-	return payloadSize == header->writeCount * 8;
+	return SusamuneModFileValid(header, gameID, fileSize);
 }
 
 void SusamuneLoadMod(u32 gameID)

@@ -80,6 +80,11 @@ def main(argv):
             z.write(args.pattern_test_log, f"{APP_NAME}/PATTERN_TESTING.md")
         if args.changelog:
             z.write(args.changelog, f"{APP_NAME}/CHANGELOG.md")
+        for name in ("foxtrot-guide-en.md", "foxtrot-guide-ja.md"):
+            guide = LAUNCHER_DIR.parent / "doc" / name
+            if guide.exists(): z.write(guide, f"{APP_NAME}/{name}")
+        decoder = LAUNCHER_DIR.parent / "scripts" / "decode_crash.py"
+        if decoder.exists(): z.write(decoder, f"{APP_NAME}/tools/{decoder.name}")
         for bin_path in mod_bins:
             z.write(bin_path, f"{APP_NAME}/{bin_path.name}")
     return 0

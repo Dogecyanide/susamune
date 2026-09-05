@@ -122,7 +122,9 @@ arena_lo = {
 # Size of the carved region. Comes out of the ~19 MiB heap, so it can be
 # generous; the mod must fit within it. MUST match
 # SUSAMUNE_MOD_REGION_SIZE in mod_bin.h.
-mod_region_size = 0x80000
+mod_region_size = 0xC0000
+# Packed DOL sections reuse the established disc relocation extent.
+mod_dol_storage_size = 0x80000
 
 # Tail of the region reserved for the asm caves' fixed-address scratch, which
 # the blob must not grow into. MUST match SUSAMUNE_SCRATCH in mod_bin.h.
@@ -133,15 +135,17 @@ mod_scratch_size = 0x40
 mod_mem1_working_cap_size = 0x58000
 mod_attachment_heap_offset = 0x58000
 mod_attachment_heap_size = 0x20000
-mod_file_max_size = 0x5F000
+mod_file_max_size = 0x9F000
 mod_write_count = sum(1 + patch.get('nop_count', 0) for patch in patches)
-mod_blob_max_size = mod_mem1_working_cap_size
-assert mod_blob_max_size == mod_mem1_working_cap_size
+mod_upper_offset = 0x80000
+mod_upper_size = 0x40000
+mod_scratch_offset = 0x7FFC0
+mod_blob_max_size = mod_mem1_working_cap_size + mod_upper_size
 assert mod_attachment_heap_offset == mod_mem1_working_cap_size
 assert mod_attachment_heap_offset + mod_attachment_heap_size <= \
-    mod_region_size - mod_scratch_size
+    mod_scratch_offset
 assert (mod_attachment_heap_offset | mod_attachment_heap_size) & 31 == 0
-assert 32 + mod_blob_max_size + mod_write_count * 8 <= mod_file_max_size
+assert 64 + mod_blob_max_size + mod_write_count * 8 <= mod_file_max_size
 
 # OSInit returns the debug stack to the arena when no debug monitor is present
 # (BI2DebugFlag < 2), so the runtime __OSArenaLo is this far BELOW the

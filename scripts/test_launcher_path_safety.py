@@ -54,10 +54,10 @@ class LauncherPathSafetyTests(unittest.TestCase):
         self.assertGreaterEqual(self.main.count("BuildDevicePath("), 5)
 
     def test_partial_patch_reads_never_publish(self) -> None:
-        self.assertIn("result == FR_OK && read == (UINT)CodeFD.obj.objsize",
-                      self.main)
+        self.assertIn("result != FR_OK || read != size", self.main)
         self.assertIn("*patch_cntAddr = 0;", self.main)
-        self.assertIn("if (CMem != NULL)", self.main)
+        self.assertIn("if (buffer == NULL)", self.main)
+        self.assertIn("const char *filePatchError = SetFilePatches();", self.main)
 
     def test_multigame_region_copy_targets_the_value(self) -> None:
         self.assertIn("memcpy(BI2region, wdvdTmpBuf, sizeof(*BI2region));",

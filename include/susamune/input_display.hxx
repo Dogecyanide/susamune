@@ -5,9 +5,11 @@
 
 #include "susamune/creation.hxx"
 #include "susamune/susamune_cfg.h"
+#include "susamune/practice_input.h"
 
 class Menu;
 class TMarioGamePad;
+struct PADStatus;
 
 struct InputDisplayLiveCfg {
     u8  startVisible;
@@ -32,6 +34,8 @@ public:
 
     void update();
     void draw(Menu *menu, bool force = false) const;
+    void drawSnapshot(Menu *menu, const SusamunePracticeInput &input,
+                      int x, int y, int scale, const char *label) const;
 
     bool dirty() const { return mDirty; }
     void clearDirty() { mDirty = false; }
@@ -51,6 +55,8 @@ private:
     void resetLayout();
     void clampLayout();
     void markDirty();
+    void drawState(Menu *menu, const PADStatus &raw, float mx, float my,
+                   float cx, float cy, bool live) const;
 
     CreationStyle       mStyle;
     InputDisplayLiveCfg mCfg;

@@ -12,7 +12,7 @@ import zlib
 from pathlib import Path
 
 from patches import mod_blob_max_size as MOD_BLOB_MAX_SIZE
-from patches import mod_region_size as MOD_REGION_SIZE
+from patches import mod_dol_storage_size as MOD_REGION_SIZE
 
 
 BPS_MAGIC = b"BPS1"
@@ -138,16 +138,24 @@ def add_operation(operations, target_offset, kind, value, size=None):
 
 
 def build_operations(layout, mod_manifest):
-    code = bytes.fromhex(mod_manifest["code"])
-    if len(code) != mod_manifest["size"] or len(code) % 4:
-        raise ValueError("mod code size is inconsistent or not word-aligned")
     region_size = layout["mod_region_size"]
-    if len(code) > MOD_BLOB_MAX_SIZE:
-        raise ValueError(
-            f"mod code is {len(code):#x} bytes, over the "
-            f"{MOD_BLOB_MAX_SIZE:#x} MEM1 working cap")
-    if len(code) > region_size:
-        raise ValueError(f"mod code is {len(code):#x} bytes, over the {region_size:#x} DOL region")
+    segments = mod_manifest.get("segments")
+    if not segments or len(segments) != 2:
+        raise ValueError("FOXTROT DOL needs two image segments")
+    images = []
+    image = bytearray()
+    for segment, (expected, cap) in zip(segments, ((0, 0x58000), (0x80000, 0x40000))):
+        code = bytes.fromhex(segment["code"])
+        size = segment["memory_size"]
+        if segment["offset"] != expected or not len(code) <= size <= cap or size % 4:
+            raise ValueError("invalid DOL image span")
+        while len(image) % 32: image.append(0)
+        images.append((len(image), mod_manifest["base_addr"] + expected, size))
+        image.extend(code)
+        image.extend(bytes(size - len(code)))
+    if len(image) > region_size:
+        raise ValueError("packed DOL exceeds verified disc extent; regenerate ISO layout")
+    code = bytes(image)
 
     operations = []
     add_operation(operations, BOOT_FST_OFFSET_FIELD, "literal", struct.pack(">I", layout["fst"]["target_offset"]))
@@ -155,11 +163,14 @@ def build_operations(layout, mod_manifest):
 
     dol = layout["dol"]
     slot = dol["new_text_slot"]
-    dol_words = {
-        dol["iso_offset"] + DOL_TEXT_OFFSET_TABLE + slot * 4: dol["size"],
-        dol["iso_offset"] + DOL_TEXT_ADDRESS_TABLE + slot * 4: mod_manifest["base_addr"],
-        dol["iso_offset"] + DOL_TEXT_SIZE_TABLE + slot * 4: region_size,
-    }
+    if slot + len(images) > 7:
+        raise ValueError("retail DOL needs two free text slots")
+    dol_words = {}
+    for index, (offset, address, size) in enumerate(images):
+        target_slot = slot + index
+        dol_words[dol["iso_offset"] + DOL_TEXT_OFFSET_TABLE + target_slot * 4] = dol["size"] + offset
+        dol_words[dol["iso_offset"] + DOL_TEXT_ADDRESS_TABLE + target_slot * 4] = address
+        dol_words[dol["iso_offset"] + DOL_TEXT_SIZE_TABLE + target_slot * 4] = size
     for address, value in mod_manifest["writes"]:
         dol_words[hook_iso_offset(layout, address)] = value
     for offset, value in dol_words.items():

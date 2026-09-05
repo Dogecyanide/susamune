@@ -1,133 +1,108 @@
-#!/usr/bin/env python3
-"""Host contracts for the launcher mod-bin capacity boundaries."""
-
-from __future__ import annotations
-
+"""Executable V3 span validation and protected-hole regression tests."""
+import ctypes
 import importlib.util
 from pathlib import Path
 import struct
+import subprocess
+import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
-GEN_PATH = ROOT / "scripts" / "gen_mod_bin.py"
+spec = importlib.util.spec_from_file_location("packer", ROOT / "scripts/gen_mod_bin.py")
+packer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(packer)
 
-spec = importlib.util.spec_from_file_location("gen_mod_bin_test", GEN_PATH)
-assert spec and spec.loader
-gen_mod_bin = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gen_mod_bin)
+def manifest(low=8, upper=4, low_mem=16, upper_mem=16):
+    return {"game_id": 0x474D534A, "base_addr": 0x80426020,
+            "region_reserve": 0xC2000,
+            "segments": [{"offset": 0, "code": "12" * low, "memory_size": low_mem},
+                         {"offset": 0x80000, "code": "34" * upper, "memory_size": upper_mem}],
+            "writes": [(0x8000561C, 0x48000001)]}
 
+class ModBinTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        folder = Path(cls.temp.name)
+        assert folder.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve())
+        src = folder / "validator.c"
+        src.write_text('#include "susamune/mod_bin.h"\n__declspec(dllexport) int validate(const struct SusamuneModHeader *h, unsigned int n) { return SusamuneModFileValid(h, h->gameId, n); }\n')
+        dll = folder / "validator.dll"
+        subprocess.run([str(ROOT / "toolchain/clang.exe"), "--target=x86_64-pc-windows-msvc",
+                        "-shared", "-nostdlib", "-fuse-ld=lld", "-Wl,/noentry",
+                        "-I", str(ROOT / "include"), str(src), "-o", str(dll)], check=True, capture_output=True)
+        cls.library = ctypes.CDLL(str(dll))
+        cls.validate = cls.library.validate
+        cls.validate.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        cls.validate.restype = ctypes.c_int
 
-def manifest(code_size: int, write_count: int, memory_size: int | None = None) -> dict:
-    return {
-        "code": "00" * code_size,
-        "size": code_size,
-        "memory_size": code_size if memory_size is None else memory_size,
-        "game_id": 0x474D534A,
-        "base_addr": 0x80426020,
-        "region_reserve": 0x82000,
-        "writes": [(0x80000000, 0)] * write_count,
-    }
+    @classmethod
+    def tearDownClass(cls):
+        import _ctypes
+        del cls.validate
+        _ctypes.FreeLibrary(cls.library._handle)
+        del cls.library
+        cls.temp.cleanup()
 
+    def native(self, packed):
+        # Shared C consumers see native words; this host is little endian.
+        h = struct.unpack(">8I", packed[:32])
+        words = list(h) + list(struct.unpack(">8I", packed[32:64]))
+        out = bytearray(struct.pack("=16I", *words))
+        out.extend(packed[64:32+h[4]])
+        for off in range(32+h[4], len(packed), 8):
+            out.extend(struct.pack("=2I", *struct.unpack(">2I", packed[off:off+8])))
+        return out
 
-class ModBinCapacityTests(unittest.TestCase):
-    def test_shared_capacity_constants(self) -> None:
-        self.assertEqual(gen_mod_bin.MAGIC, 0x534D4F44)
-        self.assertEqual(gen_mod_bin.VERSION, 2)
-        self.assertEqual(gen_mod_bin.HEADER_SIZE, 32)
-        self.assertEqual(gen_mod_bin.BLOB_MAX_SIZE, 0x58000)
-        self.assertEqual(gen_mod_bin.STAGED_FILE_MAX_SIZE, 0x5F000)
+    def valid(self, data):
+        buf = ctypes.create_string_buffer(bytes(data))
+        return self.validate(buf, len(data))
 
-    def test_current_write_count_fits_at_raw_cap(self) -> None:
-        packed = gen_mod_bin.build_mod_bin(manifest(0x58000, 22))
-        self.assertEqual(len(packed), 0x580D0)
+    def test_valid_scatter_and_bss(self):
+        packed = packer.build_mod_bin(manifest())
+        h = struct.unpack(">8I", packed[:32])
+        self.assertEqual((h[1], h[4], h[7]), (3, 44, 32))
+        self.assertTrue(self.valid(self.native(packed)))
+        dest = bytearray([0xA5]) * 0xC0000
+        for i in range(2):
+            off, init, size, payload = struct.unpack_from(">4I", packed, 32+i*16)
+            dest[off:off+init] = packed[32+payload:32+payload+init]
+            dest[off+init:off+size] = bytes(size-init)
+        self.assertEqual(dest[8:16], bytes(8))
+        self.assertEqual(dest[0x80004:0x80010], bytes(12))
+        self.assertEqual(dest[0x58000:0x80000], bytes([0xA5]) * 0x28000)
 
-    def test_v2_header_separates_file_prefix_from_runtime_image(self) -> None:
-        packed = gen_mod_bin.build_mod_bin(manifest(8, 1, 0x100))
-        header = struct.unpack(">8I", packed[:gen_mod_bin.HEADER_SIZE])
-        self.assertEqual(header[1], 2)
-        self.assertEqual(header[4], 8)
-        self.assertEqual(header[5], 1)
-        self.assertEqual(header[7], 0x100)
-        self.assertEqual(len(packed), gen_mod_bin.HEADER_SIZE + 8 + 8)
-        self.assertEqual(packed[-8:], struct.pack(">II", 0x80000000, 0))
+    def test_full_capacity_and_ceiling(self):
+        value = manifest(0x58000, 0x40000, 0x58000, 0x40000)
+        packed = packer.build_mod_bin(value)
+        self.assertTrue(self.valid(self.native(packed)))
+        value["writes"] *= 10000
+        with self.assertRaisesRegex(ValueError, "ceiling"):
+            packer.build_mod_bin(value)
 
-    def test_initialized_prefix_cannot_exceed_runtime_image(self) -> None:
-        with self.assertRaisesRegex(ValueError, "initialized code"):
-            gen_mod_bin.build_mod_bin(manifest(8, 0, 4))
+    def test_host_rejects_holes_overflow_wrong_revision(self):
+        for change in (lambda m: m["segments"][0].update(memory_size=0x58004),
+                       lambda m: m["segments"][1].update(offset=0x7FFC0),
+                       lambda m: m["segments"][1].update(memory_size=0x40004),
+                       lambda m: m.update(region_reserve=0x82000),
+                       lambda m: m.update(base_addr=0x80429800),
+                       lambda m: m.update(writes=[(0x91F00000, 0)])):
+            value = manifest()
+            change(value)
+            with self.assertRaises(ValueError): packer.build_mod_bin(value)
 
-    def test_manifest_code_size_must_match_payload(self) -> None:
-        value = manifest(8, 0)
-        value["size"] = 4
-        with self.assertRaisesRegex(ValueError, "manifest code size"):
-            gen_mod_bin.build_mod_bin(value)
+    def test_c_consumer_rejects_corrupt_descriptors_and_hooks(self):
+        good = self.native(packer.build_mod_bin(manifest()))
+        # Every offset is a native u32 in the shared C header/body.
+        changes = {4: 2, 12: 0x80429800, 16: 0xFFFFFFFF, 20: 0xFFFFFFFF,
+                   24: 0x82000, 28: 0x98004, 32: 0x58000, 36: 20,
+                   40: 0x58004, 44: 0, 48: 0x7FFC0, 52: 0x40004,
+                   56: 0x40004, 60: 0, 76: 0x91F00000}
+        for offset, word in changes.items():
+            damaged = good.copy()
+            struct.pack_into("=I", damaged, offset, word)
+            with self.subTest(offset=offset): self.assertFalse(self.valid(damaged))
+        self.assertFalse(self.valid(good[:-4]))
+        self.assertFalse(self.valid(good + bytes(4)))
 
-    def test_boolean_runtime_size_is_not_an_integer_size(self) -> None:
-        value = manifest(0, 0)
-        value["memory_size"] = True
-        with self.assertRaisesRegex(ValueError, "runtime image size"):
-            gen_mod_bin.build_mod_bin(value)
-
-    def test_runtime_image_cap_is_strict(self) -> None:
-        with self.assertRaisesRegex(ValueError, "MEM1 working cap"):
-            gen_mod_bin.build_mod_bin(manifest(4, 0, 0x58004))
-
-    def test_both_sizes_must_be_word_aligned(self) -> None:
-        with self.assertRaisesRegex(ValueError, "code blob"):
-            gen_mod_bin.build_mod_bin(manifest(3, 0, 4))
-        with self.assertRaisesRegex(ValueError, "runtime image"):
-            gen_mod_bin.build_mod_bin(manifest(4, 0, 5))
-
-    def test_raw_cap_is_strict(self) -> None:
-        with self.assertRaisesRegex(ValueError, "MEM1 working cap"):
-            gen_mod_bin.build_mod_bin(manifest(0x58004, 0))
-
-    def test_staged_file_ceiling_is_end_exclusive(self) -> None:
-        exact_writes = (0x5F000 - gen_mod_bin.HEADER_SIZE - 0x58000) // 8
-        self.assertEqual(
-            len(gen_mod_bin.build_mod_bin(manifest(0x58000, exact_writes))),
-            0x5F000,
-        )
-        with self.assertRaisesRegex(ValueError, "reset-safe ceiling"):
-            gen_mod_bin.build_mod_bin(manifest(0x58000, exact_writes + 1))
-
-
-class ModBinConsumerContractTests(unittest.TestCase):
-    def test_exfat_size_is_checked_before_narrowing(self) -> None:
-        source = (ROOT / "launcher" / "loader" / "source" /
-                  "SusamuneMod.c").read_text()
-        read_pos = source.index("sizeOnDisk = fd.obj.objsize")
-        bound_pos = source.index(
-            "sizeOnDisk > SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE", read_pos)
-        cast_pos = source.index("size = (u32)sizeOnDisk", bound_pos)
-        self.assertLess(read_pos, bound_pos)
-        self.assertLess(bound_pos, cast_pos)
-
-    def test_all_consumers_bound_the_runtime_image(self) -> None:
-        paths = (
-            ROOT / "launcher" / "loader" / "source" / "SusamuneMod.c",
-            ROOT / "launcher" / "kernel" / "Patch.c",
-            ROOT / "launcher" / "kernel" / "SusamuneCrash.c",
-        )
-        for path in paths:
-            source = path.read_text()
-            with self.subTest(path=path.name):
-                self.assertRegex(source, r"codeSize\s*>\s*\w+->memSize")
-                self.assertRegex(
-                    source,
-                    r"memSize\s*>\s*SUSAMUNE_MOD_BLOB_MAX_SIZE",
-                )
-                self.assertRegex(source, r"memSize\s*&\s*3")
-
-    def test_kernel_reconstructs_and_syncs_the_full_image(self) -> None:
-        source = (ROOT / "launcher" / "kernel" / "Patch.c").read_text()
-        self.assertIn(
-            "memset((void*)(base + hdr->codeSize), 0, "
-            "hdr->memSize - hdr->codeSize)",
-            source,
-        )
-        self.assertIn("sync_after_write((void*)base, hdr->memSize)", source)
-
-
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == "__main__": unittest.main()

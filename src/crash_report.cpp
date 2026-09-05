@@ -9,13 +9,29 @@
 #include "susamune/crash_report.h"
 #include "susamune/mod_bin.h"
 
+#ifndef MOONSHINE_CRASH_BUILD
+#define MOONSHINE_CRASH_BUILD "Moonshine V2.3.0 FOXTROT Pre-release"
+#endif
+
 extern "C" void setJutPreUserCallback(JUTException::UserCallback)
     asm("setPreUserCallback__12JUTExceptionFPUsP9OSContextUlUl");
+extern "C" JUTException::UserCallback jutPostUserCallback
+    asm("sPostUserCallback__12JUTException");
+extern "C" void *jutExceptionConsole asm("sConsole__12JUTException");
+extern "C" void *jutConsoleManager asm("sManager__17JUTConsoleManager");
+extern "C" void jutConsolePrint(void *, const char *, ...)
+    asm("print_f__10JUTConsoleFPCce");
+extern "C" void jutConsoleScroll(void *, int) asm("scroll__10JUTConsoleFi");
+extern "C" void jutConsoleDraw(void *, bool)
+    asm("drawDirect__17JUTConsoleManagerCFb");
+extern "C" void jutExceptionWait(s32) asm("waitTime__12JUTExceptionFl");
 
 namespace {
 
 JUTException::UserCallback sPreviousHandler = nullptr;
+JUTException::UserCallback sPreviousPostHandler = nullptr;
 bool sCapturing = false;
+bool sPhotoPrinted = false;
 u32 sLastContext = 0xFFFFFFFFu;
 
 void readTimeBase(unsigned int *high, unsigned int *low) {
@@ -62,6 +78,53 @@ u32 packScene(const TGameSequence &scene) {
            static_cast<u32>(scene.mEpisodeID) << 16 | scene.mFlag.mVal;
 }
 
+bool captureCore(u16 exception, OSContext *context, u32 dsisr, u32 dar,
+                 const SusamuneCrashReport *report) {
+    SusamuneCrashCore *core = SUSAMUNE_CRASH_CORE_PPC_PTR;
+    clearBytes(core, sizeof(*core));
+    core->magic = SUSAMUNE_CRASH_CORE_MAGIC;
+    core->version = SUSAMUNE_CRASH_CORE_VERSION;
+    core->reportSize = sizeof(*core);
+    core->captureSeq = report->captureSeq;
+    core->gameId = report->gameId;
+    core->modFileCrc32 = report->modFileCrc32;
+    core->exception = exception;
+    core->dsisr = dsisr;
+    core->dar = dar;
+    core->contextValid = (reinterpret_cast<u32>(context) & 3u) == 0 &&
+        readableRange(reinterpret_cast<u32>(context), sizeof(*context));
+    if (core->contextValid) {
+        for (u32 i = 0; i < 32; ++i) core->gpr[i] = context->mGPR[i];
+        core->cr = context->mCR;
+        core->lr = context->mLR;
+        core->ctr = context->mCTR;
+        core->xer = context->mXER;
+        core->srr0 = context->mSRR0;
+        core->srr1 = context->mSRR1;
+    }
+    core->appContext = gpApplication.mContext;
+    core->currentScene = packScene(gpApplication.mCurrentScene);
+    core->prevScene = packScene(gpApplication.mPrevScene);
+    core->nextScene = packScene(gpApplication.mNextScene);
+    readTimeBase(&core->timeBaseHigh, &core->timeBaseLow);
+    if (report->breadcrumbCount != 0) {
+        const SusamuneCrashBreadcrumb &last = report->breadcrumbs[
+            (report->breadcrumbSeq - 1u) % SUSAMUNE_CRASH_BREADCRUMB_COUNT];
+        core->lastEvent = last.event;
+        core->lastArg0 = last.arg0;
+        core->lastArg1 = last.arg1;
+    }
+    static const char build[] = MOONSHINE_CRASH_BUILD;
+    for (u32 i = 0; i < sizeof(build) - 1 && i < sizeof(core->build) - 1; ++i)
+        core->build[i] = build[i];
+    core->state = SUSAMUNE_CRASH_STATE_READY;
+    core->checksum = Checksum::crc32(core, sizeof(*core),
+        __builtin_offsetof(SusamuneCrashCore, checksum), sizeof(core->checksum));
+    DCStoreRange(reinterpret_cast<u8 *>(core) + 32, sizeof(*core) - 32);
+    DCStoreRange(core, 32);
+    return core->contextValid != 0;
+}
+
 void captureBacktrace(SusamuneCrashReport *report, u32 stackPointer) {
     clearBytes(report->backtrace, sizeof(report->backtrace));
     u32 frame = stackPointer;
@@ -85,8 +148,15 @@ void captureException(u16 exception, OSContext *context, u32 dsisr, u32 dar) {
         report->reportSize == sizeof(*report) &&
         report->state == SUSAMUNE_CRASH_STATE_ARMED) {
         sCapturing = true;
+        const bool validContext = captureCore(exception, context, dsisr, dar, report);
         report->state = SUSAMUNE_CRASH_STATE_WRITING;
         DCStoreRange(report, 32);
+
+        if (!validContext) {
+            if (sPreviousHandler && sPreviousHandler != captureException)
+                sPreviousHandler(exception, context, dsisr, dar);
+            return;
+        }
 
         report->exception = exception;
         report->captureFlags = 0;
@@ -126,6 +196,7 @@ void captureException(u16 exception, OSContext *context, u32 dsisr, u32 dar) {
         report->directorWindowSize = 0;
         clearBytes(report->directorWindow, sizeof(report->directorWindow));
         if ((report->marDirector & 3u) == 0 &&
+            readableRange(report->marDirector, sizeof(TMarDirector)) &&
             copyReadable(report->directorWindow, report->marDirector,
                          sizeof(report->directorWindow))) {
             report->captureFlags |= SUSAMUNE_CRASH_FLAG_DIRECTOR;
@@ -196,6 +267,50 @@ void captureException(u16 exception, OSContext *context, u32 dsisr, u32 dar) {
         sPreviousHandler(exception, context, dsisr, dar);
 }
 
+void printPhotoReport(u16 exception, OSContext *context, u32 dsisr, u32 dar) {
+    if (sPreviousPostHandler && sPreviousPostHandler != printPhotoReport)
+        sPreviousPostHandler(exception, context, dsisr, dar);
+    const SusamuneCrashCore *core = SUSAMUNE_CRASH_CORE_PPC_PTR;
+    if (sPhotoPrinted || !jutExceptionConsole || !jutConsoleManager ||
+        core->magic != SUSAMUNE_CRASH_CORE_MAGIC ||
+        core->state != SUSAMUNE_CRASH_STATE_READY) return;
+    sPhotoPrinted = true;
+
+    const SusamuneCrashAck *ack = SUSAMUNE_CRASH_ACK_PPC_PTR;
+    DCInvalidateRange(const_cast<SusamuneCrashAck *>(ack), sizeof(*ack));
+    const char *saved = "not confirmed";
+    if (ack->magic == SUSAMUNE_CRASH_ACK_MAGIC) {
+        if (ack->status == SUSAMUNE_CRASH_ACK_UNAVAILABLE) saved = "no storage";
+        else if (ack->captureSeq == core->captureSeq) {
+            switch (ack->status) {
+            case SUSAMUNE_CRASH_ACK_SAVED: saved = "complete"; break;
+            case SUSAMUNE_CRASH_ACK_CORE_ONLY: saved = "minimal report"; break;
+            case SUSAMUNE_CRASH_ACK_FAILED: saved = "write failed / partial"; break;
+            default: saved = "pending"; break;
+            }
+        }
+    }
+    const char *region = core->gameId == SUSAMUNE_MOD_GAME_ID_JP ? "JP/GMSJ" :
+        core->gameId == SUSAMUNE_MOD_GAME_ID_US ? "US/GMSE" : "PAL/GMSP";
+    // Retail calls this with a live console after its exception pages.
+    // Keep the core independent: optional rendering may itself be damaged.
+    jutConsolePrint(jutExceptionConsole,
+        "\nMOONSHINE V2.3.0 FOXTROT\n"
+        "REPORT %08X-%08X\n%s  MOD %08X\n"
+        "EXCEPTION %u  CONTEXT %u\n"
+        "PC %08X  LR %08X\nSP %08X  DAR %08X\n"
+        "DSISR %08X  SRR1 %08X\n"
+        "SCENE %08X  LAST %u\nSAVE: %s\n"
+        "Photo this block; share .core/.bin/.txt\n",
+        core->captureSeq, core->checksum, region, core->modFileCrc32,
+        core->exception, core->contextValid, core->srr0, core->lr,
+        core->gpr[1], core->dar, core->dsisr, core->srr1,
+        core->currentScene, core->lastEvent, saved);
+    jutConsoleScroll(jutExceptionConsole, 0x1000);
+    jutConsoleDraw(jutConsoleManager, true);
+    jutExceptionWait(8000);
+}
+
 }  // namespace
 
 namespace CrashReport {
@@ -203,7 +318,6 @@ namespace CrashReport {
 void init() {
     SusamuneCrashReport *report = SUSAMUNE_CRASH_PPC_PTR;
     DCInvalidateRange(report, sizeof(*report));
-#if IS_EMULATOR
     if (report->magic != SUSAMUNE_CRASH_MAGIC ||
         report->version != SUSAMUNE_CRASH_VERSION ||
         report->reportSize != sizeof(*report)) {
@@ -223,7 +337,10 @@ void init() {
 #endif
         DCStoreRange(report, sizeof(*report));
     }
-#endif
+    if (report->state == SUSAMUNE_CRASH_STATE_DISABLED) {
+        report->state = SUSAMUNE_CRASH_STATE_ARMED;
+        DCStoreRange(report, 32);
+    }
     if (report->magic != SUSAMUNE_CRASH_MAGIC ||
         report->version != SUSAMUNE_CRASH_VERSION ||
         report->reportSize != sizeof(*report) ||
@@ -231,16 +348,23 @@ void init() {
         return;
 
     sPreviousHandler = JUTException::sPreUserCallback;
+    sPreviousPostHandler = jutPostUserCallback;
+    clearBytes(SUSAMUNE_CRASH_CORE_PPC_PTR, sizeof(SusamuneCrashCore));
+    DCStoreRange(SUSAMUNE_CRASH_CORE_PPC_PTR, sizeof(SusamuneCrashCore));
     setJutPreUserCallback(captureException);
+    jutPostUserCallback = printPhotoReport;
     note(SUSAMUNE_CRASH_EVENT_APP_INIT, SUSAMUNE_GAME_VERSION,
          reinterpret_cast<u32>(sPreviousHandler));
 }
 
 void note(u32 event, u32 arg0, u32 arg1) {
+    const bool interrupts = OSDisableInterrupts();
     SusamuneCrashReport *report = SUSAMUNE_CRASH_PPC_PTR;
     if (report->magic != SUSAMUNE_CRASH_MAGIC ||
-        report->state != SUSAMUNE_CRASH_STATE_ARMED)
+        report->state != SUSAMUNE_CRASH_STATE_ARMED) {
+        OSRestoreInterrupts(interrupts);
         return;
+    }
     const u32 sequence = report->breadcrumbSeq;
     SusamuneCrashBreadcrumb &entry =
         report->breadcrumbs[sequence % SUSAMUNE_CRASH_BREADCRUMB_COUNT];
@@ -251,6 +375,7 @@ void note(u32 event, u32 arg0, u32 arg1) {
     report->breadcrumbSeq = sequence + 1;
     if (report->breadcrumbCount < SUSAMUNE_CRASH_BREADCRUMB_COUNT)
         ++report->breadcrumbCount;
+    OSRestoreInterrupts(interrupts);
 }
 
 void observeContext(u32 context) {

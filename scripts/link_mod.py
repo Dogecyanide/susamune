@@ -25,6 +25,9 @@ def check_shared_layout():
         "SUSAMUNE_MOD_BASE_US": patches.base_addr["us"],
         "SUSAMUNE_MOD_BASE_PAL": patches.base_addr["pal"],
         "SUSAMUNE_MOD_REGION_SIZE": patches.mod_region_size,
+        "SUSAMUNE_MOD_UPPER_OFFSET": patches.mod_upper_offset,
+        "SUSAMUNE_MOD_UPPER_SIZE": patches.mod_upper_size,
+        "SUSAMUNE_MOD_SCRATCH_OFFSET": patches.mod_scratch_offset,
         "SUSAMUNE_MOD_BLOB_MAX_SIZE": patches.mod_blob_max_size,
         "SUSAMUNE_MOD_MEM1_WORKING_CAP_SIZE": patches.mod_mem1_working_cap_size,
         "SUSAMUNE_MOD_ATTACHMENT_HEAP_OFFSET": patches.mod_attachment_heap_offset,
@@ -124,7 +127,27 @@ def main():
     p.obj_dir = ""
     p.kuribo_compiler_home = args.kuribo_home
     p.base_addr = base
-    p.blob_max_size = patches.mod_blob_max_size
+    p.blob_max_size = patches.mod_region_size
+    p.allowed_spans = [(0, patches.mod_mem1_working_cap_size),
+                       (patches.mod_upper_offset, patches.mod_upper_size)]
+    layout = obj.parent / f"foxtrot_{args.vers}.ld"
+    layout.write_text(f"""SECTIONS {{
+      . = {base:#x};
+      .text : {{ *(.text .text.* .init .init.*) }}
+      .rodata : {{ *(.rodata .rodata.* .sdata2 .sdata2.*) }}
+      .data : {{ *(.data .data.* .sdata .sdata.*) }}
+      .bss (NOLOAD) : {{ *(.bss .bss.* .sbss .sbss.* COMMON) }}
+      . = ALIGN(4);
+      ASSERT(. <= {base + patches.mod_mem1_working_cap_size:#x}, "low image overlaps attachment heap")
+      . = {base + patches.mod_upper_offset:#x};
+      .foxtrot.text : {{ *(.foxtrot.text .foxtrot.text.*) }}
+      .foxtrot.rodata : {{ *(.foxtrot.rodata .foxtrot.rodata.*) }}
+      .foxtrot.data : {{ *(.foxtrot.data .foxtrot.data.*) }}
+      .foxtrot.bss (NOLOAD) : {{ *(.foxtrot.bss .foxtrot.bss.*) }}
+      . = ALIGN(4);
+      ASSERT(. <= {base + patches.mod_region_size:#x}, "upper image exceeds reserved arena")
+    }}""")
+    p.add_linker_script_file(str(layout))
     p.add_linker_script_file(str(linker_script))
     p.add_obj_file(obj.name)
     p.linker_flags.append("--gc-sections")

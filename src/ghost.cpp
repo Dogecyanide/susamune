@@ -18,7 +18,9 @@
 #include "susamune/checksum.hxx"
 #include "susamune/ghost_format.h"
 #include "susamune/ghost_model.hxx"
+#include "susamune/ghost_storage.h"
 #include "susamune/iling.hxx"
+#include "susamune/input_display.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/menu.hxx"
 #include "susamune/features.hxx"
@@ -40,6 +42,10 @@ const u16 kMaxSegments = SUSAMUNE_GHOST_V4_MAX_SEGMENTS;
 const u32 kPlaybackTokenBit = 0x80000000u;
 const u16 kCueMove = 0x0001u;
 const u16 kCueEntry = 0x0200u;
+u8 runningRegion();
+static_assert(SUSAMUNE_GHOST_INPUT_MAX_COUNT *
+                  sizeof(SusamuneGhostInputSample) <=
+              SUSAMUNE_GHOST_INPUT_BANK_SIZE, "ghost input bank too small");
 
 enum RecordFailure {
     RECORD_FAILURE_NONE,
@@ -105,6 +111,12 @@ static_assert(kSegmentTableOffset + kMaxSegments * sizeof(Segment) <=
 struct Track {
     Sample *samples;
     Segment *segments;
+    SusamuneGhostInputSample *inputs;
+    u32 inputCount;
+    SusamuneGhostSplitSample splits[SUSAMUNE_GHOST_SPLIT_MAX_COUNT];
+    u8 splitCount;
+    u8 sourceRegion;
+    u8 teachingFlags;
     u32 count;
     u32 startQf;
     u32 endQf;
@@ -153,6 +165,10 @@ u32 sPlaybackRaceToken;
 RaceContext sRaceContext;
 u32 sRaceContextPlaybackToken;
 bool sRaceContextValid;
+SusamuneGhostSplitSample sRaceSplits[SUSAMUNE_GHOST_SPLIT_MAX_COUNT];
+u8 sRaceSplitCount;
+u32 sRaceSplitSerial;
+s32 sVisualQf;
 ClockPhase sClockPhase;
 u16 sClockObservations;
 u8 sLiveArea;
@@ -318,6 +334,7 @@ bool pinSurvivesRoute(u8 area, u8 episode, s32 parent, u8 parentArea) {
 void clearRaceContext() {
     sRaceContextValid = false;
     sRaceContext.source = RACE_SOURCE_NONE;
+    if (sRaceSplitSerial != gQFTTimer.attemptSerial()) sRaceSplitCount = 0;
 }
 
 void captureRaceContext() {
@@ -340,6 +357,11 @@ void captureRaceContext() {
     sRaceContext.source = sPlaybackRaceSource;
     sRaceContextPlaybackToken = sPlaybackToken;
     sRaceContextValid = true;
+    sRaceSplitCount = sPlayback.sourceRegion == runningRegion()
+        ? sPlayback.splitCount : 0;
+    sRaceSplitSerial = sAttemptSerial;
+    memcpy(sRaceSplits, sPlayback.splits,
+           sRaceSplitCount * sizeof(sRaceSplits[0]));
 }
 
 void settlePlaybackPin() {
@@ -421,6 +443,10 @@ bool liveRouteStorable() {
 }
 
 void clearTrack(Track &track) {
+    track.inputCount = 0;
+    track.splitCount = 0;
+    track.teachingFlags = 0;
+    track.sourceRegion = runningRegion();
     track.count = 0;
     track.startQf = 0;
     track.endQf = 0;
@@ -661,7 +687,7 @@ u16 sampleAnimationId(const Sample &sample) {
 
 u16 sampleAnimationPhase(const Sample &sample, u16 version) {
     const u32 packed = readU24(sample.animation);
-    if (version == SUSAMUNE_GHOST_FILE_VERSION_V4) {
+    if (version >= SUSAMUNE_GHOST_FILE_VERSION_V4) {
         const u32 phase = (packed >> SUSAMUNE_GHOST_V4_ANIMATION_PHASE_SHIFT) &
                           SUSAMUNE_GHOST_V4_ANIMATION_PHASE_MAX;
         return static_cast<u16>(phase * SUSAMUNE_GHOST_ANIMATION_PHASE_MAX /
@@ -672,7 +698,7 @@ u16 sampleAnimationPhase(const Sample &sample, u16 version) {
 }
 
 u8 sampleYoshi(const Sample &sample, u16 version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V4
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V4
         ? static_cast<u8>((readU24(sample.animation) >>
                            SUSAMUNE_GHOST_V4_YOSHI_SHIFT) &
                           SUSAMUNE_GHOST_V4_YOSHI_MASK)
@@ -680,7 +706,7 @@ u8 sampleYoshi(const Sample &sample, u16 version) {
 }
 
 u8 sampleHeld(const Sample &sample, u16 version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V4
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V4
         ? static_cast<u8>(readU24(sample.animation) &
                           SUSAMUNE_GHOST_V4_HELD_INDEX_MASK)
         : 0;
@@ -991,6 +1017,9 @@ void clearEpochSamples() {
     segment->startQf = 0;
     segment->endQf = 0;
     if (sRecord.segmentCount == 1) {
+        sRecord.inputCount = 0;
+        sRecord.splitCount = 0;
+        sRecord.teachingFlags = 0;
         sRecord.startQf = 0;
         sRecord.endQf = 0;
         sRecord.valid = false;
@@ -1212,9 +1241,11 @@ void beginAttempt(s32 qf, bool boundaryReset = false) {
         // route. Route matching controls racing, not ownership/exportability.
         Sample *oldPlayback = sPlayback.samples;
         Segment *oldPlaybackSegments = sPlayback.segments;
+        SusamuneGhostInputSample *oldInputs = sPlayback.inputs;
         sPlayback = sRecord;
         sRecord.samples = oldPlayback;
         sRecord.segments = oldPlaybackSegments;
+        sRecord.inputs = oldInputs;
         bumpPlaybackToken();
         sPlaybackOriginRecordToken = sRecordToken;
     }
@@ -1267,6 +1298,7 @@ void selectPlaybackSegment(u16 index) {
 }
 
 void updatePlayback(s32 qf) {
+    sVisualQf = qf;
     sGhostVisible = false;
     sGhostHeldObjectId = 0;
     sGhostHeldNameKey = 0;
@@ -1433,6 +1465,7 @@ s32 observerQf(bool *pastEnd = nullptr) {
 }
 
 void updateObserverVisual(s32 qf) {
+    sVisualQf = qf;
     sGhostVisible = sampleObserverTrack(
         sPlayback, sObserverPrimarySegment, qf, &sPlaybackCursor,
         &sPlaybackCursorQf, &sGhostPosition, &sGhostYaw,
@@ -1985,7 +2018,8 @@ bool validSampleAnimation(const Sample &sample, u16 version,
     if (version == SUSAMUNE_GHOST_FILE_VERSION_V3) {
         return !(packed & SUSAMUNE_GHOST_ANIMATION_RESERVED_MASK);
     }
-    if (version != SUSAMUNE_GHOST_FILE_VERSION_V4) return false;
+    if (version != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+        version != SUSAMUNE_GHOST_FILE_VERSION_V5) return false;
     const u8 yoshi = static_cast<u8>(
         (packed >> SUSAMUNE_GHOST_V4_YOSHI_SHIFT) &
         SUSAMUNE_GHOST_V4_YOSHI_MASK);
@@ -2008,9 +2042,11 @@ bool validCanonicalFile(const void *data, u32 size,
     SusamuneGhostFileHeader header;
     memcpy(&header, data, sizeof(header));
     const bool v3 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V3;
-    const bool v4 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V4;
+    const bool v5 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V5;
+    const bool v4 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V4 || v5;
     if (!v3 && !v4) return false;
-    const u32 supportedFeatures = v4
+    const u32 supportedFeatures = v5
+        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5 : v4
         ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4
         : SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V3;
     const bool foreign = header.gameId != runningGameId() ||
@@ -2018,11 +2054,11 @@ bool validCanonicalFile(const void *data, u32 size,
     if (header.magic != SUSAMUNE_GHOST_FILE_MAGIC ||
         header.headerSize != SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
         header.fileSize != size ||
-        size > SUSAMUNE_GHOST_V4_MAX_FILE_SIZE ||
+        size > (v5 ? SUSAMUNE_GHOST_V5_MAX_FILE_SIZE
+                   : SUSAMUNE_GHOST_V4_MAX_FILE_SIZE) ||
         header.checksumKind != SUSAMUNE_GHOST_CHECKSUM_CRC32 ||
         (header.requiredFeatures & ~supportedFeatures) ||
-        (v4 && header.requiredFeatures !=
-                   SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC) ||
+        (v4 && header.requiredFeatures != supportedFeatures) ||
         !validGameRegionPair(header.gameId, header.region) ||
         header.discRevision != SUSAMUNE_GHOST_DISC_REVISION ||
         header.sourceProfile >= SUSAMUNE_GHOST_PROFILE_COUNT ||
@@ -2073,9 +2109,10 @@ bool validCanonicalFile(const void *data, u32 size,
         extension.sampleDataOffset !=
             SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET ||
         extension.sampleDataSize != sampleDataSize ||
-        header.payloadSize !=
-            SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE + sampleDataSize ||
-        header.fileSize != extension.sampleDataOffset + sampleDataSize) {
+        header.payloadSize != size - header.headerSize ||
+        (v5 ? header.fileSize < extension.sampleDataOffset + sampleDataSize +
+                                  SUSAMUNE_GHOST_TEACHING_HEADER_SIZE
+            : header.fileSize != extension.sampleDataOffset + sampleDataSize)) {
         return false;
     }
     if (v3) {
@@ -2217,6 +2254,34 @@ bool validCanonicalFile(const void *data, u32 size,
         return false;
     }
 
+    if (v5) {
+        const u32 offset = extension.sampleDataOffset + sampleDataSize;
+        const u8 *teaching = bytes + offset;
+        const u32 teachingSize = size - offset;
+        if (!SusamuneGhostTeachingHeaderValid(teaching, teachingSize))
+            return false;
+        const u32 inputs = SusamuneGhostReadBe32(teaching + 8);
+        const u32 splits = SusamuneGhostReadBe32(teaching + 12);
+        const u8 *input = teaching + SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        if (SusamuneGhostReadBe32(teaching + 20) != Checksum::crc32(
+                input, teachingSize - SUSAMUNE_GHOST_TEACHING_HEADER_SIZE))
+            return false;
+        u32 previous = 0;
+        for (u32 i = 0; i < inputs; ++i, input += 16) {
+            if (!SusamuneGhostTeachingInputValid(input, header.startQf,
+                    header.endQf, previous, i == 0)) return false;
+            previous = SusamuneGhostReadBe32(input);
+        }
+        const u32 route = splits ? ((u32)input[8] << 8) | input[9] : 0;
+        const u32 schema = splits ? SusamuneGhostReadBe32(input + 4) : 0;
+        previous = 0;
+        for (u32 i = 0; i < splits; ++i, input += 12) {
+            if (!SusamuneGhostTeachingSplitValid(input, header.startQf,
+                    header.endQf, previous, route, schema, i)) return false;
+            previous = SusamuneGhostReadBe32(input);
+        }
+    }
+
     *headerOut = header;
     return true;
 }
@@ -2243,11 +2308,25 @@ void installCanonicalTrack(Track &track, const void *data,
     track.routeParentArea = header.routeParentArea;
     track.routeFlags = header.routeFlags;
     track.formatVersion = header.version;
-    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V4) {
+    track.sourceRegion = header.region;
+    if (header.version >= SUSAMUNE_GHOST_FILE_VERSION_V4) {
         track.attachmentFlags = extension.attachmentFlags;
         track.attachmentCount = extension.attachmentCount;
         memcpy(track.attachments, extension.attachments,
                sizeof(track.attachments));
+    }
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5) {
+        const u8 *teaching = bytes + extension.sampleDataOffset +
+                            extension.sampleDataSize;
+        track.inputCount = SusamuneGhostReadBe32(teaching + 8);
+        track.splitCount = (u8)SusamuneGhostReadBe32(teaching + 12);
+        track.teachingFlags = (u8)SusamuneGhostReadBe32(teaching + 16);
+        const u8 *inputs = teaching + SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        memcpy(track.inputs, inputs, track.inputCount *
+                                      sizeof(SusamuneGhostInputSample));
+        memcpy(track.splits, inputs + track.inputCount *
+                                     sizeof(SusamuneGhostInputSample),
+               track.splitCount * sizeof(SusamuneGhostSplitSample));
     }
     track.valid = true;
     track.completed =
@@ -2344,6 +2423,29 @@ void init() {
     sPlayback.segments = reinterpret_cast<Segment *>(
         SUSAMUNE_GHOST_PLAY_PPC_BASE + kSegmentTableOffset);
     sObserverSecondary.segments = sRecord.segments;
+#if IS_EMULATOR
+    sRecord.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_DOLPHIN_GHOST_INPUT_RECORD_PPC_BASE);
+    sPlayback.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_DOLPHIN_GHOST_INPUT_PLAY_PPC_BASE);
+#else
+    sRecord.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_GHOST_INPUT_RECORD_PPC_BASE);
+    sPlayback.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_GHOST_INPUT_PLAY_PPC_BASE);
+#endif
+    sObserverSecondary.inputs = sRecord.inputs;
+#if !IS_EMULATOR
+    volatile SusamuneGhostStorageMailbox *mailbox =
+        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    DCInvalidateRange((void *)&mailbox->response, 32);
+    if (mailbox->response.responseMagic != SUSAMUNE_GHOST_STORAGE_MAGIC ||
+        mailbox->response.protocolVersion != SUSAMUNE_GHOST_STORAGE_VERSION) {
+        sRecord.inputs = nullptr;
+        sPlayback.inputs = nullptr;
+        sObserverSecondary.inputs = nullptr;
+    }
+#endif
     sRecordToken = 0;
     sRecordIdentityToken = 0;
     sPlaybackToken = 0;
@@ -2506,7 +2608,7 @@ void afterDirect(s32 appState) {
         !sObserverMarioBaselineFinalized || !sObserverMarioOwned) {
         return;
     }
-    if (appState != 0 || !gpMarDirector ||
+    if (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP || !gpMarDirector ||
         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
         // direct() can begin teardown on the same frame as the loading-zone
         // hit. Restore before the next director reuses this stage heap.
@@ -2820,6 +2922,108 @@ void draw(Menu *menu) {
     }
 }
 
+void invalidateForAssist() {
+    if (!sRecording || sAttemptSerial != gQFTTimer.attemptSerial() ||
+        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_ASSISTED)) return;
+    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED;
+    bumpRecordToken();
+}
+
+void captureInput(const SusamunePracticeInput &input) {
+    s32 qf;
+    if (observerStatsSuppressed() || !sRecord.inputs ||
+        (!sRecording && !sRecord.completed) ||
+        sAttemptSerial != gQFTTimer.attemptSerial() ||
+        input.flags != 0 || !gQFTTimer.currentQf(&qf) || qf < 0 ||
+        sRecord.segmentCount == 0) return;
+    if (sRecord.inputCount &&
+        sRecord.inputs[sRecord.inputCount - 1].qf >= (u32)qf) return;
+    if (!sRecording && (u32)qf != sRecord.endQf) return;
+    if (sRecord.inputCount == SUSAMUNE_GHOST_INPUT_MAX_COUNT) {
+        sRecord.teachingFlags |= SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED;
+        return;
+    }
+    SusamuneGhostInputSample &sample = sRecord.inputs[sRecord.inputCount++];
+    sample.qf = (u32)qf;
+    sample.input = input;
+}
+
+void captureSplit(u16 route, u8 endpoint, s32 absoluteQf) {
+    if (observerStatsSuppressed() || (!sRecording && !sRecord.completed) ||
+        sAttemptSerial != gQFTTimer.attemptSerial() || absoluteQf < 0 ||
+        route >= SUSAMUNE_SPLIT_STATS_ROUTE_COUNT ||
+        endpoint != sRecord.splitCount ||
+        endpoint >= SUSAMUNE_GHOST_SPLIT_MAX_COUNT) return;
+    if (sRecord.splitCount &&
+        (sRecord.splits[0].route != route ||
+         sRecord.splits[sRecord.splitCount - 1].qf > (u32)absoluteQf)) return;
+    SusamuneGhostSplitSample &split = sRecord.splits[sRecord.splitCount++];
+    split.qf = (u32)absoluteQf;
+    split.schema = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
+    split.route = route;
+    split.endpoint = endpoint;
+    split.reserved = 0;
+}
+
+bool comparisonSplit(u16 route, u8 endpoint, s32 *out) {
+    if (!out || sRaceSplitSerial != gQFTTimer.attemptSerial() ||
+        endpoint >= sRaceSplitCount) return false;
+    const SusamuneGhostSplitSample &split = sRaceSplits[endpoint];
+    if (split.route != route || split.endpoint != endpoint ||
+        split.schema != SUSAMUNE_SPLIT_STATS_SCHEMA_HASH) return false;
+    *out = (s32)split.qf;
+    return true;
+}
+
+static bool playbackInput(const Track &track, u16 segmentIndex,
+                          SusamunePracticeInput *out) {
+    if (!out || !track.inputs || !track.inputCount || sVisualQf < 0 ||
+        segmentIndex >= track.segmentCount) return false;
+    u32 lo = 0, hi = track.inputCount;
+    while (lo < hi) {
+        const u32 mid = lo + (hi - lo) / 2;
+        if (track.inputs[mid].qf <= (u32)sVisualQf) lo = mid + 1;
+        else hi = mid;
+    }
+    if (!lo || track.inputs[lo - 1].qf <
+                    track.segments[segmentIndex].startQf) return false;
+    if ((track.teachingFlags & SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED) &&
+        (u32)sVisualQf > track.inputs[track.inputCount - 1].qf) return false;
+    *out = track.inputs[lo - 1].input;
+    return true;
+}
+
+void drawInputs(Menu *menu, u8 mode) {
+    if (!menu || menu->shown() || !mode || !sGhostVisible) return;
+    SusamunePracticeInput input;
+    if (playbackInput(sPlayback, sPlaybackSegment, &input)) {
+        gInputDisplay.drawSnapshot(menu, input, 460, 326, 65, "Ghost 1");
+    } else {
+        menu->drawText("Inputs not recorded", 438, 326, 12, 12,
+                       JUtility::TColor(220, 240, 255, 255));
+    }
+    if (mode < 2) return;
+    if (observerHasTwo()) {
+        if (sSecondaryGhostVisible &&
+            playbackInput(sObserverSecondary, sObserverSecondarySegment, &input))
+            gInputDisplay.drawSnapshot(menu, input, 330, 326, 65, "Ghost 2");
+    } else if (!observerActive()) {
+        const PADStatus &raw = JUTGamePad::mPadStatus[0];
+        input.buttons = raw.mButton;
+        input.stickX = (s8)raw.mStickX;
+        input.stickY = (s8)raw.mStickY;
+        input.substickX = (s8)raw.mSubStickX;
+        input.substickY = (s8)raw.mSubStickY;
+        input.triggerL = raw.mTriggerLeft;
+        input.triggerR = raw.mTriggerRight;
+        input.analogA = raw.mAnalogA;
+        input.analogB = raw.mAnalogB;
+        input.error = (s8)raw.mCurError;
+        input.flags = 0;
+        gInputDisplay.drawSnapshot(menu, input, 330, 326, 65, "You");
+    }
+}
+
 bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
                   const char *profileName, u32 *outSize,
                   u32 *outRecordToken) {
@@ -2837,7 +3041,8 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
         track->parentEpisode > SUSAMUNE_GHOST_ROUTE_VARIANT_MAX ||
         track->segmentCount == 0 || track->segmentCount > kMaxSegments ||
         track->endQf < track->startQf ||
-        track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 ||
+        (track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+         track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V5) ||
         track->attachmentCount >
             SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT ||
         (track->attachmentFlags &
@@ -2848,12 +3053,27 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
     const u32 duration = track->endQf - track->startQf;
     const u32 sampleDataSize = track->count * sizeof(Sample);
     const u32 sampleDataOffset = SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET;
+    u32 firstInput = 0, inputCount = track->inputCount;
+    while (inputCount && track->inputs[inputCount - 1].qf > track->endQf)
+        --inputCount;
+    while (firstInput < inputCount &&
+           track->inputs[firstInput].qf < track->startQf) ++firstInput;
+    inputCount -= firstInput;
+    // Console exports adopt the running region; foreign split schemas do not.
+    u8 splitCount = track->sourceRegion == runningRegion() ? track->splitCount : 0;
+    while (splitCount && track->splits[splitCount - 1].qf > track->endQf)
+        --splitCount;
+    if (splitCount && track->splits[0].qf < track->startQf) splitCount = 0;
+    const bool teaching = inputCount != 0 || splitCount != 0;
+    const u32 teachingSize = teaching
+        ? SUSAMUNE_GHOST_TEACHING_HEADER_SIZE + inputCount * 16u +
+              splitCount * 12u : 0;
     const u32 payloadSize = sampleDataSize +
-        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE;
-    const u32 fileSize = sampleDataOffset + sampleDataSize;
+        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE + teachingSize;
+    const u32 fileSize = sampleDataOffset + sampleDataSize + teachingSize;
     if (duration > SUSAMUNE_GHOST_MAX_DURATION_QF ||
         sampleDataSize > SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE ||
-        payloadSize > SUSAMUNE_GHOST_V4_MAX_PAYLOAD_SIZE ||
+        payloadSize > SUSAMUNE_GHOST_MAX_PAYLOAD_SIZE ||
         fileSize > capacity) {
         return false;
     }
@@ -2863,14 +3083,34 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
     memcpy(bytes + sampleDataOffset, track->samples, sampleDataSize);
     memcpy(bytes + SUSAMUNE_GHOST_V4_SEGMENT_TABLE_OFFSET,
            track->segments, track->segmentCount * sizeof(Segment));
+    if (teaching) {
+        u8 *section = bytes + sampleDataOffset + sampleDataSize;
+        SusamuneGhostTeachingHeader info = {};
+        info.magic = SUSAMUNE_GHOST_TEACHING_MAGIC;
+        info.version = SUSAMUNE_GHOST_TEACHING_VERSION;
+        info.headerSize = SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        info.inputCount = inputCount;
+        info.splitCount = splitCount;
+        info.flags = track->teachingFlags;
+        if (inputCount) memcpy(section + sizeof(info),
+                               track->inputs + firstInput, inputCount * 16u);
+        memcpy(section + sizeof(info) + inputCount * 16u, track->splits,
+               splitCount * 12u);
+        info.dataChecksum = Checksum::crc32(section + sizeof(info),
+                                            teachingSize - sizeof(info));
+        memcpy(section, &info, sizeof(info));
+    }
 
     SusamuneGhostFileHeader header;
     memset(&header, 0, sizeof(header));
     header.magic = SUSAMUNE_GHOST_FILE_MAGIC;
-    header.version = SUSAMUNE_GHOST_FILE_VERSION_V4;
+    header.version = teaching ? SUSAMUNE_GHOST_FILE_VERSION_V5
+                              : SUSAMUNE_GHOST_FILE_VERSION_V4;
     header.headerSize = SUSAMUNE_GHOST_FILE_HEADER_SIZE;
     header.fileSize = fileSize;
-    header.requiredFeatures = SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC;
+    header.requiredFeatures = teaching
+        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5
+        : SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC;
     header.runFlags = track->runFlags;
     header.gameId = runningGameId();
     header.discRevision = SUSAMUNE_GHOST_DISC_REVISION;
@@ -2951,6 +3191,8 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
 bool importPlayback(const void *data, u32 size, bool imported) {
     SusamuneGhostFileHeader header;
     if (!validCanonicalFile(data, size, &header)) return false;
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5 && !sPlayback.inputs)
+        return false;
     if (sPlayback.valid && sPlayback.pb && !sPlayback.saved &&
         sPlayback.pbToken != 0) {
         return false;
@@ -3025,6 +3267,8 @@ bool importObserverTrack(const void *data, u32 size, bool secondary) {
           !sObserverPrimaryReady))) {
         return false;
     }
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
+        !(secondary ? sRecord.inputs : sPlayback.inputs)) return false;
 
     if (secondary) {
         if (sRecord.samples == sPlayback.samples ||
@@ -3035,6 +3279,7 @@ bool importObserverTrack(const void *data, u32 size, bool secondary) {
         // record slot selected by that swap, not its boot-time address.
         sObserverSecondary.samples = sRecord.samples;
         sObserverSecondary.segments = sRecord.segments;
+        sObserverSecondary.inputs = sRecord.inputs;
         clearTrack(sObserverSecondary);
         installCanonicalTrack(sObserverSecondary, data, header);
         sObserverSecondaryReady = true;
@@ -3336,6 +3581,7 @@ bool discardUnsavedPB(u32 token) {
 
 bool markCurrentRecordingPB(s32 resultQf) {
     if (resultQf < 0 || !sRecord.valid || !sRecord.completed ||
+        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_ASSISTED) ||
         sRecord.resultQf != static_cast<u32>(resultQf)) {
         return false;
     }
@@ -3399,6 +3645,7 @@ void releaseSavedRecording(u32 recordToken) {
 }
 
 void onSavestateLoaded() {
+    sRaceSplitCount = 0;
     clearRaceContext();
     if (sObserverPhase != OBSERVER_OFF) {
         releaseObserverMario(false);

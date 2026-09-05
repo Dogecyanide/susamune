@@ -289,10 +289,16 @@ void ConvertName(u8* name, u8 pos, u32 val)
 // Perhaps not the most ideal but this should solve conflicts between global and per-game
 static bool patchOnce = false;
 
-static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
+static bool FilePatchRoom(u32 used, u32 needed)
+{
+	return used <= NIN_MEM2_FILE_PATCH_SIZE - sizeof(u32) &&
+		needed <= NIN_MEM2_FILE_PATCH_SIZE - sizeof(u32) - used;
+}
+
+static bool app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 {
 	if(patchOnce)
-		return;
+		return true;
 
 	// initialize memory to 0
 	vu32* CCdirect = (vu32*)0x932F009C;
@@ -401,6 +407,7 @@ static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 						ret = sscanf((char *)tempgameconf + i, "( %x , %x", (unsigned int *)&codeaddr, (unsigned int *)&codeval);
 						if (ret == 2)
 						{
+							if (!FilePatchRoom(memIncrement, 8)) goto overflow;
 							codeaddr &= 0x0FFFFFFF;
 							memcpy((void*)patch_address+memIncrement, &codeaddr, 4);
 							memIncrement += 4;
@@ -417,6 +424,7 @@ static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 						ret = sscanf((char *)(tempgameconf + i), "( %x , %x , %x , %x", (unsigned int *)&codeaddr, (unsigned int *)&codeval, (unsigned int *)&codeaddr2, (unsigned int *)&codeval2);
 						if (ret == 4)
 						{
+							if (!FilePatchRoom(memIncrement, 16)) goto overflow;
 							//this won't work if the dol hasn't loaded yet
 						//	if(*(u32*)codeaddr == codeval) {
 								
@@ -448,6 +456,7 @@ static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 						ret = sscanf((char *)tempgameconf + i, "( %x , %x , %x , %x , %x", (unsigned int *)&codeaddr, (unsigned int *)&start, (unsigned int *)&end, (unsigned int *)&pos, (unsigned int *)&codeval);
 						if (ret == 5)
 						{
+							if (!FilePatchRoom(memIncrement, 8)) goto overflow;
 							//rand(801A5084, u32 start, u32 end, u8 pos, u32 initial_value)
 							
 							//first set the address
@@ -534,6 +543,7 @@ static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 								//*(vu32*)0x93003438 = 1;
 								//DCFlushRange((void *)0x93003438, 4);
 								
+								if (!FilePatchRoom(memIncrement, 8)) goto overflow;
 								codeaddr = 0x13003438;
 								codeval = 1;
 								memcpy((void*)patch_address+memIncrement, &codeaddr, 4);
@@ -661,7 +671,7 @@ static void app_loadgameconfig(u8 *tempgameconf, u32 tempgameconfsize)
 					}
 					if (strncasecmp("writePlaylog", parsebuffer, strlen(parsebuffer)) == 0 && strlen(parsebuffer) == 12)
 					{
-						ret = sscanf((char *)tempgameconf + i, "( %x , %s , %s", (unsigned int *)&codeval,
+						ret = sscanf((char *)tempgameconf + i, "( %x , %21s , %21s", (unsigned int *)&codeval,
 																		nameStr1, nameStr2);
 						if (ret == 3)
 						{
@@ -772,129 +782,122 @@ end:
 		VIDEO_WaitVSync();
 		usleep(500000); */
 	}
+	return true;
+
+overflow:
+	*patch_cntAddr = 0;
+	DCFlushRange((void *)patch_cntAddr, sizeof(*patch_cntAddr));
+	return false;
 }
 #endif
 
-void SetFilePatches(void)
+static const char *FilePatchError(const char *path, const char *reason, u32 limit)
 {
-#if 0 // TEST: changes Sonic Mega Collection text from 'Game Title' to 'Game Reset'
-	vu32* patch_cntAddr = (vu32*)NIN_MEM2_FILE_PATCH_PPC_BASE; //amount of writes
-	vu32* patch_1 = (vu32*)(NIN_MEM2_FILE_PATCH_PPC_BASE + 0x04u); //addr
-	vu32* patch_2 = (vu32*)(NIN_MEM2_FILE_PATCH_PPC_BASE + 0x08u); //val
-	vu32* patch_3 = (vu32*)(NIN_MEM2_FILE_PATCH_PPC_BASE + 0x0Cu);
-	vu32* patch_4 = (vu32*)(NIN_MEM2_FILE_PATCH_PPC_BASE + 0x10u);
+	static char message[256];
+	const char *name = strrchr(path, '/');
+	name = name ? name + 1 : path;
+	gprintf("External patch %s: %s (limit %u bytes)\n", path, reason, limit);
+	snprintf(message, sizeof(message),
+		"%s: %s\n%.54s\nLimit: %u bytes (0x%X).\n"
+		"Boot cancelled; returning to loader.", name, reason, path, limit, limit);
+	return message;
+}
 
-	*patch_cntAddr = 2;
-	*patch_1 = 0x002406CC;
-	*patch_2 = 0x20526573;
-	*patch_3 = 0x002406D0;
-	*patch_4 = 0x65740000;
-	return;
-#endif
-	
-	//first set patch count to 0 regardless of using patch or not
-	//because the spot comes with some data
-	vu32* patch_cntAddr = (vu32*)NIN_MEM2_FILE_PATCH_PPC_BASE; //amount of writes
-	*patch_cntAddr = 0;
-	DCFlushRange((void*)patch_cntAddr, sizeof(*patch_cntAddr));
-	
-	//TODO: check for extracted fst format
-	char cheatPath[260];
-	u32 i;
-	FIL CodeFD;
-	if (BuildSiblingPath(cheatPath, sizeof(cheatPath), ncfg->GamePath,
-		"patch.bin") &&
-	    f_open_char(&CodeFD, cheatPath, FA_READ | FA_OPEN_EXISTING) == FR_OK)
+static const char *LoadFilePatch(const char *path, bool text, u32 limit,
+	bool *found)
+{
+	FIL file;
+	FRESULT result;
+	UINT read = 0;
+	u32 size, i;
+	u8 *buffer;
+	const char *error = NULL;
+	*found = false;
+	result = f_open_char(&file, path, FA_READ | FA_OPEN_EXISTING);
+	if (result == FR_NO_FILE || result == FR_NO_PATH)
+		return NULL;
+	if (result != FR_OK)
+		return FilePatchError(path, "could not read file", limit);
+	*found = true;
+	if (file.obj.objsize > limit)
+		error = "file too large";
+	else if (!text && file.obj.objsize < sizeof(u32))
+		error = "invalid patch header";
+	if (error != NULL)
 	{
-		if( CodeFD.obj.objsize > NIN_MEM2_FILE_PATCH_SIZE )
+		f_close(&file);
+		return FilePatchError(path, error, limit);
+	}
+	size = (u32)file.obj.objsize;
+	buffer = text ? memalign(32, size + 1) : (u8*)NIN_MEM2_FILE_PATCH_PPC_BASE;
+	if (buffer == NULL)
+	{
+		f_close(&file);
+		return FilePatchError(path, "not enough buffer memory", limit);
+	}
+	result = f_read(&file, buffer, size, &read);
+	if (f_close(&file) != FR_OK || result != FR_OK || read != size)
+		error = "could not read complete file";
+	else if (text)
+	{
+		u32 length = 0;
+		for (i = 0; i < size; ++i)
+			if (buffer[i] >= 9 && buffer[i] <= 126)
+				buffer[length++] = buffer[i];
+		// The legacy scanner uses sscanf, including on the final line.
+		buffer[length] = 0;
+		if (length && !app_loadgameconfig(buffer, length))
 		{
-			;//dbgprintf("Patch:File is too large, can't be larger than 6 MiB!\r\n");
+			error = "generated patches exceed capacity";
+			limit = NIN_MEM2_FILE_PATCH_SIZE;
 		}
+	}
+	else
+	{
+		u32 count = *(u32*)buffer;
+		if (count > (size - sizeof(u32)) / 8)
+			error = "invalid patch record count";
 		else
 		{
-			void *patchbuf = (void*)NIN_MEM2_FILE_PATCH_PPC_BASE;
-			UINT read;
-			FRESULT result = f_read(&CodeFD, patchbuf,
-				(UINT)CodeFD.obj.objsize, &read);
-			if (result == FR_OK && read == (UINT)CodeFD.obj.objsize)
-				DCFlushRange(patchbuf, read);
-			else
-			{
-				*patch_cntAddr = 0;
-				DCFlushRange((void*)patch_cntAddr,
-					sizeof(*patch_cntAddr));
-			}
-		}
-		f_close( &CodeFD );
-	}
-	else if (BuildSiblingPath(cheatPath, sizeof(cheatPath), ncfg->GamePath,
-		"patch.txt") &&
-	         f_open_char(&CodeFD, cheatPath,
-			 FA_READ | FA_OPEN_EXISTING) == FR_OK)
-	{
-		if (CodeFD.obj.objsize <= NIN_MEM2_FILE_PATCH_SIZE)
-		{
-			u8 *CMem = memalign(32, (u32)CodeFD.obj.objsize);
-			if (CMem != NULL)
-			{
-				UINT read;
-				FRESULT result = f_read(&CodeFD, CMem,
-					(UINT)CodeFD.obj.objsize, &read);
-				if (result == FR_OK && read == (UINT)CodeFD.obj.objsize)
-				{
-					u32 numnonascii = 0;
-					for (i = 0; i < read; i++)
+			for (i = 0; i < count; ++i)
+				if (((u32*)buffer)[1 + i * 2] & 1u)
+					if (++i >= count)
 					{
-						if (CMem[i] < 9 || CMem[i] > 126)
-							numnonascii++;
-						else
-							CMem[i - numnonascii] = CMem[i];
+						error = "incomplete conditional patch";
+						break;
 					}
-					app_loadgameconfig(CMem, read - numnonascii);
-				}
-				free(CMem);
-			}
+			if (error == NULL)
+				DCFlushRange(buffer, size);
 		}
-		f_close(&CodeFD);
 	}
-	
-	// Check for global patch.txt in apps/gc_devo/patch.txt
-	// this can be used to make every game use the kabuki jingle for example
-#if 1
-	if (BuildDevicePath(cheatPath, sizeof(cheatPath),
-		"/apps/gc_devo/patch.txt", "") &&
-	    f_open_char(&CodeFD, cheatPath, FA_READ | FA_OPEN_EXISTING) == FR_OK)
-	{
-		if( CodeFD.obj.objsize < 1*1024*1024 )
-		{
-			u8 *CMem = memalign(32, (u32)CodeFD.obj.objsize);
-			UINT read;
-			FRESULT result;
-			if (CMem == NULL)
-			{
-				f_close(&CodeFD);
-				return;
-			}
-			result = f_read(&CodeFD, CMem, (UINT)CodeFD.obj.objsize,
-				&read);
-			if (result == FR_OK && read == (UINT)CodeFD.obj.objsize)
-			{
-				u32 numnonascii = 0;
-				for (i = 0; i < read; i++)
-				{
-					if (CMem[i] < 9 || CMem[i] > 126)
-						numnonascii++;
-					else
-						CMem[i - numnonascii] = CMem[i];
-				}
-				app_loadgameconfig(CMem, read - numnonascii);
-			}
-			free(CMem);
-		}
-		f_close( &CodeFD );
-	}
-#endif
+	if (text)
+		free(buffer);
+	return error ? FilePatchError(path, error, limit) : NULL;
+}
 
+static const char *SetFilePatches(void)
+{
+	vu32 *count = (vu32*)NIN_MEM2_FILE_PATCH_PPC_BASE;
+	char path[260];
+	const char *error = NULL;
+	bool found = false;
+	*count = 0;
+	patchOnce = false;
+	DCFlushRange((void*)count, sizeof(*count));
+
+	if (BuildSiblingPath(path, sizeof(path), ncfg->GamePath, "patch.bin"))
+		error = LoadFilePatch(path, false, NIN_MEM2_FILE_PATCH_SIZE, &found);
+	if (!error && !found &&
+		BuildSiblingPath(path, sizeof(path), ncfg->GamePath, "patch.txt"))
+		error = LoadFilePatch(path, true, NIN_MEM2_FILE_PATCH_SIZE, &found);
+	if (!error && BuildDevicePath(path, sizeof(path), "/apps/gc_devo/patch.txt", ""))
+		error = LoadFilePatch(path, true, 1024u * 1024u - 1u, &found);
+	if (error)
+	{
+		*count = 0;
+		DCFlushRange((void*)count, sizeof(*count));
+	}
+	return error;
 }
 
 void SMC_ROM(void)
@@ -1061,91 +1064,6 @@ static const char NIN_BUILD_STRING[] ALIGNED(32) = NIN_VERSION_STRING; // Versio
 
 bool isWiiVC = false;
 bool wiiVCInternal = false;
-
-/**
- * Update meta.xml.
- */
-static void updateMetaXml(void)
-{
-	char filepath[MAXPATHLEN];
-	char new_meta[1024];
-	const bool dir_argument_exists = launch_dir[0] != '\0';
-	const char *metaDir =
-		dir_argument_exists ? launch_dir : "/apps/Nintendont/";
-	size_t metaDirLength = strlen(metaDir);
-	int len;
-	FIL meta;
-
-	if (metaDirLength + sizeof("meta.xml") > sizeof(filepath))
-		return;
-	memcpy(filepath, metaDir, metaDirLength);
-	memcpy(filepath + metaDirLength, "meta.xml", sizeof("meta.xml"));
-
-	if (!dir_argument_exists) {
-		gprintf("Creating new directory\r\n");
-		f_mkdir_char("/apps");
-		f_mkdir_char("/apps/Nintendont");
-	}
-
-	len = snprintf(new_meta, sizeof(new_meta),
-		META_XML "\r\n<app version=\"1\">\r\n"
-		"\t<name>" META_NAME "</name>\r\n"
-		"\t<coder>" META_AUTHOR "</coder>\r\n"
-		"\t<version>%d.%d%s</version>\r\n"
-		"\t<release_date>2023</release_date>\r\n"
-		"\t<short_description>" META_SHORT "</short_description>\r\n"
-		"\t<long_description>" META_LONG1 "\r\n\r\n" META_LONG2 "</long_description>\r\n"
-		"\t<ahb_access/>\r\n"
-		"</app>\r\n",
-		NIN_VERSION >> 16, NIN_VERSION & 0xFFFF,
-#ifdef NIN_SPECIAL_VERSION
-		NIN_SPECIAL_VERSION
-#else
-		""
-#endif
-  			);
-	if (len < 0 || (size_t)len >= sizeof(new_meta))
-		return;
-
-	// Check if the file already exists.
-	if (f_open_char(&meta, filepath, FA_READ|FA_OPEN_EXISTING) == FR_OK)
-	{
-		// File exists. If it's the same as the new meta.xml,
-		// don't bother rewriting it.
-		char orig_meta[1024];
-		if (len == meta.obj.objsize)
-		{
-			// File is the same length.
-			UINT read;
-			f_read(&meta, orig_meta, len, &read);
-			if (read == (UINT)len &&
-			    !strncmp(orig_meta, new_meta, len))
-			{
-				// File is identical.
-				// Don't rewrite it.
-				f_close(&meta);
-				return;
-			}
-		}
-		f_close(&meta);
-	}
-
-	// File does not exist, or file is not identical.
-	// Write the new meta.xml.
-/*	if (f_open_char(&meta, filepath, FA_WRITE|FA_CREATE_ALWAYS) == FR_OK)
-	{
-		// Reserve space in the file.
-		if (f_size(&meta) < len) {
-			f_expand(&meta, len, 1);
-		}
-
-		// Write the new meta.xml.
-		UINT wrote;
-		f_write(&meta, new_meta, len, &wrote);
-		f_close(&meta);
-		FlushDevices();
-	} */
-}
 
 static const WCHAR *primaryDevice;
 void changeToDefaultDrive()
@@ -1625,7 +1543,6 @@ static char dev_es[] ATTRIBUTE_ALIGN(32) = "/dev/es";
 extern vu32 FoundVersion;
 int main(int argc, char **argv)
 {
-	bool presentationAttempted = false;
 	size_t launchDirLength;
 	char *first_slash;
 
@@ -1686,26 +1603,8 @@ int main(int argc, char **argv)
 		DCStoreRange((void*)0x80001800, 0x1800);
 	}
 
-	// Load the launcher's presentation before its first visible frame. The
-	// temporary mount is closed before an IOS reload and reopened afterwards.
-	UseSD = (strncmp(launch_dir, "usb:", 4) != 0);
-	if (MountLauncherDevice() == false)
-	{
-		UseSD = !UseSD;
-		MountLauncherDevice();
-	}
-	if (devices[DEV_SD] || devices[DEV_USB])
-	{
-		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
-		SusamuneMusicLoad(GetRootDevice(), launch_dir);
-		presentationAttempted = true;
-	}
+	// Custom media is loaded only if the menu is needed, after autoboot cancels.
 	RevealBackground(false);
-	if (SusamuneThemeWarning()[0] != '\0')
-	{
-		ShowMessageScreen(SusamuneThemeWarning());
-		usleep(2500000);
-	}
 	s32 fd;
 
 	/* Wii VC fw.img is pre-patched but Wii/vWii isnt, so we
@@ -1832,12 +1731,6 @@ int main(int argc, char **argv)
 
 	gprintf("Nintendont at your service!\r\n%s\r\n", NIN_BUILD_STRING);
 	KernelLoaded = 1;
-	SusamuneMusicStart();
-	if (SusamuneMusicWarning()[0] != '\0')
-	{
-		ShowMessageScreen(SusamuneMusicWarning());
-		usleep(2500000);
-	}
 
 	// Checking for storage devices...
 	ShowMessageScreen("Checking storage devices...");
@@ -1877,30 +1770,6 @@ int main(int argc, char **argv)
 	/* Read IPL Font before doing any patches. */
 	LoadIplFonts();
 	//gprintf("Font: 0x1AFF00 starts with %.4s, 0x1FCF00 with %.4s\n", (char*)0x93100000, (char*)0x93100000 + 0x4D000);
-
-	// An early device may have been unavailable until after the IOS reload.
-	if (!presentationAttempted)
-	{
-		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
-		SusamuneMusicLoad(GetRootDevice(), launch_dir);
-		SusamuneMusicStart();
-		ClearScreen();
-		GRRLIB_Render();
-		ClearScreen();
-		if (SusamuneThemeWarning()[0] != '\0')
-		{
-			ShowMessageScreen(SusamuneThemeWarning());
-			usleep(2500000);
-		}
-		if (SusamuneMusicWarning()[0] != '\0')
-		{
-			ShowMessageScreen(SusamuneMusicWarning());
-			usleep(2500000);
-		}
-	}
-
-	// Update meta.xml.
-	updateMetaXml();
 
 	// susamune.ini is the only launcher config; nincfg.bin is gone. The kernel
 	// takes NIN_CFG through the MEM2 handoff, so the file was never anything
@@ -1969,6 +1838,22 @@ int main(int argc, char **argv)
 
 	if(!(ncfg->Config & NIN_CFG_AUTO_BOOT))
 	{
+		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+		SusamuneMusicLoad(GetRootDevice(), launch_dir);
+		SusamuneMusicStart();
+		ClearScreen();
+		GRRLIB_Render();
+		ClearScreen();
+		if (SusamuneThemeWarning()[0] != '\0')
+		{
+			ShowMessageScreen(SusamuneThemeWarning());
+			usleep(2500000);
+		}
+		if (SusamuneMusicWarning()[0] != '\0')
+		{
+			ShowMessageScreen(SusamuneMusicWarning());
+			usleep(2500000);
+		}
 		// The menu lists both devices, so the one auto boot skipped has to
 		// come up now.
 		MountDeviceOnce(DEV_SD);
@@ -2262,7 +2147,10 @@ int main(int argc, char **argv)
 
 	//Check if game is Triforce game
 	u32 IsTRIGame = 0;
-	if (ncfg->GameID != 0x47545050) //Damn you Knights Of The Temple!
+	// These IDs came from the validated disc header; Sunshine is not Triforce.
+	if (ncfg->GameID != 0x47545050 &&
+	    ncfg->GameID != 0x474D534A && ncfg->GameID != 0x474D5345 &&
+	    ncfg->GameID != 0x474D5350)
 		IsTRIGame = TRISetupGames(ncfg->GamePath, CurDICMD, ISOShift);
 
 	if (!(ncfg->Config & (NIN_CFG_SKIP_IPL)))
@@ -2372,7 +2260,13 @@ int main(int argc, char **argv)
 	
 	//read patches from GAMEID.txt to mem2, which in patch.c will be applied to mem1
 	srand (time (0));
-	SetFilePatches();
+	const char *filePatchError = SetFilePatches();
+	if (filePatchError)
+	{
+		ShowMessageScreen(filePatchError);
+		usleep(5000000);
+		ExitToLoader(1);
+	}
 
 	// Last disc/FAT read into the loader-only buffer. The payload is flushed
 	// before its ready header and survives the handoff as the ghost record slot.

@@ -14,6 +14,7 @@
 #include "susamune/addresses.hxx"
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
+#include "susamune/native_timer_layout.hxx"
 #include "susamune/settings.hxx"
 
 namespace PracticeVisuals {
@@ -672,7 +673,9 @@ void update() {
 void drawHudScreen(J2DScreen *screen, int x, int y,
                    const J2DGrafContext *context) {
     const PaneShift shift = shiftPinnaTimerPanel(screen);
+    const bool timerLayout = NativeTimerLayout::beginDraw(screen);
     screen->draw(x, y, context);
+    if (timerLayout) NativeTimerLayout::endDraw();
     if (shift.pane) shift.pane->add(0, -shift.y);
 }
 

@@ -192,7 +192,12 @@
     /* -- V2.2 PR6 practice visuals (append-only persisted ids) -- */        \
     X(SETTING_HIDDEN_ITEM_LABELS,            "hidden_item_labels")         \
     X(SETTING_HURTBOX_TARGET,                "hurtbox_target")             \
-    X(SETTING_RICCO_RACE_CHECKPOINTS,        "ricco_race_checkpoints")
+    X(SETTING_RICCO_RACE_CHECKPOINTS,        "ricco_race_checkpoints")       \
+    X(SETTING_GHOST_INPUTS,                  "ghost_inputs")                 \
+    X(SETTING_SPLIT_COMPARISON,              "split_comparison")             \
+    X(SETTING_NATIVE_TIMER_X,                "native_timer_x")               \
+    X(SETTING_NATIVE_TIMER_Y,                "native_timer_y")               \
+    X(SETTING_NATIVE_TIMER_SCALE,            "native_timer_scale")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

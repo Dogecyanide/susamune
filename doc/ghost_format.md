@@ -1,9 +1,61 @@
 # Ghost file format
 
-Status: V4 format. V3 ghosts remain readable with their original byte
-semantics; V1/V2 test ghosts are intentionally refused. V4 retains V3's
-bounded route segments and records attachment state without increasing the
-sample stride, file limit, or runtime buffers.
+Status: V5 adds recorded controller inputs and existing split endpoints. V3/V4
+remain readable with their original byte semantics; V1/V2 test ghosts remain
+unsupported. Files without teaching data continue to export as V4.
+
+## V5 teaching extension
+
+V5 retains the 256-byte V4 header, 2048-byte route table, attachment codec and
+16-byte pose samples. Its version is 5 and `requiredFeatures` is 3. Immediately
+after `sampleDataOffset + sampleDataSize`, it appends a big-endian `SGTI` section:
+
+| Offset | Bytes | Value |
+|---:|---:|---|
+| 0 | 4 | `SGTI` magic |
+| 4 | 2 | Section version 1 |
+| 6 | 2 | Header size 32 |
+| 8 | 4 | Input count, 0–54,000 |
+| 12 | 4 | Split count, 0–6 |
+| 16 | 4 | Flags: bit 0 means input capacity was reached |
+| 20 | 4 | CRC-32 of input and split records |
+| 24 | 8 | Reserved, zero |
+
+Inputs follow the section header, then splits; there is no padding or trailing
+data. Each 16-byte input is absolute QF (`u32`) followed by the 12-byte
+`SusamunePracticeInput`: buttons (`u16`), main X/Y and C X/Y (`s8`), L/R and
+analog A/B (`u8`), controller error (`s8`), and reserved flags (`u8`, zero).
+Only defined pad-button bits are allowed. Inputs must increase strictly and lie
+inside the pose track's QF bounds. They represent the controller sample consumed
+by a gameplay update, not one input per pose or per internal simulation tick.
+Playback holds the most recent recorded sample in its matching scene segment;
+no input is invented before the first sample or after a truncated stream.
+
+Each 12-byte split stores absolute QF (`u32`), registry schema hash (`u32`), route
+ID (`u16`), endpoint ordinal (`u8`), and reserved zero (`u8`). Splits must share a
+nonzero schema and route, have consecutive ordinals beginning at zero, and have
+nondecreasing QF timestamps within the track. Equal timestamps are allowed.
+Only endpoints already accepted by the existing split capture are recorded.
+Ghost comparison requires the current region, route, endpoint and schema to
+match; legacy files supply no ghost comparison values. Re-export under another
+region omits the original region's split records.
+
+The main payload/file checksums also cover the complete appended section.
+Maximum V5 size is 1,297,992 bytes: 433,888 bytes of V4 data, 32 bytes of section
+header, 864,000 bytes of inputs and 72 bytes of splits. Parsing validates all
+counts, bounds and checksums before installing runtime data. The ARM validator
+processes at most 16 KiB per service pass and never splits a record across passes.
+
+Storage mailbox protocol 4 retains the request/response cache lines at their
+old addresses and moves payload bytes to a fixed 1,310,720-byte transfer bank.
+Two independent 917,504-byte banks hold recording and playback inputs. Watch 2
+borrows the current recording bank, including after buffer promotion. The PPC
+owns a save payload until acknowledgement; the ARM publishes load payloads
+before its response cache line. An older launcher protocol disables this new
+storage path and controller recording before the new region is touched.
+
+The following tables describe the unchanged V4 prefix. SGIX remains a legacy
+optional host catalog; this release's console import/export does not use it.
 
 ## Scope
 

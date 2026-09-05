@@ -72,7 +72,7 @@ def rechecksum_ghost(raw: bytes) -> bytes:
 class StorageEnvelopeTests(unittest.TestCase):
     def test_old_and_future_canonical_versions_are_not_parsed(self) -> None:
         for version in (ghost_format.GHOST_VERSION_V1,
-                        ghost_format.GHOST_VERSION_V2, 5):
+                        ghost_format.GHOST_VERSION_V2, 6):
             with self.subTest(version=version), mock.patch.object(
                 ghost_format,
                 "validate_ghost",

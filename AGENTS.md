@@ -2,6 +2,20 @@
 
 A speedrun-practice mod for **Super Mario Sunshine** (JP GMSJ01, US GMSE01, and PAL GMSP01). The mod's code is injected into the game at runtime — the primary distribution is a **custom Nintendont** (Homebrew Channel app) that patches the selected disc revision in memory on boot, so end users need only a real disc (or their own ISO on SD) and **no patched ISO/DOL**. Dolphin remains the primary *development* environment (via a patched `main.dol`). The companion repo `../../src/sms` is the in-progress decompilation of the game and the source of truth for any game-side type layouts; refer to it freely when sizing a struct or tracing a code path.
 
+## FOXTROT implementation notes
+
+The current branch is **Moonshine Launcher FOXTROT, V2.3.0 pre-release**. The architecture plan in `doc/v2.3.0-frame-by-frame-plan.md` predates implementation; these concrete details supersede old capacity/menu descriptions below:
+
+- MEM1 reserve is `0xC2000` (768 KiB region plus the 8 KiB debug-stack gap). Runtime code/data occupy two linker-checked spans: `[0,0x58000)` and `[0x80000,0xC0000)` relative to the mod base. The attachment heap remains `[0x58000,0x78000)` and timer scratch remains at `0x7FFC0`. Do not move timer scratch or edit `src/qft_timer.cpp` for this work.
+- Mod-bin V3 has the existing 32-byte header plus two fixed segment descriptors, initialized payloads and hooks. `codeSize` includes the descriptor table; `memSize` sums the two spans, excluding the protected hole. Loader, kernel and crash reporting share complete validation. DOL/BPS and Gecko packing also emit separate spans. The BPS disc storage extent remains 512 KiB; it is distinct from the 768 KiB runtime address reservation.
+- The added ghost teaching banks use `0x91B3F000..0x91CFF000`; a complete file mailbox uses `0x91CFF000..0x91E3F000`. Immutable mod staging is `0x91E3F000..0x91EDE000`, followed by the unchanged model asset vault. Snapshots and established config wire offsets stay fixed. New live binds/settings/menu occupy the compile-checked gap at config offsets `0x5B80`, `0x5C00`, and `0x6000`; old configuration slots are left reserved.
+- `practice_session.cpp` owns guarded retail input hooks, practice pause/step, scoped free camera and a 4096-frame local input take. It adds no QFT callback. A step releases one rendered director frame; clocks, audio/UI and absolute deadlines remain live. The take reloads the existing user savestate and stops on a diagnostic fingerprint mismatch. It is experimental and assisted, not a portable deterministic replay.
+- The 64 KiB local take reuses the PPC-only former ghost-file payload at `0x91880100` (`0x71100100` in Dolphin). The live 256-byte ghost mailbox header and secondary model heap remain untouched; console recording requires protocol 4. Native timer transforms share three vtable copies across their bounded pane snapshots.
+- Dolphin keeps the 436-byte `Menu` object in MEM1 because its embedded `J2DTextBox` reaches retail paired-single matrix instructions that Dolphin 5.0 cannot JIT against fake MEM2. Scalar tab storage stays in the fixed emulated window. Wii keeps its actual MEM2 menu storage.
+- Ghost V5 appends bounded input samples and up to six existing split endpoints. New level split definitions remain excluded. Ghost comparison freezes compatible target timestamps and reports unavailable data without guessing.
+- Menu roots are Quick, Practice, Runs, Ghosts, Display and System. New IDs are append-only. Native timer position/size lives in `native_timer_layout.cpp`, scoped strictly around HUD drawing; the original timer implementation is unchanged.
+- FOXTROT packaging includes EN/JA guides, a test sheet and a crash decoder. Release installation remains governed by the SD deployment section below.
+
 ## Comment style
 
 Keep comments short. Explain **non-obvious mechanics and footguns** — the

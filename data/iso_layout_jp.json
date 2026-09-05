@@ -168,19 +168,19 @@
       "crc32": "9E867E61"
     },
     {
-      "offset": 122892,
-      "size": 68,
-      "crc32": "2E3ADD37"
+      "offset": 122896,
+      "size": 64,
+      "crc32": "4B60D0AC"
     },
     {
-      "offset": 122964,
-      "size": 68,
-      "crc32": "3E8089C9"
+      "offset": 122968,
+      "size": 64,
+      "crc32": "5BDA8452"
     },
     {
-      "offset": 123036,
-      "size": 9408,
-      "crc32": "E0DE2472"
+      "offset": 123040,
+      "size": 9404,
+      "crc32": "7D395EE7"
     },
     {
       "offset": 132448,
