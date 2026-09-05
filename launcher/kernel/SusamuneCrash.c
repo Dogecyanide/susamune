@@ -1,6 +1,7 @@
 #include "SusamuneCrash.h"
 
 #include "SusamuneCfg.h"
+#include "common.h"
 #include "ff_utf8.h"
 #include "string.h"
 #include "susamune/crash_report.h"
@@ -30,20 +31,6 @@ static u32 LastAttempt;
 static FIL TextFile;
 static int TextStatus;
 
-static const u32 CrcNibbleTable[16] = {
-	0x00000000u, 0x1DB71064u, 0x3B6E20C8u, 0x26D930ACu,
-	0x76DC4190u, 0x6B6B51F4u, 0x4DB26158u, 0x5005713Cu,
-	0xEDB88320u, 0xF00F9344u, 0xD6D6A3E8u, 0xCB61B38Cu,
-	0x9B64C2B0u, 0x86D3D2D4u, 0xA00AE278u, 0xBDBDF21Cu
-};
-
-static inline u32 CrcByte(u32 crc, u8 byte)
-{
-	crc ^= byte;
-	crc = (crc >> 4) ^ CrcNibbleTable[crc & 15u];
-	return (crc >> 4) ^ CrcNibbleTable[crc & 15u];
-}
-
 static u32 ReportChecksum(const void *report, u32 size)
 {
 	const u8 *bytes = (const u8*)report;
@@ -54,7 +41,7 @@ static u32 ReportChecksum(const void *report, u32 size)
 		bool checksumByte =
 			i >= __builtin_offsetof(struct SusamuneCrashReport, checksum) &&
 			i < __builtin_offsetof(struct SusamuneCrashReport, checksum) + 4;
-		crc = CrcByte(crc, checksumByte ? 0u : bytes[i]);
+		crc = SusamuneCrcByte(crc, checksumByte ? 0u : bytes[i]);
 	}
 	return crc ^ 0xFFFFFFFFu;
 }
@@ -147,12 +134,7 @@ static bool ReadCore(const char *path)
 
 static u32 ModFileCrc(const struct SusamuneModHeader *header, u32 fileSize)
 {
-	const u8 *bytes = (const u8*)header;
-	u32 crc = 0xFFFFFFFFu;
-	u32 i;
-	for (i = 0; i < fileSize; ++i)
-		crc = CrcByte(crc, bytes[i]);
-	return crc ^ 0xFFFFFFFFu;
+	return SusamuneCrc32(header, fileSize);
 }
 
 static bool ValidStagedMod(const struct SusamuneModHeader *header)

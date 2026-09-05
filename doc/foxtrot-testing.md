@@ -1,6 +1,6 @@
 # FOXTROT first-build test sheet
 
-Status: pre-release. All six regional/platform builds and 476 host tests pass.
+Status: pre-release. All six regional/platform builds and 479 host tests pass.
 Wii hardware playtesting is pending.
 
 ## Checks completed on 2026-09-05
@@ -41,6 +41,9 @@ Wii hardware playtesting is pending.
 - The launcher decoder no longer calls a helper or saves registers for every
   output byte. Production decoding and checksum validation passed both model
   archives from all three owned retail discs, with output guards intact.
+- The kernel shares one nibble-table CRC across model, mod-file and crash
+  validation. All six retail model payloads pass, corruption still rejects,
+  and the original cache synchronization ranges are retained.
 - Basic Bianco 1 pixel checks show free-camera viewpoint movement while
   Mario's position remains fixed, and native timer position/scale changes.
 - Final US image `0391BB7B` keeps both frame controls and Creation open

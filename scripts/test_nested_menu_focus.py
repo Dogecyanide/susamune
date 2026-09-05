@@ -3,6 +3,7 @@
 from pathlib import Path
 import ctypes
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -28,8 +29,8 @@ class NestedMenuFocusTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         compiler = ROOT / "toolchain/clang++.exe"
-        if not compiler.exists():
-            raise unittest.SkipTest("bundled host compiler unavailable")
+        if sys.platform != "win32" or not compiler.exists():
+            raise unittest.SkipTest("bundled Windows host compiler unavailable")
         source = (ROOT / "src/menu.cpp").read_text(encoding="utf-8")
         source = source[source.index("class NestedMenuTab final"):]
         methods = "\n".join(function(source, signature) for signature in (

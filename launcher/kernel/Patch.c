@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "TRI.h"
 #include "Config.h"
 #include "global.h"
+#include "common.h"
 #include "patches.c"
 #include "DI.h"
 #include "ISO.h"
@@ -4097,20 +4098,6 @@ static const struct SusamuneModHeader *SusamuneModStaged(void)
     return SusamuneModFileValid(hdr, GAME_ID, size) ? hdr : NULL;
 }
 
-static u32 SusamuneAssetCrc32(const void *data, u32 size)
-{
-	const u8 *bytes = (const u8*)data;
-	u32 crc = 0xFFFFFFFFu;
-	u32 i, bit;
-	for (i = 0; i < size; ++i)
-	{
-		crc ^= bytes[i];
-		for (bit = 0; bit < 8; ++bit)
-			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-	}
-	return crc ^ 0xFFFFFFFFu;
-}
-
 static bool SusamuneShadowAssetValid(
 	const struct SusamuneGhostShadowAsset *asset)
 {
@@ -4124,7 +4111,7 @@ static bool SusamuneShadowAssetValid(
 		asset->bmdSize == SUSAMUNE_GHOST_SHADOW_BMD_SIZE &&
 		asset->payloadChecksum == SUSAMUNE_GHOST_SHADOW_PAYLOAD_CRC32 &&
 		asset->reserved == 0 &&
-		SusamuneAssetCrc32(asset->payload,
+		SusamuneCrc32(asset->payload,
 			SUSAMUNE_GHOST_SHADOW_BMD_SIZE +
 			SUSAMUNE_GHOST_SHADOW_BTK_SIZE) ==
 			SUSAMUNE_GHOST_SHADOW_PAYLOAD_CRC32;
@@ -4143,7 +4130,7 @@ static bool SusamunePiantaAssetValid(
 		asset->bmdSize == SUSAMUNE_GHOST_PIANTA_BMD_SIZE &&
 		asset->payloadChecksum == SUSAMUNE_GHOST_PIANTA_PAYLOAD_CRC32 &&
 		asset->reserved == 0 &&
-		SusamuneAssetCrc32(asset->payload,
+		SusamuneCrc32(asset->payload,
 			SUSAMUNE_GHOST_PIANTA_BMD_SIZE) ==
 			SUSAMUNE_GHOST_PIANTA_PAYLOAD_CRC32;
 }

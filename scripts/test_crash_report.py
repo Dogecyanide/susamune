@@ -106,23 +106,46 @@ class KernelChecksumTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         work = Path(cls.temp.name)
         production = (ROOT / "launcher/kernel/SusamuneCrash.c").read_text()
-        checksums = production[production.index("static const u32 CrcNibbleTable"):
+        common = (ROOT / "launcher/kernel/common.c").read_text()
+        header = (ROOT / "launcher/kernel/common.h").read_text()
+        checksums = header[header.index("extern const u32 SusamuneCrcNibbleTable"):
+                           header.index("#define SEEK_CUR")]
+        checksums += common[common.index("const u32 SusamuneCrcNibbleTable"):
+                            common.index("void BootStatus(")]
+        checksums += production[production.index("static u32 ReportChecksum"):
                                production.index("static u32 CrashChecksum")]
         checksums += production[production.index("static u32 ModFileCrc"):
                                 production.index("static bool ValidStagedMod")]
+        patch = (ROOT / "launcher/kernel/Patch.c").read_text()
+        validators = patch[patch.index("static bool SusamuneShadowAssetValid("):
+                           patch.index("static void SusamunePublishAsset(")]
         source = work / "crc.c"
         source.write_text('''typedef unsigned int u32;
 typedef unsigned char u8;
 typedef _Bool bool;
 #include "susamune/crash_report.h"
 #include "susamune/mod_bin.h"
-''' + checksums + '''
+#include "susamune/ghost_model_asset.h"
+static u32 syncSize;
+static void sync_before_read(void *data, u32 size) { syncSize = size; }
+''' + checksums + validators + '''
 __declspec(dllexport) u32 reportCrc(const void *data, u32 size) {
     return ReportChecksum(data, size);
 }
 __declspec(dllexport) u32 modCrc(const void *data, u32 size) {
     return ModFileCrc((const struct SusamuneModHeader *)data, size);
 }
+__declspec(dllexport) u32 assetCrc(const void *data, u32 size) {
+    return SusamuneCrc32(data, size);
+}
+__declspec(dllexport) u32 byteCrc(u32 crc, u8 byte) {
+    return SusamuneCrcByte(crc, byte);
+}
+__declspec(dllexport) int validAsset(const void *data, int pianta) {
+    syncSize = 0;
+    return pianta ? SusamunePiantaAssetValid(data) : SusamuneShadowAssetValid(data);
+}
+__declspec(dllexport) u32 assetSyncSize(void) { return syncSize; }
 ''', encoding="ascii")
         library = work / "crc.dll"
         subprocess.run([str(clang), "--target=x86_64-pc-windows-msvc", "-O2",
@@ -132,9 +155,14 @@ __declspec(dllexport) u32 modCrc(const void *data, u32 size) {
         cls.dll = ctypes.CDLL(str(library))
         cls.addClassCleanup(lambda: ctypes.windll.kernel32.FreeLibrary(
             ctypes.c_void_p(cls.dll._handle)))
-        for name in ("reportCrc", "modCrc"):
+        for name in ("reportCrc", "modCrc", "assetCrc"):
             getattr(cls.dll, name).argtypes = [ctypes.c_void_p, ctypes.c_uint]
             getattr(cls.dll, name).restype = ctypes.c_uint
+        cls.dll.byteCrc.argtypes = [ctypes.c_uint, ctypes.c_ubyte]
+        cls.dll.byteCrc.restype = ctypes.c_uint
+        cls.dll.validAsset.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        cls.dll.validAsset.restype = ctypes.c_int
+        cls.dll.assetSyncSize.restype = ctypes.c_uint
 
     def test_production_mod_crc_matches_ieee_vectors_and_staging_limit(self):
         rng = random.Random(0x435243)
@@ -166,6 +194,38 @@ __declspec(dllexport) u32 modCrc(const void *data, u32 size) {
             data = path.read_bytes()
             with self.subTest(region=path.stem):
                 self.assertEqual(self.dll.modCrc(data, len(data)), zlib.crc32(data))
+
+    def test_shared_crc_covers_every_byte_for_varied_internal_states(self):
+        states = (0, 1, 0xFFFFFFFF, 0x80000000, 0x12345678, 0xEDB88320)
+        for state in states:
+            for byte in range(256):
+                expected = zlib.crc32(bytes((byte,)), state ^ 0xFFFFFFFF) ^ 0xFFFFFFFF
+                self.assertEqual(self.dll.byteCrc(state, byte), expected)
+
+    def test_shared_asset_crc_is_byte_order_and_alignment_independent(self):
+        words = (0, 1, 0xFFFFFFFF, 0x01234567, 0x89ABCDEF, 0x80000000)
+        vectors = [struct.pack(endian + "6I", *words) for endian in (">", "<")]
+        vectors += [bytes(range(256)), bytes(reversed(range(256)))]
+        for data in vectors:
+            for offset in range(8):
+                storage = ctypes.create_string_buffer(b"x" * offset + data + b"y" * 8)
+                self.assertEqual(self.dll.assetCrc(ctypes.byref(storage, offset), len(data)),
+                                 zlib.crc32(data))
+
+    def test_production_asset_validators_keep_header_crc_and_cache_guards(self):
+        for pianta, magic, span, bmd_size, btk_size, checksum in (
+            (0, 0x5347534D, 0x10000, 0xF8C0, 0x440, 0xFC04D868),
+            (1, 0x5347504D, 0x12000, 0x119A0, 0, 0x448001A9),
+        ):
+            asset = bytearray(span)
+            storage = ctypes.create_string_buffer(bytes(asset))
+            self.assertEqual(self.dll.validAsset(storage, pianta), 0)
+            self.assertEqual(self.dll.assetSyncSize(), span)
+            struct.pack_into("<IHH i 5I", asset, 0, magic, 1, 32, 1,
+                             32 + bmd_size + btk_size, 32, bmd_size, checksum, 0)
+            storage = ctypes.create_string_buffer(bytes(asset))
+            self.assertEqual(self.dll.validAsset(storage, pianta), 0)
+            self.assertEqual(self.dll.assetSyncSize(), span)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,11 @@ New live binds/settings/menu windows occupy configuration offsets `0x5B80`,
 `0x5C00` and `0x6000`; the old live slots stay reserved. Cache-line ownership,
 aliases, adjacency and capacities are enforced in `include/susamune/mem2_map.h`.
 
+Sharing the kernel's 64-byte CRC table and raw checksum routine removes 100
+bytes of ARM code/read-only data. Kernel writable data, BSS and every MEM2
+window remain unchanged; model verification now uses two nibble steps per
+byte instead of eight bit rounds.
+
 ## Measured scene headroom
 
 Isolated Dolphin 5.0 JIT runs on 2026-09-05 measured Bianco 1 after setup:
