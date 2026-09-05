@@ -1,6 +1,6 @@
 # FOXTROT first-build test sheet
 
-Status: pre-release. All six regional/platform builds and 463 host tests pass.
+Status: pre-release. All six regional/platform builds and 476 host tests pass.
 Wii hardware playtesting is pending.
 
 ## Checks completed on 2026-09-05
@@ -26,17 +26,35 @@ Wii hardware playtesting is pending.
   2606a JIT and Dolphin 5.0 Interpreter. The old 5.0 JIT failed that check;
   use a current release for frame tools. Interpreter also passed a single
   step with jump held and a warp out of practice hold.
-- The final US image (CRC32 `5F9FF69D`) passed Dolphin 2606a JIT checks for
+- US image CRC32 `5F9FF69D` passed Dolphin 2606a JIT checks for
   holding with jump/stick input, menu navigation during hold, one step with
   jump held, free-camera activation and movement in both pause modes, camera
   handoff to the menu, and a completed warp from practice hold.
+- US image `14403536` passed a captured menu-entry check: holding A
+  opens the frame controls without activating Pause; a fresh press activates
+  it. The title, pre-release badge and all seven control rows fit at 640×480.
+  A fresh 68-frame moving/jumping take replayed with all fingerprints matching
+  and the same final position. Held-menu input and Step with A also passed.
+- The recording settings hash remains byte-for-byte equivalent after removing
+  126 helper calls per frame. Launcher asset validation retains every checksum
+  while hashing 135,776 fewer bytes per two-model load.
+- The launcher decoder no longer calls a helper or saves registers for every
+  output byte. Production decoding and checksum validation passed both model
+  archives from all three owned retail discs, with output guards intact.
+- Basic Bianco 1 pixel checks show free-camera viewpoint movement while
+  Mario's position remains fixed, and native timer position/scale changes.
+- Final US image `0391BB7B` keeps both frame controls and Creation open
+  through a held selecting press. The shared child-page guard also skips
+  the release callback, so a stale decoded button cannot activate an editor.
+  Final captures verify notification/banner priority, free-camera movement,
+  and a clean native timer at +60 X, -40 Y and 140% scale.
 - The protected QFT timer implementation and existing callback order are
   unchanged. No new level splits were added.
 
 The live control fixture supplies controller packets at the retail input
 boundary in a private test image; it does not test a physical controller or
-Wii storage. Camera observations verify state and hook phases, not visual
-quality. Full ghost teaching export/Watch, hardware frame pacing and the
+Wii storage. Camera observations cover sampled views and hook phases.
+Full ghost teaching export/Watch, hardware frame pacing and the
 device matrix below still need playtesting.
 
 ## Runner test checklist

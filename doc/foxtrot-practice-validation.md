@@ -116,7 +116,7 @@ The 330-frame take and deliberate-mismatch evidence are in
 used Dolphin 5.0 JIT and the preceding `FF1C16BC` image. They demonstrate this
 particular take and the mismatch detector, not full-world determinism.
 
-The final US image, CRC `5F9FF69D`, was then checked in Dolphin 2606a JIT.
+US image CRC `5F9FF69D` was then checked in Dolphin 2606a JIT.
 `build/foxtrot-smoke/final-current-jit-smoke.json` records held menu input,
 Step with A, camera activation without movement from the enabling combo,
 camera/menu input handoff, camera movement during hold and ordinary retail
@@ -125,6 +125,37 @@ from 2 to 3 and returned to normal gameplay state 4. Menu ownership remained
 true in every one of 20 samples for both handoff checks; decoded C-stick input
 was observed across rendered frames. A temporary zero in decoded input within
 a frame is expected when the wrapper suppresses retail gameplay controls.
+
+The `14403536` image includes a child-page focus fix found during pixel
+capture. Holding A for 1.2 seconds when entering frame controls leaves the menu
+open and practice live. Releasing A and pressing it again pauses. The captured
+640×480 control pages show all seven rows, the local take count and help text
+without overlap. Evidence is under `build/foxtrot-visual`.
+
+The same image recorded and replayed a fresh 68-frame moving/jumping
+take with all fingerprints matching and the identical ending position. It
+also passed held-menu input ownership in 20/20 samples and one Step with A.
+`build/foxtrot-smoke/optimized-current-jit-replay.json` records these checks.
+
+Final image `0391BB7B` adds a shared child-page release guard for both raw-
+and decoded-input pages. Held-A captures confirm that entering frame controls
+or Creation does not activate a row. The guard also suppresses action binds
+until release and skips the release callback before handing input to the page.
+`scripts/test_nested_menu_focus.py` exercises these behaviors, stale decoded
+input, protected entry and the next fresh Back press.
+Final captures also show pause/camera notifications taking priority over the
+practice banner, which returns after the notification expires. Clean native
+timer captures use +60 X, -40 Y and 140% scale with the input overlay hidden;
+the draw path reports 18 panes. Camera movement leaves Mario's exact position
+unchanged. Final capture evidence is under `build/foxtrot-visual`.
+
+The final settings fingerprint loop uses the identical unsigned FNV byte step
+directly. The compiled loop drops 126 helper calls per recorded/replayed frame;
+the cadence and stick-mode suffixes retain their original code and read order.
+Comparison covered 526,080 single-byte cases, all 65,536 two-byte streams and
+32,848 full settings/cadence/mode streams. The function also shrank by 44 bytes
+and uses a 32-byte stack frame instead of 48. Evidence is under
+`build/optimization`.
 
 Dolphin 5.0 JIT has a reproducible held-menu/warp input failure with the
 untraced `4D9B651E` image: controller ownership can read false despite an open
@@ -140,7 +171,8 @@ The captured fault was a paired-single matrix load from the menu's J2D object
 in FakeVMEM. Keeping the 440-byte Menu object in MEM1 on emulator builds
 resolved that crash; the remaining menu runtime stays in its reserved bank.
 
-These are executable and state checks. They do not establish visual camera
-quality, every enemy/water interaction, all controller edge cases, every
-stage, or Wii hardware behavior. No Wii result is claimed. Audio, rendering,
+Additional Bianco 1 captures show the rendered camera moving while Mario's
+recorded position remains fixed, and native timer position/scale changes.
+These sampled views do not cover every enemy/water interaction, controller
+edge case, stage or Wii hardware behavior. No Wii result is claimed. Audio, rendering,
 absolute clocks and asynchronous services continue during practice hold.

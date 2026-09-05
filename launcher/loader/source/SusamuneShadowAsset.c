@@ -448,7 +448,8 @@ static bool RarcStringEquals(const ShadowDecoder *decoder, u32 strings,
 	       decoder->metadata[strings + offset + length] == '\0';
 }
 
-static bool ParseRarc(ShadowDecoder *decoder)
+// Parse metadata once without adding its register saves to every decoded byte.
+static bool __attribute__((noinline)) ParseRarc(ShadowDecoder *decoder)
 {
 	const AssetSpec *spec = decoder->spec;
 	const u8 *meta = decoder->metadata;
@@ -550,7 +551,7 @@ static bool ParseRarc(ShadowDecoder *decoder)
 	return true;
 }
 
-static bool EmitByte(ShadowDecoder *decoder, u8 value)
+static inline bool __attribute__((always_inline)) EmitByte(ShadowDecoder *decoder, u8 value)
 {
 	const AssetSpec *spec = decoder->spec;
 	const u32 position = decoder->outputPosition;
@@ -858,17 +859,20 @@ static void StageAsset(const AssetSpec *spec, const char *gameDevice,
 		status = SUSAMUNE_GHOST_SHADOW_STATUS_RESOURCE_MISSING;
 		goto done;
 	}
-	checksum = crc32(0L, Z_NULL, 0);
-	checksum = crc32(checksum, (const Bytef *)spec->payload,
-		spec->bmdSize + spec->btkSize);
 	bmdChecksum = crc32(0L, Z_NULL, 0);
 	bmdChecksum = crc32(bmdChecksum, (const Bytef *)spec->payload,
 		spec->bmdSize);
+	checksum = bmdChecksum;
 	btkChecksum = crc32(0L, Z_NULL, 0);
 	if (spec->btkSize != 0)
+	{
+		checksum = crc32(checksum,
+			(const Bytef *)spec->payload + spec->bmdSize,
+			spec->btkSize);
 		btkChecksum = crc32(btkChecksum,
 			(const Bytef *)spec->payload + spec->bmdSize,
 			spec->btkSize);
+	}
 	if ((u32)checksum != spec->payloadChecksum ||
 	    (u32)bmdChecksum != spec->bmdChecksum ||
 	    (u32)btkChecksum != spec->btkChecksum)

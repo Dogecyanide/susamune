@@ -27,11 +27,11 @@ Final console mod builds on 2026-09-05:
 
 | Region | Initialized image | Full runtime image | Free code/data capacity |
 |---|---:|---:|---:|
-| JP | 346,024 B | 384,704 B | 237,888 B |
-| US | 344,728 B | 383,424 B | 239,168 B |
-| PAL | 344,860 B | 383,552 B | 239,040 B |
+| JP | 346,084 B | 384,768 B | 237,824 B |
+| US | 344,788 B | 383,488 B | 239,104 B |
+| PAL | 344,920 B | 383,616 B | 238,976 B |
 
-The largest runtime image is about 375.7 KiB; it leaves about 232.3 KiB of
+The largest runtime image is about 375.8 KiB; it leaves about 232.3 KiB of
 unused code/data capacity inside the requested reservation.
 
 The local 4096-frame input take no longer consumes 65,536 bytes of MEM1 BSS.

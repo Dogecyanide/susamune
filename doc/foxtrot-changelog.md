@@ -13,5 +13,6 @@ V2.3.0 pre-release, first build.
 - Oversized, incomplete or unreadable external patch files cancel boot with a clear error.
 - 768 KiB MEM1 reservation; fixed timer scratch and attachment heap remain at their established addresses.
 - Reused MEM2 space for the 64 KiB local input take and reduced temporary native timer display storage.
+- Reduced per-frame recording work and duplicate launcher asset checksum work.
 
 This is a testing build. Hardware behavior, frame pacing and replay consistency need playtesting. See TESTING.md and the English/Japanese guides.

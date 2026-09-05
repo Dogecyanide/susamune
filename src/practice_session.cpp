@@ -183,7 +183,7 @@ u32 settingsHash() {
     u32 hash = 2166136261u;
     for (int i = 0; i < SETTING_COUNT; ++i) {
         const u8 value = gSettings.get(static_cast<SettingId>(i));
-        hash = hashBytes(hash, &value, sizeof(value));
+        hash = (hash ^ value) * 16777619u;
     }
     const f32 cadence = SMSGetVSyncTimesPerSec();
     hash = hashBytes(hash, &cadence, sizeof(cadence));
@@ -840,7 +840,7 @@ bool consumedInput(SusamunePracticeInput *out) {
 }
 
 void draw(Menu *menu) {
-    if (!menu || menu->shown() ||
+    if (!menu || menu->shown() || menu->hasToast() ||
         (!sPaused && !sFreeCamera && !sRecord && !sReplay && !sLoadKind)) return;
     char text[96];
     if (sRecord) snprintf(text, sizeof(text), "INPUT REC  %lu / %lu", sCount, kMaxFrames);

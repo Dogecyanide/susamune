@@ -5185,7 +5185,7 @@ public:
     NestedMenuTab(const char *name, MenuTab *const *children, int count,
                   SectionStyle sectionStyle = SECTIONS_NONE)
         : mName(name), mCount((u8)count), mSel(0), mPage(-1),
-          mSectionStyle((u8)sectionStyle) {
+          mSectionStyle((u8)sectionStyle), mChildEntryWait(false) {
         for (int i = 0; i < MAX_CHILDREN; i++) {
             mChildren[i] = i < count ? children[i] : nullptr;
         }
@@ -5200,6 +5200,7 @@ public:
         MenuTab *child = current();
         const u16 held = JUTGamePad::mPadStatus[0].mButton;
         if (!child) return (held & JUTGamePad::A) != 0;
+        if (mChildEntryWait && (held & (JUTGamePad::A | JUTGamePad::B))) return true;
         if (!child->grabsInput() && (held & JUTGamePad::B)) return true;
         return child->suppressesBinds();
     }
@@ -5210,7 +5211,9 @@ public:
         return current() && current()->favoriteHint();
     }
     void focus() override {
-        mNavInput.begin(current() ? JUTGamePad::B : JUTGamePad::A);
+        MenuTab *child = current();
+        mNavInput.begin(child ? JUTGamePad::B : JUTGamePad::A);
+        mChildEntryWait = child != nullptr;
     }
 
     bool beginProtectedPBSave(Menu *menu, u32 token) override {
@@ -5218,7 +5221,7 @@ public:
             if (!mChildren[i]->beginProtectedPBSave(menu, token)) continue;
             mSel = (u8)i;
             mPage = (s8)i;
-            mNavInput.begin(JUTGamePad::B);
+            focus();
             return true;
         }
         return false;
@@ -5227,6 +5230,14 @@ public:
     void update(Menu *menu, TMarioGamePad *pad) override {
         MenuTab *child = current();
         if (child) {
+            // Decoded-input pages must not inherit the parent's selecting press.
+            if (mChildEntryWait) {
+                if (JUTGamePad::mPadStatus[0].mButton & (JUTGamePad::A | JUTGamePad::B))
+                    return;
+                mChildEntryWait = false;
+                child->focus();
+                return;
+            }
             if (child->grabsInput()) {
                 // A raw modal may close on B. Require a fresh release before
                 // the same button can also leave its nested page.
@@ -5263,7 +5274,7 @@ public:
                 return;
             }
             mPage = (s8)mSel;
-            mNavInput.begin(JUTGamePad::B);
+            focus();
         }
     }
 
@@ -5395,6 +5406,7 @@ private:
     u8 mSel;
     s8 mPage;
     u8 mSectionStyle;
+    bool mChildEntryWait;
     RawPromptInput mNavInput;
 };
 

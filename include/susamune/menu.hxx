@@ -52,6 +52,7 @@ public:
     // internal buffer, so callers may pass scratch storage. Replaces any
     // message still on screen; expires on its own after kToastFrames.
     void toast(const char *msg);
+    bool hasToast() const { return mToastFrames > 0 && mToastBuf[0] != '\0'; }
 
     // Restore mod settings, binds and layouts, then persist them. IL PBs and
     // Records live in separate mailboxes and are deliberately untouched.
