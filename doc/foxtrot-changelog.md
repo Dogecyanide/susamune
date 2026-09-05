@@ -6,6 +6,7 @@ V2.3.0 pre-release, first build.
 - Free camera during retail pause and frame advance.
 - Experimental local input recording and playback from an existing savestate.
 - Ghost input teaching tracks and existing split timestamps; older pose-only ghosts remain readable.
+- Ghost input panels sit above the native HUD in Watch and racing views.
 - Split comparisons: Off, PB, sum of best segments, or a selected ghost. No new level checkpoint definitions.
 - Six menu roots: Quick, Practice, Runs, Ghosts, Display, System.
 - Native Sunshine timer position and size controls through scoped display transforms.

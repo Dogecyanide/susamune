@@ -19,12 +19,12 @@ Wii hardware playtesting is pending.
   seconds each. Their stage heaps reported 1,366,088 and 1,382,152 free bytes,
   respectively. These are emulator measurements for Bianco 1, not worst-stage
   or Wii measurements.
-- Final JP `A27A0024` and PAL `BE5E2141` images reached Bianco 5 through the
+- JP `A27A0024` and PAL `BE5E2141` images reached Bianco 5 through the
   real warp wheel in Dolphin 2606a JIT. Each remained fully loaded for 30.12
   seconds; 30 stationary samples gave minimum free heaps of 759,512 and
   787,800 bytes. Root-heap boundaries and heap cursor arithmetic stayed valid.
   These are sampled emulator values, not Wii or full-playthrough minima.
-- Final US `0391BB7B` passed ten live wheel warps in Dolphin 2606a JIT:
+- US `0391BB7B` passed ten live wheel warps in Dolphin 2606a JIT:
   all seven main-course episode 1 entrances, Bianco 5, Pinna 8's beach entrance
   and Sirena Hotel. Each had 95–96 stationary samples over five seconds.
   Bianco 5 had the lowest observed free heap, 789,240 bytes (770.74 KiB).
@@ -59,18 +59,30 @@ Wii hardware playtesting is pending.
   and the original cache synchronization ranges are retained.
 - Basic Bianco 1 pixel checks show free-camera viewpoint movement while
   Mario's position remains fixed, and native timer position/scale changes.
-- Final US image `0391BB7B` keeps both frame controls and Creation open
+- US image `0391BB7B` keeps both frame controls and Creation open
   through a held selecting press. The shared child-page guard also skips
   the release callback, so a stale decoded button cannot activate an editor.
   Final captures verify notification/banner priority, free-camera movement,
   and a clean native timer at +60 X, -40 Y and 140% scale.
+- The production ghost input lookup passed 47,969 independent host comparisons,
+  including sparse samples, segment boundaries, truncated tails and 54,000
+  inputs. Synthetic runtime tracks also passed Watch/Watch2 display checks
+  on Dolphin: Off/Ghost/Both, recorded A-to-B changes with neutral live input,
+  distinct second-ghost inputs and an explicit no-input message for V3.
+  The fixture bypassed file import and SD storage; it tests the observer and
+  rendering paths. Source-repository evidence is in
+  `doc/foxtrot-ghost-validation.md`.
+- Final US `9B61FABE` clears the native HUD with both ghost input panels and
+  the legacy no-input label. Regional mods change only three position operands
+  from the stage-tested images; memory, hooks and all other bytes are identical.
+  Full BPS validation passes for JP `B8A0ADEB`, US `9B61FABE` and PAL `E735EBF3`.
 - The protected QFT timer implementation and existing callback order are
   unchanged. No new level splits were added.
 
 The live control fixture supplies controller packets at the retail input
 boundary in a private test image; it does not test a physical controller or
 Wii storage. Camera observations cover sampled views and hook phases.
-Full ghost teaching export/Watch, hardware frame pacing and the
+Full ghost teaching export and loading from SD, hardware frame pacing and the
 device matrix below still need playtesting.
 
 ## Runner test checklist

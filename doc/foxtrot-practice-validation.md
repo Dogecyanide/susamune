@@ -137,7 +137,7 @@ take with all fingerprints matching and the identical ending position. It
 also passed held-menu input ownership in 20/20 samples and one Step with A.
 `build/foxtrot-smoke/optimized-current-jit-replay.json` records these checks.
 
-Final image `0391BB7B` adds a shared child-page release guard for both raw-
+Image `0391BB7B` adds a shared child-page release guard for both raw-
 and decoded-input pages. Held-A captures confirm that entering frame controls
 or Creation does not activate a row. The guard also suppresses action binds
 until release and skips the release callback before handing input to the page.

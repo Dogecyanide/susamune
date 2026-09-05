@@ -97,7 +97,7 @@ Isolated Dolphin 5.0 JIT runs on 2026-09-05 measured Bianco 1 after setup:
 
 The heap vtables, field offsets and cursor/free arithmetic were checked.
 
-Final JP image `A27A0024`, US image `0391BB7B` and PAL image `BE5E2141` also
+JP image `A27A0024`, US image `0391BB7B` and PAL image `BE5E2141` also
 reached Bianco 5 through the real warp wheel in Dolphin 2606a JIT. Root-heap
 boundaries stayed valid throughout each sampling window:
 
@@ -138,3 +138,7 @@ start (`0x804E98B0`) remained above the mod region end (`0x804E9800`).
 Pinna's park and rollercoaster interiors were not included in this sweep.
 Heap field arithmetic was verified against retail `JKRSolidHeap::getFreeSize`;
 these release-image probes did not invoke heap checks or enable canaries.
+
+The final ghost-panel placement adjustment changes only three vertical-position
+instruction operands per regional mod. The reservation, initialized/runtime
+sizes, heap layout and hooks are identical to these measured builds.

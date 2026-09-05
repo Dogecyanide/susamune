@@ -2995,18 +2995,19 @@ static bool playbackInput(const Track &track, u16 segmentIndex,
 
 void drawInputs(Menu *menu, u8 mode) {
     if (!menu || menu->shown() || !mode || !sGhostVisible) return;
+    const int panelY = 218;
     SusamunePracticeInput input;
     if (playbackInput(sPlayback, sPlaybackSegment, &input)) {
-        gInputDisplay.drawSnapshot(menu, input, 460, 326, 65, "Ghost 1");
+        gInputDisplay.drawSnapshot(menu, input, 460, panelY, 65, "Ghost 1");
     } else {
-        menu->drawText("Inputs not recorded", 438, 326, 12, 12,
+        menu->drawText("Inputs not recorded", 438, panelY, 12, 12,
                        JUtility::TColor(220, 240, 255, 255));
     }
     if (mode < 2) return;
     if (observerHasTwo()) {
         if (sSecondaryGhostVisible &&
             playbackInput(sObserverSecondary, sObserverSecondarySegment, &input))
-            gInputDisplay.drawSnapshot(menu, input, 330, 326, 65, "Ghost 2");
+            gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65, "Ghost 2");
     } else if (!observerActive()) {
         const PADStatus &raw = JUTGamePad::mPadStatus[0];
         input.buttons = raw.mButton;
@@ -3020,7 +3021,7 @@ void drawInputs(Menu *menu, u8 mode) {
         input.analogB = raw.mAnalogB;
         input.error = (s8)raw.mCurError;
         input.flags = 0;
-        gInputDisplay.drawSnapshot(menu, input, 330, 326, 65, "You");
+        gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65, "You");
     }
 }
 
