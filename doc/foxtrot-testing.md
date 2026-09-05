@@ -19,6 +19,19 @@ Wii hardware playtesting is pending.
   seconds each. Their stage heaps reported 1,366,088 and 1,382,152 free bytes,
   respectively. These are emulator measurements for Bianco 1, not worst-stage
   or Wii measurements.
+- Final JP `A27A0024` and PAL `BE5E2141` images reached Bianco 5 through the
+  real warp wheel in Dolphin 2606a JIT. Each remained fully loaded for 30.12
+  seconds; 30 stationary samples gave minimum free heaps of 759,512 and
+  787,800 bytes. Root-heap boundaries and heap cursor arithmetic stayed valid.
+  These are sampled emulator values, not Wii or full-playthrough minima.
+- Final US `0391BB7B` passed ten live wheel warps in Dolphin 2606a JIT:
+  all seven main-course episode 1 entrances, Bianco 5, Pinna 8's beach entrance
+  and Sirena Hotel. Each had 95–96 stationary samples over five seconds.
+  Bianco 5 had the lowest observed free heap, 789,240 bytes (770.74 KiB).
+  Stage generations, director/heap identities and the root floor stayed
+  consistent; no crash or loading stall was observed. Pinna interiors were
+  not sampled. Full values and scope are in the source repository's
+  `doc/foxtrot-memory.md`.
 - A 330-frame moving take replayed with matching diagnostic fingerprints. A
   separate replay stopped on the next sample after a deliberate position change
   in the test process. This does not establish full-world determinism.

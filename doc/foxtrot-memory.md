@@ -96,6 +96,45 @@ Isolated Dolphin 5.0 JIT runs on 2026-09-05 measured Bianco 1 after setup:
 | PAL | 14,942,176 B | 1,382,152 B |
 
 The heap vtables, field offsets and cursor/free arithmetic were checked.
-These are emulator measurements for one scene. The user's earlier worst-stage
-measurement of roughly 997 KiB predicts roughly 741 KiB after the reservation
-increase; actual Wii minimum headroom remains a hardware playtest item.
+
+Final JP image `A27A0024`, US image `0391BB7B` and PAL image `BE5E2141` also
+reached Bianco 5 through the real warp wheel in Dolphin 2606a JIT. Root-heap
+boundaries stayed valid throughout each sampling window:
+
+| Region | Initial free bytes | Minimum sampled free bytes | Window / samples |
+|---|---:|---:|---:|
+| JP | 759,512 B | 759,512 B (741.71 KiB) | 30.12 s / 30 |
+| US | 789,240 B | 789,240 B (770.74 KiB) | 5 s / 96 |
+| PAL | 787,800 B | 787,800 B (769.34 KiB) | 30.12 s / 30 |
+
+Bianco 5 was the lowest-memory scene in the earlier console pressure pass
+documented in `mem1_stability.md`. Its roughly 997 KiB estimate at a 512 KiB
+reservation predicts roughly 741 KiB at 768 KiB, consistent with this JP
+sample. Initial values are fully live observations after setup, not values
+captured at the setup hook. These stationary emulator samples do not establish
+a full-playthrough or Wii minimum. Private controller fixtures and complete
+samples are recorded in `build/foxtrot-bianco5/{jp,pal}/proof.json` and
+`build/foxtrot-smoke/stage-sweep-results.json`.
+
+The US sweep covered ten scenes, with 95–96 samples over five seconds per
+scene. All ten live wheel warps loaded, stage generations advanced once per
+warp, and director/heap identities stayed stable within each window. No crash
+or loading stall was observed. The root heap object (`0x804E9820`) and usable
+start (`0x804E98B0`) remained above the mod region end (`0x804E9800`).
+
+| US scene | Initial and minimum sampled free bytes |
+|---|---:|
+| Bianco 1 | 1,385,480 B |
+| Ricco 1 | 1,428,920 B |
+| Gelato 1 | 1,347,672 B |
+| Pinna 1 beach entrance | 1,417,452 B |
+| Sirena 1 / Manta | 1,731,424 B |
+| Pianta 1 | 1,788,692 B |
+| Noki 1 | 983,832 B |
+| Bianco 5 | 789,240 B |
+| Pinna 8 beach entrance | 1,463,672 B |
+| Sirena Hotel / episode 2 | 4,252,780 B |
+
+Pinna's park and rollercoaster interiors were not included in this sweep.
+Heap field arithmetic was verified against retail `JKRSolidHeap::getFreeSize`;
+these release-image probes did not invoke heap checks or enable canaries.
