@@ -272,7 +272,6 @@ void Initialise(void)
 	VIDEO_SetBlack(TRUE);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
-	SusamuneMusicInit();
 	if (unzip_data(font_zip, font_zip_size, &font_ttf, &font_ttf_size))
 	{
 		gprintf("Decompressed font.ttf with %i bytes\r\n", font_ttf_size);
@@ -639,18 +638,18 @@ static const devInitInfo_t devInitInfo[2] =
  * @param pdrv Device number.
  * @return Mount point (WCHAR), or NULL on error.
  */
-const WCHAR *MountDevice(BYTE pdrv)
+const WCHAR *MountDeviceWithTimeout(BYTE pdrv, int timeoutSeconds)
 {
 	if (/*pdrv < DEV_SD ||*/ pdrv > DEV_USB)
 		return NULL;
 
 	// Attempt to initialize this device
 	// TODO: Do initialization asynchronously.
-	if (devInitInfo[pdrv].timeout > 0)
+	if (timeoutSeconds > 0)
 	{
 		// Attempt multiple inits within a timeout period.
 		time_t timeout = time(NULL);
-		while (time(NULL) - timeout < devInitInfo[pdrv].timeout)
+		while (time(NULL) - timeout < timeoutSeconds)
 		{
 			if (disk_initialize(pdrv) == 0)
 				break;
@@ -667,6 +666,8 @@ const WCHAR *MountDevice(BYTE pdrv)
 	{
 		// Device initialized.
 		devices[pdrv] = (FATFS*)memalign(32, sizeof(FATFS));
+		if (devices[pdrv] == NULL)
+			return NULL;
 		if (f_mount(devices[pdrv], devInitInfo[pdrv].devNameFF, 1) == FR_OK)
 		{
 			gprintf("Mounted %s!\n", devInitInfo[pdrv].devNameDisplay);
@@ -680,6 +681,13 @@ const WCHAR *MountDevice(BYTE pdrv)
 	}
 
 	return (devices[pdrv] ? devInitInfo[pdrv].devNameFF : NULL);
+}
+
+const WCHAR *MountDevice(BYTE pdrv)
+{
+	if (pdrv > DEV_USB)
+		return NULL;
+	return MountDeviceWithTimeout(pdrv, devInitInfo[pdrv].timeout);
 }
 
 bool RemountDevice(BYTE pdrv)

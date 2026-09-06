@@ -46,7 +46,8 @@ struct Vec { float x,y,z; void set(float a,float b,float c) { x=a;y=b;z=c; } };
 struct CameraView { Vec position,target,up; float fovy; };
 struct JUTGamePad { enum { X=0x400 }; };
 static const int SETTING_FREE_CAMERA_SPEED=1;
-struct Settings { u8 choice; u8 get(int) { return choice; } } gSettings;
+static const int SETTING_FREE_CAMERA_STRAFE_REVERSE=2;
+struct Settings { u8 choice,reverse; u8 get(int id) { return id==1?choice:reverse; } } gSettings;
 static CameraView sCameraView;
 static SusamunePracticeInput sPhysical;
 static bool sFreeCamera,sModal,sCameraWaitButtons,sControl,sNormal,sPaused;
@@ -77,7 +78,7 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     const SusamunePracticeInput *input,float *out) {
     sPhysical=*input;sYaw=yaw;sPitch=0;sFreeCamera=true;
     sModal=flags&1;sCameraWaitButtons=flags&2;sControl=!(flags&4);
-    gSettings.choice=(u8)choice;sCameraView.position.set(0,0,0);
+    gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;sCameraView.position.set(0,0,0);
     sCameraView.target.set(0,0,0);updateCamera();
     out[0]=sCameraView.position.x;out[1]=sCameraView.position.y;
     out[2]=sCameraView.position.z;out[3]=sCameraView.target.x;
@@ -140,6 +141,18 @@ extern "C" __declspec(dllexport) unsigned queue(unsigned flags,int cw,int fromMe
             out = self.camera(choice=choice, substickX=80)
             self.assertLess(out[3], 0)
             self.assertAlmostEqual(out[6], -.035, places=6)
+
+    def test_reverse_sideways_changes_only_main_stick_lateral_motion(self):
+        for degree in range(-180, 181, 15):
+            yaw = math.radians(degree)
+            normal = self.camera(yaw, stickX=80)
+            reverse = self.camera(yaw, flags=8, stickX=80)
+            self.assertAlmostEqual(normal[0], -reverse[0], places=4)
+            self.assertAlmostEqual(normal[2], -reverse[2], places=4)
+            for controls in ({"stickY": 80}, {"substickX": 80},
+                             {"substickY": 80}, {"triggerR": 255}):
+                self.assertEqual(self.camera(yaw, **controls),
+                                 self.camera(yaw, flags=8, **controls))
 
     def test_camera_modal_release_latch_and_deadzone(self):
         for flags in (1, 4):

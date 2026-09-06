@@ -35,6 +35,8 @@ void releaseForDeparture();
 void recenterCamera();
 
 bool paused();
+// An armed hold survives loading and waits for Mario's controls to return.
+bool pausePending();
 bool freeCamera();
 bool recording();
 bool replaying();

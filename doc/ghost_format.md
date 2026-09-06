@@ -15,8 +15,8 @@ after `sampleDataOffset + sampleDataSize`, it appends a big-endian `SGTI` sectio
 | 0 | 4 | `SGTI` magic |
 | 4 | 2 | Section version 1 |
 | 6 | 2 | Header size 32 |
-| 8 | 4 | Input count, 0–54,000 |
-| 12 | 4 | Split count, 0–6 |
+| 8 | 4 | Input count, 0â€“54,000 |
+| 12 | 4 | Split count, 0â€“6 |
 | 16 | 4 | Flags: bit 0 means input capacity was reached |
 | 20 | 4 | CRC-32 of input and split records |
 | 24 | 8 | Reserved, zero |
@@ -48,8 +48,8 @@ header, 864,000 bytes of inputs and 72 bytes of splits. Parsing validates all
 counts, bounds and checksums before installing runtime data. The ARM validator
 processes at most 16 KiB per service pass and never splits a record across passes.
 
-Storage mailbox protocol 4 retains the request/response cache lines at their
-old addresses and moves payload bytes to a fixed 1,310,720-byte transfer bank.
+Storage mailbox protocol 5 retains the request/response cache lines at their
+old addresses and keeps the protocol-4 payload bank at 1,310,720 bytes.
 Two independent 917,504-byte banks hold recording and playback inputs. Watch 2
 borrows the current recording bank, including after buffer promotion. The PPC
 owns a save payload until acknowledgement; the ARM publishes load payloads
@@ -67,14 +67,14 @@ V3/V4 partition one absolute-QFT track into up to 64 ordered route segments; it
 does not reset time at a stage load. It contains no console slot number,
 storage generation, or filename.
 
-Console storage is a separate layer. It uses fixed A/B slot envelopes below
+Console storage is a separate layer. It uses A/B slot envelopes below
 `/susamune_ghosts/<region>/p<profile>`. The mailbox contract is declared by
-`include/susamune/ghost_storage.h`; the kernel owns the envelope and fixed-path
+`include/susamune/ghost_storage.h`; the kernel owns the envelope and path
 implementation. It derives every path from validated numeric region, profile,
 slot, and A/B bank values. It never uses imported display text or a portable
 filename as a path component.
 
-`SGIX` is an optional catalog for a future portable host import/export bundle.
+`SGIX` is a legacy optional host bundle catalog.
 The console does not read it, enumerate it, or use it as its source of truth.
 
 All multibyte values in both formats are big-endian. Signed fields use two's
@@ -134,8 +134,8 @@ offsets.
 
 `startQf` and `endQf` are bounded to `0x7fffffff`, matching the signed runtime
 clock. `endQf` must not precede `startQf`. A present `resultQf` must lie inside
-the inclusive start/end interval. Storage quotas use `durationQf`, not the
-absolute clock values or the result.
+the inclusive start/end interval. Library duration totals use `durationQf`,
+not the absolute clock values or the result.
 
 `routeVariant` preserves `TFlagManager` flag `0x40003`, the parent-episode or
 scenario selector that distinguishes internal routes sharing an area ID.
@@ -358,14 +358,13 @@ only of printable ASCII, end case-insensitively in `.smsghost`, contain none of
 and paths are always rebuilt beneath the fixed import root.
 
 The ARM scans one directory entry or one bounded file operation per DI-idle
-service pass. It checks the header and the complete SGHF V3/V4 fixed segment
-table before cataloguing a candidate. Compatible candidates are ordered by an
-ASCII case-insensitive lexical comparison with exact-ASCII tie-breaking. The
-lexicographically smallest 12 become global imported rows `0..11`; this is
-stable regardless of FAT directory order. A bounded overflow count reports how
-many additional compatible candidates were found. LOAD opens the cached leaf
-again and revalidates the complete file, including payload and file CRCs,
-before changing playback.
+service pass. It checks the header and complete fixed segment table before
+cataloguing a candidate. Every compatible file can appear in the library;
+16 records are returned per page in filesystem directory order. Scanning does
+not copy all records or ghost payloads into RAM. LOAD reopens the exact
+validated leaf and checks the complete file, including payload and file CRCs,
+before changing playback. The leaf plus canonical CRC identifies an imported
+selection independently of its page or current directory position.
 
 If a supported-version file changes after prefix scanning and fails full LOAD
 payload or CRC validation, its cached sanitized leaf remains as a visible
@@ -400,7 +399,7 @@ existing deterministic name is reported as already existing; this prototype
 does not compare the existing bytes or call the operation successful. An
 interrupted new export can leave an invalid partial leaf for the user to
 remove, but cannot damage an earlier export or the A/B library. Friendly
-exports remain unmanaged copies outside the journal quota. A different date
+exports remain unmanaged copies outside the personal library. A different date
 produces another file; this build does not enumerate or prune export copies.
 Full or write-protected media reports an error without changing a library
 generation or catalog row.
@@ -411,52 +410,123 @@ visible whichever PB profile is active. Loading or racing does not consume a
 personal slot. Explicit imported DELETE unlinks the selected source leaf; no
 automatic import, pruning, rename, or replacement occurs.
 
-## Quotas and storage cost
+## Paged console catalog and storage
 
-The personal-library quota namespace is `(running game region, PB profile)`.
-Each namespace must satisfy both limits:
+Personal libraries remain separated by `(running game region, PB profile)`.
+The former 45-personal, 12-imported and ten-hour aggregate limits are removed.
+Libraries grow with available filesystem space. The individual 15-minute
+recording and format bounds remain unchanged. A maximum V5 canonical ghost
+occupies 1,297,992 bytes before its 64-byte personal envelope and filesystem
+allocation overhead; imports and share copies contain only canonical bytes.
 
-- 45 writable rows (`0..44`) for new saves;
-- at most `4315684` aggregate `durationQf`, exactly ten hours at
-  `120000/1001` QF per second.
+The kernel retains one working A/B slot and one 16-entry catalog page. The
+PPC caches one personal page and one imported page in the existing 7,680-byte
+cache window. Neither cache grows with library size. A page refresh scans the
+whole selected directory incrementally, so larger libraries take more service
+passes. Personal scans read only the 64-byte envelopes and 256-byte canonical
+headers; imported scans read the fixed 2,304-byte header/segment prefix. Full
+payload validation is deferred until LOAD or EXPORT. The kernel services at
+most one directory entry or bounded header operation, or 16 KiB of payload,
+per DI-idle pass; ongoing disc reads retain priority.
 
-Rows `45..47` are outside the PR1 namespace. The 48-row wire catalog retains
-three zero tail rows for ABI convenience, but the ARM does not scan the old
-files, they do not contribute count or duration, and LOAD/EXPORT/DELETE rejects
-those indices. The old Gate ghost library must be cleared before PR1; orphaned
-tail files are otherwise ignored. Every V4 save refuses an occupied row;
-there is no overwrite request in the mailbox ABI or UI. Across four profiles
-this reserves 12 rows' worth of policy budget for the single global imported
-pool.
-The import pool has at most 12 visible files and therefore at most three hours
-at the per-file 15-minute cap; it does not consume the personal ten-hour quota.
+Protocol 5 keeps the two 32-byte request/response lines and all MEM2 addresses.
+Its request has `profile:u16` at offset 12, reserved zero at 14, `slot:u32` at
+16, `payloadSize:u32` at 20, flags zero at 24 and `expectedGeneration:u32` at
+28. The response field at offset 24 is now `slot:u32`, followed by page count
+and profile (`u16` each). Older protocols must not interpret this wire layout.
 
-Forty full 15-minute ghosts consume `4315680` QF, leaving only four QF; a 41st
-full ghost fails the time quota. Forty-five shorter new ghosts may instead
-reach the writable-row limit. SAVE computes the proposed total with checked
-arithmetic.
+- LIST and IMPORT_SCAN use request `slot` as a record offset, normally
+  `0, 16, 32, ...`; payload and expected generation are zero. Page responses
+  have response `slot=0`, `generation=0` and the actual page entry count.
+- SAVE with `slot=0xffffffff` asks the kernel to choose an unused personal ID.
+  A tombstoned ID is reused with its next A/B generation. Otherwise allocation
+  appends after existing filenames, with safe hole probing at the ID limit.
+  The successful response returns the chosen ID. Explicit SAVE still refuses
+  an occupied or unsafe ID; there is no overwrite flag.
+- Personal LOAD, DELETE and EXPORT carry a stable `u32` ID and its expected
+  A/B generation. Imported LOAD and DELETE carry ID zero, a 96-byte
+  NUL-terminated exact leaf payload and the canonical CRC as expected
+  generation. Zero generations and zero CRCs are valid values. Identity checks
+  run again before action; a changed selection fails instead of selecting
+  whichever record now occupies a page row.
+- Error responses have zero payload size and page count. Complete load bytes
+  are published before the response acknowledgement. Request payloads remain
+  immutable while the request is outstanding.
 
-At the four-QF sampling interval, raw animated poses cost about 479.52 bytes/s,
-28.77 kB/min (28.10 KiB/min), or 1.73 MB/hour (1.65 MiB/hour). The 45-row
-namespace plus the ten-hour cap is smaller than the historical bound. For a
-conservative SD estimate, the former 48-file V1 bound was 17276368 bytes and
-the fixed tables retained by V3/V4 raise it to 17374672 bytes (16.57 MiB).
+The 3,680-byte `SusamuneGhostCatalogPage` has this layout, with big-endian
+integers on both console processors:
 
-Console A/B recovery can temporarily retain twice that V3/V4 amount: 34749344
-bytes per profile, 138997376 bytes per region, and 416992128 bytes across all
-three regions (approximately 33.14, 132.56, and 397.67 MiB). These remain safe
-upper bounds even though rows `45..47` are no longer scanned. Twelve
-maximum-size V3/V4 import files total 5206656 bytes (4.97 MiB); extra files may
-remain in the user-managed directory but are not visible until their lexical
-predecessors are removed. These are SD-card bounds. Runtime MEM2 remains a
-fixed record buffer, playback buffer, and transfer buffer; it does not scale
-with the library.
+| Offset | Size | Field |
+|---:|---:|---|
+| `0x00` | 4 | `SGPG` magic |
+| `0x04` | 2 | page format version `1` |
+| `0x06` | 2 | count, `0..16` |
+| `0x08` | 4 | requested first record offset |
+| `0x0c` | 4 | full directory record count |
+| `0x10` | 8 | aggregate duration, low word then high word |
+| `0x18` | 4 | next append ID hint; not an action identity |
+| `0x1c` | 4 | reserved flags, zero |
+| `0x20` | 3648 | sixteen 228-byte catalog entries |
+
+Each entry is a `u32` stable ID, the unchanged 128-byte
+`SusamuneGhostSlotInfo`, and a 96-byte import leaf (zero for personal rows).
+Unused entries are entirely zero. A page past the current directory end is
+empty and still reports the full count and 64-bit duration. Personal rows with
+no readable bank remain visible as unsafe entries and are never reused as
+empty space. Payload corruption discovered only by LOAD does not authorize
+exporting or activating a different A/B generation.
+
+## Personal A/B envelope (`SGEN`)
+
+Canonical SGHF bytes remain unchanged and contain no console slot ID.
+Personal files keep `/susamune_ghosts/<region>/p<profile>/gNN[a|b].sgh`, where
+NN is an unsigned decimal ID with a minimum width of two. IDs `45..47` remain
+reserved and their historical files are ignored; newer IDs begin at 48. This
+reserved gap is not a capacity limit. ID `0xffffffff` is the SAVE_AUTO sentinel.
+
+The current envelope version is 2, still exactly 64 bytes. Version 1 remains
+readable for its original 16-bit IDs. Version 2 stores the low 16 bits in the
+old slot field and the complete 32-bit ID at offset 40. Every remaining
+reserved word is zero. This extends the namespace without changing any
+canonical V3/V4/V5 file or legacy A/B filename.
+
+| Offset | Size | Field |
+|---:|---:|---|
+| `0x00` | 4 | `SGEN` magic |
+| `0x04` | 2 | envelope version `1` or `2` |
+| `0x06` | 2 | header size `64` |
+| `0x08` | 4 | wrapping generation |
+| `0x0c` | 4 | flags; bit 0 is tombstone |
+| `0x10` | 4 | source game ID |
+| `0x14` | 2 | personal profile `0..3` |
+| `0x16` | 2 | slot ID, low 16 bits |
+| `0x18` | 4 | canonical payload size |
+| `0x1c` | 4 | canonical duration QF |
+| `0x20` | 4 | CRC-32 of exact canonical bytes |
+| `0x24` | 4 | envelope CRC-32, with this word zero |
+| `0x28` | 4 | full slot ID in V2; zero in V1 |
+| `0x2c` | 20 | reserved, zero |
+
+SAVE writes the inactive bank with a zero envelope, streams and syncs the
+payload, then writes and syncs the real envelope last. Interrupted writes do
+not replace a readable committed bank. Equal generations with conflicting
+metadata, ambiguous half-range generation differences, future formats and
+unreadable slots fail closed. A corrupt bank header can fall back to a valid
+other bank; full-payload failure cannot silently change the selected identity.
+
+DELETE commits and syncs a newer tombstone before unlinking the old payload
+bank. A power failure during reclamation cannot revive that old ghost. The
+small tombstone remains for safe ID reuse and generation continuity; a future
+SAVE_AUTO can reuse it. If reclamation fails, the service reports the I/O
+error and the committed tombstone still protects the deletion. Library,
+import and export operations never prune unrelated files.
 
 ## Portable bundle index (`SGIX`)
 
-SGIX is reserved for a future host-side export bundle. Its generation and
-catalog validation are useful for host tooling, but it is not the console A/B
-slot envelope or an on-console index.
+SGIX V1 is a legacy optional host bundle index. Its 48-entry and ten-hour
+fields below describe that historical format only. The console does not read
+SGIX and none of these limits apply to protocol-5 libraries. Existing host
+validation remains available for old bundles.
 
 The header is `0x80` bytes:
 

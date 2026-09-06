@@ -42,7 +42,7 @@ void PrintFormat(u8 size, const u32 color, int x, int y, const char *str, ... )
 	vsnprintf(astr, sizeof(astr), str, ap);
 
 	va_end( ap );
-	if (color == BLACK)
+	if (color == BLACK || color == MAROON)
 	{
 		u8 i;
 		for (i = 0; i < 8; ++i)

@@ -112,9 +112,9 @@ extern "C" __declspec(dllexport) unsigned observerRelease(int state, unsigned ow
     def test_console_requires_exact_protocol_but_not_mounted_storage(self):
         console = self.libraries[0]
         for flags in (0, 1, 2):
-            self.assertTrue(console.ready(0x53475354, 4, flags))
+            self.assertTrue(console.ready(0x53475354, 5, flags))
             self.assertEqual((console.cache(0), console.cache(1)), (32, 32))
-        for magic, version in ((0, 4), (0x53475354, 3), (0x53475354, 5)):
+        for magic, version in ((0, 5), (0x53475354, 4), (0x53475354, 6)):
             self.assertFalse(console.ready(magic, version, 1))
 
     def test_dolphin_uses_its_own_window_without_arm_mailbox_access(self):

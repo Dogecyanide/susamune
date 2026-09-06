@@ -1,7 +1,45 @@
-# FOXTROT feedback-update test sheet
+# FOXTROT validation record
 
-Status: pre-release. All six regional/platform builds and 526 host tests pass.
-The feedback update still needs Wii hardware playtesting.
+Status: pre-release. The short runner checklist is in
+[foxtrot-tester-checklist.md](foxtrot-tester-checklist.md); it ships as TESTING.md.
+This file records developer verification and the scope of earlier checks.
+
+## Controls and ghost-library update on 2026-09-06
+
+- Final host suite: 582 tests pass. Launcher build checksum: `2BC0E2E1`.
+- JP/US/PAL console and emulator images compile within their fixed memory spans.
+  Full BPS application passes for JP `46EF7CF9`, US `A68B3EEF` and PAL
+  `A2B59038`: original/target checksums, 31 hook writes, initialized/BSS spans
+  and the protected attachment/scratch hole all match.
+- A private US `4AF65F76` image passed Dolphin 2606a checks for D-Up buffered
+  during black loading, hold at the first actionable update after the intro,
+  one Step, D-Up+A jump, X rebinding, and the old L+D-Up Pause shortcut combined
+  with a D-Up Step shortcut. Holding L after resume caused no re-pause or
+  ground pound. Freecam auto-pause, Off retaining pause, and the sideways
+  direction toggle passed with Mario stationary.
+- That live fixture feeds controller packets at the retail PADRead boundary;
+  it does not test a physical controller or Wii storage. The tested image
+  precedes final ghost/menu integration. Reproducible results are in
+  `build/foxtrot-pr3-controls/results-final.json`; the original QFT code is unchanged.
+- Production menu tests cover the three practice pages, held entry/rebind
+  buttons, four-button bind completion, cross-page Watch2 identities and page
+  wrap. PB auto-save tests keep a pending warp blocked until its exact protected
+  recording has been acknowledged as saved.
+- Production PPC mailbox tests cover 50,000 catalog entries, 64-bit duration
+  totals, page changes during a transfer, stale identities, automatic saves
+  and delayed acknowledgements. Two cached pages use 7,360 of the existing
+  7,680 bytes; no snapshot, configuration or active playback bank moved.
+- Native tests drive the production ARM storage state machine with a fake
+  filesystem. They cover libraries beyond 45/12 entries and ten hours, extended
+  IDs, page enumeration, old A/B recovery, interrupted writes, stale selections,
+  chunked loading and reclaiming deleted payloads after committing a tombstone.
+- Launcher tests cover early theme ordering, first-frame visibility, explicit
+  text depth state, fallback fonts and storage-probe cleanup. The launcher
+  builds, but the user's early blank-text symptom still needs Wii confirmation.
+
+Real-console startup appearance, storage durability and large-library browsing
+performance remain hardware playtest items. The checks below are historical
+evidence for the preceding packages, with their own image checksums.
 
 ## Feedback update checks on 2026-09-05
 
@@ -126,23 +164,7 @@ Wii storage. Camera observations cover sampled views and hook phases.
 Full ghost teaching export and loading from SD, hardware frame pacing and the
 device matrix below still need playtesting.
 
-## Runner test checklist
+## Runner checklist
 
-Record game region, console/Dolphin version, scene, settings, and the displayed build checksum with each report.
-
-1. Boot from disc and from your own ISO/CISO. Test automatic boot and B to return to the launcher.
-2. Load the most demanding scene and note free memory. Enter/exit the menu and use the warp wheel.
-3. L + D-Up pauses actor simulation; L + D-Right releases one rendered gameplay frame; L + D-Up resumes. Repeat with Mario airborne, an enemy active, and a moving platform. Clocks and absolute-time deadlines remain live.
-4. During retail pause, L + D-Down toggles free camera. Test both sticks and L/R height. Turn it off and check the restored camera. Repeat while practice-paused and while stepping.
-5. Save during normal gameplay, record a short take, stop, then replay. Check start state, button edges, analog triggers, B/Start abort, scene changes, new savestates and changed settings. Mismatch detection is diagnostic, not proof of full determinism.
-6. Record a successful ghost on an already supported split route. Export and reload it. Compare Off/PB/SOB/Ghost, race it, and inspect inputs in Watch/Watch2. Old ghosts should show no input data.
-7. Move/resize the native timer, collect coins and trigger the native layout shift, save/load, warp, and restore default layout. Verify HUD artwork/visibility and the original timing behavior.
-8. Save settings and restart. Existing region-specific settings, records, ghosts and binds should survive.
-9. Retain crash .bin, .core and text files with the exact package checksum. Avoid deliberately crashing during a save.
-10. Check blue, purple and white on timer digits, label and streak; recolour normal health and underwater air independently. Keep/discard/reset, save and reboot. Hold Y to adjust RGB by one.
-11. Reduce metadata field gaps, set fields per row and switch Stable/Compact widths. Verify changing values keep their colours and layout remains readable.
-12. Watch two ghosts, pause, step and move free camera. Record a TAS ghost and verify held time is absent when it is saved, reloaded and shared.
-13. Export a supported split route from PAL and race it on JP/US. Compatible V5 checkpoints should show a delta; older files without checkpoints should show `--`.
-14. Verify all launcher labels appear with the existing SD theme. If blank text recurs, report whether the built-in fallback appears and keep the launcher log.
-
-No new level splits were added.
+The current concise checklist, including PR1, is
+[foxtrot-tester-checklist.md](foxtrot-tester-checklist.md).

@@ -471,6 +471,7 @@ void GRRLIB_PrintfTTF(int x, int y, GRRLIB_ttfFont *myFont, const char *string, 
 	if(string == NULL)
 		return;
 	// Text uses points, independently of the preceding theme's texture state.
+	GX_SetZMode(GX_FALSE, GX_LEQUAL, GX_FALSE);
 	GX_SetPointSize(6, GX_TO_ZERO);
 	GX_SetNumTevStages(1);
 	GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
@@ -1337,15 +1338,16 @@ static void GRRLIB_RenderMode(bool clear) {
 	GX_SetZMode      (GX_TRUE, GX_LEQUAL, GX_TRUE);
 	GX_SetColorUpdate(GX_TRUE);
 	GX_CopyDisp      (xfb[fb], clear ? GX_TRUE : GX_FALSE);
+	// Copy clearing needs depth writes; the next 2D frame does not.
+	GX_SetZMode      (GX_FALSE, GX_LEQUAL, GX_FALSE);
 
 	VIDEO_SetNextFramebuffer(xfb[fb]);  // Select External Frame Buffer
-	VIDEO_Flush();                      // Flush video buffer to screen
-
 	if (!enable_output) // stfour: this prevent strange behavior on first frame
 	{
 		VIDEO_SetBlack(false);  // Enable video output
 		enable_output = true;
 	}
+	VIDEO_Flush();                      // Publish framebuffer and unblank together.
 
 	VIDEO_WaitVSync();                  // Wait for screen to update
 	// Interlaced screens require two frames to update

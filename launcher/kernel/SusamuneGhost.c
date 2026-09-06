@@ -64,6 +64,8 @@ enum OperationPhase
 {
 	OP_IDLE,
 	OP_VALIDATE_SAVE,
+	OP_PERSONAL_SCAN_OPEN,
+	OP_PERSONAL_SCAN_NEXT,
 	OP_SCAN_ENVELOPES,
 	OP_SCAN_HEADERS,
 	OP_SCAN_ACTIVE_HEADERS,
@@ -88,6 +90,7 @@ enum OperationPhase
 	OP_IMPORT_SCAN_FILE_CLOSE,
 	OP_DELETE_OPEN,
 	OP_DELETE_FINISH,
+	OP_DELETE_RECLAIM,
 	OP_IMPORTED_DELETE
 };
 
@@ -101,6 +104,7 @@ enum ValidateResult
 enum ReadResult
 {
 	READ_INVALID,
+	READ_MISSING,
 	READ_VALID,
 	READ_UNSAFE,
 	READ_IO
@@ -111,14 +115,16 @@ struct GhostRequest
 	u32 seq;
 	u16 command;
 	u16 profile;
-	u16 slot;
+	u32 slot;
 	u32 payloadSize;
 	u32 flags;
+	u32 expectedGeneration;
+	char leaf[SUSAMUNE_GHOST_IMPORT_LEAF_SIZE];
 };
 
 struct ImportedCatalogWork
 {
-	struct ImportedSlot catalog[SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES];
+	struct ImportedSlot catalog[1];
 	struct ImportedSlot candidate;
 	DIR dir;
 	FILINFO entry;
@@ -127,14 +133,14 @@ struct ImportedCatalogWork
 // Requests are serialized; switching profiles invalidates the old view.
 union GhostCatalogStorage
 {
-	struct SlotCatalog personal[SUSAMUNE_GHOST_SLOT_COUNT];
+	struct SlotCatalog personal[1];
 	struct ImportedCatalogWork imported;
 };
 
-typedef char ImportedCatalogWorkFitsPersonal[
-	sizeof(((union GhostCatalogStorage*)0)->imported) <=
-	        sizeof(((union GhostCatalogStorage*)0)->personal)
-		? 1 : -1];
+// Personal slot scans run while the overlaid directory iterator stays open.
+typedef char PersonalCatalogDoesNotOverlapDirectory[
+	sizeof(struct SlotCatalog) <=
+	        __builtin_offsetof(struct ImportedCatalogWork, dir) ? 1 : -1];
 
 static union GhostCatalogStorage CatalogStorage;
 #define Catalog         CatalogStorage.personal
@@ -154,11 +160,8 @@ static u16 CatalogProfile;
 static u16 CatalogCount;
 static u16 ImportedCatalogCount;
 static u32 CatalogDurationQf;
-static u32 ImportedCatalogDurationQf;
-static u32 ImportedCompatibleCount;
 static u32 GhostAckSeq;
 static u32 ScanFile;
-static u32 ScanHeaderSlot;
 static u8 ScanHeaderAttempts;
 static int ScanIoError;
 static enum OperationPhase Phase;
@@ -169,6 +172,14 @@ static u8 LoadAttemptedBanks;
 static bool ImportDirOpen;
 static u32 ImportCandidateSize;
 static u32 ImportPrefixSize;
+static struct SusamuneGhostCatalogPage Page;
+static bool DirectoryScan;
+static bool AutoProbe;
+static u32 ScanSlot;
+static u32 AutoReuseSlot;
+static u32 PageOrdinal;
+static u64 PageDuration;
+
 
 static const u8 *ValidationBytes;
 static u32 ValidationSize;
@@ -255,16 +266,73 @@ static u32 CrcUpdateHeader(u32 crc, const u8 *header,
 	return crc;
 }
 
-static u32 EnvelopeChecksum(
-	const struct SusamuneGhostStorageEnvelope *envelope)
+static void WriteBe16(u8 *p, u16 value)
 {
-	struct SusamuneGhostStorageEnvelope copy = *envelope;
-	u32 crc;
+	p[0] = (u8)(value >> 8);
+	p[1] = (u8)value;
+}
 
-	copy.headerChecksum = 0;
-	crc = CrcUpdate(SUSAMUNE_GHOST_CRC32_INIT, (const u8*)&copy,
-	                sizeof(copy));
-	return crc ^ SUSAMUNE_GHOST_CRC32_XOR_OUT;
+static void WriteBe32(u8 *p, u32 value)
+{
+	p[0] = (u8)(value >> 24);
+	p[1] = (u8)(value >> 16);
+	p[2] = (u8)(value >> 8);
+	p[3] = (u8)value;
+}
+
+static void EncodeEnvelope(const struct SusamuneGhostStorageEnvelope *e, u8 *raw)
+{
+	u32 i;
+	WriteBe32(raw, e->magic);
+	WriteBe16(raw + 4, e->version);
+	WriteBe16(raw + 6, e->headerSize);
+	WriteBe32(raw + 8, e->generation);
+	WriteBe32(raw + 12, e->flags);
+	WriteBe32(raw + 16, e->gameId);
+	WriteBe16(raw + 20, e->profile);
+	WriteBe16(raw + 22, e->slot);
+	WriteBe32(raw + 24, e->payloadSize);
+	WriteBe32(raw + 28, e->durationQf);
+	WriteBe32(raw + 32, e->payloadChecksum);
+	WriteBe32(raw + 36, e->headerChecksum);
+	for (i = 0; i < 6; ++i)
+		WriteBe32(raw + 40 + i * 4, e->reserved[i]);
+}
+
+static void DecodeEnvelope(const u8 *raw, struct SusamuneGhostStorageEnvelope *e)
+{
+	u32 i;
+	e->magic = ReadBe32(raw);
+	e->version = ReadBe16(raw + 4);
+	e->headerSize = ReadBe16(raw + 6);
+	e->generation = ReadBe32(raw + 8);
+	e->flags = ReadBe32(raw + 12);
+	e->gameId = ReadBe32(raw + 16);
+	e->profile = ReadBe16(raw + 20);
+	e->slot = ReadBe16(raw + 22);
+	e->payloadSize = ReadBe32(raw + 24);
+	e->durationQf = ReadBe32(raw + 28);
+	e->payloadChecksum = ReadBe32(raw + 32);
+	e->headerChecksum = ReadBe32(raw + 36);
+	for (i = 0; i < 6; ++i)
+		e->reserved[i] = ReadBe32(raw + 40 + i * 4);
+}
+
+static int WriteEnvelope(FIL *file,
+	                     const struct SusamuneGhostStorageEnvelope *e, UINT *wrote)
+{
+	u8 raw[SUSAMUNE_GHOST_ENVELOPE_SIZE];
+	EncodeEnvelope(e, raw);
+	return f_write(file, raw, sizeof(raw), wrote);
+}
+
+static u32 EnvelopeChecksum(const struct SusamuneGhostStorageEnvelope *envelope)
+{
+	u8 raw[SUSAMUNE_GHOST_ENVELOPE_SIZE];
+	EncodeEnvelope(envelope, raw);
+	WriteBe32(raw + 36, 0);
+	return CrcUpdate(SUSAMUNE_GHOST_CRC32_INIT, raw, sizeof(raw)) ^
+	       SUSAMUNE_GHOST_CRC32_XOR_OUT;
 }
 
 static bool BytesAreZero(const u8 *bytes, u32 size)
@@ -843,7 +911,7 @@ static bool GenerationIsNewer(u32 candidate, u32 current)
 	return (s32)(candidate - current) > 0;
 }
 
-static void BuildGhostPath(char *path, u16 profile, u16 slot, u8 bank)
+static void BuildGhostPath(char *path, u16 profile, u32 slot, u8 bank)
 {
 	_sprintf(path, "%s/susamune_ghosts/%s/p%u/g%02u%c.sgh",
 	         SusamuneCfgStoragePrefix(), GhostRegion, profile, slot,
@@ -866,27 +934,6 @@ static void BuildImportPath(char *path, const char *leaf)
 static u8 FoldAscii(u8 value)
 {
 	return value >= 'A' && value <= 'Z' ? (u8)(value + ('a' - 'A')) : value;
-}
-
-static int ImportLeafCompare(const char *a, const char *b)
-{
-	u32 i;
-	u8 foldedA;
-	u8 foldedB;
-
-	for (i = 0; a[i] != 0 && b[i] != 0; i++)
-	{
-		foldedA = FoldAscii((u8)a[i]);
-		foldedB = FoldAscii((u8)b[i]);
-		if (foldedA != foldedB)
-			return foldedA < foldedB ? -1 : 1;
-	}
-	if (a[i] != b[i])
-		return (u8)a[i] < (u8)b[i] ? -1 : 1;
-	for (i = 0; a[i] != 0 && b[i] != 0; i++)
-		if (a[i] != b[i])
-			return (u8)a[i] < (u8)b[i] ? -1 : 1;
-	return 0;
 }
 
 static bool ImportLeafIsValid(const WCHAR *source, char *out)
@@ -992,7 +1039,7 @@ static void BuildExportPath(char *path, u16 profile, const u8 *header)
 	         SUSAMUNE_GHOST_SHARE_EXTENSION);
 }
 
-static enum ReadResult ReadEnvelope(u16 profile, u16 slot, u8 bank,
+static enum ReadResult ReadEnvelope(u16 profile, u32 slot, u8 bank,
 	                                struct SusamuneGhostStorageEnvelope *envelope,
 	                                int *ioError)
 {
@@ -1009,11 +1056,11 @@ static enum ReadResult ReadEnvelope(u16 profile, u16 slot, u8 bank,
 	BuildGhostPath(path, profile, slot, bank);
 	ret = f_open_char(&file, path, FA_READ | FA_OPEN_EXISTING);
 	if (ret == FR_NO_FILE)
-		return READ_INVALID;
+		return READ_MISSING;
 	if (ret != FR_OK)
 	{
 		*ioError = ret;
-		return ret == FR_NO_PATH ? READ_IO : READ_IO;
+		return READ_IO;
 	}
 
 	size = f_size(&file);
@@ -1029,22 +1076,23 @@ static enum ReadResult ReadEnvelope(u16 profile, u16 slot, u8 bank,
 	}
 
 	if (read >= 6 && ReadBe32(raw) == SUSAMUNE_GHOST_ENVELOPE_MAGIC &&
-	    ReadBe16(raw + 4) != SUSAMUNE_GHOST_ENVELOPE_VERSION)
+	    ReadBe16(raw + 4) > SUSAMUNE_GHOST_ENVELOPE_VERSION)
 		return READ_UNSAFE;
 	if (size < sizeof(raw) || ReadBe32(raw) != SUSAMUNE_GHOST_ENVELOPE_MAGIC)
 		return READ_INVALID;
 
-	memcpy(envelope, raw, sizeof(*envelope));
-	if (envelope->version != SUSAMUNE_GHOST_ENVELOPE_VERSION ||
+	DecodeEnvelope(raw, envelope);
+	if ((envelope->version != 1 && envelope->version != SUSAMUNE_GHOST_ENVELOPE_VERSION) ||
 	    envelope->headerSize != SUSAMUNE_GHOST_ENVELOPE_SIZE ||
 	    envelope->gameId != GAME_ID || envelope->profile != profile ||
-	    envelope->slot != slot ||
+	    envelope->slot != (u16)slot ||
+	    (envelope->version == 1 ? slot > 0xFFFFu : envelope->reserved[0] != slot) ||
 	    (envelope->flags & ~SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) != 0 ||
 	    envelope->payloadSize > SUSAMUNE_GHOST_MAX_FILE_SIZE ||
 	    envelope->durationQf > SUSAMUNE_GHOST_MAX_DURATION_QF ||
 	    envelope->headerChecksum != EnvelopeChecksum(envelope))
 		return READ_INVALID;
-	for (i = 0; i < sizeof(envelope->reserved) / sizeof(envelope->reserved[0]); i++)
+	for (i = envelope->version == 1 ? 0 : 1; i < sizeof(envelope->reserved) / sizeof(envelope->reserved[0]); i++)
 		if (envelope->reserved[i] != 0)
 			return READ_INVALID;
 
@@ -1090,9 +1138,9 @@ static void MarkSlotUnsafe(struct SlotCatalog *slot)
 	slot->info.status = SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE;
 }
 
-static void RecomputeSlot(u32 index)
+static void RecomputeSlot(void)
 {
-	struct SlotCatalog *slot = &Catalog[index];
+	struct SlotCatalog *slot = &Catalog[0];
 	struct BankInfo *a = &slot->bank[0];
 	struct BankInfo *b = &slot->bank[1];
 	u32 delta;
@@ -1106,7 +1154,11 @@ static void RecomputeSlot(u32 index)
 		return;
 	}
 	if (a->state != BANK_VALID && b->state != BANK_VALID)
+	{
+		if (a->state == BANK_INVALID || b->state == BANK_INVALID)
+			MarkSlotUnsafe(slot);
 		return;
+	}
 	if (a->state != BANK_VALID)
 		slot->activeBank = 1;
 	else if (b->state != BANK_VALID)
@@ -1136,20 +1188,9 @@ static void RecomputeSlot(u32 index)
 
 static void RecomputeCatalogTotals(void)
 {
-	u32 slot;
-
-	CatalogUnsafe = false;
-	CatalogCount = 0;
-	CatalogDurationQf = 0;
-	for (slot = 0; slot < SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES; slot++)
-	{
-		if (Catalog[slot].unsafe)
-			CatalogUnsafe = true;
-		if ((Catalog[slot].info.flags & SUSAMUNE_GHOST_SLOT_PRESENT) == 0)
-			continue;
-		CatalogCount++;
-		CatalogDurationQf += Catalog[slot].info.durationQf;
-	}
+	CatalogUnsafe = Catalog[0].unsafe;
+	CatalogCount = (Catalog[0].info.flags & SUSAMUNE_GHOST_SLOT_PRESENT) != 0;
+	CatalogDurationQf = CatalogCount ? Catalog[0].info.durationQf : 0;
 }
 
 static u8 SanitizeText(char *out, u32 capacity, const u8 *in, u32 length)
@@ -1194,48 +1235,33 @@ static void FillInfo(struct SusamuneGhostSlotInfo *info, const u8 *header,
 	info->canonicalVersion = (u8)ReadBe16(header + 4);
 }
 
-static void FillSlotInfo(u32 slotIndex, const u8 *header)
+static void FillSlotInfo(const u8 *header)
 {
-	struct SlotCatalog *slot = &Catalog[slotIndex];
+	struct SlotCatalog *slot = &Catalog[0];
 	struct BankInfo *bank = &slot->bank[(u8)slot->activeBank];
 
 	FillInfo(&slot->info, header, bank->generation, 0);
 }
 
-static void RecomputeImportedTotals(void)
-{
-	u32 slot;
-
-	ImportedCatalogDurationQf = 0;
-	for (slot = 0; slot < ImportedCatalogCount; slot++)
-		ImportedCatalogDurationQf += ImportedCatalog[slot].info.durationQf;
-}
-
 static void InsertImportCandidate(void)
 {
-	u32 position = 0;
-	u32 move;
-
-	ImportedCompatibleCount++;
-	while (position < ImportedCatalogCount &&
-	       ImportLeafCompare(ImportedCatalog[position].leaf,
-	                         ImportCandidate.leaf) < 0)
-		position++;
-	if (position >= SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES)
-		return;
-	if (ImportedCatalogCount < SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES)
-		ImportedCatalogCount++;
-	for (move = ImportedCatalogCount - 1u; move > position; move--)
-		ImportedCatalog[move] = ImportedCatalog[move - 1u];
-	ImportedCatalog[position] = ImportCandidate;
+	if (PageOrdinal >= Page.first && Page.count < SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES)
+	{
+		struct SusamuneGhostCatalogEntry *entry = &Page.entries[Page.count++];
+		entry->id = 0;
+		entry->info = ImportCandidate.info;
+		memcpy(entry->leaf, ImportCandidate.leaf, sizeof(entry->leaf));
+	}
+	++PageOrdinal;
+	PageDuration += ImportCandidate.info.durationQf;
 }
 
-static enum ReadResult ReadCanonicalHeader(u16 profile, u16 slot,
+static enum ReadResult ReadCanonicalHeader(u16 profile, u32 slot,
 	                                       u8 bankIndex,
 	                                       u8 *header,
 	                                       int *ioError)
 {
-	struct BankInfo *bank = &Catalog[slot].bank[bankIndex];
+	struct BankInfo *bank = &Catalog[0].bank[bankIndex];
 	char path[GHOST_PATH_SIZE];
 	FIL file;
 	UINT read = 0;
@@ -1314,30 +1340,18 @@ static void PublishBusy(void)
 static void FinishRequest(int status, u32 payloadSize, u32 generation)
 {
 	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
-
 	mailbox->response.responseMagic = SUSAMUNE_GHOST_STORAGE_MAGIC;
 	mailbox->response.protocolVersion = SUSAMUNE_GHOST_STORAGE_VERSION;
-	mailbox->response.flags = GhostSupported
-		? SUSAMUNE_GHOST_RESPONSE_READY : 0;
+	mailbox->response.flags = GhostSupported ? SUSAMUNE_GHOST_RESPONSE_READY : 0;
 	mailbox->response.ackSeq = Request.seq;
 	mailbox->response.status = status;
 	mailbox->response.payloadSize = payloadSize;
 	mailbox->response.generation = generation;
-	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
-	{
-		mailbox->response.totalDurationQf = ImportedCatalogReady
-			? ImportedCatalogDurationQf : 0;
-		mailbox->response.slotCount = ImportedCatalogReady
-			? ImportedCatalogCount : 0;
-	}
-	else
-	{
-		mailbox->response.totalDurationQf =
-			CatalogReady && CatalogProfile == Request.profile
-				? CatalogDurationQf : 0;
-		mailbox->response.slotCount =
-			CatalogReady && CatalogProfile == Request.profile ? CatalogCount : 0;
-	}
+	mailbox->response.slot = (Request.command == SUSAMUNE_GHOST_CMD_LIST ||
+		Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) ? 0 : Request.slot;
+	mailbox->response.slotCount = status == SUSAMUNE_GHOST_STATUS_OK &&
+	(Request.command == SUSAMUNE_GHOST_CMD_LIST ||
+		Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) ? Page.count : 0;
 	mailbox->response.profile = Request.profile;
 	GhostAckSeq = Request.seq;
 	Phase = OP_IDLE;
@@ -1368,156 +1382,282 @@ static void FinishIoError(int result)
 	FinishRequest(StorageStatusForResult(result), 0, 0);
 }
 
-static void BeginCatalogScan(u16 profile)
+static bool PersonalSlotValid(u32 slot)
 {
-	ImportedCatalogReady = false;
+	return slot != SUSAMUNE_GHOST_SLOT_AUTO && (slot < 45u || slot >= 48u);
+}
+
+static void InitPage(void)
+{
+	memset(&Page, 0, sizeof(Page));
+	Page.magic = SUSAMUNE_GHOST_CATALOG_PAGE_MAGIC;
+	Page.version = SUSAMUNE_GHOST_CATALOG_PAGE_VERSION;
+	Page.first = Request.command == SUSAMUNE_GHOST_CMD_SAVE ? 0 : Request.slot;
+	PageOrdinal = 0;
+	PageDuration = 0;
+	AutoReuseSlot = SUSAMUNE_GHOST_SLOT_AUTO;
+}
+
+static void PublishPage(void)
+{
+	Page.totalCount = PageOrdinal;
+	Page.totalDurationQfLo = (u32)PageDuration;
+	Page.totalDurationQfHi = (u32)(PageDuration >> 32);
+	memcpy((void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, &Page, sizeof(Page));
+	sync_after_write((void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, sizeof(Page));
+	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, sizeof(Page), 0);
+}
+
+static void BeginSingleSlot(u32 slot)
+{
 	memset(Catalog, 0, sizeof(Catalog));
 	CatalogReady = false;
 	CatalogUnsafe = false;
-	CatalogProfile = profile;
-	CatalogCount = 0;
-	CatalogDurationQf = 0;
+	CatalogProfile = Request.profile;
+	ScanSlot = slot;
 	ScanFile = 0;
-	ScanHeaderSlot = 0;
 	ScanHeaderAttempts = 0;
 	ScanIoError = FR_OK;
 	Phase = OP_SCAN_ENVELOPES;
 }
 
+static void BeginCatalogScan(void)
+{
+	ImportedCatalogReady = false;
+	DirectoryScan = Request.command == SUSAMUNE_GHOST_CMD_LIST ||
+	                Request.slot == SUSAMUNE_GHOST_SLOT_AUTO;
+	if (DirectoryScan)
+	{
+		InitPage();
+		Phase = OP_PERSONAL_SCAN_OPEN;
+	}
+	else
+		BeginSingleSlot(Request.slot);
+}
+
+static void PersonalScanOpenPass(void)
+{
+	char path[GHOST_PATH_SIZE];
+	int ret;
+	_sprintf(path, "%s/susamune_ghosts/%s/p%u",
+	         SusamuneCfgStoragePrefix(), GhostRegion, Request.profile);
+	ret = f_opendir_char(&ImportDir, path);
+	if (ret != FR_OK)
+	{
+		FinishIoError(ret);
+		return;
+	}
+	ImportDirOpen = true;
+	Phase = OP_PERSONAL_SCAN_NEXT;
+}
+
+static bool ParsePersonalLeaf(const char *leaf, u32 *id, u8 *bank)
+{
+	const char *p = leaf;
+	u32 value = 0;
+	char canonical[32];
+	if (*p++ != 'g' || *p < '0' || *p > '9') return false;
+	while (*p >= '0' && *p <= '9')
+	{
+		const u32 digit = (u32)(*p++ - '0');
+		if (value > (0xFFFFFFFFu - digit) / 10u) return false;
+		value = value * 10u + digit;
+	}
+	if ((*p != 'a' && *p != 'b') || strcmp(p + 1, ".sgh") ||
+	    !PersonalSlotValid(value))
+		return false;
+	*bank = *p == 'b';
+	_sprintf(canonical, "g%02u%c.sgh", value, *p);
+	if (strcmp(canonical, leaf)) return false;
+	*id = value;
+	return true;
+}
+
+static void PersonalScanNextPass(void)
+{
+	char leaf[32];
+	u32 n;
+	u32 id;
+	u8 bank;
+	int ret;
+	memset(&ImportEntry, 0, sizeof(ImportEntry));
+	ret = f_readdir(&ImportDir, &ImportEntry);
+	if (ret != FR_OK)
+	{
+		FinishIoError(ret);
+		return;
+	}
+	if (!ImportEntry.fname[0])
+	{
+		ret = f_closedir(&ImportDir);
+		ImportDirOpen = false;
+		if (ret != FR_OK)
+		{
+			FinishIoError(ret);
+			return;
+		}
+		DirectoryScan = false;
+		if (Request.command == SUSAMUNE_GHOST_CMD_LIST) PublishPage();
+		else
+		{
+			Request.slot = AutoReuseSlot != SUSAMUNE_GHOST_SLOT_AUTO ? AutoReuseSlot :
+			               Page.nextSlot == SUSAMUNE_GHOST_SLOT_AUTO ? 0 : Page.nextSlot;
+			if (!PersonalSlotValid(Request.slot)) Request.slot = 48;
+			AutoProbe = true;
+			BeginSingleSlot(Request.slot);
+		}
+		return;
+	}
+	if (ImportEntry.fattrib & AM_DIR) return;
+	for (n = 0; n < sizeof(leaf); ++n)
+	{
+		if (ImportEntry.fname[n] > 0x7Fu) return;
+		leaf[n] = (char)ImportEntry.fname[n];
+		if (!leaf[n]) break;
+	}
+	if (n == sizeof(leaf) || !ParsePersonalLeaf(leaf, &id, &bank)) return;
+	if (id >= Page.nextSlot) Page.nextSlot = id + 1u;
+	if (Page.nextSlot == 45u) Page.nextSlot = 48u;
+	if (bank)
+	{
+		char path[GHOST_PATH_SIZE];
+		FILINFO other;
+		BuildGhostPath(path, Request.profile, id, 0);
+		ret = f_stat_char(path, &other);
+		if (ret == FR_OK) return;
+		if (ret != FR_NO_FILE)
+		{
+			FinishIoError(ret);
+			return;
+		}
+	}
+	BeginSingleSlot(id);
+}
+
+static void FinishSingleSlot(void)
+{
+	CatalogReady = true;
+	RecomputeCatalogTotals();
+	if (DirectoryScan)
+	{
+		if (Request.command == SUSAMUNE_GHOST_CMD_SAVE && !CatalogUnsafe &&
+			Catalog[0].activeBank >= 0 &&
+		    (Catalog[0].bank[(u8)Catalog[0].activeBank].flags &
+		         SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) &&
+		    ScanSlot < AutoReuseSlot)
+			AutoReuseSlot = ScanSlot;
+		if (CatalogCount || CatalogUnsafe)
+		{
+			if (PageOrdinal >= Page.first && Page.count < SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES)
+			{
+				struct SusamuneGhostCatalogEntry *entry = &Page.entries[Page.count++];
+				entry->id = ScanSlot;
+				entry->info = Catalog[0].info;
+			}
+			++PageOrdinal;
+			PageDuration += CatalogDurationQf;
+		}
+		Phase = OP_PERSONAL_SCAN_NEXT;
+		return;
+	}
+	if (AutoProbe && (CatalogCount || CatalogUnsafe))
+	{
+		++Request.slot;
+		if (Request.slot == 45u) Request.slot = 48u;
+		if (Request.slot == SUSAMUNE_GHOST_SLOT_AUTO)
+		{
+			FinishRequest(SUSAMUNE_GHOST_STATUS_STORAGE_UNAVAILABLE, 0, 0);
+			return;
+		}
+		BeginSingleSlot(Request.slot);
+		return;
+	}
+	AutoProbe = false;
+	DispatchRequest();
+}
+
 static void ScanEnvelopePass(void)
 {
 	struct SusamuneGhostStorageEnvelope envelope;
-	u32 slot;
-	u8 bank;
 	enum ReadResult result;
-
-	if (ScanFile >=
-	    SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES * GHOST_BANK_COUNT)
+	if (ScanFile == 2)
 	{
 		ScanFile = 0;
 		Phase = OP_SCAN_HEADERS;
 		return;
 	}
-
-	slot = ScanFile / GHOST_BANK_COUNT;
-	bank = (u8)(ScanFile % GHOST_BANK_COUNT);
-	result = ReadEnvelope(CatalogProfile, (u16)slot, bank,
-	                      &envelope, &ScanIoError);
+	result = ReadEnvelope(Request.profile, ScanSlot, (u8)ScanFile, &envelope, &ScanIoError);
 	if (result == READ_IO)
 	{
-		CatalogReady = false;
-		FinishRequest(StorageStatusForResult(ScanIoError), 0, 0);
+		FinishIoError(ScanIoError);
 		return;
 	}
 	if (result == READ_VALID)
-		CopyEnvelopeInfo(&Catalog[slot].bank[bank], &envelope);
+		CopyEnvelopeInfo(&Catalog[0].bank[ScanFile], &envelope);
 	else
-		Catalog[slot].bank[bank].state =
-			result == READ_UNSAFE ? BANK_UNSAFE : BANK_INVALID;
-	ScanFile++;
+		Catalog[0].bank[ScanFile].state = result == READ_UNSAFE ? BANK_UNSAFE :
+		                                result == READ_MISSING ? BANK_EMPTY : BANK_INVALID;
+	++ScanFile;
 }
 
 static void ScanHeaderPass(void)
 {
 	u8 header[SUSAMUNE_GHOST_FILE_HEADER_SIZE];
-	u32 slotIndex;
-	u8 bank;
 	enum ReadResult result;
-
-	while (ScanFile <
-	       SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES * GHOST_BANK_COUNT)
+	u8 bank;
+	if (ScanFile == 2)
 	{
-		slotIndex = ScanFile / GHOST_BANK_COUNT;
-		bank = (u8)(ScanFile % GHOST_BANK_COUNT);
-		ScanFile++;
-		if (Catalog[slotIndex].bank[bank].state != BANK_VALID ||
-		    (Catalog[slotIndex].bank[bank].flags &
-		     SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) != 0)
-			continue;
-
-		result = ReadCanonicalHeader(CatalogProfile, (u16)slotIndex,
-		                             bank, header, &ScanIoError);
-		if (result == READ_IO)
-		{
-			CatalogReady = false;
-			FinishRequest(StorageStatusForResult(ScanIoError), 0, 0);
-			return;
-		}
-		if (result == READ_UNSAFE)
-			Catalog[slotIndex].bank[bank].state = BANK_UNSAFE;
-		else if (result == READ_INVALID)
-			Catalog[slotIndex].bank[bank].state = BANK_INVALID;
+		RecomputeSlot();
+		Phase = OP_SCAN_ACTIVE_HEADERS;
 		return;
 	}
-
-	for (slotIndex = 0;
-	     slotIndex < SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES;
-	     slotIndex++)
-		RecomputeSlot(slotIndex);
-	ScanHeaderSlot = 0;
-	ScanHeaderAttempts = 0;
-	Phase = OP_SCAN_ACTIVE_HEADERS;
+	bank = (u8)ScanFile++;
+	if (Catalog[0].bank[bank].state != BANK_VALID ||
+		(Catalog[0].bank[bank].flags & SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE)) return;
+	result = ReadCanonicalHeader(Request.profile, ScanSlot, bank, header, &ScanIoError);
+	if (result == READ_IO)
+	{
+		FinishIoError(ScanIoError);
+		return;
+	}
+	if (result != READ_VALID)
+		Catalog[0].bank[bank].state = result == READ_UNSAFE ? BANK_UNSAFE : BANK_INVALID;
 }
 
 static void ScanActiveHeaderPass(void)
 {
 	u8 header[SUSAMUNE_GHOST_FILE_HEADER_SIZE];
-	struct SlotCatalog *slot;
-	u8 bank;
 	enum ReadResult result;
-
-	while (ScanHeaderSlot < SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)
+	struct SlotCatalog *slot = &Catalog[0];
+	u8 bank;
+	if (slot->unsafe || slot->activeBank < 0 ||
+	    (slot->bank[(u8)slot->activeBank].flags & SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE))
 	{
-		slot = &Catalog[ScanHeaderSlot];
-		if (slot->unsafe || slot->activeBank < 0 ||
-		    (slot->bank[(u8)slot->activeBank].flags &
-		     SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) != 0)
-		{
-			ScanHeaderSlot++;
-			ScanHeaderAttempts = 0;
-			continue;
-		}
-		bank = (u8)slot->activeBank;
-		if ((ScanHeaderAttempts & (1u << bank)) != 0)
-		{
-			slot->bank[bank].state = BANK_INVALID;
-			RecomputeSlot(ScanHeaderSlot);
-			continue;
-		}
-		ScanHeaderAttempts |= (u8)(1u << bank);
-		result = ReadCanonicalHeader(CatalogProfile,
-		                             (u16)ScanHeaderSlot, bank,
-		                             header, &ScanIoError);
-		if (result == READ_IO)
-		{
-			CatalogReady = false;
-			FinishRequest(StorageStatusForResult(ScanIoError), 0, 0);
-			return;
-		}
-		if (result == READ_UNSAFE)
-		{
-			slot->bank[bank].state = BANK_UNSAFE;
-			RecomputeSlot(ScanHeaderSlot);
-			ScanHeaderSlot++;
-			ScanHeaderAttempts = 0;
-			return;
-		}
-		if (result == READ_INVALID)
-		{
-			slot->bank[bank].state = BANK_INVALID;
-			RecomputeSlot(ScanHeaderSlot);
-			return;
-		}
-
-		FillSlotInfo(ScanHeaderSlot, header);
-		ScanHeaderSlot++;
-		ScanHeaderAttempts = 0;
+		FinishSingleSlot();
 		return;
 	}
-
-	CatalogReady = true;
-	RecomputeCatalogTotals();
-	DispatchRequest();
+	bank = (u8)slot->activeBank;
+	if (ScanHeaderAttempts & (1u << bank))
+	{
+		slot->bank[bank].state = BANK_INVALID;
+		RecomputeSlot();
+		return;
+	}
+	ScanHeaderAttempts |= (u8)(1u << bank);
+	result = ReadCanonicalHeader(Request.profile, ScanSlot, bank, header, &ScanIoError);
+	if (result == READ_IO)
+	{
+		FinishIoError(ScanIoError);
+		return;
+	}
+	if (result != READ_VALID)
+	{
+		slot->bank[bank].state = result == READ_UNSAFE ? BANK_UNSAFE : BANK_INVALID;
+		RecomputeSlot();
+		return;
+	}
+	FillSlotInfo(header);
+	FinishSingleSlot();
 }
 
 static void BeginImportScan(void)
@@ -1527,27 +1667,21 @@ static void BeginImportScan(void)
 	memset(&ImportCandidate, 0, sizeof(ImportCandidate));
 	ImportedCatalogReady = false;
 	ImportedCatalogCount = 0;
-	ImportedCatalogDurationQf = 0;
-	ImportedCompatibleCount = 0;
-	ImportCandidateSize = 0;
-	ImportPrefixSize = 0;
-	ImportDirOpen = false;
-	Phase = OP_IMPORT_SCAN_OPEN;
+	DirectoryScan = Request.command == SUSAMUNE_GHOST_CMD_LIST || Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN;
+	if (DirectoryScan)
+	{
+		InitPage();
+		Phase = OP_IMPORT_SCAN_OPEN;
+	} else {
+		memcpy(ImportCandidate.leaf, Request.leaf, sizeof(ImportCandidate.leaf));
+		Phase = OP_IMPORT_SCAN_FILE_OPEN;
+	}
 }
 
 static void EnsureCatalog(void)
 {
-	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
-	{
-		if (ImportedCatalogReady)
-			DispatchRequest();
-		else
-			BeginImportScan();
-	}
-	else if (CatalogReady && CatalogProfile == Request.profile)
-		DispatchRequest();
-	else
-		BeginCatalogScan(Request.profile);
+	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE) BeginImportScan();
+	else BeginCatalogScan();
 }
 
 static void PrepareEnvelope(struct SusamuneGhostStorageEnvelope *envelope,
@@ -1563,42 +1697,12 @@ static void PrepareEnvelope(struct SusamuneGhostStorageEnvelope *envelope,
 	envelope->flags = flags;
 	envelope->gameId = GAME_ID;
 	envelope->profile = Request.profile;
-	envelope->slot = Request.slot;
+	envelope->slot = (u16)Request.slot;
+	envelope->reserved[0] = Request.slot;
 	envelope->payloadSize = payloadSize;
 	envelope->durationQf = durationQf;
 	envelope->payloadChecksum = payloadChecksum;
 	envelope->headerChecksum = EnvelopeChecksum(envelope);
-}
-
-static void PublishList(void)
-{
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
-	u32 size = sizeof(Catalog[0].info) * SUSAMUNE_GHOST_SLOT_COUNT;
-	u32 slot;
-
-	for (slot = 0; slot < SUSAMUNE_GHOST_SLOT_COUNT; slot++)
-		memcpy((void*)(SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR + slot * sizeof(Catalog[0].info)),
-		       &Catalog[slot].info, sizeof(Catalog[slot].info));
-	sync_after_write((void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, size);
-	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, size, 0);
-}
-
-static void PublishImportedList(void)
-{
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
-	u32 size = sizeof(ImportedCatalog[0].info) *
-	           SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES;
-	u32 slot;
-	u32 overflow = ImportedCompatibleCount > ImportedCatalogCount
-		? ImportedCompatibleCount - ImportedCatalogCount : 0;
-
-	for (slot = 0; slot < SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES; slot++)
-		memcpy((void*)(SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR +
-		       slot * sizeof(ImportedCatalog[0].info)),
-		       &ImportedCatalog[slot].info,
-		       sizeof(ImportedCatalog[slot].info));
-	sync_after_write((void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, size);
-	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, size, overflow);
 }
 
 static void StartLoadBank(u8 bank)
@@ -1619,19 +1723,18 @@ static void StartImportedLoad(void)
 
 static void QuarantineImportedSlot(int status)
 {
-	memset(&ImportedCatalog[Request.slot].info, 0,
-	       sizeof(ImportedCatalog[Request.slot].info));
-	ImportedCatalog[Request.slot].info.flags =
+	memset(&ImportedCatalog[0].info, 0,
+	       sizeof(ImportedCatalog[0].info));
+	ImportedCatalog[0].info.flags =
 		SUSAMUNE_GHOST_SLOT_PRESENT |
 		SUSAMUNE_GHOST_SLOT_IMPORTED |
 		SUSAMUNE_GHOST_SLOT_UNSAFE;
-	ImportedCatalog[Request.slot].info.status = status;
-	RecomputeImportedTotals();
+	ImportedCatalog[0].info.status = status;
 }
 
 static void FailCorruptLoad(void)
 {
-	struct SlotCatalog *slot = &Catalog[Request.slot];
+	struct SlotCatalog *slot = &Catalog[0];
 	u8 next;
 
 	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
@@ -1642,7 +1745,7 @@ static void FailCorruptLoad(void)
 	}
 
 	slot->bank[IoBank].state = BANK_INVALID;
-	RecomputeSlot(Request.slot);
+	RecomputeSlot();
 	RecomputeCatalogTotals();
 	if (slot->unsafe)
 	{
@@ -1652,6 +1755,11 @@ static void FailCorruptLoad(void)
 	if (slot->activeBank >= 0)
 	{
 		next = (u8)slot->activeBank;
+		if (slot->bank[next].generation != Request.expectedGeneration)
+		{
+			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE, 0, 0);
+			return;
+		}
 		if ((slot->bank[next].flags &
 		     SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) == 0 &&
 		    (LoadAttemptedBanks & (1u << next)) == 0)
@@ -1669,7 +1777,6 @@ static void DispatchRequest(void)
 	struct BankInfo *active;
 	u32 generation;
 	u32 duration;
-	u32 projected;
 
 	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
 	{
@@ -1681,14 +1788,19 @@ static void DispatchRequest(void)
 		if (Request.command == SUSAMUNE_GHOST_CMD_LIST ||
 		    Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
 		{
-			PublishImportedList();
+			PublishPage();
 			return;
 		}
-		if (Request.slot >= ImportedCatalogCount ||
-		    (ImportedCatalog[Request.slot].info.flags &
+		if (ImportedCatalogCount == 0 ||
+		    (ImportedCatalog[0].info.flags &
 		     SUSAMUNE_GHOST_SLOT_PRESENT) == 0)
 		{
 			FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
+			return;
+		}
+		if (ImportedCatalog[0].info.generation != Request.expectedGeneration)
+		{
+			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE, 0, 0);
 			return;
 		}
 		if (Request.command == SUSAMUNE_GHOST_CMD_DELETE)
@@ -1696,7 +1808,7 @@ static void DispatchRequest(void)
 			Phase = OP_IMPORTED_DELETE;
 			return;
 		}
-		if ((ImportedCatalog[Request.slot].info.flags &
+		if ((ImportedCatalog[0].info.flags &
 		     SUSAMUNE_GHOST_SLOT_UNSAFE) != 0)
 		{
 			FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
@@ -1713,16 +1825,21 @@ static void DispatchRequest(void)
 
 	if (!CatalogReady || CatalogProfile != Request.profile)
 	{
-		BeginCatalogScan(Request.profile);
+		BeginCatalogScan();
 		return;
 	}
 	if (Request.command == SUSAMUNE_GHOST_CMD_LIST)
 	{
-		PublishList();
+		PublishPage();
 		return;
 	}
 
-	slot = &Catalog[Request.slot];
+	slot = &Catalog[0];
+	if (Request.command != SUSAMUNE_GHOST_CMD_SAVE && slot->activeBank >= 0 &&
+		slot->bank[(u8)slot->activeBank].generation != Request.expectedGeneration) {
+		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE, 0, 0);
+		return;
+	}
 	if (slot->unsafe)
 	{
 		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
@@ -1748,7 +1865,7 @@ static void DispatchRequest(void)
 		return;
 	}
 
-	// A future envelope anywhere in the profile makes mutation ambiguous.
+	// An unreadable bank makes mutation of this slot ambiguous.
 	if (CatalogUnsafe)
 	{
 		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
@@ -1771,7 +1888,7 @@ static void DispatchRequest(void)
 		return;
 	}
 	if (Request.command != SUSAMUNE_GHOST_CMD_SAVE ||
-	    Request.slot >= SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)
+	    !PersonalSlotValid(Request.slot))
 	{
 		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_SLOT, 0, 0);
 		return;
@@ -1783,22 +1900,8 @@ static void DispatchRequest(void)
 		return;
 	}
 
-	duration = ReadBe32((const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR + 64);
-	projected = CatalogDurationQf;
-	if ((slot->info.flags & SUSAMUNE_GHOST_SLOT_PRESENT) != 0)
-		projected -= slot->info.durationQf;
-	else if (CatalogCount >= SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)
-	{
-		FinishRequest(SUSAMUNE_GHOST_STATUS_QUOTA_EXCEEDED, 0, 0);
-		return;
-	}
-	projected += duration;
-	if (projected > SUSAMUNE_GHOST_PROFILE_MAX_DURATION_QF)
-	{
-		FinishRequest(SUSAMUNE_GHOST_STATUS_QUOTA_EXCEEDED, 0, 0);
-		return;
-	}
 
+	duration = ReadBe32((const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR + 64);
 	if (slot->activeBank >= 0)
 	{
 		generation = slot->bank[(u8)slot->activeBank].generation + 1u;
@@ -1842,7 +1945,6 @@ static void SaveOpenPass(void)
 
 static void SaveDataPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	u32 remaining = Request.payloadSize - IoOffset;
 	u32 chunk = remaining > SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE
 	              ? SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE : remaining;
@@ -1883,7 +1985,7 @@ static void SaveCommitPass(void)
 	int ret = f_lseek(&IoFile, 0);
 
 	if (ret == FR_OK)
-		ret = f_write(&IoFile, &IoEnvelope, sizeof(IoEnvelope), &wrote);
+		ret = WriteEnvelope(&IoFile, &IoEnvelope, &wrote);
 	if (ret != FR_OK || wrote != sizeof(IoEnvelope))
 	{
 		FinishIoError(ret != FR_OK ? ret : FR_DISK_ERR);
@@ -1894,8 +1996,7 @@ static void SaveCommitPass(void)
 
 static void SaveFinishPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
-	struct SlotCatalog *slot = &Catalog[Request.slot];
+	struct SlotCatalog *slot = &Catalog[0];
 	int ret = f_sync(&IoFile);
 	int closeRet = f_close(&IoFile);
 
@@ -1908,7 +2009,7 @@ static void SaveFinishPass(void)
 		return;
 	}
 	CopyEnvelopeInfo(&slot->bank[IoBank], &IoEnvelope);
-	RecomputeSlot(Request.slot);
+	RecomputeSlot();
 	if (slot->activeBank != (s8)IoBank)
 	{
 		MarkSlotUnsafe(slot);
@@ -1916,7 +2017,7 @@ static void SaveFinishPass(void)
 		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
 		return;
 	}
-	FillSlotInfo(Request.slot, (const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR);
+	FillSlotInfo((const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR);
 	RecomputeCatalogTotals();
 	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, IoEnvelope.generation);
 }
@@ -1932,13 +2033,13 @@ static void LoadOpenPass(void)
 
 	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
 	{
-		BuildImportPath(path, ImportedCatalog[Request.slot].leaf);
-		payloadSize = ImportedCatalog[Request.slot].info.payloadSize;
+		BuildImportPath(path, ImportedCatalog[0].leaf);
+		payloadSize = ImportedCatalog[0].info.payloadSize;
 		dataOffset = 0;
 	}
 	else
 	{
-		bank = &Catalog[Request.slot].bank[IoBank];
+		bank = &Catalog[0].bank[IoBank];
 		BuildGhostPath(path, Request.profile, Request.slot, IoBank);
 		payloadSize = bank->payloadSize;
 		dataOffset = sizeof(struct SusamuneGhostStorageEnvelope);
@@ -1978,10 +2079,9 @@ static void LoadOpenPass(void)
 
 static void LoadDataPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	u32 payloadSize = Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE
-		? ImportedCatalog[Request.slot].info.payloadSize
-		: Catalog[Request.slot].bank[IoBank].payloadSize;
+		? ImportedCatalog[0].info.payloadSize
+		: Catalog[0].bank[IoBank].payloadSize;
 	u32 remaining = payloadSize - IoOffset;
 	u32 chunk = remaining > SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE
 	              ? SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE : remaining;
@@ -2008,7 +2108,6 @@ static void LoadDataPass(void)
 
 static void LoadClosePass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	struct SlotCatalog *slot = NULL;
 	struct BankInfo *bank = NULL;
 	bool imported = Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
@@ -2024,10 +2123,10 @@ static void LoadClosePass(void)
 	}
 	IoChecksum ^= SUSAMUNE_GHOST_CRC32_XOR_OUT;
 	if (imported)
-		payloadSize = ImportedCatalog[Request.slot].info.payloadSize;
+		payloadSize = ImportedCatalog[0].info.payloadSize;
 	else
 	{
-		slot = &Catalog[Request.slot];
+		slot = &Catalog[0];
 		bank = &slot->bank[IoBank];
 		payloadSize = bank->payloadSize;
 	}
@@ -2046,7 +2145,7 @@ static void LoadClosePass(void)
 		else
 		{
 			bank->state = BANK_UNSAFE;
-			RecomputeSlot(Request.slot);
+			RecomputeSlot();
 			RecomputeCatalogTotals();
 		}
 		FinishRequest(SUSAMUNE_GHOST_STATUS_FORWARD_VERSION, 0, 0);
@@ -2062,12 +2161,11 @@ static void LoadClosePass(void)
 
 static void ValidateLoadPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	bool imported = Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
-	struct SlotCatalog *slot = imported ? NULL : &Catalog[Request.slot];
+	struct SlotCatalog *slot = imported ? NULL : &Catalog[0];
 	struct BankInfo *bank = imported ? NULL : &slot->bank[IoBank];
 	u32 payloadSize = imported
-		? ImportedCatalog[Request.slot].info.payloadSize : bank->payloadSize;
+		? ImportedCatalog[0].info.payloadSize : bank->payloadSize;
 	int validate = ContinueCanonicalValidation();
 
 	if (validate < 0)
@@ -2082,16 +2180,20 @@ static void ValidateLoadPass(void)
 		FailCorruptLoad();
 		return;
 	}
+	if (imported && ReadBe32((const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR + 12) != Request.expectedGeneration)
+	{
+		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE, 0, 0);
+		return;
+	}
 	if (imported)
 	{
-		FillInfo(&ImportedCatalog[Request.slot].info,
-		         (const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, 1,
+		FillInfo(&ImportedCatalog[0].info,
+		         (const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, Request.expectedGeneration,
 		         SUSAMUNE_GHOST_SLOT_IMPORTED);
-		RecomputeImportedTotals();
-	}
+		}
 	else
 	{
-		FillSlotInfo(Request.slot, (const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR);
+		FillSlotInfo((const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR);
 		RecomputeCatalogTotals();
 	}
 	if (Request.command == SUSAMUNE_GHOST_CMD_EXPORT)
@@ -2108,7 +2210,6 @@ static void ValidateLoadPass(void)
 
 static void ExportOpenPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	char path[GHOST_PATH_SIZE];
 	u8 blank[SUSAMUNE_GHOST_FILE_HEADER_SIZE];
 	UINT wrote = 0;
@@ -2140,7 +2241,6 @@ static void ExportOpenPass(void)
 
 static void ExportDataPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	u32 remaining = ValidationSize - IoOffset;
 	u32 chunk = remaining > SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE
 	              ? SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE : remaining;
@@ -2177,7 +2277,6 @@ static void ExportSyncDataPass(void)
 
 static void ExportCommitPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	UINT wrote = 0;
 	int ret = f_lseek(&IoFile, 0);
 
@@ -2194,7 +2293,7 @@ static void ExportCommitPass(void)
 
 static void ExportFinishPass(void)
 {
-	struct BankInfo *bank = &Catalog[Request.slot].bank[IoBank];
+	struct BankInfo *bank = &Catalog[0].bank[IoBank];
 	int ret = f_sync(&IoFile);
 	int closeRet = f_close(&IoFile);
 
@@ -2247,8 +2346,7 @@ static void ImportScanNextPass(void)
 			return;
 		}
 		ImportedCatalogReady = true;
-		RecomputeImportedTotals();
-		DispatchRequest();
+		PublishPage();
 		return;
 	}
 	if ((ImportEntry.fattrib & AM_DIR) != 0)
@@ -2275,7 +2373,8 @@ static void ImportScanFileOpenPass(void)
 	ret = f_open_char(&IoFile, path, FA_READ | FA_OPEN_EXISTING);
 	if (ret == FR_NO_FILE)
 	{
-		Phase = OP_IMPORT_SCAN_NEXT;
+		if (DirectoryScan) Phase = OP_IMPORT_SCAN_NEXT;
+		else FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
 		return;
 	}
 	if (ret != FR_OK)
@@ -2284,14 +2383,18 @@ static void ImportScanFileOpenPass(void)
 		return;
 	}
 	IoFileOpen = true;
-	if (f_size(&IoFile) != ImportCandidateSize)
+	if (!DirectoryScan) ImportCandidateSize = (u32)f_size(&IoFile);
+	if (ImportCandidateSize < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
+		ImportCandidateSize > SUSAMUNE_GHOST_MAX_FILE_SIZE ||
+		f_size(&IoFile) != ImportCandidateSize)
 	{
 		closeRet = f_close(&IoFile);
 		IoFileOpen = false;
 		if (closeRet != FR_OK)
 			FinishIoError(closeRet);
 		else
-			Phase = OP_IMPORT_SCAN_NEXT;
+			if (DirectoryScan) Phase = OP_IMPORT_SCAN_NEXT;
+		else FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
 		return;
 	}
 	ImportPrefixSize = ImportCandidateSize < SUSAMUNE_GHOST_V3_SAMPLE_DATA_OFFSET
@@ -2301,7 +2404,6 @@ static void ImportScanFileOpenPass(void)
 
 static void ImportScanFileReadPass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	UINT read = 0;
 	int ret = f_read(&IoFile, (void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR,
 	                 ImportPrefixSize, &read);
@@ -2316,7 +2418,6 @@ static void ImportScanFileReadPass(void)
 
 static void ImportScanFileClosePass(void)
 {
-	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 	const u8 *bytes = (const u8*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR;
 	enum ValidateResult validate;
 	bool portable;
@@ -2335,19 +2436,29 @@ static void ImportScanFileClosePass(void)
 	    ReadBe32(bytes + 8) != ImportCandidateSize ||
 	    ImportPrefixSize < SUSAMUNE_GHOST_V3_SAMPLE_DATA_OFFSET)
 	{
-		Phase = OP_IMPORT_SCAN_NEXT;
+		if (DirectoryScan) Phase = OP_IMPORT_SCAN_NEXT;
+		else FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
 		return;
 	}
 	portable = ReadBe32(bytes + 32) != GAME_ID;
 	if (!ValidateV3SegmentTable(bytes, portable))
 	{
-		Phase = OP_IMPORT_SCAN_NEXT;
+		if (DirectoryScan) Phase = OP_IMPORT_SCAN_NEXT;
+		else FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
 		return;
 	}
-	FillInfo(&ImportCandidate.info, bytes, 1,
+	FillInfo(&ImportCandidate.info, bytes, ReadBe32(bytes + 12),
 	         SUSAMUNE_GHOST_SLOT_IMPORTED);
-	InsertImportCandidate();
-	Phase = OP_IMPORT_SCAN_NEXT;
+	if (DirectoryScan)
+	{
+		InsertImportCandidate();
+		Phase = OP_IMPORT_SCAN_NEXT;
+	} else {
+		ImportedCatalog[0] = ImportCandidate;
+		ImportedCatalogCount = 1;
+		ImportedCatalogReady = true;
+		DispatchRequest();
+	}
 }
 
 static void DeleteOpenPass(void)
@@ -2364,7 +2475,7 @@ static void DeleteOpenPass(void)
 		return;
 	}
 	IoFileOpen = true;
-	ret = f_write(&IoFile, &IoEnvelope, sizeof(IoEnvelope), &wrote);
+	ret = WriteEnvelope(&IoFile, &IoEnvelope, &wrote);
 	if (ret != FR_OK || wrote != sizeof(IoEnvelope))
 	{
 		FinishIoError(ret != FR_OK ? ret : FR_DISK_ERR);
@@ -2375,7 +2486,7 @@ static void DeleteOpenPass(void)
 
 static void DeleteFinishPass(void)
 {
-	struct SlotCatalog *slot = &Catalog[Request.slot];
+	struct SlotCatalog *slot = &Catalog[0];
 	int ret = f_sync(&IoFile);
 	int closeRet = f_close(&IoFile);
 
@@ -2388,13 +2499,31 @@ static void DeleteFinishPass(void)
 		return;
 	}
 	CopyEnvelopeInfo(&slot->bank[IoBank], &IoEnvelope);
-	RecomputeSlot(Request.slot);
+	RecomputeSlot();
 	if (slot->activeBank != (s8)IoBank)
 		MarkSlotUnsafe(slot);
 	RecomputeCatalogTotals();
-	FinishRequest(slot->unsafe ? SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE
-	                           : SUSAMUNE_GHOST_STATUS_OK,
-	              0, IoEnvelope.generation);
+	if (slot->unsafe)
+		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
+	else
+		Phase = OP_DELETE_RECLAIM;
+}
+
+static void DeleteReclaimPass(void)
+{
+	char path[GHOST_PATH_SIZE];
+	int ret;
+
+	// The committed tombstone wins even if power fails during reclamation.
+	BuildGhostPath(path, Request.profile, Request.slot, (u8)(1u - IoBank));
+	ret = f_unlink_char(path);
+	if (ret != FR_OK && ret != FR_NO_FILE)
+	{
+		FinishIoError(ret);
+		return;
+	}
+	InvalidateRequestCatalog();
+	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, IoEnvelope.generation);
 }
 
 static void ImportedDeletePass(void)
@@ -2402,7 +2531,7 @@ static void ImportedDeletePass(void)
 	char path[GHOST_PATH_SIZE];
 	int ret;
 
-	BuildImportPath(path, ImportedCatalog[Request.slot].leaf);
+	BuildImportPath(path, ImportedCatalog[0].leaf);
 	ret = f_unlink_char(path);
 	if (ret == FR_NO_FILE)
 	{
@@ -2435,11 +2564,13 @@ static void StartRequest(void)
 	Request.slot = request->slot;
 	Request.payloadSize = request->payloadSize;
 	Request.flags = request->flags;
+	Request.expectedGeneration = request->expectedGeneration;
+	AutoProbe = false;
 	PublishBusy();
 
 	if (request->requestMagic != SUSAMUNE_GHOST_STORAGE_MAGIC ||
 	    request->protocolVersion != SUSAMUNE_GHOST_STORAGE_VERSION ||
-	    request->reserved[0] != 0 || request->reserved[1] != 0)
+	    request->reserved != 0 || Request.flags != 0)
 	{
 		FinishRequest(request->requestMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
 		              request->protocolVersion > SUSAMUNE_GHOST_STORAGE_VERSION
@@ -2464,54 +2595,59 @@ static void StartRequest(void)
 		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_SLOT, 0, 0);
 		return;
 	}
-	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
+	if (Request.command == SUSAMUNE_GHOST_CMD_LIST || Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
 	{
-		if ((Request.command != SUSAMUNE_GHOST_CMD_LIST &&
-		     Request.command != SUSAMUNE_GHOST_CMD_LOAD &&
-		     Request.command != SUSAMUNE_GHOST_CMD_DELETE &&
-		     Request.command != SUSAMUNE_GHOST_CMD_IMPORT_SCAN) ||
-		    ((Request.command == SUSAMUNE_GHOST_CMD_LOAD ||
-		      Request.command == SUSAMUNE_GHOST_CMD_DELETE) &&
-		     Request.slot >= SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES) ||
-		    ((Request.command == SUSAMUNE_GHOST_CMD_LIST ||
-		      Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) &&
-		     Request.slot != 0) ||
-		    Request.payloadSize != 0 || Request.flags != 0)
-		{
+		if (Request.payloadSize || Request.expectedGeneration ||
+			(Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN && Request.profile != SUSAMUNE_GHOST_IMPORTED_PROFILE)) {
 			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
 			return;
 		}
-		if (Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
-			BeginImportScan();
-		else
-			EnsureCatalog();
+		EnsureCatalog();
 		return;
 	}
-	if (Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
+	if (Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
 	{
-		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
-		return;
-	}
-	if (Request.command != SUSAMUNE_GHOST_CMD_LIST &&
-	    Request.slot >= SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)
-	{
-		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_SLOT, 0, 0);
-		return;
-	}
-	if (Request.flags != 0)
-	{
-		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
-		return;
-	}
-
-	if (Request.command != SUSAMUNE_GHOST_CMD_SAVE)
-	{
-		if (Request.payloadSize != 0)
+		char normalized[SUSAMUNE_GHOST_IMPORT_LEAF_SIZE];
+		WCHAR wide[SUSAMUNE_GHOST_IMPORT_LEAF_SIZE];
+		u32 length;
+		if ((Request.command != SUSAMUNE_GHOST_CMD_LOAD && Request.command != SUSAMUNE_GHOST_CMD_DELETE) ||
+			Request.payloadSize != sizeof(Request.leaf)) {
+			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
+			return;
+		}
+		sync_before_read((void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, sizeof(Request.leaf));
+		memcpy(Request.leaf, (const void*)SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR, sizeof(Request.leaf));
+		for (length = 0; length < sizeof(Request.leaf); ++length)
+		{
+			wide[length] = (u8)Request.leaf[length];
+			if (!wide[length]) break;
+		}
+		if (length == sizeof(Request.leaf) || !ImportLeafIsValid(wide, normalized) || strcmp(normalized, Request.leaf))
 		{
 			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
 			return;
 		}
 		EnsureCatalog();
+		return;
+	}
+	if (!PersonalSlotValid(Request.slot) &&
+		!(Request.command == SUSAMUNE_GHOST_CMD_SAVE && Request.slot == SUSAMUNE_GHOST_SLOT_AUTO)) {
+		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_SLOT, 0, 0);
+		return;
+	}
+	if (Request.command != SUSAMUNE_GHOST_CMD_SAVE)
+	{
+		if (Request.payloadSize)
+		{
+			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
+			return;
+		}
+		EnsureCatalog();
+		return;
+	}
+	if (Request.expectedGeneration)
+	{
+		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
 		return;
 	}
 	if (Request.payloadSize < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
@@ -2555,8 +2691,6 @@ void SusamuneGhostInit(void)
 	CatalogUnsafe = false;
 	ImportedCatalogReady = false;
 	ImportedCatalogCount = 0;
-	ImportedCatalogDurationQf = 0;
-	ImportedCompatibleCount = 0;
 	IoFileOpen = false;
 	ImportDirOpen = false;
 	Phase = OP_IDLE;
@@ -2600,6 +2734,12 @@ void SusamuneGhostService(void)
 				FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE, 0, 0);
 			else
 				EnsureCatalog();
+			break;
+		case OP_PERSONAL_SCAN_OPEN:
+			PersonalScanOpenPass();
+			break;
+		case OP_PERSONAL_SCAN_NEXT:
+			PersonalScanNextPass();
 			break;
 		case OP_SCAN_ENVELOPES:
 			ScanEnvelopePass();
@@ -2672,6 +2812,9 @@ void SusamuneGhostService(void)
 			break;
 		case OP_DELETE_FINISH:
 			DeleteFinishPass();
+			break;
+		case OP_DELETE_RECLAIM:
+			DeleteReclaimPass();
 			break;
 		case OP_IMPORTED_DELETE:
 			ImportedDeletePass();

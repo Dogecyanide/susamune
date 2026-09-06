@@ -357,8 +357,12 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool practiceModal = creationEditing || sessionBlocksNewInput ||
         menuOwnsRetailPad || wheelOwnsInputBeforeDirect;
     if (!practiceModal) {
-        if (gBinds.wasPressed(BIND_PRACTICE_PAUSE)) PracticeSession::requestPauseToggle();
-        if (gBinds.wasPressedSubset(BIND_PRACTICE_STEP)) PracticeSession::requestStep();
+        const bool pausePressed = gBinds.wasPressed(BIND_PRACTICE_PAUSE);
+        if (pausePressed) PracticeSession::requestPauseToggle();
+        const bool stepPressed = PracticeSession::paused() && !gBinds.recording()
+            ? gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP)
+            : gBinds.wasPressedSubset(BIND_PRACTICE_STEP);
+        if (!pausePressed && stepPressed) PracticeSession::requestStep();
         if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
         if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();

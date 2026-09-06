@@ -47,8 +47,8 @@ def envelope(
     payload_crc = zlib.crc32(payload) & 0xFFFFFFFF if payload else 0
     values = [
         storage.ENVELOPE_MAGIC, version, storage.ENVELOPE_SIZE,
-        generation, flags, ghost_format.REGION_GAME_IDS[0], profile, slot,
-        len(payload), duration, payload_crc, 0, *([0] * 6),
+        generation, flags, ghost_format.REGION_GAME_IDS[0], profile, slot & 0xFFFF,
+        len(payload), duration, payload_crc, 0, slot if version == 2 else 0, *([0] * 5),
     ]
     header = bytearray(storage._ENVELOPE.pack(*values))
     struct.pack_into(">I", header, 36, zlib.crc32(header) & 0xFFFFFFFF)
@@ -218,9 +218,28 @@ class StorageEnvelopeTests(unittest.TestCase):
         self.assertEqual(selected[0], 0)
         self.assertEqual(selected[1]["generation"], 4)
 
+    def test_envelope_v1_and_v2_wide_slot_identity(self) -> None:
+        ghost = build_ghost()
+        for version, slot in ((1, 44), (1, 65535), (2, 48), (2, 70000), (2, 0xFFFFFFFE)):
+            parsed = storage.validate_slot_file(
+                envelope(ghost, slot=slot, version=version),
+                game_id=ghost_format.REGION_GAME_IDS[0], profile=0, slot=slot,
+            )
+            self.assertEqual(parsed["generation"], 1)
+        with self.assertRaises(storage.StorageError):
+            storage.validate_slot_file(
+                envelope(ghost, slot=70000, version=1),
+                game_id=ghost_format.REGION_GAME_IDS[0], profile=0, slot=70000,
+            )
+        with self.assertRaises(storage.StorageError):
+            storage.validate_slot_file(
+                envelope(ghost, slot=70000),
+                game_id=ghost_format.REGION_GAME_IDS[0], profile=0, slot=70000+65536,
+            )
+
     def test_future_bank_fails_closed(self) -> None:
         old = envelope(build_ghost(), generation=4)
-        future = envelope(version=2, generation=5)
+        future = envelope(version=3, generation=5)
         with self.assertRaises(storage.UnsupportedStorage):
             storage.choose_slot(
                 (old, future), game_id=ghost_format.REGION_GAME_IDS[0],
@@ -262,7 +281,7 @@ class StorageEnvelopeTests(unittest.TestCase):
                 source_function(kernel, function),
             )
         self.assertIn(
-            "if (Request.flags != 0)", source_function(kernel, "StartRequest")
+            "Request.flags != 0", source_function(kernel, "StartRequest")
         )
         self.assertNotIn(
             "ALLOW_OVERWRITE",
@@ -430,7 +449,7 @@ class StorageEnvelopeTests(unittest.TestCase):
         sanitize = source_function(ppc, "sanitizeSlot")
         self.assertIn("out->flags |= SUSAMUNE_GHOST_SLOT_PRESENT", sanitize)
         remove = source_function(ppc, "removeImported")
-        self.assertIn("slot, true, true", remove)
+        self.assertIn("remove(identity)", remove)
         load_close = source_function(kernel, "LoadClosePass")
         self.assertIn("ImportedCatalogReady = false;", load_close)
         self.assertNotIn("QuarantineImportedSlot", load_close)
@@ -541,13 +560,13 @@ class StorageEnvelopeTests(unittest.TestCase):
                 raw, game_id=ghost_format.REGION_GAME_IDS[0], profile=1,
             )
 
-    def test_global_import_pool_is_sorted_bounded_and_path_safe(self) -> None:
+    def test_import_host_listing_keeps_all_path_safe_files(self) -> None:
         leaves = [f"ghost_{number:02d}.smsghost" for number in range(14)]
         selected, overflow = storage.sorted_import_leaves(
             list(reversed(leaves)) + ["ignored.txt", "../bad.smsghost"]
         )
-        self.assertEqual(selected, leaves[:12])
-        self.assertEqual(overflow, 2)
+        self.assertEqual(selected, leaves)
+        self.assertEqual(overflow, 0)
         case_sorted, case_overflow = storage.sorted_import_leaves([
             "a.smsghost", "A.smsghost",
         ])
@@ -561,11 +580,9 @@ class StorageEnvelopeTests(unittest.TestCase):
             )),
             storage.IMPORT_LEAF_SIZE - 1,
         )
-        self.assertEqual(
-            storage.PROFILE_WRITABLE_ENTRIES * 4 +
-            storage.IMPORTED_MAX_ENTRIES,
-            ghost_format.PROFILE_MAX_ENTRIES * 4,
-        )
+        self.assertTrue(storage.personal_slot_is_live(48))
+        self.assertTrue(storage.personal_slot_is_live(70000))
+        self.assertFalse(storage.personal_slot_is_live(0xFFFFFFFF))
         for invalid in (
             "../ghost.smsghost",
             "sub/ghost.smsghost",

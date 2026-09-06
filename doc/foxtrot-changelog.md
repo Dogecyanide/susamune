@@ -1,6 +1,17 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release, feedback update.
+V2.3.0 pre-release, controls and ghost library update.
+
+- Theme preload before kernel startup when the launch device is ready; corrected first-frame reveal, depth state and startup/error text contrast.
+- Separate Frame advance, Free camera and Input replay pages, showing current shortcuts with X to change them directly.
+- D-Up now pauses/steps and D-Down pauses/resumes by default. Existing saved bindings are preserved; camera and replay-stop shortcuts are optional.
+- Buffered frame pause catches Mario's first controllable frame after a load or intro. An armed pause can be cancelled.
+- Step accepts held gameplay buttons with freecam off; practice modifiers stay stripped until released, including analog L/R pressure.
+- Pause/Resume takes priority when an older shortcut overlaps a newly assigned Step button.
+- Freecam can pause live gameplay automatically, with a separate Reverse sideways option and clearer camera/input status.
+- Paged personal/imported ghost libraries remove the 45/12-entry and ten-hour caps. Save latest ghost creates a new file; existing files and cross-page Watch2 selections are preserved.
+
+Earlier feedback update:
 
 - Layout editor groups for timers, inputs, metadata, native HUD colours, custom text, practice feedback and menu appearance.
 - Full Sunshine timer editor, accurate blue/purple/white colours, and independent health/underwater-air colours.

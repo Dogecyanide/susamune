@@ -64,7 +64,7 @@ class RngControlMenuTests(unittest.TestCase):
         self.assertNotIn("SETTING_BIANCO_SKEETER_ROUTE", menu)
         self.assertIn('Retail\\0N1-S1-S2-S3', (ROOT / "src/settings.cpp").read_text())
         self.assertIn("const SettingPage kRngPages[]", menu)
-        self.assertIn("{ frame, savestate, practice, rng, gameplay }", menu)
+        self.assertIn("{ frame, camera, inputReplay, savestate, practice, rng, gameplay }", menu)
         self.assertIn("if (child->back())", menu)
 
     def test_every_live_rng_control_can_be_shined(self):

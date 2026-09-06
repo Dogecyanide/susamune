@@ -91,8 +91,13 @@ public:
         return m != 0 && live() && (mHeld & m) == m;
     }
     bool wasPressedSubset(BindId id) const {
-        u16 m = mMask[id];
-        return m != 0 && live() && (mHeld & m) == m && (mPrevHeld & m) != m;
+        return live() && wasPressedSubsetRaw(id);
+    }
+    // A fresh Step while paused may accompany a gameplay button still held
+    // from menu dismissal. The caller must exclude modals and bind recording.
+    bool wasPressedSubsetRaw(BindId id) const {
+        const u16 m = mMask[id];
+        return m != 0 && (mHeld & m) == m && (mPrevHeld & m) != m;
     }
 
     // --- recording ---

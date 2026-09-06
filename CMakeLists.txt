@@ -391,7 +391,7 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_OUTPUT_ZIP=${LAUNCHER_ZIP}"
         "-DLAUNCHER_DEFAULT_SOURCE=${LAUNCHER_DEFAULT_SOURCE}"
         "-DLAUNCHER_VERSION=${LAUNCHER_VERSION}"
-        "-DLAUNCHER_TEST_LOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-testing.md"
+        "-DLAUNCHER_TEST_LOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-tester-checklist.md"
         "-DLAUNCHER_PATTERN_TEST_LOG="
         "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-changelog.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"

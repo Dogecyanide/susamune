@@ -5,7 +5,8 @@ PPC-only interval `0x91880100–0x91890100` on Wii, or
 `0x71100100–0x71110100` in Dolphin. This reuses the old ghost file payload
 space after its live 256-byte mailbox header and before the secondary model
 heap at slot offset `0x6A000`. Protocol 4 moved ghost files to a separate bank.
-Console Record and Replay require that protocol's header magic and version;
+Console Record and Replay require the matching current mailbox magic and
+version (now protocol 5);
 they work even when SD storage is unavailable. Pause and free camera do not
 depend on this storage capability.
 
@@ -26,7 +27,8 @@ The module also suppresses the director's collision-check and collision-clear
 calls while holding. UI, rendering, audio stage service, the director budget
 and its unconditional counter continue. Absolute-time deadlines continue.
 
-Step releases one ordinary director update, then holds again. This is a
+Step first pauses live gameplay; later presses release one ordinary director
+update, then hold again. This is a
 display-frame workload, usually four 120 Hz logic ticks at 30 frames per
 second, with the retail fractional budget at 25 frames per second. Screen
 refresh rates of 60/50 Hz are distinct from that 30/25 fps game workload.
@@ -35,18 +37,85 @@ The configured Step/Resume combo is removed from the gameplay sample,
 including an associated analog trigger; the remaining controller input is
 decoded normally. With free camera active, a step uses neutral gameplay input.
 Step is the explicit subset-match exception to exact action binds: holding
-extra gameplay buttons still allows the configured Step combo to fire. Menu
+extra gameplay buttons still allows the configured Step combo to fire. While
+paused, a fresh Step edge can also accompany A held from menu dismissal;
+modals and the bind recorder still block it. Consumed shortcut buttons remain
+suppressed through release, including analog L/R travel after the digital click
+has released. Other gameplay buttons remain intact. Menu
 Step/Resume waits for A to be released before gameplay advances. Retail
 director results 0 (WAIT) and 1 (DEFAULT) both continue the current scene.
+If an old Pause combo contains the configured Step combo, Pause/Resume wins
+that edge; it cannot immediately pause itself again by also firing Step.
+
+New configuration defaults are D-Down Pause/Resume and D-Up Step. Camera,
+Record, Replay, Stop and spin shortcuts are unassigned. Existing configured
+values are not migrated. Practice now has separate Frame advance, Free camera
+and Input replay (experimental) pages, with the selected action's actual bind
+shown and X to rebind it.
+
+### Buffered first actionable update
+
+Pause and Step can arm a pending hold while loading or while Mario lacks
+control. Pause cancels that pending request; repeated Step does not queue
+additional updates. The pending flag survives stage setup and transitions.
+Active pause still releases for an approved warp. A pending hold does not
+silence ordinary gameplay or an intro before it becomes actionable.
+
+The pre-direct check uses the live normal stage, raw pad flags at `+0xE2`
+(`0x2` enabled, `0x99` clear), signed disabled counter at `+0xE8`, director demo
+state and Mario's `0x1000` demo-state flag. Neutral stick/buttons are valid;
+the test does not require a nonzero decoded input. The header's misleading
+`mIsTalking` bit is not used: retail sets that `0x40` bit every rendered frame.
+
+Retail can change state between logic ticks inside one `direct()` call. A
+guarded wrapper around its `changeState()` call therefore checks again after
+retail state initialization. The call is at JP `0x800ED290`, US `0x80299D0C`,
+PAL `0x80291BA4`, and the original branch word is `0x4BFFF175` in all three.
+When control becomes available, the wrapper borrows state 12 before the next
+movement tick, holds ghost clocks, and preserves the newly enabled pad flags
+as the frozen history. `afterDirect` restores state 4. Further state changes
+are skipped during that borrowed remainder, so state 12 cannot start an exit.
+
+Secondary ticks decode the controller again and decrement its disabled
+counter; the first tick of a rendered frame does not. After `changeState`,
+director flag `0x4000` distinguishes the draw boundary: the readiness threshold
+is zero there, otherwise one. This follows the pinned decomp's
+[`Application.cpp`](https://github.com/doldecomp/sms/blob/a56e1cf00289fc6467af7d2c32ed428b44d2d2f8/src/System/Application.cpp),
+[`MarDirectorDirect.cpp`](https://github.com/doldecomp/sms/blob/a56e1cf00289fc6467af7d2c32ed428b44d2d2f8/src/System/MarDirectorDirect.cpp)
+and [`MarioGamePad.cpp`](https://github.com/doldecomp/sms/blob/a56e1cf00289fc6467af7d2c32ed428b44d2d2f8/src/System/MarioGamePad.cpp).
+
+The September 6 host checks compile the production readiness and transition
+functions. They cover mid-call intro completion, the two counter thresholds,
+all controller gate bits, held-A Step, analog-trigger release, buffered
+cancellation, and modal/recorder exclusions. This is source/retail evidence;
+the new buffered transition path still needs Wii hardware validation.
+
+A bounded September 6 US Dolphin 2606a JIT run used image CRC `4AF65F76`
+before the private raw-PADRead fixture. D-Up armed during black loading
+(state 0, setup incomplete), remained armed through intro states 1 and 3,
+and held with read-enable flags `0x0002`, no queued step and zero steps
+consumed. The next Step worked. D-Up+A then advanced exactly one frame and
+jumped 40.5 units. The menu's X recorder changed Pause to L+D-Up while Step
+remained D-Up; holding that resume combo for 0.8 seconds neither re-paused
+nor ground-pounded. Free camera automatically paused gameplay, Reverse
+sideways reversed its main-stick translation, and Off retained the hold;
+Mario stayed still during camera movement. The profile was private and both
+owned test processes were stopped. Evidence and the reproducible input script
+are `build/foxtrot-pr3-controls/results-final.json` and `check-final.py`.
 
 ## Free camera
 
-Free camera works with practice hold, ordinary retail pause, or a settled
-ghost Watch. The main stick moves, C-stick looks, L/R change height, and X
+Free camera turns on from normal gameplay by entering practice hold itself.
+Turning it off leaves that hold active until Resume. It also works with
+ordinary retail pause or a settled ghost Watch. The main stick moves, C-stick looks, L/R change height, and X
 moves faster. Movement speed has persistent 0.25x, 0.5x, 1x, 2x and 4x choices;
 X multiplies the selected movement speed by 3.75. The initial view
 uses the retail final eye and target, including camera interpolation.
-Screen-right is the camera's forward direction crossed with world-up. The
+Screen-right is the camera's forward direction crossed with world-up.
+The persistent Reverse sideways option negates main-stick strafe only and
+defaults to Off; it does not alter forward movement, height or C-stick look.
+The banner explicitly says that Mario input is off while camera control is
+active. A jump or spin step requires the camera to be off. The
 activation buttons must be released before camera movement starts.
 
 The camera wrapper uses retail render cues 4 and 16. Those cues copy cached

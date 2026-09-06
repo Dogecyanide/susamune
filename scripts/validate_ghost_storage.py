@@ -14,12 +14,12 @@ import validate_ghost as ghost_format
 
 
 ENVELOPE_MAGIC = 0x5347454E
-ENVELOPE_VERSION = 1
+ENVELOPE_VERSION = 2
 ENVELOPE_SIZE = 64
 TOMBSTONE = 0x00000001
-PROFILE_WRITABLE_ENTRIES = 45
+PERSONAL_SLOT_AUTO = 0xFFFFFFFF
 IMPORTED_PROFILE = 4
-IMPORTED_MAX_ENTRIES = 12
+CATALOG_PAGE_ENTRIES = 16
 SHARE_DIRECTORY = "share"
 IMPORT_DIRECTORY = "import"
 IMPORT_LEAF_SIZE = 96
@@ -89,7 +89,7 @@ def validate_slot_file(
     _require(len(raw) >= 6, "truncated storage envelope")
     magic, version = struct.unpack_from(">IH", raw)
     _require(magic == ENVELOPE_MAGIC, "bad storage envelope magic")
-    if version != ENVELOPE_VERSION:
+    if version not in (1, ENVELOPE_VERSION):
         raise UnsupportedStorage(f"unsupported storage envelope version {version}")
     _require(len(raw) >= ENVELOPE_SIZE, "truncated storage envelope")
     fields = _ENVELOPE.unpack_from(raw)
@@ -101,9 +101,12 @@ def validate_slot_file(
     _require(header_size == ENVELOPE_SIZE, "invalid storage envelope size")
     _require(stored_game_id == game_id, "storage game id mismatch")
     _require(stored_profile == profile, "storage profile mismatch")
-    _require(stored_slot == slot, "storage slot mismatch")
+    _require(stored_slot == (slot & 0xFFFF), "storage slot mismatch")
+    _require((version == 1 and slot <= 0xFFFF) or
+             (version == 2 and reserved[0] == slot), "storage wide slot mismatch")
     _require(not flags & ~TOMBSTONE, "unknown storage envelope flags")
-    _require(not any(reserved), "nonzero storage envelope reserved bytes")
+    _require(not any(reserved if version == 1 else reserved[1:]),
+             "nonzero storage envelope reserved bytes")
     _require(
         header_checksum == _crc32_zeroed(raw[:ENVELOPE_SIZE], 36, 40),
         "storage envelope checksum mismatch",
@@ -184,7 +187,7 @@ def save_status(*, occupied: bool, request_flags: int) -> str:
 
 
 def personal_slot_is_live(slot: int) -> bool:
-    return 0 <= slot < PROFILE_WRITABLE_ENTRIES
+    return 0 <= slot < PERSONAL_SLOT_AUTO and slot not in (45, 46, 47)
 
 
 def share_directory(region: str, profile: int) -> str:
@@ -220,9 +223,7 @@ def sorted_import_leaves(leaves: list[str]) -> tuple[list[str], int]:
         except StorageError:
             continue
     valid.sort(key=lambda leaf: (leaf.lower(), leaf))
-    return valid[:IMPORTED_MAX_ENTRIES], max(
-        0, len(valid) - IMPORTED_MAX_ENTRIES
-    )
+    return valid, 0
 
 
 def route_filename_label(ghost: dict) -> str:
@@ -294,9 +295,7 @@ def select_import_files(
         except StorageError:
             continue
     valid.sort(key=lambda candidate: (candidate[0].lower(), candidate[0]))
-    return valid[:IMPORTED_MAX_ENTRIES], max(
-        0, len(valid) - IMPORTED_MAX_ENTRIES
-    )
+    return valid, 0
 
 
 def import_status(
@@ -307,12 +306,8 @@ def import_status(
         return "invalid_request"
     if occupied:
         return "slot_occupied"
-    if count >= PROFILE_WRITABLE_ENTRIES:
-        return "quota_exceeded"
-    if (import_duration_qf > ghost_format.MAX_DURATION_QF or
-            total_duration_qf + import_duration_qf >
-            ghost_format.PROFILE_MAX_DURATION_QF):
-        return "quota_exceeded"
+    if not 0 < import_duration_qf <= ghost_format.MAX_DURATION_QF:
+        return "invalid_file"
     return "ok"
 
 
@@ -322,11 +317,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--region", choices=ghost_format.REGION_NAMES.values(),
                         required=True)
     parser.add_argument("--profile", type=int, choices=range(4), required=True)
-    parser.add_argument("--slot", type=int, choices=range(48), required=True)
+    parser.add_argument("--slot", type=int, required=True)
     args = parser.parse_args(argv)
     region = next(key for key, value in ghost_format.REGION_NAMES.items()
                   if value == args.region)
     try:
+        _require(personal_slot_is_live(args.slot), "invalid personal slot")
         with args.file.open("rb") as source:
             raw = source.read(ENVELOPE_SIZE + ghost_format.MAX_GHOST_FILE_SIZE + 1)
         _require(

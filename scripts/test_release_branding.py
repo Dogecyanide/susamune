@@ -14,7 +14,7 @@ class ReleaseBrandingTests(unittest.TestCase):
         self.assertNotIn("The House Always Wins", meta)
     def test_tester_material_and_guides_packaged(self):
         cmake = (ROOT / "CMakeLists.txt").read_text()
-        self.assertIn("doc/foxtrot-testing.md", cmake)
+        self.assertIn("doc/foxtrot-tester-checklist.md", cmake)
         self.assertIn("doc/foxtrot-changelog.md", cmake)
         packer = (ROOT / "scripts/package_launcher.py").read_text()
         for name in ("foxtrot-guide-en.md", "foxtrot-guide-ja.md"):

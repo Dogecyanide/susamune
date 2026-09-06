@@ -63,6 +63,11 @@ def verify(region, path):
     expect(read, [0x7C0802A6], "relocatable pad prologue")
     direct = {"jp": 0x800ECDBC, "us": 0x80299838, "pal": 0x802916D0}[region]
     expect(direct + 0x90, [0x3BA00001], "normal app result is DEFAULT (1)")
+    change_state = {"jp": 0x800EC404, "us": 0x80298E80, "pal": 0x80290D18}[region]
+    change_call = direct + 0x4D4
+    expect(change_call - 4, [0x7F43D378,
+           0x48000001 | ((change_state - change_call) & 0x03FFFFFC)],
+           "per-tick state transition receives the live director")
     expect(movement, [0x7C0802A6, 0x90010004, 0x9421FFF8,
                       0x88030064, 0x2C000004, 0x41820008,
                       0x48000008], "movement only in state 4")

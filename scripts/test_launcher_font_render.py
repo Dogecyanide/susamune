@@ -49,11 +49,13 @@ typedef unsigned char u8;typedef unsigned u32;typedef int FT_Int;typedef int boo
 #define GX_VA_TEX0 0
 #define GX_NONE 0
 #define GX_PNMTX0 0
+#define GX_FALSE 0
+#define GX_LEQUAL 0
 #define FT_PIXEL_MODE_GRAY 2
 #define FT_PIXEL_MODE_MONO 1
 typedef struct {int rows,width,pitch;u8*buffer;u8 pixel_mode;} FT_Bitmap;
 typedef struct {void*face;} GRRLIB_ttfFont;
-static unsigned pixels,pointSize,textureMode,tevMode;static int px,py;static u8 alpha[16];
+static unsigned pixels,pointSize,textureMode,tevMode,depthTest,depthWrite;static int px,py;static u8 alpha[16];
 static int GXmodelView2D;
 void GX_Begin(int a,int b,int c){}
 void GX_Position3f32(float x,float y,float z){px=(int)x;py=(int)y;}
@@ -65,6 +67,7 @@ void GX_SetNumTevStages(int unused){}
 void GX_SetTevOp(int unused,int mode){tevMode=mode;}
 void GX_SetVtxDesc(int unused,int mode){textureMode=mode;}
 void GX_LoadPosMtxImm(int unused,int unused2){}
+void GX_SetZMode(int test,int unused,int write){depthTest=test;depthWrite=write;}
 int ff_utf8_decode_next(const char**text,u32*out){if(!(unsigned char)**text)return 0;*out=(unsigned char)*(*text)++;return 1;}
 '''
         source += "const u8 console_font_8x16[4096]={" + ",".join(map(str, font)) + "};\n"
@@ -73,10 +76,10 @@ int ff_utf8_decode_next(const char**text,u32*out){if(!(unsigned char)**text)retu
         source += "\n".join(function(production, n) for n in ("GRRLIB_PrintfTTF", "GRRLIB_WidthTTF", "DrawBitmap"))
         source += r'''
 __declspec(dllexport) int fallback(void){
- pixels=0;pointSize=0;textureMode=77;tevMode=77;
+ pixels=0;pointSize=0;textureMode=77;tevMode=77;depthTest=1;depthWrite=1;
  if(GRRLIB_WidthTTF(NULL,"Moonshine",16)!=72||pixels)return 1;
  GRRLIB_PrintfTTF(10,20,NULL,"Moonshine",16,0xffffffff);
- return pixels>30&&pointSize==6&&!textureMode&&!tevMode?0:2;
+ return pixels>30&&pointSize==6&&!textureMode&&!tevMode&&!depthTest&&!depthWrite?0:2;
 }
 __declspec(dllexport) int bitmap(int test){
  unsigned i;u8 gray[8]={255,0,199,199,64,255,199,199};u8 mono[4]={0x80,0xEE,0x40,0xEE};

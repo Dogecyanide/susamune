@@ -133,7 +133,8 @@ class TeachingTests(unittest.TestCase):
                           kernel.index("static volatile struct SusamuneGhostStorageMailbox *GhostBlock")]
         functions = kernel[kernel.index("static u16 ReadBe16("):
                            kernel.index("static bool GenerationIsNewer(")]
-        functions = functions[:functions.index("static u32 EnvelopeChecksum(")] + functions[
+        # Keep canonical decoding/validation, excluding envelope serialization and I/O.
+        functions = functions[:functions.index("static void WriteBe16(")] + functions[
             functions.index("static bool BytesAreZero("):]
         shim = '''#include "susamune/ghost_storage.h"
  typedef unsigned char u8; typedef unsigned short u16;

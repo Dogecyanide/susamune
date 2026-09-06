@@ -1105,6 +1105,21 @@ static bool MountLauncherDevice(void)
 	return MountDeviceOnce(UseSD ? DEV_SD : DEV_USB);
 }
 
+static bool PreloadLauncherTheme(void)
+{
+	const int dev = UseSD ? DEV_SD : DEV_USB;
+	bool loaded = false;
+
+	if (dev == DEV_USB && isWiiVC)
+		return false;
+	// A cold USB device may need patched IOS; retry later without a boot delay.
+	if (MountDeviceWithTimeout(dev, 0) != NULL)
+		loaded = SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+	// Keep the decoded texture, but never carry storage handles across IOS.
+	UnmountDevice(dev);
+	return loaded;
+}
+
 /**
  * Get multi-game and region code information.
  * @param CurDICMD	[in] DI command. (0 == disc image, DIP_CMD_NORMAL == GameCube disc, DIP_CMD_DVDR == DVD-R)
@@ -1603,8 +1618,9 @@ int main(int argc, char **argv)
 		DCStoreRange((void*)0x80001800, 0x1800);
 	}
 
-	// Custom media is loaded only if the menu is needed, after autoboot cancels.
-	RevealBackground(false);
+	UseSD = (strncmp(launch_dir, "usb:", 4) != 0);
+	bool themeLoaded = PreloadLauncherTheme();
+	ShowMessageScreen("Starting Moonshine...");
 	s32 fd;
 
 	/* Wii VC fw.img is pre-patched but Wii/vWii isnt, so we
@@ -1755,6 +1771,9 @@ int main(int argc, char **argv)
 		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, 232, "No FAT device found!");
 		ExitToLoader(1);
 	}
+	if (!themeLoaded)
+		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+	ShowMessageScreen("Loading settings...");
 
 	// Initialize controllers.
 	// FIXME: Initialize before storage devices.
@@ -1838,7 +1857,7 @@ int main(int argc, char **argv)
 
 	if(!(ncfg->Config & NIN_CFG_AUTO_BOOT))
 	{
-		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+		SusamuneMusicInit();
 		SusamuneMusicLoad(GetRootDevice(), launch_dir);
 		SusamuneMusicStart();
 		ClearScreen();

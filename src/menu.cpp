@@ -993,23 +993,22 @@ private:
 };
 
 // ---------------------------------------------------------------------
-// Ghost library -- fixed-slot, console-only asynchronous SD storage.
+// Ghost library -- paged, console-only asynchronous SD storage.
 // ---------------------------------------------------------------------
 class GhostsTab : public MenuTab {
 public:
     GhostsTab()
         : mSel(0), mConfirmDelete(false), mDeleteImported(false),
-          mDeleteSlot(-1), mConfirmSave(false), mSaveSlot(-1),
+          mConfirmSave(false),
           mSaveIdentity(0), mChoice(CHOICE_NONE),
           mLaunch(LAUNCH_IDLE), mPBAction(PB_ACTION_NONE), mPBToken(0),
-          mProtectedPBToken(0), mProtectedSavePending(false),
-          mProtectedDeleteConfirm(false), mProtectedDeletePending(false) {
+          mProtectedPBToken(0), mProtectedSavePending(false) {
         mSaveName[0] = '\0';
         mPBName[0] = '\0';
         mPrimaryRef.selection = -1;
-        mPrimaryRef.fingerprint = 0;
+        mPrimaryRef.identity = {};
         mSecondaryRef.selection = -1;
-        mSecondaryRef.fingerprint = 0;
+        mSecondaryRef.identity = {};
     }
 
     const char *title() const override { return "Ghosts"; }
@@ -1042,10 +1041,7 @@ public:
         mPBToken = 0;
         mProtectedPBToken = token;
         mProtectedSavePending = false;
-        mProtectedDeleteConfirm = false;
-        mProtectedDeletePending = false;
         mSaveIdentity = token;
-        mSaveSlot = -2;
         strncpy(mSaveName, name, sizeof(mSaveName));
         mSaveName[sizeof(mSaveName) - 1] = '\0';
         mPromptInput.begin(JUTGamePad::B);
@@ -1070,9 +1066,7 @@ public:
         if (mConfirmDelete) {
             const u16 pressed = mPromptInput.update();
             if (pressed & JUTGamePad::A) {
-                const bool started = mDeleteImported
-                    ? GhostStorage::removeImported(mDeleteSlot)
-                    : GhostStorage::remove(mDeleteSlot);
+                const bool started = GhostStorage::remove(mSecondaryRef.identity);
                 if (started) {
                     menu->toast("Deleting ghost...");
                 } else {
@@ -1117,7 +1111,7 @@ public:
                 if (!saveable) {
                     menu->toast("No ghost recording to save");
                     mConfirmSave = false;
-                } else if (GhostStorage::save(mSaveSlot, mSaveIdentity)) {
+                } else if (GhostStorage::saveNew(mSaveIdentity)) {
                     menu->toast("Saving ghost...");
                     mConfirmSave = false;
                     if (protectedSave) {
@@ -1145,9 +1139,9 @@ public:
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
             mSel = wrap(mSel + 1, SELECTION_COUNT);
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
-            jumpSection(-1);
+            if (onPageRow()) changePage(menu, -1); else jumpSection(-1);
         } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
-            jumpSection(+1);
+            if (onPageRow()) changePage(menu, 1); else jumpSection(+1);
         }
 
         if (rapid & TMarioGamePad::Y) {
@@ -1188,8 +1182,9 @@ public:
                     (imported ||
                      !(info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)) &&
                     !GhostStorage::busy()) {
+                    if (!GhostStorage::copyIdentity(imported, slot, &mSecondaryRef.identity)) return;
+                    mSecondaryRef.selection = (s16)mSel;
                     mDeleteImported = imported;
-                    mDeleteSlot = slot;
                     mConfirmDelete = true;
                     mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
                 }
@@ -1275,6 +1270,15 @@ public:
                 char summary[48];
                 catalogSummary(summary, sizeof(summary));
                 drawSectionHeader(menu, x, ry, w, summary);
+            } else if (row == PERSONAL_PAGE_DISPLAY || row == IMPORTED_PAGE_DISPLAY) {
+                const bool imported = row == IMPORTED_PAGE_DISPLAY;
+                char page[40];
+                pageValue(imported, page, sizeof(page));
+                drawValueRow(menu, x, ry, w, imported ? "Imported page" : "Personal page", page,
+                    mSel == (imported ? IMPORTED_PAGE_SELECTION : PERSONAL_PAGE_SELECTION), false, true);
+            } else if (row == SAVE_NEW_DISPLAY) {
+                drawValueRow(menu, x, ry, w, "Save latest ghost", "New file",
+                    mSel == SAVE_NEW_SELECTION, false, true);
             } else if (row >= PERSONAL_DISPLAY_FIRST &&
                        row < IMPORTED_SUMMARY_DISPLAY) {
                 int index;
@@ -1327,6 +1331,8 @@ public:
 
 private:
     const char *selectionHelp() const {
+        if (onPageRow()) return "C-stick left/right changes pages. A opens the next page.";
+        if (mSel == SAVE_NEW_SELECTION) return "Save your latest recording as a new personal ghost.";
         if (mSel == INPUTS_ROW)
             return "Show recorded inputs; Both ghosts compares both tracks in Watch2.";
         if (mSel == DISPLAY_ROW)
@@ -1346,9 +1352,9 @@ private:
         if (mSel == IMPORT_SCAN_SELECTION)
             return "Finds .smsghost files copied into the import folder.";
         if (isPersonalSlot())
-            return "A personal SD slot. Select to Race or Watch; X deletes it.";
+            return "A saved ghost. Select to Race or Watch; use Personal page to browse more.";
         if (isImportedSlot())
-            return "An imported ghost. Select to Race, Watch or export it.";
+            return "An imported file. Select to Race or Watch; use Imported page to browse more.";
         return "Saved and imported ghosts available for racing or watching.";
     }
 
@@ -1375,7 +1381,7 @@ private:
 
     struct GhostRef {
         s16 selection;
-        u32 fingerprint;
+        GhostStorage::Identity identity;
     };
 
     enum {
@@ -1388,12 +1394,15 @@ private:
         PROFILE_ROW = 5,
         TARGET_ROW = 6,
         INPUTS_ROW = 7,
-        PERSONAL_SELECTION_FIRST = 8,
-        PERSONAL_SELECTION_COUNT = SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES,
+        PERSONAL_PAGE_SELECTION = 8,
+        SAVE_NEW_SELECTION = 9,
+        PERSONAL_SELECTION_FIRST = 10,
+        PERSONAL_SELECTION_COUNT = SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES,
         IMPORT_SCAN_SELECTION = PERSONAL_SELECTION_FIRST +
                                 PERSONAL_SELECTION_COUNT,
-        IMPORTED_SELECTION_FIRST = IMPORT_SCAN_SELECTION + 1,
-        IMPORTED_SELECTION_COUNT = SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES,
+        IMPORTED_PAGE_SELECTION = IMPORT_SCAN_SELECTION + 1,
+        IMPORTED_SELECTION_FIRST = IMPORTED_PAGE_SELECTION + 1,
+        IMPORTED_SELECTION_COUNT = SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES,
         SELECTION_COUNT = IMPORTED_SELECTION_FIRST +
                           IMPORTED_SELECTION_COUNT,
 
@@ -1402,13 +1411,16 @@ private:
         IMPORTED_RANGE_COUNT =
             (IMPORTED_SELECTION_COUNT + RANGE_SIZE - 1) / RANGE_SIZE,
         PERSONAL_SUMMARY_DISPLAY = 9,
-        PERSONAL_DISPLAY_FIRST = PERSONAL_SUMMARY_DISPLAY + 1,
+        PERSONAL_PAGE_DISPLAY = PERSONAL_SUMMARY_DISPLAY + 1,
+        SAVE_NEW_DISPLAY = PERSONAL_PAGE_DISPLAY + 1,
+        PERSONAL_DISPLAY_FIRST = SAVE_NEW_DISPLAY + 1,
         PERSONAL_DISPLAY_COUNT = PERSONAL_SELECTION_COUNT +
                                  PERSONAL_RANGE_COUNT,
         IMPORTED_SUMMARY_DISPLAY = PERSONAL_DISPLAY_FIRST +
                                    PERSONAL_DISPLAY_COUNT,
         IMPORT_SCAN_DISPLAY = IMPORTED_SUMMARY_DISPLAY + 1,
-        IMPORTED_DISPLAY_FIRST = IMPORT_SCAN_DISPLAY + 1,
+        IMPORTED_PAGE_DISPLAY = IMPORT_SCAN_DISPLAY + 1,
+        IMPORTED_DISPLAY_FIRST = IMPORTED_PAGE_DISPLAY + 1,
         DISPLAY_ROW_COUNT = IMPORTED_DISPLAY_FIRST +
                             IMPORTED_SELECTION_COUNT +
                             IMPORTED_RANGE_COUNT,
@@ -1433,12 +1445,15 @@ private:
         return first + slot + slot / RANGE_SIZE + 1;
     }
     static int selectionRow(int selection) {
-        if (selection < PERSONAL_SELECTION_FIRST) return selection + 1;
+        if (selection < PERSONAL_PAGE_SELECTION) return selection + 1;
+        if (selection == PERSONAL_PAGE_SELECTION) return PERSONAL_PAGE_DISPLAY;
+        if (selection == SAVE_NEW_SELECTION) return SAVE_NEW_DISPLAY;
         if (selection < IMPORT_SCAN_SELECTION) {
             return slotDisplayRow(PERSONAL_DISPLAY_FIRST,
                                   selection - PERSONAL_SELECTION_FIRST);
         }
         if (selection == IMPORT_SCAN_SELECTION) return IMPORT_SCAN_DISPLAY;
+        if (selection == IMPORTED_PAGE_SELECTION) return IMPORTED_PAGE_DISPLAY;
         return slotDisplayRow(IMPORTED_DISPLAY_FIRST,
                               selection - IMPORTED_SELECTION_FIRST);
     }
@@ -1469,6 +1484,31 @@ private:
         return IMPORTED_SELECTION_FIRST + section * RANGE_SIZE;
     }
 
+    bool onPageRow() const {
+        return mSel == PERSONAL_PAGE_SELECTION || mSel == IMPORTED_PAGE_SELECTION;
+    }
+
+    void changePage(Menu *menu, int direction) {
+        const bool imported = mSel == IMPORTED_PAGE_SELECTION;
+        const u32 total = GhostStorage::totalCount(imported);
+        const u32 pages = total / SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES +
+                          (total % SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES != 0);
+        const u32 current = GhostStorage::pageOffset(imported) / SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES;
+        const u32 next = pages == 0 ? 0 : direction < 0 ?
+            (current == 0 ? pages - 1 : current - 1) : (current + 1 >= pages ? 0 : current + 1);
+        const bool started = GhostStorage::refreshPage(imported, next * SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES);
+        menu->toast(started ? "Loading ghost page..." : storageStatus());
+    }
+
+    static void pageValue(bool imported, char *out, u32 size) {
+        const bool ready = imported ? GhostStorage::importedCatalogReady() : GhostStorage::catalogReady();
+        if (!ready) { strncpy(out, "Not scanned", size); if (size) out[size - 1] = 0; return; }
+        const u32 total = GhostStorage::totalCount(imported);
+        u32 pages = total / SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES + (total % SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES != 0);
+        if (!pages) pages = 1;
+        snprintf(out, size, "%lu / %lu", GhostStorage::pageOffset(imported) / SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES + 1, pages);
+    }
+
     void jumpSection(int direction) {
         if (direction > 0) {
             for (int section = 0; section < SECTION_COUNT; section++) {
@@ -1495,11 +1535,8 @@ private:
     void clearProtectedPBSave() {
         mProtectedPBToken = 0;
         mConfirmSave = false;
-        mSaveSlot = -1;
         mSaveIdentity = 0;
         mProtectedSavePending = false;
-        mProtectedDeleteConfirm = false;
-        mProtectedDeletePending = false;
         mPromptInput.clear();
     }
 
@@ -1510,137 +1547,31 @@ private:
         menu->hide();
     }
 
-    void prepareProtectedPBSave(Menu *menu) {
-        if (!Ghost::hasUnsavedPBToken(mProtectedPBToken)) return;
-        if (GhostStorage::busy()) return;
-        if (!GhostStorage::catalogReady()) {
-            if (GhostStorage::refresh())
-                menu->toast("Refreshing ghosts...");
-            return;
-        }
-
-        for (int slot = 0; slot < PERSONAL_SELECTION_COUNT; slot++) {
-            const SusamuneGhostSlotInfo *info = GhostStorage::slot(slot);
-            if (!info ||
-                (info->flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
-                                SUSAMUNE_GHOST_SLOT_UNSAFE))) {
-                continue;
-            }
-            mSel = PERSONAL_SELECTION_FIRST + slot;
-            mSaveSlot = slot;
-            mConfirmSave = true;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
-            return;
-        }
-
-        mSaveSlot = -1;
-        if (!isPersonalSlot()) mSel = PERSONAL_SELECTION_FIRST;
-        mPromptInput.begin(JUTGamePad::B | JUTGamePad::X);
-        menu->toast("Choose a saved slot to delete first");
+    void prepareProtectedPBSave(Menu *) {
+        if (!Ghost::hasUnsavedPBToken(mProtectedPBToken) || GhostStorage::busy()) return;
+        mConfirmSave = true;
+        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
     }
 
-    void updateProtectedPBSave(Menu *menu, TMarioGamePad *pad) {
+    void updateProtectedPBSave(Menu *menu, TMarioGamePad *) {
         if (!Ghost::hasUnsavedPBToken(mProtectedPBToken)) {
             clearProtectedPBSave();
             return;
         }
-        if (mProtectedDeleteConfirm) {
-            const u16 pressed = mPromptInput.update();
-            if (pressed & JUTGamePad::B) {
-                mProtectedDeleteConfirm = false;
-                mPromptInput.begin(JUTGamePad::B | JUTGamePad::X);
-            } else if (pressed & JUTGamePad::A) {
-                if (GhostStorage::remove(mDeleteSlot)) {
-                    mProtectedDeleteConfirm = false;
-                    mProtectedDeletePending = true;
-                    mPromptInput.begin(JUTGamePad::B);
-                    menu->toast("Deleting ghost...");
-                } else {
-                    menu->toast(storageStatus());
-                    mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
-                }
-            }
+        if (mPromptInput.update() & JUTGamePad::B) {
+            cancelProtectedPBSave(menu);
             return;
         }
-        if (mProtectedDeletePending) {
-            if (mPromptInput.update() & JUTGamePad::B) {
-                cancelProtectedPBSave(menu);
-                return;
-            }
-            if (GhostStorage::busy()) return;
-            mProtectedDeletePending = false;
-            mSaveSlot = -2;
-            mPromptInput.begin(JUTGamePad::B);
-            prepareProtectedPBSave(menu);
-            return;
-        }
-        if (mProtectedSavePending) {
-            if (mPromptInput.update() & JUTGamePad::B) {
-                cancelProtectedPBSave(menu);
-                return;
-            }
-            if (GhostStorage::busy()) return;
-            mProtectedSavePending = false;
-            mConfirmSave = true;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
-            return;
-        }
-        if (mSaveSlot == -2) {
-            if (mPromptInput.update() & JUTGamePad::B) {
-                cancelProtectedPBSave(menu);
-                return;
-            }
-            if (!GhostStorage::busy()) prepareProtectedPBSave(menu);
-            return;
-        }
-        if (mSaveSlot == -1) {
-            const u32 rapid = menu->navigationInput(pad);
-            int slot = selectedPersonalSlot();
-            if (rapid & TMarioGamePad::CSTICK_UP) {
-                slot = wrap(slot - 1, PERSONAL_SELECTION_COUNT);
-            } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-                slot = wrap(slot + 1, PERSONAL_SELECTION_COUNT);
-            }
-            mSel = PERSONAL_SELECTION_FIRST + slot;
-
-            const u16 pressed = mPromptInput.update();
-            if (pressed & JUTGamePad::B) {
-                cancelProtectedPBSave(menu);
-            } else if (pressed & JUTGamePad::X) {
-                const SusamuneGhostSlotInfo *info = GhostStorage::slot(slot);
-                if (!info ||
-                    (info->flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
-                                    SUSAMUNE_GHOST_SLOT_UNSAFE)) !=
-                        SUSAMUNE_GHOST_SLOT_PRESENT) {
-                    menu->toast("Choose a writable saved ghost");
-                    return;
-                }
-                mDeleteImported = false;
-                mDeleteSlot = slot;
-                mProtectedDeleteConfirm = true;
-                mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
-            }
-            return;
-        }
-
-        // A completed save clears the PB token on its storage ACK. Reaching
-        // idle with the same token means the request failed; offer a retry.
-        mConfirmSave = true;
-        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+        if (GhostStorage::busy()) return;
+        mProtectedSavePending = false;
+        prepareProtectedPBSave(menu);
     }
 
     static const char *storageStatus() {
         return GhostStorage::statusText();
     }
 
-    static u32 slotFingerprint(const SusamuneGhostSlotInfo &info) {
-        const u8 *bytes = reinterpret_cast<const u8 *>(&info);
-        u32 hash = 2166136261u;
-        for (u32 i = 0; i < sizeof(info); i++) {
-            hash = (hash ^ bytes[i]) * 16777619u;
-        }
-        return hash ? hash : 1u;
-    }
+
 
     static bool selectionImported(int selection) {
         return selection >= IMPORTED_SELECTION_FIRST;
@@ -1665,44 +1596,28 @@ private:
     }
 
     static bool captureRef(int selection, GhostRef *out) {
-        if (!out) return false;
-        const SusamuneGhostSlotInfo *info = selectionInfo(selection);
-        if (!info ||
-            (info->flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
-                            SUSAMUNE_GHOST_SLOT_UNSAFE)) !=
-                SUSAMUNE_GHOST_SLOT_PRESENT) {
-            return false;
-        }
+        if (!out || !selectionInfo(selection) ||
+            !GhostStorage::copyIdentity(selectionImported(selection), selectionSlot(selection), &out->identity) ||
+            (out->identity.flags & SUSAMUNE_GHOST_SLOT_UNSAFE)) return false;
         out->selection = static_cast<s16>(selection);
-        out->fingerprint = slotFingerprint(*info);
         return true;
     }
 
     static bool refStillValid(const GhostRef &ref) {
-        GhostRef current;
-        return captureRef(ref.selection, &current) &&
-               current.fingerprint == ref.fingerprint;
+        return ref.selection >= 0 && GhostStorage::identityValid(ref.identity);
     }
 
-    static bool loadRef(const GhostRef &ref, bool observer,
-                        bool secondary) {
+    static bool sameRef(const GhostRef &a, const GhostRef &b) {
+        return GhostStorage::sameIdentity(a.identity, b.identity);
+    }
+
+    static bool loadRef(const GhostRef &ref, bool observer, bool secondary) {
         if (!refStillValid(ref)) return false;
-        const int slot = selectionSlot(ref.selection);
-        if (selectionImported(ref.selection)) {
-            return observer
-                ? GhostStorage::loadImportedObserver(slot, secondary)
-                : GhostStorage::loadImported(slot);
-        }
-        return observer ? GhostStorage::loadObserver(slot, secondary)
-                        : GhostStorage::load(slot);
+        return observer ? GhostStorage::loadObserver(ref.identity, secondary) : GhostStorage::load(ref.identity);
     }
 
     static bool copyRefName(const GhostRef &ref, char *out, u32 size) {
-        if (!out || size == 0 || !refStillValid(ref)) return false;
-        const int slot = selectionSlot(ref.selection);
-        return selectionImported(ref.selection)
-            ? GhostStorage::copyImportedSlotName(slot, out, size)
-            : GhostStorage::copySlotName(slot, out, size);
+        return refStillValid(ref) && GhostStorage::copyIdentityName(ref.identity, out, size);
     }
 
     bool copyPBActionName(PBAction action, char *out, u32 size,
@@ -1831,7 +1746,7 @@ private:
         }
         if (!refStillValid(mPrimaryRef) ||
             (two && (!refStillValid(mSecondaryRef) ||
-                     mSecondaryRef.selection == mPrimaryRef.selection))) {
+                     sameRef(mSecondaryRef, mPrimaryRef)))) {
             menu->toast("Ghost row changed; choose again");
             return false;
         }
@@ -1931,9 +1846,9 @@ private:
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
             mSel = wrap(mSel + 1, SELECTION_COUNT);
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
-            jumpSection(-1);
+            if (onPageRow()) changePage(menu, -1); else jumpSection(-1);
         } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
-            jumpSection(+1);
+            if (onPageRow()) changePage(menu, 1); else jumpSection(+1);
         }
         const u16 pressed = mPromptInput.update();
         if (pressed & JUTGamePad::B) {
@@ -1944,9 +1859,10 @@ private:
             return;
         }
         if (pressed & JUTGamePad::A) {
+            if (onPageRow()) { changePage(menu, 1); return; }
             if (!captureRef(mSel, &mSecondaryRef)) {
                 menu->toast("Choose a saved, validated ghost");
-            } else if (mSecondaryRef.selection == mPrimaryRef.selection) {
+            } else if (sameRef(mSecondaryRef, mPrimaryRef)) {
                 menu->toast("Choose a different second ghost");
             } else {
                 beginPBAction(menu, PB_ACTION_WATCH_TWO);
@@ -1955,6 +1871,17 @@ private:
     }
 
     void activate(Menu *menu) {
+        if (onPageRow()) { changePage(menu, 1); return; }
+        if (mSel == SAVE_NEW_SELECTION) {
+            if (GhostStorage::busy()) { menu->toast(storageStatus()); return; }
+            if (!Ghost::copySaveableName(mSaveName, sizeof(mSaveName), &mSaveIdentity)) {
+                menu->toast("No ghost recording to save");
+                return;
+            }
+            mConfirmSave = true;
+            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+            return;
+        }
         if (mSel == INPUTS_ROW) {
             gSettings.cycle(SETTING_GHOST_INPUTS, 1);
             return;
@@ -2052,16 +1979,7 @@ private:
                                JUTGamePad::X | JUTGamePad::Y);
             return;
         }
-        u32 identity = 0;
-        if (!Ghost::copySaveableName(mSaveName, sizeof(mSaveName),
-                                     &identity)) {
-            menu->toast("No ghost recording to save");
-            return;
-        }
-        mSaveSlot = index;
-        mSaveIdentity = identity;
-        mConfirmSave = true;
-        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+        menu->toast("Use Save latest ghost to add a recording");
     }
 
     void share(Menu *menu) {
@@ -2105,15 +2023,7 @@ private:
                          Ghost::observerVisibleCount(), count);
             }
         } else if (Ghost::playbackPinned()) {
-            if (GhostStorage::loadedImported()) {
-                snprintf(out, size, "Imported %02d (pinned)",
-                         GhostStorage::loadedImportedSlot() + 1);
-            } else {
-                const int loaded = GhostStorage::loadedSlot();
-                if (loaded >= 0)
-                    snprintf(out, size, "Slot %02d (pinned)", loaded + 1);
-                else strncpy(out, "Pinned ghost", size);
-            }
+            strncpy(out, GhostStorage::loadedImported() ? "Imported (pinned)" : "Saved ghost (pinned)", size);
         } else if (Ghost::playbackInfo(&info)) {
             strncpy(out, "Auto target", size);
         } else {
@@ -2128,45 +2038,11 @@ private:
     }
 
     static void catalogSummary(char *out, u32 size) {
-        int count = 0;
-        u32 duration = 0;
-        if (GhostStorage::catalogReady()) {
-            for (int i = 0; i < PERSONAL_SELECTION_COUNT; i++) {
-                const SusamuneGhostSlotInfo *info = GhostStorage::slot(i);
-                if (info && (info->flags & SUSAMUNE_GHOST_SLOT_PRESENT)) {
-                    count++;
-                    duration += info->durationQf;
-                }
-            }
-        }
-        const u32 seconds = static_cast<u32>(
-            static_cast<u64>(duration) * 1001u / 120000u);
-        snprintf(out, size, "PERSONAL %d/45  %lu:%02lu / 10h", count,
-                 seconds / 3600u, (seconds / 60u) % 60u);
+        snprintf(out, size, "PERSONAL  %lu ghosts", GhostStorage::totalCount(false));
     }
 
     static void importedSummary(char *out, u32 size) {
-        int count = 0;
-        if (GhostStorage::importedCatalogReady()) {
-            for (int i = 0; i < IMPORTED_SELECTION_COUNT; i++) {
-                const SusamuneGhostSlotInfo *info =
-                    GhostStorage::importedSlot(i);
-                if (info && (info->flags & SUSAMUNE_GHOST_SLOT_PRESENT))
-                    count++;
-            }
-        }
-        const u32 seconds = static_cast<u32>(
-            static_cast<u64>(GhostStorage::importedTotalDurationQf()) *
-            1001u / 120000u);
-        const u32 overflow = GhostStorage::importedOverflowCount();
-        if (overflow) {
-            snprintf(out, size, "IMPORTED %d/12  %lu:%02lu  +%lu MORE",
-                     count, seconds / 3600u, (seconds / 60u) % 60u,
-                     overflow);
-        } else {
-            snprintf(out, size, "IMPORTED %d/12  %lu:%02lu", count,
-                     seconds / 3600u, (seconds / 60u) % 60u);
-        }
+        snprintf(out, size, "IMPORTED  %lu ghosts", GhostStorage::totalCount(true));
     }
 
     static const char *regionTag(u8 region) {
@@ -2181,12 +2057,13 @@ private:
     static void drawRangeHeader(Menu *menu, int x, int y, int w,
                                 const char *catalog, int range,
                                 int slotCount) {
+        const bool imported = catalog[0] == 'I';
+        const u32 offset = GhostStorage::pageOffset(imported);
         const int first = range * RANGE_SIZE + 1;
         int last = first + RANGE_SIZE - 1;
         if (last > slotCount) last = slotCount;
-        char label[24];
-        snprintf(label, sizeof(label), "%s %02d-%02d", catalog,
-                 first, last);
+        char label[48];
+        snprintf(label, sizeof(label), "%s %lu-%lu", catalog, offset + first, offset + last);
         drawSectionHeader(menu, x, y, w, label);
     }
 
@@ -2195,30 +2072,33 @@ private:
         char label[40];
         char value[24];
         const SusamuneGhostSlotInfo *info = GhostStorage::slot(index);
+        const u32 number = GhostStorage::pageOffset(false) + index + 1;
+        GhostStorage::Identity identity;
+        const bool haveIdentity = GhostStorage::copyIdentity(false, index, &identity);
         const char *shownValue = GhostStorage::catalogReady() ? "Empty"
                                                               : "Not scanned";
         if (info && (info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)) {
-            snprintf(label, sizeof(label), "%02d (unsafe)", index + 1);
+            snprintf(label, sizeof(label), "%lu (unavailable)", number);
             shownValue = "Read-only";
         } else if (info && (info->flags & SUSAMUNE_GHOST_SLOT_PRESENT)) {
             if (!GhostStorage::copySlotName(index, name, sizeof(name))) {
                 strncpy(name, "Unnamed ghost", sizeof(name));
                 name[sizeof(name) - 1] = '\0';
             }
-            snprintf(label, sizeof(label), "%02d %s", index + 1, name);
+            snprintf(label, sizeof(label), "%lu %s", number, name);
             ILing::formatTime(static_cast<s32>(info->durationQf), value,
                               sizeof(value));
             const bool tas = info->runFlags & SUSAMUNE_GHOST_RUN_TAS;
             if (tas) strcat(value, " TAS");
             shownValue = value;
-            if (GhostStorage::loadedSlot() == index && Ghost::playbackPinned())
+            if (haveIdentity && GhostStorage::isLoaded(identity) && Ghost::playbackPinned())
                 shownValue = tas ? "RACING TAS" : "RACING";
             if (mChoice == CHOICE_SECOND &&
-                mPrimaryRef.selection == PERSONAL_SELECTION_FIRST + index) {
+                haveIdentity && GhostStorage::sameIdentity(mPrimaryRef.identity, identity)) {
                 shownValue = tas ? "GHOST 1 TAS" : "GHOST 1";
             }
         } else {
-            snprintf(label, sizeof(label), "%02d (empty)", index + 1);
+            strcpy(label, "-");
         }
         drawValueRow(menu, x, y, w, label, shownValue,
                      isPersonalSlot() && selectedPersonalSlot() == index,
@@ -2231,10 +2111,13 @@ private:
         char value[24];
         const SusamuneGhostSlotInfo *info =
             GhostStorage::importedSlot(index);
+        const u32 number = GhostStorage::pageOffset(true) + index + 1;
+        GhostStorage::Identity identity;
+        const bool haveIdentity = GhostStorage::copyIdentity(true, index, &identity);
         const char *shownValue = GhostStorage::importedCatalogReady()
             ? "Empty" : "Not scanned";
         if (info && (info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)) {
-            snprintf(label, sizeof(label), "%02d (unsafe)", index + 1);
+            snprintf(label, sizeof(label), "%lu (unavailable)", number);
             shownValue = "Rejected";
         } else if (info && (info->flags & SUSAMUNE_GHOST_SLOT_PRESENT)) {
             if (!GhostStorage::copyImportedSlotName(index, name,
@@ -2242,23 +2125,23 @@ private:
                 strncpy(name, "Unnamed ghost", sizeof(name));
                 name[sizeof(name) - 1] = '\0';
             }
-            snprintf(label, sizeof(label), "%02d %s %s", index + 1,
+            snprintf(label, sizeof(label), "%lu %s %s", number,
                      regionTag(info->region), name);
             ILing::formatTime(static_cast<s32>(info->durationQf), value,
                               sizeof(value));
             const bool tas = info->runFlags & SUSAMUNE_GHOST_RUN_TAS;
             if (tas) strcat(value, " TAS");
             shownValue = value;
-            if (GhostStorage::loadedImportedSlot() == index &&
+            if (haveIdentity && GhostStorage::isLoaded(identity) &&
                 Ghost::playbackPinned()) {
                 shownValue = tas ? "RACING TAS" : "RACING";
             }
             if (mChoice == CHOICE_SECOND &&
-                mPrimaryRef.selection == IMPORTED_SELECTION_FIRST + index) {
+                haveIdentity && GhostStorage::sameIdentity(mPrimaryRef.identity, identity)) {
                 shownValue = tas ? "GHOST 1 TAS" : "GHOST 1";
             }
         } else {
-            snprintf(label, sizeof(label), "%02d (empty)", index + 1);
+            strcpy(label, "-");
         }
         drawValueRow(menu, x, y, w, label, shownValue,
                      isImportedSlot() && selectedImportedSlot() == index,
@@ -2348,10 +2231,7 @@ private:
 
     void drawDeleteConfirmation(Menu *menu, int x, int y, int w) const {
         char name[40];
-        const bool copied = mDeleteImported
-            ? GhostStorage::copyImportedSlotName(mDeleteSlot, name,
-                                                 sizeof(name))
-            : GhostStorage::copySlotName(mDeleteSlot, name, sizeof(name));
+        const bool copied = GhostStorage::copyIdentityName(mSecondaryRef.identity, name, sizeof(name));
         if (!copied) {
             strncpy(name, "Selected ghost", sizeof(name));
             name[sizeof(name) - 1] = '\0';
@@ -2380,9 +2260,7 @@ private:
                Menu::textWidth(question, textSize) > w - 16) {
             textSize--;
         }
-        char destination[32];
-        snprintf(destination, sizeof(destination), "Personal slot %02d",
-                 mSaveSlot + 1);
+        const char *destination = "New file in your personal library";
         const char *hint = SUSAMUNE_GLYPH_A " Yes    " SUSAMUNE_GLYPH_B " No";
         menu->fillBox(x, y + 34, w, 104, JUtility::TColor(22, 34, 42, 245));
         menu->fillBox(x, y + 34, w, 3, cAccent());
@@ -2398,54 +2276,21 @@ private:
     }
 
     void drawProtectedPBSave(Menu *menu, int x, int y, int w) const {
-        if (mProtectedDeleteConfirm) {
-            drawDeleteConfirmation(menu, x, y, w);
-            return;
-        }
-        const bool noSlot = mSaveSlot == -1;
-        const char *title = mProtectedDeletePending
-            ? "Deleting ghost to free a slot..."
-            : mProtectedSavePending
-                ? "Saving protected PB ghost..."
-                : noSlot ? "All personal ghost slots are full"
-                         : "Preparing protected PB save...";
-        char selected[48];
-        const char *note = storageStatus();
-        if (noSlot) {
-            char name[32];
-            if (!GhostStorage::copySlotName(selectedPersonalSlot(), name,
-                                            sizeof(name))) {
-                strncpy(name, "Saved ghost", sizeof(name));
-                name[sizeof(name) - 1] = '\0';
-            }
-            snprintf(selected, sizeof(selected), "Slot %02d: %s",
-                     selectedPersonalSlot() + 1, name);
-            note = selected;
-        }
-        const char *hint = noSlot
-            ? SUSAMUNE_GLYPH_C " Up/Down Choose  " SUSAMUNE_GLYPH_X
-              " Delete  " SUSAMUNE_GLYPH_B " Back"
-            : SUSAMUNE_GLYPH_B " Back to PB protection";
-        menu->fillBox(x, y + 34, w, 112,
-                      JUtility::TColor(22, 34, 42, 245));
+        const char *title = mProtectedSavePending ? "Saving protected PB ghost..." : "Preparing protected PB save...";
+        const char *hint = SUSAMUNE_GLYPH_B " Back to PB protection";
+        menu->fillBox(x, y + 34, w, 112, JUtility::TColor(22, 34, 42, 245));
         menu->fillBox(x, y + 34, w, 3, cAccent());
-        menu->drawText(title,
-                       x + (w - Menu::textWidth(title, ROW_SZ)) / 2,
+        menu->drawText(title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2,
                        y + 54, ROW_SZ, ROW_SZ, cRowSel());
-        menu->drawText(note,
-                       x + (w - Menu::textWidth(note, FOOT_SZ)) / 2,
-                       y + 86, FOOT_SZ, FOOT_SZ, cRowDim());
-        menu->drawText(hint,
-                       x + (w - Menu::textWidth(hint, FOOT_SZ)) / 2,
+        menu->drawText(storageStatus(), x + 8, y + 86, FOOT_SZ, FOOT_SZ, cRowDim());
+        menu->drawText(hint, x + (w - Menu::textWidth(hint, FOOT_SZ)) / 2,
                        y + 116, FOOT_SZ, FOOT_SZ, cFooter());
     }
 
     int mSel;
     bool mConfirmDelete;
     bool mDeleteImported;
-    int mDeleteSlot;
     bool mConfirmSave;
-    int mSaveSlot;
     u32 mSaveIdentity;
     char mSaveName[SUSAMUNE_GHOST_NAME_SIZE];
     Choice mChoice;
@@ -2455,8 +2300,6 @@ private:
     char mPBName[SUSAMUNE_GHOST_NAME_SIZE];
     u32 mProtectedPBToken;
     bool mProtectedSavePending;
-    bool mProtectedDeleteConfirm;
-    bool mProtectedDeletePending;
     RawPromptInput mPromptInput;
     GhostRef mPrimaryRef;
     GhostRef mSecondaryRef;
@@ -3805,7 +3648,7 @@ public:
             ry += ROW_H;
             row++;
         }
-    
+
         drawScrollHints(menu, x, y, w, listH, start, end, rows);
         drawHelpLine(menu, x, y, w, h, help);
     }
@@ -5492,62 +5335,142 @@ static_assert(sizeof(NestedMenuTab) <= 64,
 
 class PracticeControlsTab final : public MenuTab {
 public:
-    PracticeControlsTab() : mSel(0) { mInput.begin(JUTGamePad::A); }
-    const char *title() const override { return "Frames, camera and inputs"; }
-    const char *summary() const override { return "Pause precisely, explore the view, record and replay a take."; }
-    void focus() override { mInput.begin(JUTGamePad::A); }
+    enum Page { FRAMES, CAMERA, INPUT_REPLAY };
+    explicit PracticeControlsTab(Page page) : mPage(page), mSel(0), mBinding(false) { focus(); }
+    const char *title() const override {
+        return mPage == FRAMES ? "Frame advance" :
+               mPage == CAMERA ? "Free camera" : "Input replay (experimental)";
+    }
+    const char *summary() const override {
+        return mPage == FRAMES ? "Pause, advance one frame, or queue a spin." :
+               mPage == CAMERA ? "Move the camera while gameplay or a ghost is paused." :
+               "Repeat your own inputs from a savestate. Saved ghosts are in Ghosts.";
+    }
+    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
+    bool grabsInput() const override { return mBinding || gBinds.recording(); }
     bool suppressesBinds() const override { return true; }
     void update(Menu *menu, TMarioGamePad *pad) override {
-        u32 nav = menu->navigationInput(pad);
-        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, 10);
-        if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, 10);
-        if (mSel == 3 && (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
-            gSettings.cycle(SETTING_FREE_CAMERA_SPEED,
+        const u32 nav = menu->navigationInput(pad);
+        if (mBinding || gBinds.recording()) {
+            if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT |
+                       TMarioGamePad::CSTICK_UP | TMarioGamePad::CSTICK_DOWN))
+                gBinds.cancelRecord();
+            // The recorder may commit before this page sees the fourth button.
+            mBinding = gBinds.recording();
+            focus();
+            return;
+        }
+        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, rowCount());
+        if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, rowCount());
+        if (mPage == CAMERA && (mSel == 2 || mSel == 3) &&
+            (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
+            gSettings.cycle(mSel == 2 ? SETTING_FREE_CAMERA_SPEED :
+                SETTING_FREE_CAMERA_STRAFE_REVERSE,
                 (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
-        if (!(mInput.update() & JUTGamePad::A)) return;
+        const u16 pressed = mInput.update();
+        const BindId bind = selectedBind();
+        if ((pressed & JUTGamePad::X) && bind != BIND_COUNT) {
+            mBinding = true;
+            gBinds.beginRecord(bind);
+            focus();
+            return;
+        }
+        if (!(pressed & JUTGamePad::A)) return;
         bool close = false;
-        switch (mSel) {
-        case 0: close = PracticeSession::requestPauseToggle(true); break;
-        case 1: close = PracticeSession::requestStep(true); break;
-        case 2: close = PracticeSession::requestFreeCameraToggle(); break;
-        case 3: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
-        case 4: PracticeSession::recenterCamera(); break;
-        case 5: close = PracticeSession::requestSpin(true, true); break;
-        case 6: close = PracticeSession::requestSpin(false, true); break;
-        case 7: close = PracticeSession::requestRecord(); break;
-        case 8: close = PracticeSession::requestPlayback(); break;
-        case 9: PracticeSession::requestStop(); break;
+        if (mPage == FRAMES) {
+            switch (mSel) {
+            case 0: close = PracticeSession::requestPauseToggle(true); break;
+            case 1: close = PracticeSession::requestStep(true); break;
+            case 2: close = PracticeSession::requestSpin(true, true); break;
+            case 3: close = PracticeSession::requestSpin(false, true); break;
+            }
+        } else if (mPage == CAMERA) {
+            switch (mSel) {
+            case 0: close = PracticeSession::requestFreeCameraToggle(); break;
+            case 1: close = PracticeSession::requestPauseToggle(true); break;
+            case 2: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
+            case 3: gSettings.cycle(SETTING_FREE_CAMERA_STRAFE_REVERSE, 1); return;
+            case 4: PracticeSession::recenterCamera(); break;
+            }
+        } else {
+            switch (mSel) {
+            case 0: close = PracticeSession::requestRecord(); break;
+            case 1: close = PracticeSession::requestPlayback(); break;
+            case 2: PracticeSession::requestStop(); break;
+            }
         }
         if (close) menu->hide();
         menu->toast(PracticeSession::status());
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
-        const char *labels[] = {"Practice pause", "Advance one frame", "Free camera",
-            "Free camera speed", "Recenter free camera", "Queue clockwise spin",
-            "Queue counterclockwise spin", "Record inputs from savestate", "Replay recorded inputs",
-            "Stop recording or replay"};
-        const char *values[] = {PracticeSession::paused() ? "Paused" : "Live", "Step",
-            PracticeSession::freeCamera() ? "On" : "Off",
-            gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED), "Reset view", "Queue", "Queue",
-            "Start", "Play", "Stop"};
-        const int listH = h - HELP_H - ROW_H;
-        const int start = listScrollStart(mSel, 10, listH / ROW_H);
-        const int end = clampi(start + listH / ROW_H, 0, 10);
+        const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
+            PracticeSession::paused() ? "Resume gameplay" : "Pause gameplay";
+        const char *frameLabels[] = {pause, "Advance one frame", "Queue clockwise spin", "Queue counterclockwise spin"};
+        const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways", "Recenter camera"};
+        const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs", "Stop recording or replay"};
+        const char *frameValues[] = {"", PracticeSession::paused() ? "Step" : "Pause", "Queue", "Queue"};
+        const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
+            gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
+            gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE), "Reset view"};
+        const char *replayValues[] = {"Record", "Play", "Stop"};
+        const char *const *labels = mPage == FRAMES ? frameLabels : mPage == CAMERA ? cameraLabels : replayLabels;
+        const char *const *values = mPage == FRAMES ? frameValues : mPage == CAMERA ? cameraValues : replayValues;
+        char status[80];
+        if (mPage == INPUT_REPLAY)
+            snprintf(status, sizeof(status), "%s   Recorded: %lu frames",
+                PracticeSession::recording() ? "Recording" : PracticeSession::replaying() ? "Replaying" : "Stopped",
+                PracticeSession::recordedFrames());
+        else
+            snprintf(status, sizeof(status), "Game: %s   Camera: %s   Spin: %lu left",
+                PracticeSession::pausePending() ? "Armed" : PracticeSession::paused() ? "Paused" : "Live",
+                PracticeSession::freeCamera() ? "On" : "Off", PracticeSession::queuedSpinFrames());
+        menu->drawText(status, x + 4, y, 14, 14, cValue());
+        const int listY = y + ROW_H;
+        const int listH = h - HELP_H - 2 * ROW_H;
+        const int start = listScrollStart(mSel, rowCount(), listH / ROW_H);
+        const int end = clampi(start + listH / ROW_H, 0, rowCount());
         for (int i = start; i < end; ++i)
-            drawValueRow(menu, x, y + (i - start) * ROW_H, w, labels[i], values[i], i == mSel, false, true);
-        drawScrollHints(menu, x, y, w, listH, start, end, 10);
-        char take[64];
-        snprintf(take, sizeof(take), "Take: %lu frames   Spin: %lu steps queued",
-                 PracticeSession::recordedFrames(), PracticeSession::queuedSpinFrames());
-        menu->drawText(take, x + 4, y + listH, 14, 14, cValue());
-        drawHelpLine(menu, x, y, w, h,
-            mSel >= 7 ? "Experimental replay: save a state first; same scene and settings." :
-            (mSel == 5 || mSel == 6) ? "Step through the stick circle; hold A on the step where you want to jump." :
-            mSel == 3 ? "Saved movement speed. Hold X for a temporary boost." :
-            "Works during gameplay and ghost Watch. Free camera moves independently.");
+            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, labels[i], values[i], i == mSel, false, true);
+        drawScrollHints(menu, x, listY, w, listH, start, end, rowCount());
+        const BindId bind = selectedBind();
+        if (bind != BIND_COUNT) {
+            char combo[kBindTextMax], line[kBindTextMax + 48];
+            Binds::format(gBinds.recording() ? gBinds.recordPreview() : gBinds.get(bind), combo);
+            snprintf(line, sizeof(line), gBinds.recording() ? "New bind: %s" : "Shortcut: %s   X: change bind", combo);
+            menu->drawText(line, x + 4, listY + listH, 13, 13, cValue());
+        }
+        drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
+            "Hold your new buttons, then release to save. C-stick cancels." : help());
     }
 private:
-    u8 mSel;
+    int rowCount() const { return mPage == FRAMES ? 4 : mPage == CAMERA ? 5 : 3; }
+    BindId selectedBind() const {
+        static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP, BIND_PRACTICE_SPIN_CW, BIND_PRACTICE_SPIN_CCW};
+        static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT, BIND_COUNT, BIND_COUNT};
+        static const BindId replay[] = {BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP};
+        return mPage == FRAMES ? frame[mSel] : mPage == CAMERA ? camera[mSel] : replay[mSel];
+    }
+    const char *help() const {
+        if (mPage == FRAMES) {
+            if (PracticeSession::pausePending()) return "Armed: will pause on Mario's first controllable frame. Pause cancels.";
+            if (PracticeSession::freeCamera()) return "Camera is ON: Mario input is OFF. Turn camera off to jump or spin.";
+            if (mSel >= 2) return "Queue nine stick directions. Tap Step for each; hold A on your jump step.";
+            return mSel == 0 ? "Pause or resume. Clocks keep running; this attempt cannot earn a normal PB." :
+                "Press early to arm a pause. Once paused, hold Mario's buttons and tap Step.";
+        }
+        if (mPage == CAMERA) {
+            if (mSel == 0) return "On pauses live gameplay. Off leaves it paused; choose Resume when ready.";
+            if (mSel == 1) return "Resume closes free camera in gameplay. Ghost Watch can keep its camera.";
+            if (mSel == 2) return "C-stick left/right changes speed. Hold X while moving for a boost.";
+            if (mSel == 3) return "Reverse only main-stick sideways movement. C-stick looking stays unchanged.";
+            return "Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.";
+        }
+        if (mSel == 0) return "Save a state first. Record reloads it; play your sequence, then Stop.";
+        if (mSel == 1) return "Reloads the same state and repeats your inputs. B or Start cancels.";
+        return "Stop keeps this session's recording. New savestates or scenes clear it.";
+    }
+    u8 mPage, mSel;
+    bool mBinding;
     RawPromptInput mInput;
 };
 static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
@@ -5559,16 +5482,21 @@ public:
     const char *summary() const override { return "Controls, recording limits and pre-release information."; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         u32 nav = menu->navigationInput(pad);
-        if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 5);
-        if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 5);
+        if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 6);
+        if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 6);
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         static const char *const pages[][8] = {
-            {"FRAME CONTROLS", "L + D-Up: practice pause / resume", "L + D-Right: advance one game frame",
-             "L + D-Down: free camera toggle", "Sticks: move / look. L / R: height.",
-             "Camera speed: Practice menu; hold X for boost.", "Also works while watching ghosts.", "Change combos in System > Button binds."},
-            {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Frames, camera and inputs > Record.",
-             "Stop keeps the local take. Replay loads its seed.", "New savestate or scene invalidates the take.",
+            {"FRAME CONTROLS", "Practice > Frame advance: pause, step or spin.",
+             "Your current shortcut is shown below the list.", "Press X on an action to change its shortcut.",
+             "Hold Mario's buttons, then tap Step to apply them.", "Press early to pause on the first controllable frame.",
+             "Also works while watching ghosts.", "Camera ON means Mario input OFF; turn it off to jump."},
+            {"FREE CAMERA", "Practice > Free camera: turn On to pause and explore.",
+             "Main stick: move. C-stick: look. L / R: height.", "Movement speed changes how fast you travel.",
+             "Hold X while moving for a temporary speed boost.", "Reverse sideways changes main-stick left / right.",
+             "Off returns the camera; Resume unpauses gameplay.", "Ordinary Start pause and ghost Watch also work."},
+            {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Input replay > Record from savestate.",
+             "Stop keeps your recording. Replay reloads the state.", "A new savestate or scene clears the recording.",
              "Up to 4096 frames, held in memory this session.", "A state mismatch stops experimental playback.", "Imported ghosts show inputs; they do not drive Mario."},
             {"SPINS AND TAS GHOSTS", "Practice menu: queue a clockwise / reverse spin.",
              "Advance the stick circle one Step at a time.", "Hold A on the step where you want to jump.",
@@ -5737,7 +5665,7 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 stageLoader[sizeof(StageLoaderTab)] __attribute__((aligned(8)));
     u8 settingsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 ilsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
-    u8 practiceControls[64] __attribute__((aligned(8)));
+    u8 practiceControls[3][sizeof(PracticeControlsTab)] __attribute__((aligned(8)));
     u8 guide[16] __attribute__((aligned(8)));
     u8 displayHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 systemHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
@@ -5850,15 +5778,17 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     MenuTab *stageLoader = new (sStageLoaderBuf) StageLoaderTab();
     MenuTab *records = new (sRecordsBuf) RecordsTab();
 
-    MenuTab *frame = new (sMenuRuntime.practiceControls) PracticeControlsTab();
+    MenuTab *frame = new (sMenuRuntime.practiceControls[0]) PracticeControlsTab(PracticeControlsTab::FRAMES);
+    MenuTab *camera = new (sMenuRuntime.practiceControls[1]) PracticeControlsTab(PracticeControlsTab::CAMERA);
+    MenuTab *inputReplay = new (sMenuRuntime.practiceControls[2]) PracticeControlsTab(PracticeControlsTab::INPUT_REPLAY);
     MenuTab *guide = new (sMenuRuntime.guide) GuideTab();
-    MenuTab *practiceChildren[] = { frame, savestate, practice, rng, gameplay };
+    MenuTab *practiceChildren[] = { frame, camera, inputReplay, savestate, practice, rng, gameplay };
     MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety, timer };
     MenuTab *displayChildren[] = { creation, display, timer, cosmetics };
     MenuTab *systemChildren[] = { binds, guide };
     mTabs[mNumTabs++] = starred;
     mTabs[mNumTabs++] = new (sSettingsHubBuf) NestedMenuTab(
-        "Practice", practiceChildren, 5);
+        "Practice", practiceChildren, 7);
     mTabs[mNumTabs++] = new (sILsHubBuf) NestedMenuTab(
         "Runs", runChildren, 5);
     mTabs[mNumTabs++] = ghosts;

@@ -32,6 +32,7 @@ REGION_GAME_IDS = {
 }
 REGION_NAMES = {0: "jp", 1: "us", 2: "pal"}
 PROFILE_COUNT = 4
+# Legacy optional SGIX V1 bundle policy; not a console library limit.
 PROFILE_MAX_ENTRIES = 48
 PROFILE_MAX_DURATION_QF = 4_315_684
 MAX_DURATION_QF = 107_892

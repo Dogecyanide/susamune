@@ -12,7 +12,7 @@ MEM2
 0x91400000-0x91700000=Triforce DIMM memory
 0x91700000-0x91780000=temporary DI/DSP patch buffer
 0x91780000-0x91900000=PPC loader-only real-disc DMA buffer; three 512 KiB Susamune ghost slots after boot
-0x91880000-0x91880100=ghost storage request/response header (protocol 4)
+0x91880000-0x91880100=ghost storage request/response header (protocol 5)
 0x91880100-0x91890100=PPC-only 64 KiB local practice input take
 0x918EA000-0x91900000=secondary ghost model heap
 0x91900000-0x91B3F000=patch.bin / patch.txt loader-to-kernel handoff
