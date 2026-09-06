@@ -1,58 +1,99 @@
-# Moonshine Launcher FOXTROT — V2.3.0 pre-release
+# Moonshine Launcher FOXTROT — final test checklist
 
-Covers **PR1 and the latest controls, launcher and ghost-library fixes**. Use the complete current package. Pick a few sections; you don't need to test every combination.
+**V2.3.0 pre-release · Build 2BC0E2E1**
 
-## 1. Launcher and normal practice
+One checklist for the complete current build. Share sections between testers, tick completed checks and report any problems against the relevant item. Use the full package so the launcher and game files match.
 
-- Boot your usual disc/ISO/CISO. Check that your theme appears during startup and text stays readable **before loading finishes**. With Auto Boot, check B returns to the launcher.
-- Play a busy level such as Bianco 5. Try the menu, savestates, restart and warp wheel; report freezes or unusual slowdown.
-- Check your saved binds and the reorganised menus. Mention confusing placement or actions accidentally triggered when opening pages.
+**Tester:**  
+**Platform:** Wii / Wii U / Dolphin — version:  
+**Game region:** JP / US / PAL  
+**Game source:** Disc / ISO / CISO — SD / USB
 
-## 2. Frame advance and free camera
+## 1. Launcher and startup
 
-Practice now has separate **Frame advance**, **Free camera** and **Input replay (experimental)** pages. Select an action to see its shortcut; **X** changes it there. New defaults are **D-Down** for pause/resume and **D-Up** for pause/step. Your existing binds stay as you set them.
+- [ ] **Early text and theme:** Start the launcher with your usual theme. Check the theme appears during startup and all text is readable **before loading finishes**, including progress and error messages. Note any blank-text period or stock-background flash.
+- [ ] **Launching:** Select your region and usual disc/ISO/CISO, then launch successfully. If using theme music, check it starts and plays normally.
+- [ ] **Auto Boot:** Check it starts the selected game. On another launch, hold B and confirm you can return to the launcher menu.
 
-- Press Pause or Step during a load/intro. **Armed** should catch the first frame where Mario can act. Pause again cancels it.
-- Pause airborne. Each Step should advance one frame. With freecam off, hold **A** alongside Step to jump. Resume should restore control without an unwanted ground pound.
-- Try freecam during ordinary Start pause, practice pause and stepping. Check movement, height, saved speed and **X** boost. Try **Reverse sideways** if left/right feels backwards. Turning freecam off restores the view; resume separately.
-- With freecam off, queue either spin direction on Frame advance. Step through its nine inputs, holding **A** on your jump step.
+## 2. Menus and button binds
 
-Freecam takes over Mario's controls while active. Clocks continuing during practice pause is expected. Assisted attempts must not earn normal PBs; restart for an unassisted attempt.
+- [ ] Browse **Quick, Practice, Runs, Ghosts, Display and System**. Enter and leave their submenus; labels should fit and holding A while entering a page should not activate its first action.
+- [ ] Under Practice, find the separate **Frame advance**, **Free camera** and **Input replay (experimental)** pages. Select an action, press **X** to change its shortcut, then use it. Finishing or cancelling the bind recorder should not trigger another action or switch tabs.
+- [ ] Check existing custom binds still work. Try a setting available in two places and confirm both show the same value. Add/remove a Quick favourite and check it opens the intended feature.
 
-## 3. Local input recording and replay — PR1
+New configurations use **D-Down = pause/resume** and **D-Up = pause/step**. Existing saved binds are preserved; the selected action shows its actual shortcut.
 
-Save a savestate, then choose **Record from savestate** under Input replay. Close the menu, release buttons and run/jump/spray briefly. Open the menu to stop; choose **Replay recorded inputs** to repeat the take. Check B/Start cancels and report mismatch messages or different movement.
+## 3. Frame advance and buffered pause
 
-This experimental take lasts only for the session and is separate from shareable ghosts. Replacing the savestate or changing scenes clears it.
+- [ ] **Pause and Step:** Press Step during normal gameplay: it should pause first. Further presses should advance one frame each. Try while airborne or beside a moving platform, then resume normal control.
+- [ ] **First actionable frame:** Press Pause or Step during loading or the stage intro. **Armed** should remain until Mario can act, then pause before he takes an unwanted step. You should not need to keep holding the button.
+- [ ] **Cancel buffering:** Arm a pause, then press Pause again before control returns. Gameplay should start normally. Extra Step presses while Armed should not queue unwanted frames.
+- [ ] **D-Up + A:** With freecam off and Step assigned to D-Up, hold A and press Step. Mario should jump on that step. Try holding A while leaving the menu as well.
+- [ ] **L-based shortcuts:** If using an old L-based pause/step bind, pause airborne and resume while still holding the shortcut briefly. Mario should not unexpectedly ground-pound or immediately pause again.
+- [ ] **Spins:** With freecam off, queue clockwise and counterclockwise spins from Frame advance. Step through the nine directions and hold A on the desired jump step. Resume afterward and check the queued inputs stop.
 
-## 4. Ghost libraries, watching and sharing
+Clocks, audio and some effects continuing during practice pause is expected. Pause/step-assisted attempts must not earn ordinary PBs; restart for a fresh unassisted attempt.
 
-- Save, export, reload/import and race/watch a ghost. Existing files should still work. **Save latest ghost** should create a new entry.
-- Browse **Personal page** and **Imported page** with C-stick left/right. Libraries can exceed 45 personal ghosts, 12 imports and ten hours combined. Larger collections are useful tests; the roughly 15-minute limit for one recording remains.
-- Choose Watch2 ghosts from different pages. Pause, step and use freecam; both should stay together. **Ghost inputs → Both ghosts** should show both controllers.
-- Record with pause/step/freecam, then save and watch again. Expect a **TAS** label, no waiting pauses and no ordinary PB credit.
+## 4. Free camera
 
-## 5. Split comparisons — including PR1
+- [ ] Turn freecam on from live gameplay. Gameplay should pause automatically. Move with the main stick, look with the C-stick and change height with L/R. Mario should stay fixed while you position the camera.
+- [ ] Change **Movement speed**, try **X** boost and toggle **Reverse sideways**. Main-stick left/right should reverse when that option changes; C-stick look should keep its direction.
+- [ ] Try **Recenter**, then turn freecam off. The usual view should return and gameplay should remain paused until Resume. Resuming should restore normal control.
+- [ ] Use freecam during ordinary Start pause and while frame advancing. With freecam on, inputs control the camera; turn it off before stepping Mario's jumps or spins. Warp afterward and check normal camera behavior returns.
 
-- Under **Runs > Timer and splits**, enable **Level splits**. Try PB, SOB and Ghost comparison on a supported route with recorded times.
-- Share a **new Bianco 3 Secret ghost from PAL to JP** and race with Ghost comparison. Expect checkpoint differences instead of `--`. Other region pairings help too.
+## 5. Local input recording and replay
 
-No new checkpoints were added. Missing times legitimately show `--`; older ghosts may lack splits or inputs.
+- [ ] Save a savestate during normal gameplay. Choose **Practice > Input replay (experimental) > Record from savestate**, close the menu and release buttons. Run, jump and spray briefly, then open the menu to stop and keep the take.
+- [ ] Choose **Replay recorded inputs**. It should start from the saved state and repeat the take. Check B/Start cancels. Report any different movement or mismatch message, with the scene and actions recorded.
+- [ ] Replace the savestate or change scenes and confirm the old take cannot play from the wrong starting point. If settings change incompatibly, replay should refuse with a clear message.
 
-## 6. Layout editor and saving
+This is a short, experimental, session-only input take. It is separate from saved/shareable ghosts.
 
-- Move/resize the Sunshine timer and try **white, blue and purple** on its digits, label and streak. Check after coins, a state load or warp.
-- Change normal health and underwater air colours independently.
-- Tighten metadata gaps and change fields per row; changing values should remain readable.
-- Hold **Y** while adjusting RGB colours for changes of **1 instead of 4**.
+## 6. Ghost library and file management
 
-Try keeping, discarding and resetting edits. Save and reboot: layout, settings, binds, records and ghosts should remain intact.
+- [ ] Complete a ghost and choose **Save latest ghost**. It should add a new entry and preserve existing ones. Load it, export it, put the shared file in the import folder and scan imports. Confirm the expected ghost appears and plays.
+- [ ] Change **Personal page** and **Imported page** with C-stick left/right. Check the first/last pages and return to an earlier entry. Names and selected actions should stay attached to the correct ghost.
+- [ ] After changing pages, load/export a known ghost and delete a **disposable** one. Verify the selected file is affected and neighbouring entries remain. Cancel a deletion once and confirm the file stays.
+- [ ] If you have a larger collection, check entries beyond **45 personal**, **12 imported**, or **ten hours combined** remain accessible. Use existing files; there is no need to record ten hours for this test. The roughly 15-minute limit for one recording remains.
+- [ ] Switch PB profiles and check personal libraries stay separate. Existing ghosts from before this update should remain available.
 
-## Send back
+## 7. Racing, Watch and TAS ghosts
 
-- Wii / Wii U / Dolphin, JP / US / PAL, and the launcher's build checksum:
-- What you tested and whether it worked:
-- For a problem: level, steps to reproduce and what happened:
-- A clip/photo, affected ghost or crash report files, if available.
+- [ ] Race a saved or imported ghost. Check its movement, start timing and recorded inputs. **Ghost inputs → Both ghosts** should show your controller and the ghost's while racing.
+- [ ] Select **Watch2** ghosts from different pages. Both should load correctly. Pause, Step and use freecam: the ghosts should stay together, remain still during the hold and advance together on Step.
+- [ ] In Watch2, **Both ghosts** should show both recorded controllers clearly above the HUD. Opening the mod menu should keep Watch active; B/Start should exit Watch when the menu is closed.
+- [ ] Record an attempt using pause/step/freecam, then save and watch it. Expect a **TAS** label, no waiting pauses in playback and no ordinary PB credit. Export/re-import it and check those properties survive.
+- [ ] If you have an older ghost without recorded inputs or splits, it should still play and clearly show that the missing data is unavailable.
 
-A simple “tested these three things, all worked” is useful too!
+## 8. Runs, PB protection and split comparisons
+
+- [ ] Complete a normal IL and check the result/PB records. Try an included Full Reds route if you use those. Assisted attempts should stay excluded from normal PBs.
+- [ ] With an unsaved PB ghost, request a restart or warp. Check the save/protection prompt; saving should preserve the ghost before continuing. Cancelling should leave you able to decide what to do.
+- [ ] Under **Runs > Timer and splits**, enable **Level splits**. On a supported route with recorded times, try Off, PB, SOB and Ghost comparison. PB compares against your best run; SOB uses your best segments.
+- [ ] **Reported sharing bug:** Export a new **Bianco 3 Secret ghost on PAL** and race it on **JP** with Ghost comparison. Existing checkpoints should show differences instead of `--`. Other region pairings are useful too.
+
+No new checkpoints were added. Missing or incompatible split data legitimately shows `--`.
+
+## 9. Layout editor and colours
+
+- [ ] **Sunshine timer:** Move it toward each screen edge and resize it. Try pure **white, blue and purple** on the digits, TIME/TEMPO label and streak. Check readability after collecting coins, loading a state and warping.
+- [ ] **Compact timer and controller displays:** Move/scale them and change colours, opacity and backgrounds. Per-button colours should affect the intended controller element; live and ghost panels should remain readable.
+- [ ] **Metadata:** Reduce field/row gaps, change fields per row and try Stable/Compact widths. Changing numbers should stay aligned and keep their assigned colours.
+- [ ] **Health and air:** Change the normal health counter and underwater air colours independently. Take damage, recover health and go underwater to check the intended meter changes.
+- [ ] **Custom text and menu appearance:** Edit a text overlay and its style; it should remain visible in game. Change menu appearance and check labels remain readable. Find rollout/dust with movement feedback and check their placement.
+- [ ] **Editor controls:** Hold **Y** while adjusting RGB for steps of **1 instead of 4**. Try Keep, Discard and Reset; each should apply only the intended edit or reset.
+
+## 10. Normal practice and saving
+
+- [ ] Play a busy level such as **Bianco 5**. Use the menu, savestate save/load, restart and warp wheel. Report crashes, freezes, new slowdown or lost controls.
+- [ ] Load a savestate after moving, changing health/water or using the camera. Check Mario and the scene return correctly and you can continue playing normally.
+- [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile.
+
+## Results to send back
+
+**Sections/items checked:**  
+**Passed:**  
+**Problems:** item number, level/episode, steps to reproduce, expected result and what happened.  
+**Attachments:** clip/photo, affected ghost or crash report files if available.
+
+Mark anything you could not check as **Not tested**. A clear report of what worked is useful too.
