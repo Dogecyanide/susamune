@@ -1870,16 +1870,27 @@ private:
         }
     }
 
+    void beginNewSave(Menu *menu) {
+        if (GhostStorage::busy()) { menu->toast(storageStatus()); return; }
+        if (!Ghost::copySaveableName(mSaveName, sizeof(mSaveName), &mSaveIdentity)) {
+            menu->toast("No ghost recording to save");
+            return;
+        }
+        mConfirmSave = true;
+        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+    }
+
+    bool isEmptySaveRow() const {
+        if (!isPersonalSlot() || !GhostStorage::catalogReady()) return false;
+        const SusamuneGhostSlotInfo *info = GhostStorage::slot(selectedPersonalSlot());
+        return !info || !(info->flags &
+            (SUSAMUNE_GHOST_SLOT_PRESENT | SUSAMUNE_GHOST_SLOT_UNSAFE));
+    }
+
     void activate(Menu *menu) {
         if (onPageRow()) { changePage(menu, 1); return; }
-        if (mSel == SAVE_NEW_SELECTION) {
-            if (GhostStorage::busy()) { menu->toast(storageStatus()); return; }
-            if (!Ghost::copySaveableName(mSaveName, sizeof(mSaveName), &mSaveIdentity)) {
-                menu->toast("No ghost recording to save");
-                return;
-            }
-            mConfirmSave = true;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+        if (mSel == SAVE_NEW_SELECTION || isEmptySaveRow()) {
+            beginNewSave(menu);
             return;
         }
         if (mSel == INPUTS_ROW) {
@@ -1979,7 +1990,7 @@ private:
                                JUTGamePad::X | JUTGamePad::Y);
             return;
         }
-        menu->toast("Use Save latest ghost to add a recording");
+        beginNewSave(menu);
     }
 
     void share(Menu *menu) {
@@ -2075,7 +2086,7 @@ private:
         const u32 number = GhostStorage::pageOffset(false) + index + 1;
         GhostStorage::Identity identity;
         const bool haveIdentity = GhostStorage::copyIdentity(false, index, &identity);
-        const char *shownValue = GhostStorage::catalogReady() ? "Empty"
+        const char *shownValue = GhostStorage::catalogReady() ? "Save latest"
                                                               : "Not scanned";
         if (info && (info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)) {
             snprintf(label, sizeof(label), "%lu (unavailable)", number);
@@ -4273,9 +4284,9 @@ public:
 
         const u32 rapid = menu->navigationInput(pad);
         if (rapid & TMarioGamePad::CSTICK_UP) {
-            mSel = wrap(mSel - 1, BIND_COUNT);
+            do { mSel = wrap(mSel - 1, BIND_COUNT); } while (!visibleBind(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            mSel = wrap(mSel + 1, BIND_COUNT);
+            do { mSel = wrap(mSel + 1, BIND_COUNT); } while (!visibleBind(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
             jumpSection(-1);
         } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
@@ -4307,6 +4318,7 @@ public:
         int  ry = y;
         int row = 0;
         for (int i = 0; i < BIND_COUNT && row < end; i++) {
+            if (!visibleBind(i)) continue;
             const char *section = sectionName(i);
             if (section) {
                 if (row >= start) {
@@ -4358,6 +4370,10 @@ public:
     }
 
 private:
+    static bool visibleBind(int id) {
+        return id != BIND_PRACTICE_SPIN_CW && id != BIND_PRACTICE_SPIN_CCW;
+    }
+
     const char *sectionName(int bind) const {
         for (int i = 0; i < kBindSectionCount; i++) {
             if (kBindSectionStarts[i] == bind)
@@ -4367,11 +4383,16 @@ private:
     }
 
     __attribute__((always_inline)) u32 displayMetrics() const {
-        int selectedRow = mSel;
+        int selectedRow = 0, count = 0;
+        for (int i = 0; i < BIND_COUNT; ++i) {
+            if (!visibleBind(i)) continue;
+            ++count;
+            if (i < mSel) ++selectedRow;
+        }
         for (int i = 0; i < kBindSectionCount; i++) {
             if (kBindSectionStarts[i] <= mSel) selectedRow++;
         }
-        return ((u32)(BIND_COUNT + kBindSectionCount) << 16) |
+        return ((u32)(count + kBindSectionCount) << 16) |
                (u16)selectedRow;
     }
 
@@ -5342,7 +5363,7 @@ public:
                mPage == CAMERA ? "Free camera" : "Input replay (experimental)";
     }
     const char *summary() const override {
-        return mPage == FRAMES ? "Pause, advance one frame, or queue a spin." :
+        return mPage == FRAMES ? "Pause the game and choose the inputs for each frame." :
                mPage == CAMERA ? "Move the camera while gameplay or a ghost is paused." :
                "Repeat your own inputs from a savestate. Saved ghosts are in Ghosts.";
     }
@@ -5381,8 +5402,6 @@ public:
             switch (mSel) {
             case 0: close = PracticeSession::requestPauseToggle(true); break;
             case 1: close = PracticeSession::requestStep(true); break;
-            case 2: close = PracticeSession::requestSpin(true, true); break;
-            case 3: close = PracticeSession::requestSpin(false, true); break;
             }
         } else if (mPage == CAMERA) {
             switch (mSel) {
@@ -5405,10 +5424,10 @@ public:
     void draw(Menu *menu, int x, int y, int w, int h) override {
         const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
             PracticeSession::paused() ? "Resume gameplay" : "Pause gameplay";
-        const char *frameLabels[] = {pause, "Advance one frame", "Queue clockwise spin", "Queue counterclockwise spin"};
+        const char *frameLabels[] = {pause, "Advance one frame"};
         const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways", "Recenter camera"};
         const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs", "Stop recording or replay"};
-        const char *frameValues[] = {"", PracticeSession::paused() ? "Step" : "Pause", "Queue", "Queue"};
+        const char *frameValues[] = {"", PracticeSession::paused() ? "Step" : "Pause"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE), "Reset view"};
@@ -5421,9 +5440,9 @@ public:
                 PracticeSession::recording() ? "Recording" : PracticeSession::replaying() ? "Replaying" : "Stopped",
                 PracticeSession::recordedFrames());
         else
-            snprintf(status, sizeof(status), "Game: %s   Camera: %s   Spin: %lu left",
+            snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::pausePending() ? "Armed" : PracticeSession::paused() ? "Paused" : "Live",
-                PracticeSession::freeCamera() ? "On" : "Off", PracticeSession::queuedSpinFrames());
+                PracticeSession::freeCamera() ? "On" : "Off");
         menu->drawText(status, x + 4, y, 14, 14, cValue());
         const int listY = y + ROW_H;
         const int listH = h - HELP_H - 2 * ROW_H;
@@ -5443,9 +5462,9 @@ public:
             "Hold your new buttons, then release to save. C-stick cancels." : help());
     }
 private:
-    int rowCount() const { return mPage == FRAMES ? 4 : mPage == CAMERA ? 5 : 3; }
+    int rowCount() const { return mPage == FRAMES ? 2 : mPage == CAMERA ? 5 : 3; }
     BindId selectedBind() const {
-        static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP, BIND_PRACTICE_SPIN_CW, BIND_PRACTICE_SPIN_CCW};
+        static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP};
         static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT, BIND_COUNT, BIND_COUNT};
         static const BindId replay[] = {BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP};
         return mPage == FRAMES ? frame[mSel] : mPage == CAMERA ? camera[mSel] : replay[mSel];
@@ -5454,9 +5473,8 @@ private:
         if (mPage == FRAMES) {
             if (PracticeSession::pausePending()) return "Armed: will pause on Mario's first controllable frame. Pause cancels.";
             if (PracticeSession::freeCamera()) return "Camera is ON: Mario input is OFF. Turn camera off to jump or spin.";
-            if (mSel >= 2) return "Queue nine stick directions. Tap Step for each; hold A on your jump step.";
-            return mSel == 0 ? "Pause or resume. Clocks keep running; this attempt cannot earn a normal PB." :
-                "Press early to arm a pause. Once paused, hold Mario's buttons and tap Step.";
+            return mSel == 0 ? "Pause or resume. The timer stops while paused and the attempt is marked TAS." :
+                "Hold your inputs and tap Step. Release A before pressing it for another jump.";
         }
         if (mPage == CAMERA) {
             if (mSel == 0) return "On pauses live gameplay. Off leaves it paused; choose Resume when ready.";
@@ -5487,7 +5505,7 @@ public:
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         static const char *const pages[][8] = {
-            {"FRAME CONTROLS", "Practice > Frame advance: pause, step or spin.",
+            {"FRAME CONTROLS", "Practice > Frame advance: pause or step.",
              "Your current shortcut is shown below the list.", "Press X on an action to change its shortcut.",
              "Hold Mario's buttons, then tap Step to apply them.", "Press early to pause on the first controllable frame.",
              "Also works while watching ghosts.", "Camera ON means Mario input OFF; turn it off to jump."},
@@ -5498,9 +5516,9 @@ public:
             {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Input replay > Record from savestate.",
              "Stop keeps your recording. Replay reloads the state.", "A new savestate or scene clears the recording.",
              "Up to 4096 frames, held in memory this session.", "A state mismatch stops experimental playback.", "Imported ghosts show inputs; they do not drive Mario."},
-            {"SPINS AND TAS GHOSTS", "Practice menu: queue a clockwise / reverse spin.",
-             "Advance the stick circle one Step at a time.", "Hold A on the step where you want to jump.",
-             "Free camera must be off to supply spin input.", "Assisted ghosts are marked TAS; pauses are cut.",
+            {"TAS PRACTICE", "The timer stops while frame advance is paused.",
+             "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
+             "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",
              "TAS ghosts cannot earn ordinary PB credit.", "Ghosts > Ghost inputs > Both ghosts for Watch2."},
             {"LAYOUT EDITOR", "Display > Layout editor > choose a group.",
              "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",

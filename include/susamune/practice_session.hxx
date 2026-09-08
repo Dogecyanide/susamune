@@ -24,8 +24,6 @@ void draw(Menu *menu);
 
 bool requestPauseToggle(bool fromMenu = false);
 bool requestStep(bool fromMenu = false);
-// Queues real stick directions; each successful Step consumes one.
-bool requestSpin(bool clockwise, bool fromMenu = false);
 bool requestFreeCameraToggle();
 bool requestRecord();
 bool requestPlayback();
@@ -43,7 +41,6 @@ bool replaying();
 bool assisted();
 bool available();
 u32 stepCount();
-u32 queuedSpinFrames();
 u32 recordedFrames();
 u32 replayFrame();
 u32 capacityFrames();

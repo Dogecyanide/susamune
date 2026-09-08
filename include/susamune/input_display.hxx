@@ -68,7 +68,7 @@ private:
     bool mDirty;
     bool mDirtyBeforeEdit;
 };
-static_assert(sizeof(InputDisplay) == 136, "input display state layout changed");
+static_assert(sizeof(InputDisplay) == 144, "input display state layout changed");
 
 extern InputDisplay &gInputDisplay;
 

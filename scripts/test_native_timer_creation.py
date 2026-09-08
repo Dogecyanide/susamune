@@ -38,10 +38,14 @@ class NativeTimerCreationTests(unittest.TestCase):
         kernel = (ROOT / "launcher/kernel/SusamuneCfg.c").read_text()
         persistence = (ROOT / "src/emulator_persistence.cpp").read_text()
         creation = (ROOT / "src/creation.cpp").read_text()
+        extras = (ROOT / "src/creation_extras.cpp").read_text()
         layout = (ROOT / "src/layout_editor.cpp").read_text()
         prelude = r'''
 #include "susamune/susamune_cfg.h"
+#define private public
 #include "susamune/creation.hxx"
+#include "susamune/creation_extras.hxx"
+#undef private
 #define SUSAMUNE_GAME_VERSION 1
 #define API extern "C" __declspec(dllexport)
 extern "C" void *memset(void *p,int v,unsigned long long n) {u8*b=(u8*)p;while(n--)*b++=(u8)v;return p;}
@@ -55,6 +59,7 @@ struct TMarioGamePad {
 '''
         cfgfuncs = "\n".join(function(kernel, n) for n in (
             "ParseU16", "ParseQftU8", "ParseNativeTimerOffset", "ApplyNativeTimerStyleKey"))
+        cfgfuncs += function(kernel, "ApplyNativeTimerModesKey")
         record = persistence[persistence.index("constexpr u32 kRecordMagic"):persistence.index("struct RecordV1")]
         persistfuncs = "\n".join(function(persistence, n) for n in (
             "initBlank", "checksum", "valid", "validV6", "migrateRecordV6"))
@@ -69,6 +74,11 @@ struct TMarioGamePad {
         code += "namespace LayoutEditor {" + layoutfunc + "}\n"
         # clampi already precedes the layout helper.
         code += editorfuncs[editorfuncs.index("\nvoid adjustTextChannel"):]
+        code += "struct J2DPane {}; struct J2DPicture : J2DPane {}; bool warning; bool rngControlInvalidatesIl(){return warning;}\n"
+        code += "\n".join(function(extras, n) for n in (
+            "nativeTimerColorSlot", "clampStyle", "loadStyle", "storeStyle",
+            "CreationExtras::adoptWallkick", "CreationExtras::stageWallkickInto",
+            "CreationExtras::nativeTimerColorsEnabled", "CreationExtras::nativeTimerRgb"))
         code += r'''
 API void parse(SusamuneNativeTimerStyleCfg *cfg,const char *key,const char *value) {
  ApplyNativeTimerStyleKey(cfg,key,value);
@@ -119,6 +129,66 @@ API int editor(int test) {
  u8 result=e.update(&p,original,defaults,2);
  return e.editing()||rgb[0][0]!=20||!(result&CreationEditor::UPDATE_CANCELLED)?4:0;
 }
+API int modes(int test) {
+ CreationEditor e; e.reset(); CreationStyle s={600,430,120,255,0,0,0,0,100,255};
+ const CreationStyle original=s; u8 rgb[15][3],backup[15][3]; u16 custom=0x7fff;
+ for(unsigned i=0;i<15;i++){rgb[i][0]=i+20;rgb[i][1]=30;rgb[i][2]=40;}
+ e.begin(&s,rgb,backup,15,15,0,CreationEditor::CAP_ALL|CreationEditor::CAP_COLOR_MODE,&custom);
+ TMarioGamePad p={};
+ if(test==0){
+  p.mButtons.mInput=p.mButtons.mFrameInput=TMarioGamePad::CSTICK_LEFT;
+  if(!(e.update(&p,original,rgb,15)&CreationEditor::UPDATE_MODE_CHANGED)||custom)return 1;
+  if(s.x!=600||s.y!=430||s.scale!=120||rgb[7][0]!=27)return 2;
+  p.mButtons.mInput=p.mButtons.mFrameInput=TMarioGamePad::CSTICK_RIGHT;
+  e.update(&p,original,rgb,15);
+  return custom==0x7fff&&rgb[7][0]==27?0:3;
+ }
+ e.selectTarget(15);
+ p.mButtons.mRapidInput=TMarioGamePad::Z;e.update(&p,original,rgb,15);
+ p.mButtons.mRapidInput=TMarioGamePad::A;e.update(&p,original,rgb,15);
+ if(custom!=0x3fff||rgb[14][0]!=34)return 4;
+ if(test==1)return 0;
+ if(test==2){
+  p.mButtons.mRapidInput=TMarioGamePad::B;e.update(&p,original,rgb,15);
+  p.mButtons.mRapidInput=TMarioGamePad::A;
+  if(!(e.update(&p,original,rgb,15)&CreationEditor::UPDATE_CANCELLED))return 5;
+  return custom==0x7fff?0:6;
+ }
+ p={};p.mButtons.mInput=p.mButtons.mFrameInput=TMarioGamePad::CSTICK_DOWN;
+ e.update(&p,original,rgb,15);
+ p.mButtons.mInput=p.mButtons.mFrameInput=TMarioGamePad::CSTICK_RIGHT;
+ e.update(&p,original,rgb,15);
+ return custom==0x7fff&&rgb[14][0]==38&&rgb[13][0]==33?0:7;
+}
+API int persistModes() {
+ static CreationExtras extras;memset(&extras,0,sizeof(extras));
+ SusamuneWallkickStyleCfg cfg={};cfg.magic=SUSAMUNE_WALLKICK_STYLE_MAGIC;cfg.version=2;
+ extras.mNativeTimerCustomMask=0x4001;
+ extras.adoptWallkick(&cfg);if(extras.mNativeTimerCustomMask!=0x4001)return 1;
+ ApplyNativeTimerModesKey(&cfg,"native_timer_custom_mask","0");
+ extras.adoptWallkick(&cfg);if(extras.mNativeTimerCustomMask)return 2;
+ ApplyNativeTimerModesKey(&cfg,"native_timer_custom_mask","16385");
+ extras.adoptWallkick(&cfg);if(extras.mNativeTimerCustomMask!=0x4001)return 3;
+ const char *bad[]={"32768","65535","-1","9999999999999999",""};
+ for(unsigned i=0;i<5;i++){
+  ApplyNativeTimerModesKey(&cfg,"native_timer_custom_mask",bad[i]);
+  if(cfg.nativeTimerCustomMask[0]!=64||cfg.nativeTimerCustomMask[1]!=1)return 4;
+ }
+ SusamuneWallkickStyleCfg saved={};extras.stageWallkickInto(&saved);
+ if(saved.nativeTimerModesMagic!=SUSAMUNE_NATIVE_TIMER_MODES_MAGIC||
+    saved.nativeTimerCustomMask[0]!=64||saved.nativeTimerCustomMask[1]!=1)return 5;
+ extras.mNativeTimerCustomMask=0;extras.adoptWallkick(&saved);
+ if(extras.mNativeTimerCustomMask!=0x4001)return 6;
+ static J2DPicture pictures[25];
+ for(unsigned i=0;i<25;i++)extras.mHudPictures[i]=pictures+i;
+ for(unsigned i=0;i<15;i++){
+  const u8 *rgb=extras.nativeTimerRgb(pictures+(i==14?0:i+11));
+  if((rgb!=0)!=(i==0||i==14))return 7;
+ }
+ warning=true;if(extras.nativeTimerRgb(pictures))return 8;warning=false;
+ saved.nativeTimerCustomMask[0]=0x80;extras.adoptWallkick(&saved);
+ return extras.mNativeTimerCustomMask==0x4001?0:9;
+}
 '''
         source = work / "fixture.cpp"
         source.write_text(code, encoding="ascii")
@@ -157,6 +227,14 @@ API int editor(int test) {
         for case in range(4):
             with self.subTest(case=case):
                 self.assertEqual(self.dll.editor(case), 0)
+
+    def test_original_custom_all_single_reset_and_cancel_keep_rgb_and_layout(self):
+        for case in range(4):
+            with self.subTest(case=case):
+                self.assertEqual(self.dll.modes(case), 0)
+
+    def test_mode_persistence_legacy_migration_validation_and_pane_selection(self):
+        self.assertEqual(self.dll.persistModes(), 0)
 
 
 if __name__ == "__main__":

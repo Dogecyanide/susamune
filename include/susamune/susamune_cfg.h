@@ -165,6 +165,8 @@ struct SusamuneInputStyleCfg {
 #define SUSAMUNE_WALLKICK_STYLE_VERSION     2u
 #define SUSAMUNE_WALLKICK_STYLE_COLOR_COUNT 7u
 #define SUSAMUNE_NOTIFICATION_STYLE_MAGIC   0x4Eu  // 'N'
+#define SUSAMUNE_NATIVE_TIMER_MODES_MAGIC   0x54u  // 'T'
+#define SUSAMUNE_NATIVE_TIMER_CUSTOM_MASK   0x7FFFu
 
 #define SUSAMUNE_MOVEMENT_STYLE_MAGIC        0x534D5653u  // 'SMVS'
 #define SUSAMUNE_MOVEMENT_STYLE_VERSION      1u
@@ -268,7 +270,10 @@ struct SusamuneWallkickStyleCfg {
     unsigned short pbPopupX;
     unsigned short pbPopupY;
     unsigned char  pbPopupScale;
-    unsigned char  reserved1[11];
+    // The native timer's fixed 8-byte style has no room before playlists.
+    unsigned char  nativeTimerModesMagic;
+    unsigned char  nativeTimerCustomMask[2];
+    unsigned char  reserved1[8];
 };
 
 struct SusamuneMovementOverlayStyleCfg {
@@ -1279,6 +1284,8 @@ typedef char susamune_metadata_style_slots_check[(__builtin_offsetof(struct Susa
 typedef char susamune_input_style_cfg_size_check[(sizeof(struct SusamuneInputStyleCfg) == 64) ? 1 : -1];
 typedef char susamune_creation_word_cfg_size_check[(sizeof(struct SusamuneCreationWordCfg) == 144) ? 1 : -1];
 typedef char susamune_creation_cfg_size_check[(sizeof(struct SusamuneCreationCfg) == 576) ? 1 : -1];
+typedef char susamune_timer_modes_magic_offset_check[(__builtin_offsetof(struct SusamuneWallkickStyleCfg, nativeTimerModesMagic) == 53) ? 1 : -1];
+typedef char susamune_timer_modes_mask_offset_check[(__builtin_offsetof(struct SusamuneWallkickStyleCfg, nativeTimerCustomMask) == 54) ? 1 : -1];
 typedef char susamune_achievement_style_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, achievementStyleMagic) == 562) ? 1 : -1];
 typedef char susamune_achievement_x_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, achievementX) == 564) ? 1 : -1];
 typedef char susamune_stage_session_magic_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, stageSessionStyleMagic) == 569) ? 1 : -1];

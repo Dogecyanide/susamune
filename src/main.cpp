@@ -357,21 +357,20 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool practiceModal = creationEditing || sessionBlocksNewInput ||
         menuOwnsRetailPad || wheelOwnsInputBeforeDirect;
     if (!practiceModal) {
-        const bool pausePressed = gBinds.wasPressed(BIND_PRACTICE_PAUSE);
+        const bool pausePressed = !gBinds.recording() &&
+            gBinds.wasPressedSubsetRaw(BIND_PRACTICE_PAUSE);
         if (pausePressed) PracticeSession::requestPauseToggle();
-        const bool stepPressed = PracticeSession::paused() && !gBinds.recording()
-            ? gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP)
-            : gBinds.wasPressedSubset(BIND_PRACTICE_STEP);
+        const bool stepPressed = !gBinds.recording() &&
+            gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
         if (!pausePressed && stepPressed) PracticeSession::requestStep();
         if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
         if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
         if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
-        if (gBinds.wasPressed(BIND_PRACTICE_SPIN_CW)) PracticeSession::requestSpin(true);
-        if (gBinds.wasPressed(BIND_PRACTICE_SPIN_CCW)) PracticeSession::requestSpin(false);
     }
     PracticeSession::beforeDirect(practiceModal);
     gQFTTimer.beginFrame();
+    if (PracticeSession::freezeRequested()) gQFTTimer.beginPracticePause();
     SplitStats::beginFrame();
     gQFTTimer.update();
     GhostModel::beginFrame();

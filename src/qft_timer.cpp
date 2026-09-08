@@ -18,6 +18,7 @@
 #include "susamune/features.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/qft_display.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/susamune_cfg.h"
 
@@ -98,6 +99,17 @@ namespace {
   u8 sSavedSectionNext;
   J2DPane *sBigTimerPane;
   u8 sBigUpdatePass;
+  bool sPracticeHolding;
+  bool sPracticeAssisted;
+  bool sSavedPracticeAssisted;
+  TMarDirector *sPracticeDirector;
+  u32 sPracticeSerial;
+  s32 sPracticeStartQf;
+  s32 sPracticeFreezeQf;
+  s32 sPracticeDeathQf;
+  s32 sPracticePlantQf;
+  s32 sPracticeTransitionQf;
+  u16 sPracticeTransitionTarget;
 
 // PowerPC address materialisation for fixed scratch. D-form offsets are
 // signed, so use @ha/@l rather than a plain high half.
@@ -590,6 +602,8 @@ namespace {
   s32 compactQf() {
     if (sState->stopped)
       return clampQf(sState->offsetQf);
+    if (PracticeSession::paused() && gpMarDirector == sStageDirector && gpMarDirector)
+      return clampQf(sState->offsetQf + gpMarDirector->unk5C - 4);
     if (sState->freezeFrames != 0) {
       return frozenDisplayQf();
     }
@@ -812,6 +826,7 @@ void QFTTimer::beginFrame() {
       sState->stopReason = STOP_NONE;
       sState->offsetQf   = -4;
       sAttemptSerial++;
+      sPracticeAssisted = false;
     }
     sResetRequested = false;
   }
@@ -819,12 +834,54 @@ void QFTTimer::beginFrame() {
   ensureCoreHooks();
   applyFreezeConfig();
   captureSection();
-  if (sState->freezeFrames > 0) {
+  if (sState->freezeFrames > 0 && !PracticeSession::freezeRequested()) {
     sState->freezeFrames--;
   }
 }
 
+void QFTTimer::beginPracticePause() {
+  if (sPracticeHolding || !sStageReady || !gpMarDirector ||
+      gpMarDirector != sStageDirector || sState->stopped)
+    return;
+  sPracticeAssisted = true;
+  sPracticeHolding = true;
+  sPracticeDirector = gpMarDirector;
+  sPracticeSerial = sAttemptSerial;
+  sPracticeStartQf = gpMarDirector->unk5C;
+  sPracticeFreezeQf = sState->freezeQf;
+  sPracticeDeathQf = *sDeathQf;
+  sPracticePlantQf = *sPlantQf;
+  sPracticeTransitionQf = *sTransitionQf;
+  sPracticeTransitionTarget = *sTransitionTarget;
+}
+
+void QFTTimer::endPracticePause() {
+  if (!sPracticeHolding) return;
+  sPracticeHolding = false;
+  if (!sStageReady || gpMarDirector != sPracticeDirector ||
+      gpMarDirector != sStageDirector || sAttemptSerial != sPracticeSerial)
+    return;
+  const s32 elapsed = gpMarDirector->unk5C - sPracticeStartQf;
+  if (elapsed <= 0) return;
+  sState->offsetQf -= elapsed;
+  // Old captures stay fixed; events raised during the hold use its frozen time.
+  if (sState->freezeQf == sPracticeFreezeQf)
+    sState->freezeQf += elapsed;
+  if (*sDeathQf >= 0 && *sDeathQf == sPracticeDeathQf)
+    *sDeathQf += elapsed;
+  if (*sPlantQf >= 0 && *sPlantQf == sPracticePlantQf)
+    *sPlantQf += elapsed;
+  if (*sTransitionTarget != 0xFFFF &&
+      *sTransitionTarget == sPracticeTransitionTarget &&
+      *sTransitionQf == sPracticeTransitionQf)
+    *sTransitionQf += elapsed;
+}
+
+void QFTTimer::markPracticeAssisted() { sPracticeAssisted = true; }
+bool QFTTimer::practiceAssisted() const { return sPracticeAssisted; }
+
 void QFTTimer::onStageSetup(TMarDirector *director) {
+  sPracticeHolding = false;
   // File select and the plaza are boundaries between timed attempts. Keep an
   // explicit request outside QFT scratch because game transition hooks also
   // write the scratch restart byte during stage setup.
@@ -902,7 +959,7 @@ void QFTTimer::draw(Menu *menu) const {
       show = sState->freezeFrames != 0;
     }
   }
-  if (!show)
+  if (!show && !PracticeSession::paused())
     return;
 
   s32 millis    = qfToMillis(compactQf());
@@ -920,6 +977,7 @@ void QFTTimer::draw(Menu *menu) const {
 }
 
 void QFTTimer::requestReset() {
+  sPracticeHolding = false;
   sResetRequested      = true;
   sFinalConsumed       = false;
   sState->restart      = 1;
@@ -1018,6 +1076,7 @@ bool QFTTimer::consumeCustom(bool death, s32 *qf) {
 }
 
 void QFTTimer::onSavestateSaved() {
+  sSavedPracticeAssisted = sPracticeAssisted;
   sSavedState.stopped      = sState->stopped;
   sSavedState.restart      = sState->restart;
   sSavedState.stopReason   = sState->stopReason;
@@ -1038,8 +1097,10 @@ void QFTTimer::onSavestateSaved() {
 }
 
 void QFTTimer::onSavestateLoaded() {
+  sPracticeHolding = false;
   if (!sHaveSavedState)
     return;
+  sPracticeAssisted = sSavedPracticeAssisted;
   sState->stopped      = sSavedState.stopped;
   sState->restart      = sSavedState.restart;
   sState->stopReason   = sSavedState.stopReason;

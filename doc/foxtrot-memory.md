@@ -23,21 +23,23 @@ bytes and trailing BSS are checked separately; zero filling cannot touch the
 attachment heap or scratch. The 512 KiB BPS disc-file extent is a separate
 storage constraint, not the size of the runtime reservation.
 
-Final console mod builds on 2026-09-05:
+Final console mod builds on 2026-09-08:
 
 | Region | Initialized image | Full runtime image | Free code/data capacity |
 |---|---:|---:|---:|
-| JP | 359,152 B | 398,436 B | 224,156 B |
-| US | 357,860 B | 397,156 B | 225,436 B |
-| PAL | 357,992 B | 397,284 B | 225,308 B |
+| JP | 366,224 B | 405,888 B | 216,704 B |
+| US | 364,944 B | 404,608 B | 217,984 B |
+| PAL | 365,060 B | 404,704 B | 217,888 B |
 
-The largest runtime image is about 389.1 KiB; it leaves about 218.9 KiB of
+The largest runtime image is about 396.4 KiB; it leaves about 211.6 KiB of
 unused code/data capacity inside the requested reservation.
 
-The feedback update adds 13,668 B to the largest runtime image. The game arena
-reservation remains 768 KiB. Metadata spacing and the two health colours reuse
+The September 8 feedback update adds 1,500 B to the largest runtime image
+relative to the September 7 package. The game arena reservation remains
+768 KiB. Metadata spacing and the two health colours reuse
 reserved settings bytes; the eight-byte native timer style occupies the final
-gap before the fixed playlist mailbox. Existing payload offsets do not move.
+gap before the fixed playlist mailbox. Original/Custom timer appearance uses
+three reserved style bytes. Existing payload offsets do not move.
 
 The local 4096-frame input take no longer consumes 65,536 bytes of MEM1 BSS.
 It reuses the former ghost-file payload in MEM2. Native timer drawing shares

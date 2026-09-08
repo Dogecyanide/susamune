@@ -48,15 +48,16 @@ bool SusamuneThemeLoad(const char*device,const char*dir,void**out){
 }
 void UnmountDevice(int dev){closeCount++;sequence=sequence*10+3;}
 static void *xfb[2];static int fb,depthTest,depthWrite,blackPending,blackVisible,copies,copyDepth,flushes;
+static int copyQueued,copyComplete,publishedTooSoon;
 static struct {int viTVMode;} mode;
 static void *nextFramebuffer;
 static typeof(mode) *rmode=&mode;
-void GX_DrawDone(void){}
+void GX_DrawDone(void){if(copyQueued){copyComplete=1;copyQueued=0;}}
 void GX_InvalidateTexAll(void){}
 void GX_SetZMode(int test,int compare,int write){depthTest=test;depthWrite=write;}
 void GX_SetColorUpdate(int value){}
-void GX_CopyDisp(void*frame,int clear){copies++;copyDepth=depthWrite;}
-void VIDEO_SetNextFramebuffer(void*frame){nextFramebuffer=frame;}
+void GX_CopyDisp(void*frame,int clear){copies++;copyDepth=depthWrite;copyQueued=1;copyComplete=0;}
+void VIDEO_SetNextFramebuffer(void*frame){nextFramebuffer=frame;if(!copyComplete)publishedTooSoon=1;}
 void VIDEO_Flush(void){blackVisible=blackPending;flushes++;}
 void VIDEO_SetBlack(int value){blackPending=value;}
 void VIDEO_WaitVSync(void){}
@@ -99,10 +100,10 @@ __declspec(dllexport) int preload(int test){
 }
 __declspec(dllexport) int first_frame(int preserve){
  enable_output=false;fb=0;depthTest=depthWrite=1;blackPending=blackVisible=1;
- copies=flushes=0;mode.viTVMode=0;xfb[0]=(void*)0x1111;xfb[1]=(void*)0x2222;
+ copies=flushes=copyQueued=copyComplete=publishedTooSoon=0;mode.viTVMode=0;xfb[0]=(void*)0x1111;xfb[1]=(void*)0x2222;
  GRRLIB_RenderMode(!preserve);
  if(blackVisible||!enable_output||copies!=1||flushes!=1||nextFramebuffer!=xfb[1])return 1;
- return depthTest||depthWrite||!copyDepth?2:0;
+ return depthTest||depthWrite||!copyDepth||!copyComplete||publishedTooSoon?2:0;
 }
 '''
         cfile = work / "startup.c"

@@ -44,10 +44,10 @@ struct Director {bool _260;Console*mGCConsole;};
 struct TApplication {enum {CONTEXT_DIRECT_STAGE=5};int mContext;} gpApplication;
 Director*gpMarDirector;
 struct CreationStyle {unsigned short x,y;u8 scale,textA,bgR,bgG,bgB,bgA,textBrightness,padding;};
-struct Extras {CreationStyle style;bool preview,colors,label;unsigned target;u8 rgb[3];
+struct Extras {CreationStyle style;bool preview,colors,label;unsigned target;u8 rgb[3];J2DPane*originalPane;
  const CreationStyle&nativeTimerStyle(){return style;} bool editingNativeTimer(){return preview;}
  bool nativeTimerColorsEnabled(){return colors;} unsigned nativeTimerTarget(){return target;}
- bool timerLabelVisible(){return label;} const u8*nativeTimerRgb(J2DPane*){return colors?rgb:0;}
+ bool timerLabelVisible(){return label;} const u8*nativeTimerRgb(J2DPane*p){return colors&&p!=originalPane?rgb:0;}
 } gCreationExtras;
 void *retailPaneVtable[11],*retailPictureVtable[11],*retailTextVtable[11];
 #include "susamune/native_timer_transform.h"
@@ -81,15 +81,23 @@ extern "C" __declspec(dllexport) int run(int which,int red,int green,int blue) {
    panes[1].mTag='\0t_1';panes[2].mTag='\0t_2';panes[3].mTag='t_tx';gCreationExtras.label=false;}
   if(which==4)panes[5].vtable=(void**)0x1234;
   if(which==5)links[2].mItemPtr=panes;
+  if(which==6)gCreationExtras.originalPane=panes+4;
+  if(which==7){gCreationExtras.colors=false;gCreationExtras.preview=true;}
   memcpy(before,panes,sizeof(panes));
   bool active=NativeTimerLayout::beginDraw(&screen);
-  if(which>=3){if(active)return 2;}
+  if(which>=3&&which<=5){if(active)return 2;}
   else{
    if(!active||NativeTimerLayout::beginDraw(&screen))return 3;
    if(panes[0].mRect.mX1!=-627||panes[0].mRect.mY1!=899)return 4;
    if(panes[4].mAlpha!=100)return 5;
-   if(panes[4].mColorMask.r!=red||panes[4].mColorMask.g!=green||panes[4].mColorMask.b!=blue)return 6;
-   if(panes[4].mColorOverlay.r!=red||panes[4].mColorOverlay.g!=green||panes[4].mColorOverlay.b!=blue)return 7;
+   if(which==6||which==7){
+    if(panes[4].mColorMask.r!=255||panes[4].mColorMask.g!=211||panes[4].mColorMask.b!=5)return 11;
+    if(panes[4].mColorOverlay.r!=0||panes[4].mColorOverlay.g!=60||panes[4].mColorOverlay.b!=255)return 12;
+    if(which==6&&(panes[5].mColorMask.r!=red||panes[5].mColorOverlay.b!=blue))return 13;
+   }else{
+    if(panes[4].mColorMask.r!=red||panes[4].mColorMask.g!=green||panes[4].mColorMask.b!=blue)return 6;
+    if(panes[4].mColorOverlay.r!=red||panes[4].mColorOverlay.g!=green||panes[4].mColorOverlay.b!=blue)return 7;
+   }
    if(panes[4].mColorMask.a!=255||panes[4].mColorOverlay.a!=0)return 8;
    if(which==2&&(!panes[0].mIsVisible||panes[1].mIsVisible||!panes[2].mIsVisible||panes[3].mIsVisible))return 9;
    for(unsigned i=0;i<count;i++){
@@ -120,6 +128,11 @@ extern "C" __declspec(dllexport) int run(int which,int red,int green,int blue) {
 
     def test_default_preview_invalid_tree_and_reentrancy_restore_all_bytes(self):
         for case in (0, 2, 3, 4, 5):
+            with self.subTest(case=case):
+                self.assertEqual(self.dll.run(case, 30, 40, 50), 0)
+
+    def test_original_preserves_retail_endpoints_in_mixed_and_all_original_preview(self):
+        for case in (6, 7):
             with self.subTest(case=case):
                 self.assertEqual(self.dll.run(case, 30, 40, 50), 0)
 

@@ -1,8 +1,8 @@
 # Moonshine Launcher FOXTROT — final test checklist
 
-**V2.3.0 pre-release · Build 2BC0E2E1**
+**V2.3.0 pre-release · Build F6962C1F**
 
-One checklist for the complete current build. Share sections between testers, tick completed checks and report any problems against the relevant item. Use the full package so the launcher and game files match.
+This is the complete reference checklist. Keep earlier results; you do not need to repeat everything. For this update, focus on startup text, frame advance, saving from an empty ghost row, and the Sunshine timer's Original/Custom appearance. Use the full package so the launcher and game files match.
 
 **Tester:**  
 **Platform:** Wii / Wii U / Dolphin — version:  
@@ -23,16 +23,16 @@ One checklist for the complete current build. Share sections between testers, ti
 
 New configurations use **D-Down = pause/resume** and **D-Up = pause/step**. Existing saved binds are preserved; the selected action shows its actual shortcut.
 
-## 3. Frame advance and buffered pause
+## 3. Frame advance
 
 - [ ] **Pause and Step:** Press Step during normal gameplay: it should pause first. Further presses should advance one frame each. Try while airborne or beside a moving platform, then resume normal control.
-- [ ] **First actionable frame:** Press Pause or Step during loading or the stage intro. **Armed** should remain until Mario can act, then pause before he takes an unwanted step. You should not need to keep holding the button.
-- [ ] **Cancel buffering:** Arm a pause, then press Pause again before control returns. Gameplay should start normally. Extra Step presses while Armed should not queue unwanted frames.
-- [ ] **D-Up + A:** With freecam off and Step assigned to D-Up, hold A and press Step. Mario should jump on that step. Try holding A while leaving the menu as well.
+- [ ] **Pause after loading:** Tap Pause or Step during loading. It should wait until Mario can move, then pause automatically. Tapping Pause again while waiting should cancel it.
+- [ ] **Jumping:** Turn freecam off. Hold A and press Pause: it should pause. Press Step: Mario should jump. Later, release A and press it again between steps; the next Step should register the new press. Keeping A held should not invent extra presses.
+- [ ] **Timer:** Stay paused for a few seconds. QFT should stay still with a small **TAS** beside it. Step should move the timer forward, and Resume should continue from there without adding the wait. TAS should remain until a fresh attempt.
 - [ ] **L-based shortcuts:** If using an old L-based pause/step bind, pause airborne and resume while still holding the shortcut briefly. Mario should not unexpectedly ground-pound or immediately pause again.
-- [ ] **Spins:** With freecam off, queue clockwise and counterclockwise spins from Frame advance. Step through the nine directions and hold A on the desired jump step. Resume afterward and check the queued inputs stop.
+- [ ] **Manual spins:** With freecam off, rotate the main stick yourself across steps and jump. There should be no Queue spin option or working spin shortcut.
 
-Clocks, audio and some effects continuing during practice pause is expected. Pause/step-assisted attempts must not earn ordinary PBs; restart for a fresh unassisted attempt.
+Audio and some effects may continue while paused. Pause/step-assisted attempts must not earn ordinary PBs; restart for a fresh attempt.
 
 ## 4. Free camera
 
@@ -51,7 +51,7 @@ This is a short, experimental, session-only input take. It is separate from save
 
 ## 6. Ghost library and file management
 
-- [ ] Complete a ghost and choose **Save latest ghost**. It should add a new entry and preserve existing ones. Load it, export it, put the shared file in the import folder and scan imports. Confirm the expected ghost appears and plays.
+- [ ] Complete a ghost and select an **empty personal row**. It should offer to save your latest recording. Confirm, then load it; existing ghosts should remain. **Save latest ghost** should also work. Export it, put the shared file in the import folder and scan imports; confirm it appears and plays.
 - [ ] Change **Personal page** and **Imported page** with C-stick left/right. Check the first/last pages and return to an earlier entry. Names and selected actions should stay attached to the correct ghost.
 - [ ] After changing pages, load/export a known ghost and delete a **disposable** one. Verify the selected file is affected and neighbouring entries remain. Cancel a deletion once and confirm the file stays.
 - [ ] If you have a larger collection, check entries beyond **45 personal**, **12 imported**, or **ten hours combined** remain accessible. Use existing files; there is no need to record ten hours for this test. The roughly 15-minute limit for one recording remains.
@@ -76,7 +76,7 @@ No new checkpoints were added. Missing or incompatible split data legitimately s
 
 ## 9. Layout editor and colours
 
-- [ ] **Sunshine timer:** Move it toward each screen edge and resize it. Try pure **white, blue and purple** on the digits, TIME/TEMPO label and streak. Check readability after collecting coins, loading a state and warping.
+- [ ] **Sunshine timer:** Set **All → Appearance → Original** to restore its normal look. Switch one character to Custom and try white, blue or purple; the others should stay original. Returning it to Original should keep its saved colour and position for later. Save and reboot once to check the choice sticks.
 - [ ] **Compact timer and controller displays:** Move/scale them and change colours, opacity and backgrounds. Per-button colours should affect the intended controller element; live and ghost panels should remain readable.
 - [ ] **Metadata:** Reduce field/row gaps, change fields per row and try Stable/Compact widths. Changing numbers should stay aligned and keep their assigned colours.
 - [ ] **Health and air:** Change the normal health counter and underwater air colours independently. Take damage, recover health and go underwater to check the intended meter changes.

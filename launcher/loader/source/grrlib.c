@@ -1330,7 +1330,6 @@ void  GRRLIB_DrawTileQuad (const guVector pos[4], GRRLIB_texImg *tex, const u32 
  * Call this function after drawing.
  */
 static void GRRLIB_RenderMode(bool clear) {
-	GX_DrawDone();          // Tell the GX engine we are done drawing
 	GX_InvalidateTexAll();
 
 	fb ^= 1;  // Toggle framebuffer index
@@ -1340,6 +1339,8 @@ static void GRRLIB_RenderMode(bool clear) {
 	GX_CopyDisp      (xfb[fb], clear ? GX_TRUE : GX_FALSE);
 	// Copy clearing needs depth writes; the next 2D frame does not.
 	GX_SetZMode      (GX_FALSE, GX_LEQUAL, GX_FALSE);
+	// Finish the copy before VI can scan out this framebuffer.
+	GX_DrawDone();
 
 	VIDEO_SetNextFramebuffer(xfb[fb]);  // Select External Frame Buffer
 	if (!enable_output) // stfour: this prevent strange behavior on first frame

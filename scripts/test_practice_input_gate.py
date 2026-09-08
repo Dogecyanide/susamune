@@ -80,9 +80,7 @@ extern "C" __declspec(dllexport) unsigned edge(unsigned previous,unsigned curren
                                                unsigned silent,unsigned recorder) {
     localBinds.mPrevHeld=(u16)previous;localBinds.mHeld=(u16)current;
     localBinds.mRecSilent=silent!=0;localBinds.mRecState=(u8)recorder;
-    const bool active=sPaused && !gBinds.recording()
-        ? gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP)
-        : gBinds.wasPressedSubset(BIND_PRACTICE_STEP);
+    const bool active=!gBinds.recording() && gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
     return active;
 }
 extern "C" __declspec(dllexport) unsigned request(unsigned kind,unsigned menu) {
@@ -126,7 +124,15 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
         self.assertEqual(self.lib.edge(0x100, 0x108, 1, 0), 1)
         self.assertEqual(self.lib.edge(0x100, 0x108, 1, 1), 0)
         self.lib.reset(4, 8)
-        self.assertEqual(self.lib.edge(0x100, 0x108, 1, 0), 0)
+        self.assertEqual(self.lib.edge(0x100, 0x108, 1, 0), 1)
+
+    def test_pause_accepts_held_A_and_consumes_only_its_own_buttons(self):
+        self.lib.reset(4, 8)
+        self.assertEqual(self.lib.dispatch(4, 0x100, 0x104), 1)
+        out, _ = self.filtered(buttons=0x104, analogA=255)
+        self.assertEqual((out.buttons, out.analogA), (0x100, 255))
+        self.assertEqual(self.lib.dispatch(4, 0x104, 0x104), 1)
+        self.assertEqual(self.lib.dispatch(4, 0x100, 0x104), 0)
 
     def test_L_step_and_resume_do_not_leak_until_analog_trigger_releases(self):
         self.lib.reset(5, 0x42)

@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Controls and ghost library update
+V2.3.0 pre-release · Frame-input and timer feedback update
 
 FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
 
@@ -33,17 +33,17 @@ Open **Practice > Frame advance**. Selecting an action shows its current shortcu
 |---|---|
 | D-Down | Toggle practice pause; cancel a buffered pause |
 | D-Up | Pause live gameplay, then advance one frame with each further press |
-| Unassigned | Free camera, input recording/replay/stop, and queued spins |
+| Unassigned | Free camera and input recording/replay/stop |
 
 These defaults apply to new configurations. Existing custom binds are preserved, including any earlier L-based combos. Z retains its existing function.
 
-You can press Pause or Step during loading, the stage intro, or while Mario cannot be controlled. **Armed** means the game is waiting to pause at the first actionable update. You do not have to hold the shortcut. Press Pause again to cancel. Pressing Step again while waiting does not queue extra steps.
+You can press Pause or Step during loading, the stage intro, or while Mario cannot be controlled. **Armed** means it will pause as soon as you can control Mario. You do not have to hold the shortcut. Press Pause again to cancel. Pressing Step again while waiting does not add extra steps.
 
-Practice pause stops actor movement, animation and collision work. A step releases one normal rendered gameplay frame, not one quarter-frame: normally four 120 Hz ticks at 30 fps, with the game's usual fractional cadence at PAL's 25 fps. Audio, interface, clocks and absolute-time deadlines continue. Affected attempts cannot earn PB credit. Restart the stage for a fresh unassisted attempt.
+Practice pause stops gameplay and the QFT. Each Step advances one normal game frame, and the QFT advances with it. Music and the game's background clocks keep running. A small **TAS** appears beside the QFT for an assisted attempt. These attempts cannot earn an ordinary PB; restart the stage to begin a fresh attempt.
 
-With free camera **Off**, hold A and press Step to jump on that frame; other gameplay buttons work alongside Step too. The Step combo itself is removed from gameplay, including any assigned L/R trigger until it is released. When choosing Step or Resume from the menu, release A to continue.
+With free camera **Off**, hold A and press Step to jump on that frame. You can also start Pause while holding A, and other gameplay buttons work alongside Pause and Step. To press A again on a later step, release it and press it again before stepping. Holding A continuously counts as keeping it held. The Pause or Step shortcut itself does not reach Mario, including any assigned L/R trigger until you release it. When choosing Step or Resume from the menu, release A to continue.
 
-For spins, pause and choose **Queue clockwise spin** or **Queue counterclockwise spin** on the Frame advance page. Each Step supplies the next stick direction, completing one circle in nine steps. Hold A on the step where you want to jump. Free camera must be off. Optional spin binds are initially unassigned. Resume, Stop, a state load or a scene change clears the queue.
+For spins, use the main stick yourself: choose the next direction before each Step. Free camera must be Off so the stick controls Mario.
 
 ## Free camera
 
@@ -69,7 +69,7 @@ Playback is experimental. It compares a small fingerprint of Mario, RNG and coun
 
 ## Ghost inputs and splits
 
-Personal ghosts and imports now use paged lists with no 45/12-entry or ten-hour library cap. Select **Personal page** or **Imported page** and use C-stick left/right to change pages; A opens the next page. Choose **Save latest ghost** to create a new personal file. Existing ghosts stay available, and Watch2 selections remain attached to their files when you browse another page.
+Personal ghosts and imports now use paged lists with no 45/12-entry or ten-hour library cap. Select **Personal page** or **Imported page** and use C-stick left/right to change pages; A opens the next page. Choose **Save latest ghost** to create a new personal file. Selecting an empty personal ghost row also offers **Save latest ghost**, with confirmation. Existing ghosts stay available, and Watch2 selections remain attached to their files when you browse another page.
 
 Available storage limits the library. The existing per-ghost recording limit remains about 15 minutes. Imported files stay in the import folder; sharing and deleting still act on the file you selected.
 
@@ -77,7 +77,7 @@ New ghost files can include the inputs actually consumed during the attempt, plu
 
 In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same control is available in Display > Layout editor > Controller inputs and Display > HUD and displays > Other HUD. Both ghosts shows both ghost controllers in Watch2, or the live and ghost controller while racing. Ghost input is a teaching overlay; imported tracks do not control Mario.
 
-Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits held time, so pausing to arrange a camera or plan the next input does not create a long pause in the saved ghost. The game timer itself keeps its original behavior. TAS ghosts are for practice and cannot earn an ordinary PB.
+Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
 
 In Display > Timer and splits > Timer and splits, choose the comparison: **Off → PB → SOB → Ghost**. SOB means the cumulative sum of your best recorded segments. Ghost uses the selected race target's compatible split timestamps. Missing or incompatible timestamps show `--`; no checkpoint timing is guessed.
 
@@ -89,7 +89,9 @@ Exported shareable ghosts live under `susamune_ghosts/share/` on the launcher's 
 
 Display > Layout editor has separate groups for Timers, Controller inputs, Metadata, Native HUD colours, Custom text, Practice feedback, and Menu and notifications. Rollout and dust editors are also beside their settings in HUD and displays > Movement feedback.
 
-**Timers > Sunshine timer** opens the full editor: position, size, opacity, brightness, all 13 characters, TIME/TEMPO and the streak. Its position range spans the full screen. Colours including blue, purple and white no longer multiply against the original yellow artwork. Timer calculations stay unchanged.
+**Timers > Sunshine timer** opens the full editor: position, size, opacity, brightness, all 13 characters, TIME/TEMPO and the streak. Its position range spans the full screen.
+
+The first option, **Appearance**, lets you choose **Original** or **Custom**. Leave the target on All to change the whole timer, or press Start to choose one character or image. Original restores the game's own colours and shading while keeping your position, size and saved custom RGB. Switch back to Custom to use those colours again. Changing an RGB value selects Custom for that target. **Z on Appearance** restores Original, with confirmation. To fix the whole timer's colours quickly, choose **All > Appearance > Original**.
 
 **Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours. In RGB controls, hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
 

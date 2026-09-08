@@ -2653,6 +2653,10 @@ void afterDirect(s32 appState) {
         !sObserverMarioBaselineFinalized || !sObserverMarioOwned) {
         return;
     }
+    // Attribute a Step's elapsed time before the next held frame begins.
+    if (appState <= TApplication::CONTEXT_DIRECT_MAIN_LOOP && gpMarDirector &&
+        (sFrameFrozen || gpMarDirector->mCurState == TMarDirector::STATE_NORMAL))
+        observerQf();
     if (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP || !gpMarDirector ||
         (!sFrameFrozen &&
          gpMarDirector->mCurState != TMarDirector::STATE_NORMAL)) {

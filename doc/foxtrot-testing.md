@@ -4,6 +4,43 @@ Status: pre-release. The short runner checklist is in
 [foxtrot-tester-checklist.md](foxtrot-tester-checklist.md); it ships as TESTING.md.
 This file records developer verification and the scope of earlier checks.
 
+## Input and timer feedback update on 2026-09-08
+
+- Final host suite: **613 tests pass**. Launcher checksum: **`F6962C1F`**.
+- JP/US/PAL console and emulator builds pass their linker memory checks. Full
+  BPS application verifies JP `F62D6D32`, US `A74FDD62` and PAL `913325E9`,
+  all 31 hook writes, both runtime spans and the protected attachment/scratch hole.
+- The final US `A74FDD62` image passed a bounded Dolphin 2606a JIT check using
+  private controller packets at the retail PADRead boundary. It accepted Pause
+  with A held, fresh/held/repressed A on Step, and a grounded A+Step jump.
+  Each Step added four QFs. The held compact text advanced
+  `0:05.438 → 0:05.472 → 0:05.505 → 0:05.538`, stayed fixed while waiting,
+  and the underlying clock continued on Resume with TAS retained. Normal
+  configured event-freeze display behavior resumes outside frame hold.
+  Evidence: `build/foxtrot-held-input/results.json`. All owned test processes
+  were stopped. This does not test a physical controller or Wii rendering.
+- Production tests cover physical releases between steps, no invented repeated
+  presses, inert retired spin binds, event timestamps, QFT hold/step/reset/state
+  load, and the actual before/after-direct order for both ghost Watch modes.
+  Watch now settles a Step's elapsed time before the next frozen frame.
+- Six production display-command tests cover TAS badge edges, opacity, split
+  spacing and attempt lifetime. New live Watch and badge screenshot checks
+  were not part of the final bounded run.
+- Native timer tests cover All/per-target Original and Custom modes, retained
+  RGB/placement, keep/discard/reset, old INI migration and exact retail endpoint
+  restoration. Configuration offsets and fixed memory ownership remain unchanged.
+- Empty-personal-row tests use the production menu flow and preserve occupied,
+  unsafe and imported entries and the exact recording confirmation token.
+- Launcher status tests model the queued framebuffer copy and require completion
+  before VI presentation. This addresses one-off missing storage status text;
+  actual startup appearance still needs Wii confirmation.
+- A real US Bianco 1 snapshot compressed from 14,986,692 to 5,015,626 bytes
+  with DarkMoonshine's production deflate codec and restored byte-for-byte.
+  This is one host-codec measurement, not Wii timing or a worst-case ratio.
+  See [the state feasibility report](foxtrot-savestate-feasibility.md).
+
+Everything below records earlier builds, with their own scope and checksums.
+
 ## Controls and ghost-library update on 2026-09-06
 
 - Final host suite: 582 tests pass. Launcher build checksum: `2BC0E2E1`.

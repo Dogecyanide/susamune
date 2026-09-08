@@ -5149,6 +5149,18 @@ static bool ParseNativeTimerOffset(const char *text, u16 bias, u16 *out)
 	return true;
 }
 
+static void ApplyNativeTimerModesKey(struct SusamuneWallkickStyleCfg *cfg,
+	                                  const char *key, const char *text)
+{
+	u16 value;
+	if (strcmp(key, "native_timer_custom_mask") != 0 ||
+	    !ParseU16(text, &value) || value > SUSAMUNE_NATIVE_TIMER_CUSTOM_MASK)
+		return;
+	cfg->nativeTimerModesMagic = SUSAMUNE_NATIVE_TIMER_MODES_MAGIC;
+	cfg->nativeTimerCustomMask[0] = (u8)(value >> 8);
+	cfg->nativeTimerCustomMask[1] = (u8)value;
+}
+
 static void ApplyNativeTimerStyleKey(struct SusamuneNativeTimerStyleCfg *cfg,
 	                                 const char *key, const char *text)
 {
@@ -5276,6 +5288,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
 			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
+			ApplyNativeTimerModesKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 		}
 
 		line = next;
@@ -5774,6 +5787,10 @@ static void EmitCreationSection(FIL *f, int *err,
 		f, err, "dust", &cfg->movementStyle.dust,
 		SUSAMUNE_DUST_STYLE_COLOR_COUNT);
 	EmitNativeTimerStyle(f, err, &cfg->nativeTimerStyle);
+	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
+		     (((u32)cfg->wallkickStyle.nativeTimerCustomMask[0] << 8) |
+		      cfg->wallkickStyle.nativeTimerCustomMask[1]) & SUSAMUNE_NATIVE_TIMER_CUSTOM_MASK));
 	for (word = 0; word < SUSAMUNE_CREATION_WORD_COUNT; word++)
 	{
 		const struct SusamuneCreationWordCfg *w = &d->words[word];

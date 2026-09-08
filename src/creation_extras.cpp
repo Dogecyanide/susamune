@@ -56,10 +56,6 @@ static_assert(sizeof(kHudPaneColors) / sizeof(kHudPaneColors[0]) ==
                   CreationExtras::HUD_PANE_COUNT,
               "HUD colour table changed");
 
-constexpr char kTimerNames[] =
-    "Normal digit 1\0Normal digit 2\0Normal digit 3\0Normal digit 4\0"
-    "Normal digit 5\0Normal digit 6\0Countdown digit 1\0Countdown digit 2\0"
-    "Countdown digit 3\0Countdown digit 4\0Separator 1\0Separator 2\0Separator 3";
 constexpr char kNativeTimerNames[] =
     "Normal digit 1\0Normal digit 2\0Normal digit 3\0Normal digit 4\0"
     "Normal digit 5\0Normal digit 6\0Countdown digit 1\0Countdown digit 2\0"
@@ -128,8 +124,7 @@ constexpr int packedEntries(const char *pool, u32 bytes) {
 static_assert(packedEntries(kMenuText, sizeof(kMenuText)) ==
                   CreationExtras::MENU_ROW_COUNT,
               "Creation menu row table changed");
-static_assert(packedEntries(kTimerNames, sizeof(kTimerNames)) ==
-                  SUSAMUNE_CREATION_TIMER_CHAR_COUNT,
+static_assert(packedEntries(kNativeTimerNames, sizeof(kNativeTimerNames)) == 15,
               "Sunshine timer colour table changed");
 
 const char kWallkickNames[] =
@@ -382,6 +377,7 @@ void CreationExtras::resetDefaults() {
     mPbBannerStyle = defaultPbBannerStyle();
     mStageSessionStyle = defaultStageSessionStyle();
     mNativeTimerStyle = defaultNativeTimerStyle();
+    mNativeTimerCustomMask = 0;
     memcpy(mHealthRgb, kHealthDefaults, sizeof(mHealthRgb));
     for (u32 i = 0; i < sizeof(mHudPictures) / sizeof(mHudPictures[0]); i++)
         mHudPictures[i] = nullptr;
@@ -422,6 +418,10 @@ void CreationExtras::adopt(const volatile SusamuneCreationCfg *src) {
     }
     mColorPresent = src->colorPresent &
                     ((1u << SUSAMUNE_CREATION_COLOR_COUNT) - 1u);
+    mNativeTimerCustomMask = 0;
+    for (unsigned i = 0; i < 15; ++i)
+        if (mColorPresent & SUSAMUNE_CREATION_COLOR(nativeTimerColorSlot(i)))
+            mNativeTimerCustomMask |= 1u << i;
     if (src->healthStyleMagic == SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC) {
         for (int i = 0; i < 2; ++i) {
             const u32 bit = SUSAMUNE_CREATION_COLOR(SUSAMUNE_CREATION_HEALTH_COLOR + i);
@@ -543,6 +543,11 @@ void CreationExtras::adoptWallkick(
     loadStyle(mWallkickStyle, &src->x);
     memcpy(mWallkickRgb, (const void *)src->rgb, sizeof(mWallkickRgb));
     if (src->version >= 2 &&
+        src->nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC &&
+        !(src->nativeTimerCustomMask[0] & 0x80))
+        mNativeTimerCustomMask = (u16)src->nativeTimerCustomMask[0] << 8 |
+                                src->nativeTimerCustomMask[1];
+    if (src->version >= 2 &&
         src->notificationStyleMagic == SUSAMUNE_NOTIFICATION_STYLE_MAGIC) {
         mToastStyle.x = src->toastX;
         mToastStyle.y = src->toastY;
@@ -570,6 +575,9 @@ void CreationExtras::stageWallkickInto(
     dst->pbPopupX = mPbBannerStyle.x;
     dst->pbPopupY = mPbBannerStyle.y;
     dst->pbPopupScale = mPbBannerStyle.scale;
+    dst->nativeTimerModesMagic = SUSAMUNE_NATIVE_TIMER_MODES_MAGIC;
+    dst->nativeTimerCustomMask[0] = (u8)(mNativeTimerCustomMask >> 8);
+    dst->nativeTimerCustomMask[1] = (u8)mNativeTimerCustomMask;
     memset((void *)dst->reserved1, 0, sizeof(dst->reserved1));
 }
 
@@ -855,6 +863,11 @@ const char *CreationExtras::menuRowValue(int row) const {
 void CreationExtras::beginColorEditor(int first, int count, const char *title,
                                       const char *names) {
     if (editing()) return;
+    if (first == SUSAMUNE_CREATION_TIMER_BG || first == SUSAMUNE_CREATION_TIMER_LABEL) {
+        beginNativeTimerEditor();
+        mEditor.selectTarget(first == SUSAMUNE_CREATION_TIMER_BG ? 15 : 14);
+        return;
+    }
     mDirtyBeforeEdit = mDirty;
     mColorPresentBeforeEdit = mColorPresent;
     mEditMode = EDIT_COLOR;
@@ -868,7 +881,7 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
 }
 
 bool CreationExtras::nativeTimerColorsEnabled() const {
-    return (mColorPresent & (((1u << 14) - 1u) << 9 | (1u << 2))) != 0;
+    return mNativeTimerCustomMask != 0;
 }
 
 const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane) const {
@@ -877,7 +890,7 @@ const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane) const {
         const unsigned picture = i == 14 ? 0 : i + 11;
         const unsigned slot = nativeTimerColorSlot(i);
         if (mHudPictures[picture] == pane &&
-            (mColorPresent & SUSAMUNE_CREATION_COLOR(slot))) return mColors[slot];
+            (mNativeTimerCustomMask & (1u << i))) return mColors[slot];
     }
     return nullptr;
 }
@@ -986,15 +999,12 @@ void CreationExtras::beginNativeTimerEditor() {
                   kNativeTimerNames, CreationEditor::CAP_POSITION |
                   CreationEditor::CAP_SCALE | CreationEditor::CAP_TEXT_ALPHA |
                   CreationEditor::CAP_BRIGHTNESS | CreationEditor::CAP_TEXT_COLOR |
-                  CreationEditor::CAP_OFFSET_POSITION);
+                  CreationEditor::CAP_OFFSET_POSITION | CreationEditor::CAP_COLOR_MODE,
+                  &mNativeTimerCustomMask);
 }
 
 void CreationExtras::beginTimerCharacterEditor() {
-    if (editing()) return;
-    beginColorEditor(SUSAMUNE_CREATION_TIMER_CHAR_FIRST,
-                     SUSAMUNE_CREATION_TIMER_CHAR_COUNT,
-                     "Sunshine timer characters", kTimerNames);
-    mEditMode = EDIT_TIMER;
+    beginNativeTimerEditor();
 }
 
 void CreationExtras::restoreHudDefaults() {
@@ -1004,6 +1014,7 @@ void CreationExtras::restoreHudDefaults() {
     memcpy(mColors, mDefaultColors, sizeof(mColors));
     mColorPresent = (1u << SUSAMUNE_CREATION_COLOR_COUNT) - 1u;
     mColorPresent &= ~((((1u << 14) - 1u) << 9) | (1u << 2));
+    mNativeTimerCustomMask = 0;
     mTimerLabelVisible = 1;
     applyHud();
     if (mHudPictures[HUD_PANE_COUNT - 1])
@@ -1294,7 +1305,9 @@ void CreationExtras::updateEditor(TMarioGamePad *pad) {
         if (result & (CreationEditor::UPDATE_CHANGED | CreationEditor::UPDATE_CANCELLED)) {
             for (int i = 0; i < 15; ++i) {
                 const int slot = nativeTimerColorSlot(i);
-                if ((result & CreationEditor::UPDATE_COLOR_CHANGED) &&
+                if ((result & (CreationEditor::UPDATE_COLOR_CHANGED |
+                               CreationEditor::UPDATE_MODE_CHANGED)) &&
+                    (mNativeTimerCustomMask & (1u << i)) &&
                     (!mEditor.target() || mEditor.target() == i + 1))
                     mColorPresent |= SUSAMUNE_CREATION_COLOR(slot);
                 copyRgb(mColors[slot], mWordBackup[i]);
@@ -1444,10 +1457,6 @@ void CreationExtras::drawEditor(Menu *menu) const {
                               SUSAMUNE_CREATION_WORD_CHARS, mWords[word],
                               false, selected);
         mEditor.draw(menu, mEditTitle, mWords[word]);
-        return;
-    }
-    if (mEditMode == EDIT_TIMER) {
-        mEditor.draw(menu, mEditTitle, "12:34:567");
         return;
     }
     if (mEditMode == EDIT_RECENT_ILS) {

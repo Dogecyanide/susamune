@@ -50,7 +50,6 @@ int wrap(int value,int count){return (value+count)%count;}
 namespace PracticeSession {
 bool requestPauseToggle(bool menu){fromMenu=menu;hit(1);return true;}
 bool requestStep(bool menu){fromMenu=menu;hit(2);return true;}
-bool requestSpin(bool cw,bool menu){fromMenu=menu;hit(cw?3:4);return true;}
 bool requestFreeCameraToggle(){hit(5);return true;}
 void recenterCamera(){hit(6);}
 bool requestRecord(){hit(7);return true;}
@@ -125,7 +124,7 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
 
     def test_each_page_reaches_its_own_actions(self):
         for page, row, action, closes, from_menu in (
-                (0, 0, 1, 1, 1), (0, 1, 2, 1, 1), (0, 2, 3, 1, 1), (0, 3, 4, 1, 1),
+                (0, 0, 1, 1, 1), (0, 1, 2, 1, 1),
                 (1, 0, 5, 1, 0), (1, 1, 1, 1, 1), (1, 4, 6, 0, 0),
                 (2, 0, 7, 1, 0), (2, 1, 8, 1, 0), (2, 2, 9, 0, 0)):
             self.assertEqual(self.route(page, row),
@@ -160,7 +159,7 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
             self.assertEqual(list(out), [1, 0, 0, 0])
 
     def test_navigation_stays_within_each_page(self):
-        for page, last in ((0, 3), (1, 4), (2, 2)):
+        for page, last in ((0, 1), (1, 4), (2, 2)):
             self.assertEqual(self.route(page, 0, 1, 0)[1][3], last)
             self.assertEqual(self.route(page, last, 2, 0)[1][3], 0)
 

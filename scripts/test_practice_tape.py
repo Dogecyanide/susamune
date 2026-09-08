@@ -63,6 +63,7 @@ static bool running, sObserverMarioBaselineFinalized, sObserverMarioOwned;
 static bool sFrameFrozen;
 static unsigned released;
 bool observerRunning() { return running; }
+int observerQf() { return 0; }
 void releaseObserverMario(bool) { ++released; }
 '''
         wrapper = r'''

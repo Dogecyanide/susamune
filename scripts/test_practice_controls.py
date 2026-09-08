@@ -34,8 +34,7 @@ class PracticeControlsTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
             "bool observerTransition()", "f32 axis(s8 value)",
-            "f32 cameraSpeedScale()", "void spinInput(", "void updateCamera()",
-            "bool requestSpin("))
+            "f32 cameraSpeedScale()", "void updateCamera()"))
         source.write_text(r'''
 #include "susamune/practice_input.h"
 typedef unsigned char u8;
@@ -85,17 +84,6 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     out[4]=sCameraView.target.y;out[5]=sCameraView.target.z;
     out[6]=sYaw;out[7]=sPitch;out[8]=sCameraWaitButtons;
 }
-extern "C" __declspec(dllexport) void spin(unsigned index,int cw,SusamunePracticeInput *input) {
-    spinInput((u8)index,cw!=0,*input);
-}
-extern "C" __declspec(dllexport) unsigned queue(unsigned flags,int cw,int fromMenu) {
-    sPaused=flags&1;sNormal=flags&2;sFreeCamera=flags&4;Ghost::active=flags&8;
-    Ghost::loading=flags&16;Ghost::cleanup=flags&32;sSpinRemaining=0;
-    sStepQueued=true;sMenuAction=0;invalidations=0;
-    bool ok=requestSpin(cw!=0,fromMenu!=0);
-    return sSpinRemaining|(sMenuAction<<8)|(ok<<16)|(invalidations<<17)|
-           (sStepQueued<<18)|(sSpinClockwise<<19);
-}
 ''', encoding="ascii")
         library = source.with_suffix(".dll")
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
@@ -110,9 +98,6 @@ extern "C" __declspec(dllexport) unsigned queue(unsigned flags,int cw,int fromMe
         cls.lib.trig(cls.sine, cls.cosine)
         cls.lib.camera.argtypes = [C.c_float, C.c_uint, C.c_uint, C.POINTER(Input),
                                   C.POINTER(C.c_float)]
-        cls.lib.spin.argtypes = [C.c_uint, C.c_int, C.POINTER(Input)]
-        cls.lib.queue.argtypes = [C.c_uint, C.c_int, C.c_int]
-        cls.lib.queue.restype = C.c_uint
 
     def camera(self, yaw=0, choice=2, flags=0, **controls):
         raw = Input(**controls)
@@ -164,51 +149,16 @@ extern "C" __declspec(dllexport) unsigned queue(unsigned flags,int cw,int fromMe
         for value in range(-11, 12):
             self.assertEqual(self.camera(stickX=value, stickY=value)[:3], [0, 0, 0])
 
-    def test_rotation_uses_only_real_stick_fields_and_completes_one_circle(self):
-        for clockwise in (0, 1):
-            values = []
-            for index in range(9):
-                raw = Input(0x142, 1, 2, -33, 44, 55, 66, 77, 88, -1, 9)
-                before = bytes(raw)
-                self.lib.spin(index, clockwise, C.byref(raw))
-                self.assertEqual(bytes(raw)[:2] + bytes(raw)[4:], before[:2] + before[4:])
-                values.append((raw.stickX, raw.stickY))
-            self.assertEqual(values[0], values[-1])
-            self.assertEqual(len(set(values)), 8)
-            self.assertEqual(values[1][0] > 0, bool(clockwise))
-
-    def test_full_circle_covers_every_retail_angle_quadrant(self):
-        vectors = []
-        for i in range(8):
-            raw = Input()
-            self.lib.spin(i, 1, C.byref(raw))
-            vectors.append(math.atan2(raw.stickX, raw.stickY))
-        for heading in range(0, 65536, 17):
-            quadrants = set()
-            for angle in vectors:
-                value = ((round(angle * 32768 / math.pi) + heading + 32768) % 65536) - 32768
-                if value < -24576 or value > 24576:
-                    quadrants.add(0)
-                if -24576 <= value <= -8192:
-                    quadrants.add(1)
-                if -8192 < value < 8192:
-                    quadrants.add(2)
-                if 8192 <= value <= 24576:
-                    quadrants.add(3)
-            self.assertEqual(len(quadrants), 4)
-
-    def test_queue_requires_player_frame_hold_and_waits_for_menu_A_release(self):
-        for flags in range(64):
-            result = self.lib.queue(flags, 1, 1)
-            if flags == 3:
-                self.assertEqual(result & 255, 9)
-                self.assertEqual((result >> 8) & 255, 1)
-                self.assertTrue(result & (1 << 16))
-                self.assertTrue(result & (1 << 17))
-                self.assertFalse(result & (1 << 18))
-            else:
-                self.assertEqual(result & 255, 0)
-                self.assertFalse(result & (1 << 16))
+    def test_automated_spins_are_removed_but_wire_ids_stay_reserved(self):
+        practice = (ROOT / "src/practice_session.cpp").read_text()
+        main = (ROOT / "src/main.cpp").read_text()
+        menu = (ROOT / "src/menu.cpp").read_text()
+        binds = (ROOT / "include/susamune/binds_list.h").read_text()
+        for token in ("requestSpin", "spinInput", "sSpinRemaining", "Queue clockwise spin"):
+            self.assertNotIn(token, practice + main + menu)
+        for token in ("BIND_PRACTICE_SPIN_CW", "BIND_PRACTICE_SPIN_CCW"):
+            self.assertIn(token, binds)
+            self.assertNotIn(token, main)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,15 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release, controls and ghost library update.
+V2.3.0 pre-release, frame-input and timer feedback update.
+
+- Pause accepts held gameplay buttons. Releasing and pressing a button again between steps now registers on the next Step; held buttons do not create extra presses.
+- QFT stops during frame holds and advances on Step. A small TAS label stays beside it for the assisted attempt.
+- Removed queued spin actions and shortcuts. Manual stick input remains available during frame advance.
+- Sunshine timer Appearance can be Original or Custom, for All or individual characters, TIME and streak. Original restores retail shading while retaining custom colours and placement.
+- Empty personal ghost rows offer to save the latest recording instead of requesting another scan.
+- Startup frames now finish copying before display, addressing missing one-off status text such as Checking storage devices.
+
+Controls and ghost library update:
 
 - Theme preload before kernel startup when the launch device is ready; corrected first-frame reveal, depth state and startup/error text contrast.
 - Separate Frame advance, Free camera and Input replay pages, showing current shortcuts with X to change them directly.
@@ -17,7 +26,7 @@ Earlier feedback update:
 - Full Sunshine timer editor, accurate blue/purple/white colours, and independent health/underwater-air colours.
 - Hold Y for one-unit RGB adjustments; metadata field/row spacing, column limits and compact widths.
 - Corrected free-camera strafe direction, five saved speeds and an X speed boost.
-- Pause, step and free camera during ghost Watch; queued spin inputs while frame advancing.
+- Pause, step and free camera during ghost Watch.
 - Assisted ghost recordings omit held time and carry a TAS label; ordinary PB eligibility stays separate.
 - Ghost input controls in the Ghosts page and Layout editor, with the clearer Both ghosts label.
 - Rollout and dust editors now appear beside their movement settings; timer/split controls also appear under Runs.

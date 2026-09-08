@@ -21,6 +21,12 @@ class QFTTimer {
   // configured duration on that same frame.
   void beginFrame();
 
+  // Exclude only a practice hold; retail director/audio clocks remain live.
+  void beginPracticePause();
+  void endPracticePause();
+  void markPracticeAssisted();
+  bool practiceAssisted() const;
+
   // Stage lifecycle and post-direct display update.
   void onStageSetup(TMarDirector *director);
   void update();

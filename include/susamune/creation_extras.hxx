@@ -109,7 +109,6 @@ private:
     enum EditMode {
         EDIT_NONE,
         EDIT_COLOR,
-        EDIT_TIMER,
         EDIT_WORD_STYLE,
         EDIT_RECENT_ILS,
         EDIT_SAVESTATE_FEEDBACK,
@@ -187,6 +186,7 @@ private:
     u32 mColorPresent;
     u32 mColorPresentBeforeEdit;
     u32 mPreviewVisible;
+    u16 mNativeTimerCustomMask;
     u8 mWaterFillDefault[2][3];
     u8 mTimerLabelVisible;
     bool mKeyboard;

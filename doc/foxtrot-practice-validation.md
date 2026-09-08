@@ -15,8 +15,9 @@ Only initialized samples up to the current count are read; stage setup
 invalidates that count without clearing unrelated mailbox or model memory.
 The move frees 65,536 bytes of mod BSS capacity. The requested 768 KiB MEM1
 reservation remains unchanged. Two 236-byte controller histories and under
-512 bytes of camera view state remain in MEM1. No heap is allocated and no
-timer source, callback or clock is changed.
+512 bytes of camera view state remain in MEM1. No heap is allocated.
+The September 8 timer integration excludes practice holds
+from QFT while preserving the retail director and audio clocks, as described below.
 
 ## Gameplay hold and Step
 
@@ -36,8 +37,8 @@ It is not one QF or an emulator pause.
 The configured Step/Resume combo is removed from the gameplay sample,
 including an associated analog trigger; the remaining controller input is
 decoded normally. With free camera active, a step uses neutral gameplay input.
-Step is the explicit subset-match exception to exact action binds: holding
-extra gameplay buttons still allows the configured Step combo to fire. While
+Pause and Step are explicit subset-match exceptions to exact action binds: holding
+extra gameplay buttons still allows either configured combo to fire. While
 paused, a fresh Step edge can also accompany A held from menu dismissal;
 modals and the bind recorder still block it. Consumed shortcut buttons remain
 suppressed through release, including analog L/R travel after the digital click
@@ -48,7 +49,8 @@ If an old Pause combo contains the configured Step combo, Pause/Resume wins
 that edge; it cannot immediately pause itself again by also firing Step.
 
 New configuration defaults are D-Down Pause/Resume and D-Up Step. Camera,
-Record, Replay, Stop and spin shortcuts are unassigned. Existing configured
+Record, Replay and Stop shortcuts are unassigned. Retired spin IDs remain reserved
+and inert, with no menu entries or input generation. Existing configured
 values are not migrated. Practice now has separate Frame advance, Free camera
 and Input replay (experimental) pages, with the selected action's actual bind
 shown and X to rebind it.
@@ -135,32 +137,40 @@ hold after releasing its activation combo. Results are recorded in
 `build/foxtrot-smoke/feedback-visible-controls.json`; this fixture changes only
 the private raw-pad read site, not simulation state.
 
-## Queued spin inputs
+## Held buttons and manual spins
 
-While gameplay is held, Queue clockwise/counterclockwise rotation prepares
-nine real main-stick samples: Up, the seven remaining 45-degree directions,
-then Up again. Each successful Step consumes one sample; held rendering,
-menus and failed steps consume none. Other controller fields remain the
-player's input. Hold A on the ninth Step for a spin jump, or choose an earlier
-jump point manually. Menu entry waits for A release. Resume, load, departure,
-Stop and enabling free camera clear the queue. Spin queuing is unavailable
-while Watch owns Mario.
+The frozen controller history now observes physical releases between steps.
+Releasing A and pressing it again makes the next Step see a fresh press;
+continuous holds do not repeat the edge. A tap released before Step is not
+queued. The render-only samples still cannot advance Mario's stick history.
 
-The game itself builds and recognizes the angle history. No Mario angle
-history, action or spin flag is written by the mod. The pinned decomp's
-[`makeHistory` and `checkStickRotate`](https://github.com/doldecomp/sms/blob/a56e1cf00289fc6467af7d2c32ed428b44d2d2f8/src/Player/MarioMove.cpp#L1595)
-describe the path; the three retail functions were checked independently.
+Automatic spin input generation was removed at the user's request on September 8.
+The two old bind IDs remain reserved for configuration compatibility and cannot
+dispatch an action. Manual main-stick samples continue through the retail
+rotation-history path on gameplay steps, with free camera off.
 
-The September 5 US live fixture used Dolphin 2606a JIT and release-image CRC
-`5FF0C16B`, with only the private PADRead-call substitution used to feed raw
-controller packets. Clockwise reached retail Mario state `0x895` and
-counterclockwise `0x896`, both on the ninth Step with A. Each step consumed
-exactly one queued direction and incremented the practice step count once.
-This US scene used four retail history samples per displayed step; after
-nine steps the game held 36 samples within its live 40-sample window.
-The trace is `build/foxtrot-smoke/feedback-show-controls.json` and the captured
-symbol map is `feedback-show-symbols.txt` beside it. This is emulator evidence,
-not a Wii spin-input validation.
+## QFT during practice holds
+
+The user's September 8 request explicitly authorizes this narrow QFT change.
+The scratch location and ordinary timer paths remain unchanged. Before and
+after a held director pass, QFT measures elapsed director ticks and excludes
+them through its existing offset. A Step runs normally. Existing frozen,
+death, plant and transition captures are rebased to preserve their displayed
+time, and state load or a new attempt cancels an in-flight hold measurement.
+An event display's remaining freeze frames also stay fixed during a hold.
+The compact readout uses current adjusted time while frame-advance is paused,
+so every Step is visible even when an event-freeze setting is active. Ordinary
+event-freeze display behavior returns on Resume.
+The director clock remains live because audio deadlines also depend on it.
+
+The compact display carries a small TAS label for the assisted attempt and
+reserves space before its split delta. Its assistance flag follows the QFT
+attempt through continuing areas and is saved with the timer sidecar. Ghost
+clocks see the adjusted QFT without subtracting the same time twice. Watch
+settles its observer clock after `direct()` so the next hold cannot discard
+the preceding Step's elapsed ticks. Focused production-code tests cover long
+holds, Step/resume, captured results, state load, attempt continuity and the
+actual before/after-direct order for ghost recording and both Watch modes.
 
 ## Local input takes
 

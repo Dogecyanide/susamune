@@ -37,9 +37,11 @@ directions, matching Mare's high-contrast treatment. Mare's Super Mario Script
 font is not bundled because the available font file contains no redistribution
 license metadata.
 
-The early IOS/kernel preparation screens still use the procedural background,
-because the SD or USB volume is not mounted yet. The custom image begins on the
-launcher menu after the storage check.
+Startup tries the launcher's own device first, loading the theme before kernel
+preparation when that device is ready. A device that becomes available later
+uses the procedural background until the regular storage check can load it.
+Each status frame finishes its framebuffer copy before it is presented, including
+one-off messages such as Checking storage devices.
 
 PNG decoding is streamed from FatFS one row at a time. The stock view is drawn
 with rectangles and owns no texture allocation; loading a custom theme allocates

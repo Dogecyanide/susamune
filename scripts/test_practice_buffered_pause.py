@@ -44,6 +44,7 @@ static TApplication gpApplication={{&pad}};
 static TMarioGamePad *sReadPad;
 static bool sHaveRead;
 static u16 sBeforeRead;
+struct Timer { void beginPracticePause() {} } gQFTTimer;
 void capturePad(u16 &out,TMarioGamePad *p) { out=p->flags; }
 struct Mario { u32 mState; } mario;
 static Mario *gpMarioOriginal=&mario;

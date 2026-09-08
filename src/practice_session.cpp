@@ -9,6 +9,7 @@
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
+#include "susamune/qft_timer.hxx"
 #include "susamune/savestate.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/stage_loader.hxx"
@@ -41,7 +42,6 @@ const u32 kHitClearCall = SUSAMUNE_MEM1_ADDR(0x800ed088u, 0x80299b04u, 0x8029199
 const u32 kChangeState = SUSAMUNE_MEM1_ADDR(0x800ec404u, 0x80298e80u, 0x80290d18u);
 const u32 kChangeStateCall = SUSAMUNE_MEM1_ADDR(0x800ed290u, 0x80299d0cu, 0x80291ba4u);
 const u32 kMaxFrames = 4096;
-const u8 kSpinFrames = 9;
 
 struct Frame {
     SusamunePracticeInput input;
@@ -103,9 +103,6 @@ bool sReplay;
 bool sOwnLoad;
 bool sSeedValid;
 bool sFrameInjected;
-bool sSpinApplied;
-bool sSpinClockwise;
-u8 sSpinRemaining;
 u8 sLoadKind;
 u8 sMenuAction;
 u16 sLoadWait;
@@ -193,6 +190,7 @@ void message(const char *text) {
 
 void invalidate() {
     sAssisted = true;
+    gQFTTimer.markPracticeAssisted();
     ILing::invalidateForAssist();
     Records::invalidateAttempt();
     Ghost::invalidateForAssist();
@@ -257,6 +255,19 @@ void restorePad(const PadHistory &in, TMarioGamePad *pad) {
     memcpy(&JUTGamePad::mPadSStick[0], in.shared + 64, 16);
     memcpy(&pad->mButtons, in.controls, sizeof(in.controls));
     memcpy(&pad->_A4, in.meaning, sizeof(in.meaning));
+}
+
+void retainPausedReleases(TMarioGamePad *pad) {
+    const u32 held = pad->mButtons.mInput;
+    const u32 meaning = pad->mMeaning;
+    restorePad(sBeforeRead, pad);
+    // A release between steps must re-arm the next press without consuming it.
+    JUTGamePad::mPadButton[0].mInput &= held;
+    pad->mButtons.mInput &= held;
+    pad->mMeaning &= meaning;
+    pad->mFrameMeaning = 0;
+    pad->_D8 = 0;
+    capturePad(sBeforeRead, pad);
 }
 
 SusamunePracticeInput snapshot(const PADStatus &pad) {
@@ -376,16 +387,6 @@ void consumeControlInput() {
     if (sPhysical.triggerL >= 30) held |= JUTGamePad::L;
     if (sPhysical.triggerR >= 30) held |= JUTGamePad::R;
     sStripButtons &= held;
-}
-
-void spinInput(u8 index, bool clockwise, SusamunePracticeInput &input) {
-    static const s8 directions[8][2] = {
-        {0, 80}, {57, 57}, {80, 0}, {57, -57},
-        {0, -80}, {-57, -57}, {-80, 0}, {-57, 57},
-    };
-    const u8 direction = clockwise ? index & 7u : (8u - index) & 7u;
-    input.stickX = directions[direction][0];
-    input.stickY = directions[direction][1];
 }
 
 void updateCamera() {
@@ -527,6 +528,7 @@ extern "C" s32 susamunePracticeChangeState(TMarDirector *director) {
         sHaveRead = true;
         // Keep nextStateInitialize's newly enabled pad flags across the hold.
         capturePad(sBeforeRead, sReadPad);
+        gQFTTimer.beginPracticePause();
         // changeState can finish an intro between two ticks of this frame.
         director->mCurState = TMarDirector::STATE_STAGE_EXIT_2;
         sBorrowedPause = true;
@@ -568,7 +570,6 @@ void beforeStageSetup() {
     sPaused = false;
     sBorrowedPause = false;
     sStepQueued = false;
-    sSpinRemaining = 0;
     sMenuAction = 0;
     sFreeze = false;
     sAssisted = false;
@@ -586,7 +587,6 @@ void beforeDirect(bool modalOwnsInput) {
     restoreCamera();
     sConsumedFrame = false;
     sStepping = false;
-    sSpinApplied = false;
     sModal = modalOwnsInput;
     const bool injectedBeforeDirect = sFrameInjected;
     activatePendingPause();
@@ -594,14 +594,17 @@ void beforeDirect(bool modalOwnsInput) {
         sCameraWaitButtons = false;
         sPaused = false;
         sStepQueued = false;
-        sSpinRemaining = 0;
         sMenuAction = 0;
         sFreeze = false;
         sFreeCamera = false;
         if (sRecord || sReplay) stopTape("Input session ended: scene transition");
         return;
     }
-    if (sAssisted) invalidate();
+    if (assisted()) {
+        ILing::invalidateForAssist();
+        Records::invalidateAttempt();
+        Ghost::invalidateForAssist();
+    }
     if ((sRecord || sReplay) && settingsHash() != sSettingsHash)
         stopTape("Settings changed - record again");
     if ((sRecord || sReplay) && actionsFastForwardActive())
@@ -619,7 +622,6 @@ void beforeDirect(bool modalOwnsInput) {
         if (sMenuAction == 2) {
             sPaused = false;
             sStepQueued = false;
-            sSpinRemaining = 0;
             if (!Ghost::observerActive()) sFreeCamera = false;
             message("Gameplay resumed");
             CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, 0, sSteps);
@@ -632,19 +634,15 @@ void beforeDirect(bool modalOwnsInput) {
         sStepQueued = false;
         sMenuAction = 0;
     }
-    if ((sStripButtons || (sStepping && sSpinRemaining)) && !sModal && sHaveRead &&
+    if (sStripButtons && !sModal && sHaveRead &&
         sReadPad == gpApplication.mGamePads[0] && !sReplay) {
         consumeControlInput();
-        if (sStepping && sSpinRemaining && !sFreeCamera) {
-            spinInput(kSpinFrames - sSpinRemaining, sSpinClockwise, sConsumed);
-            sSpinApplied = true;
-        }
         inject(sConsumed, sReadPad);
         sReadPad->updateMeaning();
     }
     sFreeze = sPaused && !sStepping && normalStage();
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
-        restorePad(sBeforeRead, sReadPad);
+        retainPausedReleases(sReadPad);
     }
     if (sFreeCamera && !sPaused &&
         gpMarDirector->mCurState != TMarDirector::STATE_PAUSE_MENU &&
@@ -657,6 +655,7 @@ bool freezeRequested() { return sFreeze; }
 bool ownsGameplayInput() { return sPaused || sFreeCamera || sReplay || sLoadKind != 0; }
 
 void afterDirect(s32 appState, bool gameplayActive) {
+    gQFTTimer.endPracticePause();
     if (sBorrowedPause) {
         if (stageReady() && gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2)
             gpMarDirector->mCurState = TMarDirector::STATE_NORMAL;
@@ -670,7 +669,6 @@ void afterDirect(s32 appState, bool gameplayActive) {
         sFreeCamera = false;
         sPaused = false;
         sStepQueued = false;
-        sSpinRemaining = 0;
         sMenuAction = 0;
         sFreeze = false;
         return;
@@ -692,7 +690,6 @@ void afterDirect(s32 appState, bool gameplayActive) {
         if (sRecord || sReplay) stopTape("Controller disconnected - input stopped");
         return;
     }
-    if (sSpinApplied && sSpinRemaining) --sSpinRemaining;
     if (sRecord) {
         if (sCount == kMaxFrames) {
             stopTape("Input recording full");
@@ -778,7 +775,6 @@ void onSavestateLoaded() {
     sCamera = nullptr;
     sFreeCamera = false;
     sStepQueued = false;
-    sSpinRemaining = 0;
     sHaveRead = false;
     if (!sOwnLoad) stopTape(nullptr);
     invalidate();
@@ -789,7 +785,7 @@ bool requestPauseToggle(bool fromMenu) {
         message("Frame advance is unavailable");
         return false;
     }
-    if (gBinds.wasPressed(BIND_PRACTICE_PAUSE))
+    if (!fromMenu)
         sStripButtons |= gBinds.get(BIND_PRACTICE_PAUSE);
     if (sPausePending) {
         sPausePending = false;
@@ -813,11 +809,10 @@ bool requestPauseToggle(bool fromMenu) {
     sPaused = !sPaused;
     sStepQueued = false;
     if (!sPaused) {
-        sSpinRemaining = 0;
         if (!Ghost::observerActive()) { sFreeCamera = false; restoreCamera(); }
     }
     else invalidate();
-    message(sPaused ? "Frame advance paused - clocks stay live" : "Gameplay resumed");
+    message(sPaused ? "Paused - hold your inputs, then press Step" : "Gameplay resumed");
     CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, sPaused ? 1 : 0, sSteps);
     return true;
 }
@@ -848,21 +843,6 @@ bool requestStep(bool fromMenu) {
     sMenuAction = fromMenu ? 1 : 0;
     if (fromMenu) message("Release A to advance one frame");
     invalidate();
-    return true;
-}
-
-bool requestSpin(bool clockwise, bool fromMenu) {
-    if (!sPaused || !normalStage() || sFreeCamera || Ghost::observerActive() ||
-        observerTransition()) {
-        message("Queue spin needs frame hold without free camera");
-        return false;
-    }
-    sSpinClockwise = clockwise;
-    sSpinRemaining = kSpinFrames;
-    sStepQueued = false;
-    sMenuAction = fromMenu ? 1 : 0;
-    invalidate();
-    message("Spin queued: Step each direction; hold A to jump");
     return true;
 }
 
@@ -912,7 +892,6 @@ bool requestFreeCameraToggle() {
     }
     recenterCamera();
     sFreeCamera = true;
-    sSpinRemaining = 0;
     sCameraWaitButtons = true;
     invalidate();
     message("Free camera: sticks move/look, L/R height, X boost");
@@ -962,7 +941,6 @@ bool requestPlayback() {
 void requestStop() {
     if (gBinds.wasPressed(BIND_PRACTICE_STOP))
         sStripButtons |= gBinds.get(BIND_PRACTICE_STOP);
-    sSpinRemaining = 0;
     stopTape("Input session stopped");
     gBinds.suppressUntilRelease();
 }
@@ -980,7 +958,6 @@ void releaseForDeparture() {
     sPaused = false;
     sFreeCamera = false;
     sStepQueued = false;
-    sSpinRemaining = 0;
     sStepping = false;
     sFreeze = false;
     sConsumedFrame = false;
@@ -998,7 +975,6 @@ bool replaying() { return sReplay; }
 bool assisted() { return sAssisted; }
 bool available() { return sPadHookReady; }
 u32 stepCount() { return sSteps; }
-u32 queuedSpinFrames() { return sSpinRemaining; }
 u32 recordedFrames() { return sCount; }
 u32 replayFrame() { return sCursor; }
 u32 capacityFrames() { return kMaxFrames; }
@@ -1012,20 +988,18 @@ bool consumedInput(SusamunePracticeInput *out) {
 
 void draw(Menu *menu) {
     if (!menu || menu->shown() || menu->hasToast() ||
-        (!sPaused && !sPausePending && !sFreeCamera && !sRecord && !sReplay && !sLoadKind)) return;
+        (!sPausePending && !sFreeCamera && !sRecord && !sReplay && !sLoadKind)) return;
     char text[96];
     if (sPausePending) snprintf(text, sizeof(text), "FRAME ADVANCE ARMED - waiting for Mario control");
     else if (sRecord) snprintf(text, sizeof(text), "INPUT REC  %lu / %lu", sCount, kMaxFrames);
     else if (sReplay) snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu", sCursor, sCount);
     else if (sFreeCamera) snprintf(text, sizeof(text), "CAMERA ON  %.2fx  X boost  Mario input OFF",
                                   cameraSpeedScale());
-    else if (sSpinRemaining) snprintf(text, sizeof(text), "SPIN %s  %u directions left  Step + A: jump",
-                                     sSpinClockwise ? "CW" : "CCW", sSpinRemaining);
-    else snprintf(text, sizeof(text), "FRAME ADVANCE  %lu   Playback %lu", sSteps, sCursor);
+    else snprintf(text, sizeof(text), "INPUT SESSION - release buttons to begin");
     menu->fillBox(42, 388, 556, 40, JUtility::TColor(8, 17, 31, 225));
     menu->drawText(text, 50, 394, 16, 16, JUtility::TColor(130, 225, 255, 255));
     menu->drawText(sFreeCamera ? "Turn camera Off to step with A or other Mario inputs" :
-                   "Practice only - gameplay clocks are unchanged", 50, 413, 12, 12,
+                   "Hold your inputs, then press Step. Release A before another jump.", 50, 413, 12, 12,
                    JUtility::TColor(235, 235, 235, 255));
 }
 
