@@ -871,8 +871,14 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 }
 #endif /* #if MINIZ_USE_UNALIGNED_LOADS_AND_STORES */
 
-#if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN
-#ifdef MINIZ_UNALIGNED_USE_MEMCPY
+#if (MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN) || MINIZ_PORTABLE_FAST_DEFLATE
+#if MINIZ_PORTABLE_FAST_DEFLATE
+/* The fast parser also works on big-endian CPUs with byte-safe LE reads. */
+    static MZ_FORCEINLINE mz_uint32 TDEFL_READ_UNALIGNED_WORD32(const mz_uint8 *p)
+    {
+        return MZ_READ_LE32(p);
+    }
+#elif defined(MINIZ_UNALIGNED_USE_MEMCPY)
     static mz_uint32 TDEFL_READ_UNALIGNED_WORD32(const mz_uint8 *p)
     {
         mz_uint32 ret;
@@ -882,6 +888,10 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 #else
 #define TDEFL_READ_UNALIGNED_WORD32(p) *(const mz_uint32 *)(p)
 #endif
+    static MZ_FORCEINLINE mz_uint16 tdefl_read_le16(const mz_uint8 *p)
+    {
+        return (mz_uint16)MZ_READ_LE16(p);
+    }
     static mz_bool tdefl_compress_fast(tdefl_compressor *d)
     {
         /* Faster, minimally featured LZRW1-style match+parse loop with better register utilization. Intended for applications where raw throughput is valued more highly than ratio. */
@@ -917,20 +927,20 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                 mz_uint cur_match_dist, cur_match_len = 1;
                 mz_uint8 *pCur_dict = d->m_dict + cur_pos;
                 mz_uint first_trigram = TDEFL_READ_UNALIGNED_WORD32(pCur_dict) & 0xFFFFFF;
-                mz_uint hash = (first_trigram ^ (first_trigram >> (24 - (TDEFL_LZ_HASH_BITS - 8)))) & TDEFL_LEVEL1_HASH_SIZE_MASK;
+                mz_uint hash = (first_trigram * 0x1E35A7BDu) >> (32 - TDEFL_LZ_HASH_BITS);
                 mz_uint probe_pos = d->m_hash[hash];
                 d->m_hash[hash] = (mz_uint16)lookahead_pos;
 
                 if (((cur_match_dist = (mz_uint16)(lookahead_pos - probe_pos)) <= dict_size) && ((TDEFL_READ_UNALIGNED_WORD32(d->m_dict + (probe_pos &= TDEFL_LZ_DICT_SIZE_MASK)) & 0xFFFFFF) == first_trigram))
                 {
-                    const mz_uint16 *p = (const mz_uint16 *)pCur_dict;
-                    const mz_uint16 *q = (const mz_uint16 *)(d->m_dict + probe_pos);
+                    const mz_uint8 *p = pCur_dict;
+                    const mz_uint8 *q = d->m_dict + probe_pos;
                     mz_uint32 probe_len = 32;
                     do
                     {
-                    } while ((TDEFL_READ_UNALIGNED_WORD2(++p) == TDEFL_READ_UNALIGNED_WORD2(++q)) && (TDEFL_READ_UNALIGNED_WORD2(++p) == TDEFL_READ_UNALIGNED_WORD2(++q)) &&
-                             (TDEFL_READ_UNALIGNED_WORD2(++p) == TDEFL_READ_UNALIGNED_WORD2(++q)) && (TDEFL_READ_UNALIGNED_WORD2(++p) == TDEFL_READ_UNALIGNED_WORD2(++q)) && (--probe_len > 0));
-                    cur_match_len = ((mz_uint)(p - (const mz_uint16 *)pCur_dict) * 2) + (mz_uint)(*(const mz_uint8 *)p == *(const mz_uint8 *)q);
+                    } while ((tdefl_read_le16(p += 2) == tdefl_read_le16(q += 2)) && (tdefl_read_le16(p += 2) == tdefl_read_le16(q += 2)) &&
+                             (tdefl_read_le16(p += 2) == tdefl_read_le16(q += 2)) && (tdefl_read_le16(p += 2) == tdefl_read_le16(q += 2)) && (--probe_len > 0));
+                    cur_match_len = (mz_uint)(p - pCur_dict) + (mz_uint)(*p == *q);
                     if (!probe_len)
                         cur_match_len = cur_match_dist ? TDEFL_MAX_MATCH_LEN : 0;
 
@@ -951,11 +961,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                         cur_match_dist--;
 
                         pLZ_code_buf[0] = (mz_uint8)(cur_match_len - TDEFL_MIN_MATCH_LEN);
-#ifdef MINIZ_UNALIGNED_USE_MEMCPY
-                        memcpy(&pLZ_code_buf[1], &cur_match_dist, sizeof(cur_match_dist));
-#else
-                        *(mz_uint16 *)(&pLZ_code_buf[1]) = (mz_uint16)cur_match_dist;
-#endif
+                        pLZ_code_buf[1] = (mz_uint8)cur_match_dist;
+                        pLZ_code_buf[2] = (mz_uint8)(cur_match_dist >> 8);
                         pLZ_code_buf += 3;
                         *pLZ_flags = (mz_uint8)((*pLZ_flags >> 1) | 0x80);
 
@@ -1054,7 +1061,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         d->m_num_flags_left = num_flags_left;
         return MZ_TRUE;
     }
-#endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN */
+#endif /* unaligned little-endian or portable fast parser */
 
     static MZ_FORCEINLINE void tdefl_record_literal(tdefl_compressor *d, mz_uint8 lit)
     {
@@ -1297,7 +1304,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         if ((d->m_output_flush_remaining) || (d->m_finished))
             return (d->m_prev_return_status = tdefl_flush_output_buffer(d));
 
-#if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN
+#if (MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN) || MINIZ_PORTABLE_FAST_DEFLATE
         if (((d->m_flags & TDEFL_MAX_PROBES_MASK) == 1) &&
             ((d->m_flags & TDEFL_GREEDY_PARSING_FLAG) != 0) &&
             ((d->m_flags & (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) == 0))

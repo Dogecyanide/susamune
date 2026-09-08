@@ -1860,9 +1860,6 @@ int main(int argc, char **argv)
 		SusamuneMusicInit();
 		SusamuneMusicLoad(GetRootDevice(), launch_dir);
 		SusamuneMusicStart();
-		ClearScreen();
-		GRRLIB_Render();
-		ClearScreen();
 		if (SusamuneThemeWarning()[0] != '\0')
 		{
 			ShowMessageScreen(SusamuneThemeWarning());
@@ -1874,7 +1871,8 @@ int main(int argc, char **argv)
 			usleep(2500000);
 		}
 		// The menu lists both devices, so the one auto boot skipped has to
-		// come up now.
+		// come up now. Keep the status visible during the USB timeout.
+		ShowMessageScreen("Checking storage devices...");
 		MountDeviceOnce(DEV_SD);
 		MountDeviceOnce(DEV_USB);
 		SusamuneMenuRun(GetRootDevice(), LauncherCanSave);

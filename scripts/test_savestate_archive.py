@@ -30,7 +30,10 @@ static StatePoolMemory sPoolMemory={{banks[0],banks[1]},{50000,50000}};
 struct StoredState {u32 generation,rawSize,packedSize,adler32,metadataTag;};
 static StoredState sSlots[3],sCandidate,returned;
 static u32 sDiskSlot,sDiskGeneration,sDiskPoolUsed,sDiskScene,sDurableSlots;
-static OSTime sDiskStarted;static bool sDiskActive;
+static u32 sPackedChecksums[3],fullDecodes,verifiedDecodes,policyBytes;
+static OSTime sDiskStarted;static bool sDiskActive,sDiskRestore,sDiskLoadReady;
+static u32 sLoadSlot,sPendingSlot,sPendingGeneration;
+static SusamuneStateCatalogEntry sSelectedSD;
 static const char*sDiskStatus;
 static bool candidateMatches,transportBusy,ready;static u32 scene,rebased,cleared,notified,stores;
 static bool muted,interrupts;
@@ -53,14 +56,24 @@ static void DCStoreRange(void*,u32){++stores;}
 static void*codecWorkspace(){return workspace;}
 struct Menu{void toast(const char*){++notified;}}menu;static Menu*gMenu=&menu;
 namespace PracticeSession{void onSavestateCleared(u32,u32){++cleared;}}
+namespace Ghost{enum{kSavestateSpanCount=0};}
+namespace StateArchiveProfile{static void copyGameBytes(void*,void*d,const void*s,u32 n){policyBytes+=n;memcpy(d,s,n);}}
+static u32 sLiveArchiveProfile;
+static StateCodec::Status fullDecode(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,
+ const StateCodec::WriteSpan*d,u32 dn,u32 raw,u32 adler,StateCodec::CopyBytes copy,void*ctx){
+ ++fullDecodes;return StateCodec::decompress(w,n,s,count,d,dn,raw,adler,copy,ctx);}
+static StateCodec::Status verifiedDecode(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,
+ const StateCodec::WriteSpan*d,u32 dn,u32 raw,u32 adler,StateCodec::CopyBytes copy,void*ctx){
+ ++verifiedDecodes;return StateCodec::decompressVerified(w,n,s,count,d,dn,raw,adler,copy,ctx);}
 namespace StateStorage{
-struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;};
+struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];};
 static Result result;
 void update(){}
 bool takeResult(Result&out){if(!ready)return false;out=result;ready=false;transportBusy=false;return true;}
 bool busy(){return transportBusy;}
 }
-class SavestateManager{public:enum{kSlotCount=3};static bool diskBusy();void updateDisk();}manager;
+class SavestateManager{public:enum{kSlotCount=3};bool mLoadPending;u32 mLoadWaitFrames;
+ static bool diskBusy();void updateDisk();}manager;
 '''
 
 EXPORTS = r'''
@@ -71,10 +84,15 @@ __declspec(dllexport) void reset(const void*packed,u32 packedSize,u32 raw,u32 ad
   for(u32 j=0;j<13000;++j)banks[0][i*13000+j]=(u8)(20+i);}
  sPool.used=39000;sDiskSlot=slot;sDiskGeneration=100+slot;sDiskPoolUsed=39000;
  sDiskScene=scene=0x10203;sDiskActive=true;sDiskStarted=17;sDurableSlots=0;
+ sDiskRestore=sDiskLoadReady=manager.mLoadPending=false;manager.mLoadWaitFrames=0;
+ sLoadSlot=2;sPendingSlot=sPendingGeneration=0;sSelectedSD={};sSelectedSD.id=71;
+ fullDecodes=verifiedDecodes=policyBytes=0;
+ for(u32 i=0;i<3;++i)sPackedChecksums[i]=packedChecksum(sPool.slots[i].offset,sPool.slots[i].size);
  returned={9,raw,packedSize,adler,0};returned.metadataTag=metadataTag(returned);
  StateStorage::result={};StateStorage::result.command=SUSAMUNE_STATE_CMD_IMPORT;
  StateStorage::result.status=SUSAMUNE_STATE_OK;StateStorage::result.metadata=&returned;
  StateStorage::result.header.metadataSize=sizeof(returned);
+ StateStorage::result.header.payloadCrc=SusamuneStateCrc(packed,packedSize);
  u32 first=packedSize<4096?packedSize:4096;memcpy(staging,packed,first);
  StatePoolMemoryCopyIn(&sPoolMemory,sPool.used,(const u8*)packed+first,packedSize-first);
  candidateMatches=ready=transportBusy=true;rebased=cleared=notified=stores=0;muted=interrupts=false;
@@ -87,11 +105,34 @@ __declspec(dllexport) void change(u32 which){
  if(which==5)staging[30]^=0x80;
  if(which==6)StateStorage::result.status=SUSAMUNE_STATE_CANCELLED;
  if(which==7)ready=false;
+ if(which==8)++sPool.used;
+ if(which==9)StateStorage::result.metadata=0;
+ if(which==10)sDiskActive=false;
 }
+__declspec(dllexport) void directRestore(){sDiskRestore=true;}
+__declspec(dllexport) void metadataResult(u32 command,u32 id,u32 status){
+ StateStorage::result.command=command;StateStorage::result.id=id;StateStorage::result.status=status;
+ memcpy(StateStorage::result.name,"renamed",8);}
 __declspec(dllexport) void tick(){manager.updateDisk();}
 __declspec(dllexport) u32 get(u32 key){switch(key){case 0:return sPool.used;case 1:return sDurableSlots;
  case 2:return SavestateManager::diskBusy();case 3:return rebased;case 4:return cleared;
- case 5:return muted||interrupts;case 6:return stores;case 7:return sSlots[sDiskSlot].generation;}return 0;}
+ case 5:return muted||interrupts;case 6:return stores;case 7:return sSlots[sDiskSlot].generation;
+ case 8:return sDiskLoadReady;case 9:return manager.mLoadPending;case 10:return sPendingSlot;
+ case 11:return sPendingGeneration;case 12:return sLoadSlot;case 13:return sSelectedSD.id;
+ case 14:return sSelectedSD.name[0];case 15:return sDiskRestore;
+ case 16:return fullDecodes;case 17:return verifiedDecodes;case 18:return policyBytes;}return 0;}
+__declspec(dllexport) u32 trustedChecksum(u32 slot){return sPackedChecksums[slot];}
+__declspec(dllexport) void corruptSlot(u32 slot,u32 at){u8 v;
+ StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset+at,&v,1);v^=0x80;
+ StatePoolMemoryCopyIn(&sPoolMemory,sPool.slots[slot].offset+at,&v,1);}
+__declspec(dllexport) void candidateBytes(void*out){u32 first=returned.packedSize<4096?returned.packedSize:4096;
+ memcpy(out,staging,first);StatePoolMemoryCopyOut(&sPoolMemory,sDiskPoolUsed,(u8*)out+first,returned.packedSize-first);}
+__declspec(dllexport) u32 decodeReady(void*out){StateCodec::ReadSpan spans[3]={};
+ u32 first=sCandidate.packedSize<4096?sCandidate.packedSize:4096;
+ spans[0]={staging,first};poolReadSpans(sDiskPoolUsed,sCandidate.packedSize-first,spans+1);
+ StateCodec::WriteSpan destination={out,sCandidate.rawSize};
+ return StateCodec::decompress(workspace,sizeof(workspace),spans,3,&destination,1,
+  sCandidate.rawSize,sCandidate.adler32);}
 __declspec(dllexport) void slotBytes(u32 slot,void*out){StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset,out,sPool.slots[slot].size);}
 __declspec(dllexport) u32 slotSize(u32 slot){return sPool.slots[slot].size;}
 __declspec(dllexport) u32 admitted(u32 state,u32 busy){director.mCurState=state;loading=busy;
@@ -108,11 +149,25 @@ class SavestateArchiveTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory(prefix='moonshine-sd-commit-')
         cls.addClassCleanup(cls.temp.cleanup)
         source=FIXTURE
-        for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'void storePool(',
+        for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(', 'void storePool(',
                      'bool archiveStageReady()', 'bool admitArchiveStage()',
                      'bool SavestateManager::diskBusy()', 'void SavestateManager::updateDisk()'):
             source+=function_source(SOURCE,name)
-        path=Path(cls.temp.name)/'test.cpp';path.write_text(source+EXPORTS)
+        load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
+        spans=load[load.index('    StateCodec::ReadSpan compressed[3]'):
+                   load.index('    StateCodec::WriteSpan destinations[')]
+        dispatch=load[load.index('    StateCodec::Status restored;'):
+                      load.index('    if (restored == StateCodec::COMMIT_FAILED)')]
+        dispatch=dispatch.replace('StateCodec::decompress(', 'fullDecode(').replace(
+            'StateCodec::decompressVerified(', 'verifiedDecode(')
+        restore=r'''
+extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out){
+ const bool fromSD=direct!=0,durable=fromSD||(sDurableSlots&(1u<<slot));
+ const StoredState&saved=fromSD?sCandidate:sSlots[slot];
+ struct Header{u32 region_count;};Header header={1};Header*h=&header;
+ StateCodec::WriteSpan destinations[1]={{out,saved.rawSize}};
+''' + spans + dispatch + '\n return restored;\n}\n'
+        path=Path(cls.temp.name)/'test.cpp';path.write_text(source+EXPORTS+restore)
         proc=subprocess.run([str(compiler),'--target=x86_64-pc-windows-msvc','-shared','-O2',
             '-fno-builtin','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
             '-I',str(ROOT/'include'),str(path),str(ROOT/'src/state_codec.cpp'),'-o',str(path.with_suffix('.dll'))],
@@ -122,9 +177,13 @@ class SavestateArchiveTests(unittest.TestCase):
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         cls.lib.reset.argtypes=[C.c_void_p]+[C.c_uint]*4
         cls.lib.slotBytes.argtypes=[C.c_uint,C.c_void_p]
+        cls.lib.candidateBytes.argtypes=[C.c_void_p]
+        cls.lib.decodeReady.argtypes=[C.c_void_p]
+        cls.lib.restorePayload.argtypes=[C.c_uint,C.c_uint,C.c_void_p]
+        cls.lib.trustedChecksum.restype=C.c_uint
 
-    def setupCandidate(self,slot=1):
-        self.raw=random.Random(99).randbytes(20000)
+    def setupCandidate(self,slot=1,size=20000):
+        self.raw=random.Random(99).randbytes(size)
         self.packed=zlib.compress(self.raw)
         self.owner=C.create_string_buffer(self.packed)
         self.lib.reset(self.owner,len(self.packed),len(self.raw),zlib.adler32(self.raw),slot)
@@ -141,7 +200,12 @@ class SavestateArchiveTests(unittest.TestCase):
                 if other!=slot:self.assertEqual(self.slot(other),bytes([20+other])*13000)
             self.assertEqual(self.lib.get(1),1<<slot)
             self.assertEqual(self.lib.get(7),555)
+            self.assertEqual(self.lib.trustedChecksum(slot),zlib.crc32(self.packed))
+            for other in range(3):
+                if other!=slot:self.assertEqual(self.lib.trustedChecksum(other),zlib.crc32(bytes([20+other])*13000))
             self.assertEqual([self.lib.get(i)for i in (2,3,4,5)],[0,1,1,0])
+            self.assertEqual([self.lib.get(i)for i in (12,13)],[2,71],
+                             'Import must preserve the separately selected Load source')
 
     def test_stale_slot_scene_profile_size_bad_stream_and_cancel_preserve_all_slots(self):
         for fault in range(1,7):
@@ -149,11 +213,126 @@ class SavestateArchiveTests(unittest.TestCase):
                 self.setupCandidate();self.lib.change(fault);self.lib.tick()
                 for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
                 self.assertEqual([self.lib.get(i)for i in (0,1,2,3,4,5,6)],[39000,0,0,1,0,0,0])
+                for slot in range(3):self.assertEqual(self.lib.trustedChecksum(slot),zlib.crc32(bytes([20+slot])*13000))
 
     def test_missing_receipt_keeps_pool_owned_without_rebase_or_commit(self):
         self.setupCandidate();self.lib.change(7)
         for _ in range(10):self.lib.tick()
         self.assertEqual([self.lib.get(i)for i in (0,1,2,3,4,5,6)],[39000,0,1,0,0,0,0])
+
+    def test_direct_sd_load_validates_but_keeps_all_memory_slots_unchanged(self):
+        for slot in range(3):
+            with self.subTest(save_slot=slot):
+                self.setupCandidate(slot); self.lib.directRestore(); self.lib.tick()
+                for saved in range(3):self.assertEqual(self.slot(saved),bytes([20+saved])*13000)
+                self.assertEqual([self.lib.get(i)for i in (0,1,2,3,4,5,6)],
+                                 [39000,0,1,0,0,0,0])
+                self.assertEqual([self.lib.get(i)for i in (8,9,10,11,12,13,15)],
+                                 [1,1,3,9,2,71,0])
+                candidate=C.create_string_buffer(len(self.packed));self.lib.candidateBytes(candidate)
+                self.assertEqual(candidate.raw,self.packed)
+                # The receipt is consumed once; ownership lasts until the post-draw queue releases it.
+                self.lib.tick();self.lib.tick()
+                self.assertEqual([self.lib.get(i)for i in (2,3,4,8,9)],[1,0,0,1,1])
+
+    def test_direct_sd_failed_validation_or_cancel_never_queues_restore_or_changes_slots(self):
+        for fault in (1,2,3,4,6,8,9,10):
+            with self.subTest(fault=fault):
+                self.setupCandidate();self.lib.directRestore();self.lib.change(fault);self.lib.tick()
+                for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
+                self.assertEqual([self.lib.get(i)for i in (1,2,4,5,6,8,9,12,13,15)],
+                                 [0,0,0,0,0,0,0,2,71,0])
+                self.assertEqual(self.lib.get(3),int(fault!=10))
+
+    def test_direct_sd_defers_stream_preflight_to_restore_and_bad_stream_writes_nothing(self):
+        for corrupt in (False,True):
+            with self.subTest(corrupt=corrupt):
+                self.setupCandidate();self.lib.directRestore()
+                if corrupt:self.lib.change(5)
+                self.lib.tick()
+                self.assertEqual([self.lib.get(i)for i in (2,8,9)],[1,1,1])
+                output=C.create_string_buffer(bytes([0xa5])*len(self.raw),len(self.raw))
+                result=self.lib.restorePayload(3,1,output)
+                self.assertEqual(result==0,not corrupt)
+                self.assertEqual(output.raw,bytes([0xa5])*len(self.raw) if corrupt else self.raw)
+                self.assertEqual([self.lib.get(i)for i in (16,17,18)],
+                                 [1,0,0 if corrupt else len(self.raw)])
+                for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
+                for slot in range(3):self.assertEqual(self.lib.trustedChecksum(slot),zlib.crc32(bytes([20+slot])*13000))
+        update=function_source(SOURCE,'void SavestateManager::updateDisk()')
+        self.assertIn('if (valid && !sDiskRestore)',update)
+        load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
+        self.assertIn('StateCodec::decompress(',load)
+        self.assertIn('poolReadSpans(sDiskPoolUsed, saved.packedSize - first, compressed + 1)',load)
+
+    def test_validated_import_mints_trusted_crc_then_ram_restore_uses_verified_copy_policy(self):
+        for slot in range(3):
+            with self.subTest(slot=slot):
+                self.setupCandidate(slot,size=30000);self.lib.tick()
+                self.assertEqual(self.lib.trustedChecksum(slot),zlib.crc32(self.packed))
+                output=C.create_string_buffer(len(self.raw))
+                self.assertEqual(self.lib.restorePayload(slot,0,output),0)
+                self.assertEqual(output.raw,self.raw)
+                self.assertEqual([self.lib.get(i)for i in (16,17,18)],[0,1,len(self.raw)])
+                self.assertEqual(self.slot(slot),self.packed)
+
+    def test_corrupt_ram_crc_refuses_before_any_decode_or_destination_write_across_banks(self):
+        for at in (0,1,23999,24000,30005):
+            with self.subTest(packed_offset=at):
+                self.setupCandidate(1,size=30000);self.lib.tick()
+                trusted=self.lib.trustedChecksum(1)
+                self.lib.corruptSlot(1,at)
+                output=C.create_string_buffer(bytes([0xa5])*len(self.raw),len(self.raw))
+                self.assertEqual(self.lib.restorePayload(1,0,output),4)
+                self.assertEqual(output.raw,bytes([0xa5])*len(self.raw))
+                self.assertEqual([self.lib.get(i)for i in (16,17,18)],[0,0,0])
+                self.assertEqual(self.lib.trustedChecksum(1),trusted)
+                for slot in (0,2):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
+
+    def test_trusted_crc_is_local_and_checked_with_interrupts_off_before_fast_decode(self):
+        production=SOURCE.read_text()
+        stored=production[production.index('struct StoredState'):production.index('StateSlotPool sPool;')]
+        self.assertNotIn('sPackedChecksums',stored)
+        constructor=function_source(SOURCE,'SavestateManager::SavestateManager()')
+        self.assertIn('memset(sPackedChecksums, 0, sizeof(sPackedChecksums))',constructor)
+        save=function_source(SOURCE,'bool SavestateManager::saveState()')
+        crc=save.index('sPackedChecksums[sActiveSlot] = packedChecksum(')
+        self.assertLess(save.index('const bool fits = commitPackedState('),crc)
+        self.assertLess(save.index('if (!fits)'),crc)
+        self.assertGreater(save.index('OSRestoreInterrupts(ints)',crc),crc)
+        load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
+        crc=load.index('packedChecksum(sPool.slots[slot].offset, saved.packedSize) != sPackedChecksums[slot]')
+        self.assertLess(load.index('OSDisableInterrupts()'),crc)
+        self.assertLess(crc,load.index('StateCodec::decompressVerified('))
+        self.assertLess(load.index('StateCodec::decompressVerified('),load.index('OSRestoreInterrupts(ints)',crc))
+        self.assertIn('if (restored == StateCodec::COMMIT_FAILED) __builtin_trap()',load)
+        clear=function_source(SOURCE,'bool SavestateManager::clearSlot(')
+        self.assertIn('sPackedChecksums[slot] = 0',clear)
+
+    def test_failed_direct_sd_restore_rebases_only_the_outer_full_transaction(self):
+        load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
+        failure_lines=[line.strip()for line in load.splitlines()
+                       if 'rebaseMissionStopwatch(restoreStarted)' in line]
+        self.assertEqual(failure_lines,
+            ['if (!fromSD) rebaseMissionStopwatch(restoreStarted);']*2,
+            'Profile and decode failures must leave direct SD timing to its queue owner')
+        process=function_source(SOURCE,'void SavestateManager::processPendingLoad()')
+        self.assertIn('if (!restored) rebaseMissionStopwatch(sDiskStarted);',process)
+        self.assertEqual(process.count('if (!restored) rebaseMissionStopwatch(sDiskStarted);'),1)
+
+    def test_rename_and_delete_touch_only_matching_selected_sd_identity_after_success(self):
+        header=(ROOT/'include/susamune/state_storage.h').read_text()
+        self.assertIn('SUSAMUNE_STATE_CMD_RENAME, SUSAMUNE_STATE_CMD_DELETE',header)
+        for command in (5,6):
+            for selected in (False,True):
+                for success in (False,True):
+                    with self.subTest(command=command,selected=selected,success=success):
+                        self.setupCandidate();self.lib.metadataResult(command,71 if selected else 72,
+                            0 if success else 1);self.lib.tick()
+                        self.assertEqual(self.lib.get(13),0 if command==6 and selected and success else 71)
+                        self.assertEqual(self.lib.get(14),ord('r') if command==5 and selected and success else 0)
+                        for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
+                        self.assertEqual([self.lib.get(i)for i in (1,2,3,4,6,8,9)],[0,0,1,0,0,0,0])
 
     def test_game_manifest_and_live_profile_checks_precede_decode_and_commit(self):
         check=function_source(SOURCE,'bool archiveCandidateMatches(')
@@ -178,7 +357,9 @@ class SavestateArchiveTests(unittest.TestCase):
         admission=function_source(SOURCE,'bool admitArchiveStage()')
         self.assertIn('Return to normal play before using SD states',admission)
         self.assertIn('gMenu->toast(sDiskStatus)',admission)
-        for action in ('saveToSD','loadFromSD','refreshSD'):
+        self.assertIn('beginSDLoad(id, crc, packed, false)',
+                      function_source(SOURCE,'bool SavestateManager::loadFromSD('))
+        for action in ('saveToSD','beginSDLoad','refreshSD','renameSD','deleteSD'):
             code=function_source(SOURCE,f'bool SavestateManager::{action}(')
             self.assertLess(code.index('admitArchiveStage()'),code.index('StateStorage::'))
 

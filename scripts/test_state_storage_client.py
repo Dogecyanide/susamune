@@ -27,7 +27,7 @@ static void DCFlushRange(void *p,u32 n) {if(flushCount<32)flushed[flushCount++]=
 static void DCInvalidateRange(void *p,u32 n) {if(invalidateCount<32)invalidated[invalidateCount++]={p,n};}
 static u64 OSGetTime() {return 0x123456789ABCULL;}
 namespace StateStorage {
-struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;};
+struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];};
 bool busy();
 }
 '''
@@ -42,6 +42,9 @@ __declspec(dllexport) void reset(u32 pending) {
  StateStorage::init();
 }
 __declspec(dllexport) u32 beginImport(u32 size,u32 offset) {return StateStorage::startImport(7,999,size,offset);}
+__declspec(dllexport) u32 beginRename(u32 id,u32 crc,const char *name) {return StateStorage::rename(id,crc,name);}
+__declspec(dllexport) u32 beginDelete(u32 id,u32 crc) {return StateStorage::remove(id,crc);}
+__declspec(dllexport) const void *mailbox(void) {return &testMailbox;}
 __declspec(dllexport) u32 beginExport(u32 size,u32 offset) {
  SusamuneStateArchiveHeader h={};h.metadataSize=8;h.packedSize=size;h.rawSize=size*2;
  h.gameId=0x474D5345;h.buildCrc=1234;h.snapshotVersion=15;
@@ -73,6 +76,25 @@ __declspec(dllexport) u32 headerValid(void) {return SusamuneStateHeaderValid(&te
 __declspec(dllexport) void expand(void) {expanded=true;}
 __declspec(dllexport) u32 extraInvalidated(u32 size) {
  for(u32 i=0;i<invalidateCount;++i)if(invalidated[i].address==testExtra && invalidated[i].size==size)return 1;return 0;}
+__declspec(dllexport) u32 prepareMutation(void) {
+ auto &h=testMailbox.header;memset(&h,0,sizeof(h));h.magic=SUSAMUNE_STATE_ARCHIVE_MAGIC;h.version=1;
+ h.headerSize=sizeof(h);h.metadataSize=8;h.packedSize=100;h.rawSize=200;h.gameId=0x474D5345;
+ h.buildCrc=12;h.snapshotVersion=15;h.configId=777;memcpy(h.name,"Original",9);
+ h.headerCrc=SusamuneStateHeaderCrc(&h);
+ return h.headerCrc;
+}
+__declspec(dllexport) void mutationReceipt(u32 corruption) {
+ auto &h=testMailbox.header;
+ acknowledge(0,0,0);auto &r=testMailbox.receipt;r.headerCrc=h.headerCrc;r.packedSize=h.packedSize;r.metadataSize=h.metadataSize;
+ testMailbox.response.resultId=testMailbox.request.id;
+ memcpy(testMailbox.resultName,"Renamed state",14);r.reserved=SusamuneStateCrc(testMailbox.resultName,32);
+ if(corruption==1)testMailbox.resultName[0]^=1;if(corruption==2)testMailbox.response.resultId^=1;
+ if(corruption==3)r.headerCrc^=1;if(corruption==4)h.headerCrc^=1;
+}
+__declspec(dllexport) u32 renamedResult(void) {
+ StateStorage::Result r;if(!StateStorage::takeResult(r)||r.status||r.metadata||!SusamuneStateHeaderValid(&r.header))return 0;
+ return r.name[0]=='R' && r.name[8]=='s' && r.header.name[0]=='O';
+}
 }
 '''
 
@@ -97,6 +119,8 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
             '-I', str(ROOT/'include'), str(path/'test.cpp'), '-o', str(path/'test.dll')], capture_output=True, text=True)
         if proc.returncode: raise RuntimeError(proc.stdout+proc.stderr)
         cls.lib = C.CDLL(str(path/'test.dll'))
+        cls.lib.beginRename.argtypes = [C.c_uint, C.c_uint, C.c_char_p]
+        cls.lib.mailbox.restype = C.c_void_p
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
 
     def setUp(self): self.lib.reset(0)
@@ -157,6 +181,35 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
         self.lib.clearCacheLog();self.lib.acknowledge(3,0,0);self.lib.tick()
         self.assertEqual(self.lib.poolTailInvalidated(0xFA0000-16,16),1)
         self.assertEqual(self.lib.extraInvalidated(240),1)
+
+    def test_name_bounds_and_mutations_hold_ownership_through_receipt(self):
+        for name in (None, b'', b'a'*32, b'a\nb', b'\xFF'):
+            self.assertEqual(self.lib.beginRename(7,999,name),0)
+        self.assertEqual(self.lib.beginRename(0,999,b'Name'),0)
+        self.assertEqual(self.lib.beginDelete(100000000,999),0)
+        for command in (5,6):
+            with self.subTest(command=command):
+                self.lib.reset(0)
+                accepted = self.lib.beginRename(7,999,b'a'*31) if command==5 else self.lib.beginDelete(7,999)
+                self.assertEqual(accepted,1)
+                self.assertEqual(self.lib.command(),command)
+                self.assertEqual(self.lib.cancel(),0)
+                self.assertEqual(self.lib.beginImport(100,0),0)
+                self.lib.acknowledge(7,3,0);self.lib.tick()
+                self.assertEqual(self.lib.busy(),1)
+                self.lib.acknowledge(7,0,0);self.lib.tick()
+                self.assertEqual(self.lib.result(),7)
+                self.assertEqual(self.lib.busy(),0)
+
+    def test_effective_name_is_separate_from_immutable_header_and_has_receipt_crc(self):
+        for corrupt in range(5):
+            with self.subTest(corrupt=corrupt):
+                self.lib.reset(0)
+                crc=self.lib.prepareMutation()
+                self.assertEqual(self.lib.beginRename(7,crc,b'Renamed state'),1)
+                self.lib.mutationReceipt(corrupt);self.lib.tick()
+                if corrupt:self.assertEqual(self.lib.result(),3)
+                else:self.assertEqual(self.lib.renamedResult(),1)
 
 
 if __name__ == '__main__': unittest.main()

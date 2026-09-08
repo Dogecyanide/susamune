@@ -63,14 +63,18 @@ void recolor(const unsigned char *source, unsigned char *destination,
                 b = tint(b, x, y, colors, enabled);
                 const bool swap = fourColors ? a < b : a > b;
                 if (swap) { const unsigned temp = a; a = b; b = temp; }
-                // Equal endpoints would switch a four-colour block to alpha mode.
-                if (fourColors && a == b) {
-                    if (a < 65535) ++a; else --b;
+                const bool solid = fourColors && a == b;
+                unsigned solidIndices = 0;
+                if (solid) {
+                    // Keep opaque mode, but never sample the artificial endpoint:
+                    // an RGB565 increment can wrap blue and turn magenta red.
+                    if (a) --b;
+                    else { ++a; solidIndices = 0x55; }
                 }
                 write16(dst, a);
                 write16(dst + 2, b);
                 for (unsigned row = 0; row < 4; ++row) {
-                    unsigned indices = src[4 + row];
+                    unsigned indices = solid ? solidIndices : src[4 + row];
                     if (swap) {
                         unsigned mapped = 0;
                         for (unsigned shift = 0; shift < 8; shift += 2) {

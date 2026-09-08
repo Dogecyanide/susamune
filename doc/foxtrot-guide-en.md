@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 5B0EC1B1
+V2.3.0 pre-release · Build C4AF447B
 
 FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
 
@@ -10,7 +10,7 @@ Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace 
 
 Open Moonshine Launcher FOXTROT from the Homebrew Channel. Choose the matching **Version**, then **Path** to select your ISO/CISO on SD or USB, or **Disc Drive** for a real disc. Choose **Launch Game**. If Auto Boot is enabled, hold B during startup to return to the launcher menu.
 
-The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes.
+The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes. **Checking storage devices...** stays visible during the later SD/USB scan, which previously showed only the background while waiting.
 
 Configuration and saved mod data belong to the device the launcher was opened from. For example, a launcher on SD still saves its configuration on SD when the game is on USB. Settings and binds are separate for JP, US and PAL. Keep the existing `susamune_*` names when updating.
 
@@ -21,6 +21,7 @@ Open the mod menu with your configured menu combo (default Y + Start). Use L/R f
 - **Quick:** your Shined favourites.
 - **Practice:** separate Frame advance, Free camera and Input replay pages, savestates, practice rules, RNG and gameplay options.
 - **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
+- **Records:** achievements and practice statistics, also reachable from Runs.
 - **Ghosts:** race, watch, save and manage ghost tracks.
 - **Display:** layout editors, HUD overlays, timer/split display and appearance.
 - **System:** button binds and the built-in quick guide.
@@ -59,23 +60,33 @@ Practice pause, stepping and free camera also work in Ghost Watch and Watch2. Th
 
 ## Three savestates
 
-Open **Practice > Savestates** and choose **Active state** with A or C-stick left/right. Each of the three states shows Saved or Empty. Your usual Save and Load shortcuts now use the selected state; changing the selection alone does not save or load anything. **System > Button binds > Savestate: cycle states** is an optional shortcut with no button assigned by default.
+Open **Practice > Savestates**. **Save to** chooses which memory slot your Save shortcut writes to. **Load from** independently chooses what your Load shortcut restores. Change either with A or C-stick left/right; choosing a slot does not save or load anything. For example, Save to State 1 and Load from State 2 lets you replace State 1 while continuing to practise from State 2.
 
-The three states share **17.625 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear selected state** asks for confirmation before freeing that state's space; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
+Each of the three states shows Saved or Empty. **System > Button binds** has optional **Savestate: cycle save slot** and **Savestate: cycle load slot** shortcuts, both unassigned by default. The older **Savestate: cycle both slots** shortcut remains available for existing binds.
+
+The three states share **17.625 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
 
 The three memory slots start empty after closing the game or rebooting. To keep a state, save a separate SD copy before closing the game.
 
 ## Keep a state on SD
 
-1. Make a normal memory savestate and select its slot.
-2. Open **Practice > Savestates > SD states > Save selected state to SD**. Wait until the save finishes. It creates a new file in `/moonshine_states` on the launcher's device.
+1. Make a normal memory savestate and choose its slot under **Save to**.
+2. Open **Practice > Savestates > SD states > Save memory state to SD**. Give the state a name, confirm it with Start, and wait until saving finishes. It creates a new `.mss` file in `/moonshine_states` on the launcher's device. X + Start cancels naming.
 3. After rebooting, use the same mod build, game region and launcher setup, then enter the same level and episode. Secret areas also need the same parent episode.
-4. Open **SD states**, choose **Active memory state**, then **Refresh / first page**. Select the file and confirm its import. This replaces the chosen memory slot; the SD file remains saved.
-5. Use your ordinary **Load** action to restore gameplay from that slot.
+4. Open **SD states > Refresh / first page** and highlight your file. Choose one of the actions below.
+
+| Button on an SD file | Action |
+|---|---|
+| **Y — Load from** | Select this file for your ordinary Load shortcut. Close the menu and press Load to restore it. Your three memory slots stay intact. |
+| **A — Import** | After confirmation, copy the file into the memory slot shown under **Save to**. **Load from** stays unchanged; select the imported slot there when you want to use it. |
+| **Start — Rename** | Edit the file's display name. Start finishes; X + Start cancels. |
+| **X — Delete** | Ask to delete this SD file. Cancelling keeps it; memory states are unaffected. |
+
+Loading from SD reads the file each time, so it can take longer than a memory load. It needs temporary space: 4 MiB plus the unused part of the state pool. If the memory slots are exceptionally full, there may not be room for that file. A refusal keeps all existing states; clear a disposable memory slot or use a smaller file before trying again.
 
 The game also checks that its loaded resources match the saved state. A matching level name alone may not be enough. Unsupported setups, incompatible files and damaged files are refused before replacing a memory slot. SD states are specific to their build and game setup; they are not cross-region sharing files like ghosts.
 
-Keep the storage device connected until the transfer or its cancellation finishes. SD files survive power-off, but this experimental feature still needs real Wii/Wii U power-off-and-load testing. Use the latest section of TESTING.md when reporting a result.
+Keep the storage device connected until the transfer or its cancellation finishes. A tester has confirmed SD-state restoration after a real Wii reboot on the previous build. Full ghost recording after frame advance, timer alignment and colour persistence were also confirmed. The new file controls still need feedback across more scenes and setups; use the latest section of TESTING.md.
 
 ## Record and replay an input take
 
@@ -115,7 +126,7 @@ Display > Layout editor has separate groups for Timers, Controller inputs, Metad
 
 **Timers > Sunshine timer** opens the full editor: position, size, opacity, brightness, all 13 characters, TIME/TEMPO and the streak. Its position range spans the full screen.
 
-The first option, **Appearance**, lets you choose **Original** or **Custom**. Leave the target on All to change the whole timer, or press Start to choose one character or image. Original restores the game's own colours and shading while keeping your position, size and saved custom RGB. Switch back to Custom to use those colours again. Changing an RGB value selects Custom for that target. **Z on Appearance** restores Original, with confirmation. To fix the whole timer's colours quickly, choose **All > Appearance > Original**.
+The first option, **Appearance**, lets you choose **Original** or **Custom**. Leave the target on All to change the whole timer, or press Start to choose one character or image. Original keeps the game's shading and lets you tint it; Custom uses your chosen colours more directly. RGB editing keeps the appearance mode you selected. To restore the whole timer's normal colours, choose **All > Appearance > Original**, then reset Red, Green and Blue individually with **Z** and confirmation. Position, size and the other style controls stay as they were.
 
 **Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours. In RGB controls, hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
 
@@ -126,7 +137,7 @@ The first option, **Appearance**, lets you choose **Original** or **Custom**. Le
 | Mario colours — 7 | Cap, shirt, overalls, gloves, shoes, sunglasses, Sunshine shirt |
 | FLUDD colours — 10 | Body paint, metal, straps, tank, spray nozzle, hover nozzle, rocket nozzle, turbo nozzle, sprayed water, water highlights |
 
-Mario's skin stays unchanged. Sprayed water covers the stream, outlet mist and impact splashes; sea water and Yoshi juice keep their normal colours. Keep the edits to save the colours and each part's Original/Custom choice for the next boot.
+Mario's skin stays unchanged. Magenta on the cap and shirt no longer produces red specks when texture colours round to the same value. Sprayed water covers the stream, outlet mist and impact splashes; sea water and Yoshi juice keep their normal colours. Keep the edits to save the colours and each part's Original/Custom choice for the next boot.
 
 **Metadata** adds Field gap, Row gap, Fields per row and Value widths. C-stick left/right decreases or increases these values. Choose horizontal layout to arrange several fields per row; Fields per row limits the number before wrapping. Auto wraps at the screen edge. Stable widths keep values aligned as digits change; Compact reduces empty space. Per-character colours remain attached to their original fields.
 

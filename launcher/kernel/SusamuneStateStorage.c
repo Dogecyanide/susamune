@@ -16,7 +16,7 @@ extern u32 GAME_ID;
 #endif
 
 enum { IDLE, EXPORT_FIND, OPEN_FILE, HEADER_IO, METADATA_IO, PAYLOAD_IO,
-       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER };
+       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE };
 static bool Enabled, FileOpen, DirOpen;
 static u32 Ack, Phase, FileId, Offset, PayloadCrc, ConfigId;
 static struct SusamuneStateRequest Request;
@@ -25,6 +25,7 @@ static FIL File;
 static DIR Scan;
 static char Directory[32], Path[72], Temporary[72];
 static u32 ScanId, ScanSize;
+static char RequestName[SUSAMUNE_STATE_NAME_BYTES];
 
 static u8 *PoolPiece(u32 offset, u32 *size)
 {
@@ -62,6 +63,102 @@ static void Paths(u32 id)
     _sprintf(Temporary, "%s/state_%08u.tmp", Directory, id);
 }
 
+static bool ReadNames(u32 id, u32 crc, struct SusamuneStateNameRecord *latest, u32 *copy)
+{
+    struct SusamuneStateNameRecord record;
+    FIL file;
+    char path[72];
+    FRESULT result, closed;
+    UINT done;
+    u32 i, size;
+    bool readable = true;
+    memset(latest, 0, sizeof(*latest));
+    *copy = 1;
+    for (i = 0; i < 2; ++i) {
+        _sprintf(path, "%s/state_%08u.name%u", Directory, id, i);
+        result = f_open_char(&file, path, FA_READ);
+        if (result == FR_NO_FILE) continue;
+        if (result != FR_OK) { readable = false; continue; }
+        size = f_size(&file);
+        result = f_read(&file, &record, sizeof(record), &done);
+        closed = f_close(&file);
+        if (result != FR_OK || closed != FR_OK) { readable = false; continue; }
+        if (done != sizeof(record) || size != sizeof(record)) continue;
+        if (record.magic == SUSAMUNE_STATE_NAME_MAGIC && record.version > 1u) { readable = false; continue; }
+        if (record.magic != SUSAMUNE_STATE_NAME_MAGIC || record.version != 1u ||
+            record.archiveId != id || record.archiveChecksum != crc || !record.generation ||
+            record.reserved[0] || record.reserved[1] || !SusamuneStateNameValid(record.name) ||
+            !record.name[0] || record.checksum != SusamuneStateNameCrc(&record)) continue;
+        if (record.generation == latest->generation && memcmp(&record, latest, sizeof(record))) readable = false;
+        if (record.generation > latest->generation) { *latest = record; *copy = i; }
+    }
+    return readable;
+}
+
+static void EffectiveName(u32 id, char *name)
+{
+    struct SusamuneStateNameRecord record;
+    u32 copy;
+    memcpy(name, Header.name, SUSAMUNE_STATE_NAME_BYTES);
+    ReadNames(id, Header.headerCrc, &record, &copy);
+    if (record.generation) memcpy(name, record.name, SUSAMUNE_STATE_NAME_BYTES);
+}
+
+static u32 WriteName(void)
+{
+    struct SusamuneStateNameRecord record;
+    FIL file;
+    char path[72], temporary[72];
+    u32 copy;
+    UINT done = 0;
+    FRESULT result, closed;
+    if (!ReadNames(FileId, Header.headerCrc, &record, &copy)) return SUSAMUNE_STATE_IO_ERROR;
+    if (record.generation == 0xFFFFFFFFu) return SUSAMUNE_STATE_FULL;
+    record.magic = SUSAMUNE_STATE_NAME_MAGIC; record.version = 1;
+    record.archiveId = FileId; record.archiveChecksum = Header.headerCrc;
+    ++record.generation;
+    memcpy(record.name, RequestName, sizeof(record.name));
+    record.checksum = SusamuneStateNameCrc(&record);
+    copy ^= 1u;
+    _sprintf(path, "%s/state_%08u.name%u", Directory, FileId, copy);
+    _sprintf(temporary, "%s/state_%08u.name%u.tmp", Directory, FileId, copy);
+    result = f_open_char(&file, temporary, FA_WRITE | FA_CREATE_ALWAYS);
+    if (result != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    result = f_write(&file, &record, sizeof(record), &done);
+    if (result == FR_OK && done == sizeof(record)) result = f_sync(&file);
+    closed = f_close(&file);
+    if (result != FR_OK || done != sizeof(record) || closed != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    // The active name survives any failure while replacing the other generation.
+    result = f_unlink_char(path);
+    if (result != FR_OK && result != FR_NO_FILE) return SUSAMUNE_STATE_IO_ERROR;
+    return f_rename_char(temporary, path) == FR_OK ? SUSAMUNE_STATE_OK : SUSAMUNE_STATE_IO_ERROR;
+}
+
+static u32 DeleteArchive(void)
+{
+    FIL file;
+    char marker[72], name[72];
+    FRESULT result, closed;
+    UINT done = 0;
+    u32 i;
+    _sprintf(marker, "%s/state_%08u.used", Directory, FileId);
+    result = f_open_char(&file, marker, FA_WRITE | FA_CREATE_ALWAYS);
+    if (result != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    result = f_write(&file, &Header, sizeof(Header), &done);
+    if (result == FR_OK && done == sizeof(Header)) result = f_sync(&file);
+    closed = f_close(&file);
+    if (result != FR_OK || done != sizeof(Header) || closed != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    // Reserve the numeric identity before removing its payload.
+    if (f_unlink_char(Path) != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    for (i = 0; i < 2; ++i) {
+        _sprintf(name, "%s/state_%08u.name%u", Directory, FileId, i);
+        f_unlink_char(name);
+        _sprintf(name, "%s/state_%08u.name%u.tmp", Directory, FileId, i);
+        f_unlink_char(name);
+    }
+    return SUSAMUNE_STATE_OK;
+}
+
 static void Finish(u32 status)
 {
     struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
@@ -72,13 +169,21 @@ static void Finish(u32 status)
     m->receipt.command = Request.command;
     m->receipt.id = Request.id;
     m->receipt.seq = Request.seq;
-    if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_EXPORT)) {
+    if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_IMPORT ||
+        Request.command == SUSAMUNE_STATE_CMD_EXPORT || Request.command == SUSAMUNE_STATE_CMD_RENAME ||
+        Request.command == SUSAMUNE_STATE_CMD_DELETE)) {
         m->header = Header;
         sync_after_write(&m->header, sizeof(m->header));
-        sync_after_write(m->metadata, Header.metadataSize);
+        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_EXPORT)
+            sync_after_write(m->metadata, Header.metadataSize);
+        if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE)
+            memcpy(m->resultName, RequestName, sizeof(m->resultName));
+        else EffectiveName(FileId, m->resultName);
+        sync_after_write(m->resultName, sizeof(m->resultName));
         m->receipt.metadataSize = Header.metadataSize;
         m->receipt.packedSize = Header.packedSize;
         m->receipt.headerCrc = Header.headerCrc;
+        m->receipt.reserved = SusamuneStateCrc(m->resultName, sizeof(m->resultName));
     }
     sync_after_write(&m->receipt, sizeof(m->receipt));
     m->response.status = status;
@@ -147,8 +252,7 @@ static void AddCatalog(void)
     entry.metadataSize = Header.metadataSize; entry.rawSize = Header.rawSize;
     entry.gameId = Header.gameId; entry.buildCrc = Header.buildCrc;
     entry.headerCrc = Header.headerCrc; entry.sceneKey = Header.sceneKey;
-    memcpy(entry.name, Header.name, sizeof(entry.name));
-    entry.name[31] = 0;
+    EffectiveName(ScanId, entry.name);
     for (at = 0; at < c->count && c->entries[at].id < entry.id; ++at) {}
     if (c->count == SUSAMUNE_STATE_CATALOG_COUNT) c->more = 1;
     else ++c->count;
@@ -200,12 +304,28 @@ void SusamuneStateStorageService(void)
                 !SusamuneStateImportRange(Request.poolOffset, Request.packedSize)) { Finish(SUSAMUNE_STATE_FULL); return; }
             FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
         }
+        if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE) {
+            if (!Request.id || Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || Request.poolOffset || Request.packedSize) {
+                Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
+            }
+            if (Request.command == SUSAMUNE_STATE_CMD_RENAME) {
+                sync_before_read(m->requestName, sizeof(m->requestName));
+                memcpy(RequestName, m->requestName, sizeof(RequestName));
+                if (!SusamuneStateNameValid(RequestName) || !RequestName[0]) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+            }
+            FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
+        }
         Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
     }
     if (Phase == EXPORT_FIND) {
         Paths(FileId);
         result = f_stat_char(Path, &info);
         if (result == FR_NO_FILE) result = f_stat_char(Temporary, &info);
+        if (result == FR_NO_FILE) {
+            char marker[72];
+            _sprintf(marker, "%s/state_%08u.used", Directory, FileId);
+            result = f_stat_char(marker, &info);
+        }
         if (result == FR_NO_FILE) { Phase = OPEN_FILE; return; }
         if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (++FileId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) Finish(SUSAMUNE_STATE_FULL);
@@ -226,7 +346,19 @@ void SusamuneStateStorageService(void)
             if (Header.headerCrc != Request.expectedHeaderCrc || Header.packedSize != Request.packedSize) { Finish(SUSAMUNE_STATE_STALE); return; }
             if (Header.gameId != GAME_ID || Header.configId != ConfigId) { Finish(SUSAMUNE_STATE_WRONG_CONFIG); return; }
         }
+        if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE) {
+            if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File))) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+            if (Header.headerCrc != Request.expectedHeaderCrc) { Finish(SUSAMUNE_STATE_STALE); return; }
+            result = f_close(&File); FileOpen = false;
+            if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
+            Phase = MUTATE_FILE; return;
+        }
         Phase = METADATA_IO; return;
+    }
+    if (Phase == MUTATE_FILE) {
+        if (Request.command == SUSAMUNE_STATE_CMD_DELETE) EffectiveName(FileId, RequestName);
+        Finish(Request.command == SUSAMUNE_STATE_CMD_RENAME ? WriteName() : DeleteArchive());
+        return;
     }
     if (Phase == METADATA_IO) {
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) result = f_write(&File, m->metadata, Header.metadataSize, &done);

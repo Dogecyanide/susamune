@@ -102,22 +102,30 @@ void update() {
     sResult.command = sPending.command;
     sResult.status = sMailbox->response.status;
     sResult.id = sMailbox->response.resultId;
+    const bool payload = sPending.command == SUSAMUNE_STATE_CMD_IMPORT || sPending.command == SUSAMUNE_STATE_CMD_EXPORT;
     if (sResult.status == SUSAMUNE_STATE_OK &&
-        (sPending.command == SUSAMUNE_STATE_CMD_IMPORT || sPending.command == SUSAMUNE_STATE_CMD_EXPORT)) {
+        (payload || sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE)) {
         DCInvalidateRange(&sMailbox->header, sizeof(sMailbox->header));
+        DCInvalidateRange(sMailbox->resultName, sizeof(sMailbox->resultName));
         const SusamuneStateArchiveHeader &h = sMailbox->header;
         if (!SusamuneStateHeaderValid(&h) || h.headerCrc != r.headerCrc ||
-            h.metadataSize != r.metadataSize || h.packedSize != r.packedSize || h.configId != sConfig ||
-            h.packedSize != sPending.packedSize ||
-            (sPending.command == SUSAMUNE_STATE_CMD_IMPORT && h.headerCrc != sPending.expectedHeaderCrc)) {
+            h.metadataSize != r.metadataSize || h.packedSize != r.packedSize ||
+            !SusamuneStateNameValid(sMailbox->resultName) ||
+            SusamuneStateCrc(sMailbox->resultName, sizeof(sMailbox->resultName)) != r.reserved ||
+            (payload && (h.configId != sConfig || h.packedSize != sPending.packedSize)) ||
+            (sPending.command != SUSAMUNE_STATE_CMD_EXPORT &&
+             (h.headerCrc != sPending.expectedHeaderCrc || sResult.id != sPending.id))) {
             sResult.status = SUSAMUNE_STATE_BAD_FILE;
         } else {
-            DCInvalidateRange(sMailbox->metadata, h.metadataSize);
-            if (SusamuneStateCrc(sMailbox->metadata, h.metadataSize) != h.metadataCrc)
-                sResult.status = SUSAMUNE_STATE_BAD_FILE;
-            else {
+            if (payload) {
+                DCInvalidateRange(sMailbox->metadata, h.metadataSize);
+                if (SusamuneStateCrc(sMailbox->metadata, h.metadataSize) != h.metadataCrc)
+                    sResult.status = SUSAMUNE_STATE_BAD_FILE;
+                else sResult.metadata = sMailbox->metadata;
+            }
+            if (sResult.status == SUSAMUNE_STATE_OK) {
                 sResult.header = h;
-                sResult.metadata = sMailbox->metadata;
+                memcpy(sResult.name, sMailbox->resultName, sizeof(sResult.name));
             }
         }
     } else if (sPending.command == SUSAMUNE_STATE_CMD_CATALOG) {
@@ -130,7 +138,7 @@ void update() {
             for (u32 i = 0; valid && i < c.count; ++i) {
                 const SusamuneStateCatalogEntry &e = c.entries[i];
                 valid = e.id > prior && e.id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
-                    e.packedSize && e.packedSize <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE && e.name[31] == 0;
+                    e.packedSize && e.packedSize <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE && SusamuneStateNameValid(e.name);
                 prior = e.id;
             }
             valid = valid && c.nextId == prior;
@@ -179,8 +187,25 @@ bool refresh(u32 afterId) {
     sCatalogReady = false;
     return true;
 }
+bool rename(u32 id, u32 crc, const char *name) {
+    if (!sAvailable || busy() || sResultReady || !id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+        !SusamuneStateNameValid(name) || !name[0]) return false;
+    memset(sMailbox->requestName, 0, sizeof(sMailbox->requestName));
+    for (u32 i = 0; name[i]; ++i) sMailbox->requestName[i] = name[i];
+    DCFlushRange(sMailbox->requestName, sizeof(sMailbox->requestName));
+    if (!submit(SUSAMUNE_STATE_CMD_RENAME, id, 0, 0, crc)) return false;
+    sCatalogReady = false;
+    return true;
+}
+bool remove(u32 id, u32 crc) {
+    if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+        !submit(SUSAMUNE_STATE_CMD_DELETE, id, 0, 0, crc)) return false;
+    sCatalogReady = false;
+    return true;
+}
 bool cancel() {
-    if (!busy() || sPending.command == SUSAMUNE_STATE_CMD_CANCEL) return false;
+    if (!busy() || sPending.command == SUSAMUNE_STATE_CMD_CANCEL ||
+        sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE) return false;
     // Keep the imported range owned until cancellation's own receipt arrives.
     memset(&sPending, 0, sizeof(sPending));
     return submit(SUSAMUNE_STATE_CMD_CANCEL, 0, 0, 0, 0);

@@ -32,7 +32,7 @@ unsigned int workspaceSize();
 // OUTPUT_FULL still reports the complete required size; partial output is invalid.
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan *output, unsigned int outputCount = 2);
+                const WriteSpan *output, unsigned int outputCount = 2, bool compact = false);
 
 // Input spans contain exactly the stream's bytes, excluding allocation padding.
 Status validate(void *workspace, unsigned int workspaceBytes,
@@ -45,6 +45,14 @@ Status validate(void *workspace, unsigned int workspaceBytes,
 // An optional copy policy runs only after validation, and must not fail or mutate
 // source/workspace/descriptors. The caller validates its policy before this call.
 Status decompress(void *workspace, unsigned int workspaceBytes,
+                  const ReadSpan *source, unsigned int sourceCount,
+                  const WriteSpan *output, unsigned int outputCount,
+                  unsigned int expectedRaw, unsigned int expectedAdler,
+                  CopyBytes copy = 0, void *copyContext = 0);
+
+// Only for a locally encoded or fully validated stream whose saved checksum has
+// just been rechecked under exclusive ownership. Any failure may follow writes.
+Status decompressVerified(void *workspace, unsigned int workspaceBytes,
                   const ReadSpan *source, unsigned int sourceCount,
                   const WriteSpan *output, unsigned int outputCount,
                   unsigned int expectedRaw, unsigned int expectedAdler,

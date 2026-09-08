@@ -49,6 +49,7 @@ bool SusamuneThemeLoad(const char*device,const char*dir,void**out){
 void UnmountDevice(int dev){closeCount++;sequence=sequence*10+3;}
 static void *xfb[2];static int fb,depthTest,depthWrite,blackPending,blackVisible,copies,copyDepth,flushes;
 static int copyQueued,copyComplete,publishedTooSoon;
+static const char *drawnMessage,*displayedMessage;
 static struct {int viTVMode;} mode;
 static void *nextFramebuffer;
 static typeof(mode) *rmode=&mode;
@@ -56,7 +57,7 @@ void GX_DrawDone(void){if(copyQueued){copyComplete=1;copyQueued=0;}}
 void GX_InvalidateTexAll(void){}
 void GX_SetZMode(int test,int compare,int write){depthTest=test;depthWrite=write;}
 void GX_SetColorUpdate(int value){}
-void GX_CopyDisp(void*frame,int clear){copies++;copyDepth=depthWrite;copyQueued=1;copyComplete=0;}
+void GX_CopyDisp(void*frame,int clear){copies++;copyDepth=depthWrite;copyQueued=1;copyComplete=0;displayedMessage=drawnMessage;}
 void VIDEO_SetNextFramebuffer(void*frame){nextFramebuffer=frame;if(!copyComplete)publishedTooSoon=1;}
 void VIDEO_Flush(void){blackVisible=blackPending;flushes++;}
 void VIDEO_SetBlack(int value){blackPending=value;}
@@ -64,6 +65,56 @@ void VIDEO_WaitVSync(void){}
 '''
         source += function(cls.main, "PreloadLauncherTheme")
         source += function(graphics, "GRRLIB_RenderMode")
+        source += r'''
+#define DEFAULT_SIZE 16
+#define BLACK 0x000000ff
+unsigned long long strlen(const char*s){unsigned long long n=0;while(s[n])n++;return n;}
+const char *strchr(const char*s,int c){while(*s&&*s!=c)s++;return *s==c?s:NULL;}
+int strcmp(const char*a,const char*b){while(*a&&*a==*b){a++;b++;}return *a-*b;}
+void ClearScreen(void){drawnMessage=NULL;}
+void PrintInfo(void){}
+void PrintFormat(int size,int color,int x,int y,const char*fmt,int len,const char*line){drawnMessage=line;}
+void GRRLIB_Render(void){GRRLIB_RenderMode(true);}
+'''
+        menu = (ROOT / "launcher/loader/source/menu.c").read_text()
+        source += function(menu, "ShowMessageScreen")
+        source += r'''
+static int warningMask,menuOpened,mountChecks,blankChecks,elapsedTicks;
+static bool LauncherCanSave;
+void SusamuneMusicInit(void){}
+void SusamuneMusicLoad(const char*root,const char*dir){}
+void SusamuneMusicStart(void){}
+const char *SusamuneThemeWarning(void){return warningMask&1?"Theme warning":"";}
+const char *SusamuneMusicWarning(void){return warningMask&2?"Music warning":"";}
+void usleep(unsigned ticks){elapsedTicks+=ticks;}
+bool MountDeviceOnce(int dev){
+ for(int i=0;i<(dev==DEV_USB?600:3);i++){
+  mountChecks++;
+  if(!displayedMessage||strcmp(displayedMessage,"Checking storage devices..."))blankChecks++;
+  usleep(16667);
+ }
+ return true;
+}
+void SusamuneMenuRun(const char*root,bool canSave){menuOpened++;}
+'''
+        # Exercise the real pre-menu sequence: the delayed second device probe
+        # used to run after presenting a frame containing only the background.
+        start = cls.main.index("\n\tif(!(ncfg->Config & NIN_CFG_AUTO_BOOT))")
+        start = cls.main.index("{", start)
+        depth, end = 1, start + 1
+        while depth:
+            depth += (cls.main[end] == "{") - (cls.main[end] == "}")
+            end += 1
+        source += "void prepareMenu(void)" + cls.main[start:end]
+        source += r'''
+__declspec(dllexport) int menu_storage_wait(int warnings){
+ warningMask=warnings;menuOpened=mountChecks=blankChecks=elapsedTicks=0;
+ drawnMessage=displayedMessage="Loading settings...";
+ prepareMenu();
+ if(menuOpened!=1||mountChecks!=603)return 1;
+ return blankChecks?2:0;
+}
+'''
         source += r"""
 typedef int DRESULT;typedef unsigned char BYTE;
 #define RES_OK 0
@@ -135,6 +186,11 @@ __declspec(dllexport) int first_frame(int preserve){
         self.assertLess(main.index('ShowMessageScreen("Starting Moonshine...")'), main.index("LoadKernel()"))
         self.assertLess(main.index("KernelLoaded = 1"), main.index("SusamuneMusicInit()"))
         self.assertNotIn("RevealBackground(false)", main)
+
+    def test_storage_status_remains_visible_through_slow_menu_device_scan(self):
+        for warnings in range(4):
+            with self.subTest(warnings=warnings):
+                self.assertEqual(self.dll.menu_storage_wait(warnings), 0)
 
 
 if __name__ == "__main__":

@@ -4293,11 +4293,13 @@ static_assert(BIND_REGRAB_OBJECT == 0 &&
 class SavestatesTab : public MenuTab {
 public:
     SavestatesTab() : mSel(0), mSDsel(0), mSD(false), mConfirmClear(false),
-        mConfirmLoad(false), mClearSlot(0), mClearGeneration(0), mArchiveId(0),
+        mConfirmLoad(false), mConfirmDelete(false), mNameMode(NAME_NONE),
+        mNameLength(0), mNamePage(0), mNameCursor(0), mNameUpper(false), mMetadataPending(false),
+        mClearSlot(0), mClearGeneration(0), mArchiveId(0),
         mArchiveCrc(0), mArchiveSize(0) { mArchiveName[0] = 0; focus(); }
     const char *title() const override { return "Savestates"; }
     const char *summary() const override { return "Choose a memory state, or save and browse SD states."; }
-    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X); }
+    void focus() override { mInput.begin(SUSAMUNE_BIND_BUTTON_MASK); }
     bool grabsInput() const override { return mSD || mConfirmClear || gCreationExtras.editing(); }
     bool fullScreen() const override { return grabsInput(); }
     bool suppressesBinds() const override {
@@ -4329,9 +4331,9 @@ public:
         const u32 nav = menu->navigationInput(pad);
         if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, ROW_COUNT);
         else if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, ROW_COUNT);
-        if (mSel == ROW_ACTIVE &&
+        if ((mSel == ROW_SAVE || mSel == ROW_LOAD) &&
             (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT))) {
-            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
+            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1, mSel == ROW_LOAD);
             return;
         }
         if ((pressed & JUTGamePad::X) && favoriteHint()) {
@@ -4341,11 +4343,11 @@ public:
             return;
         }
         if (!(pressed & JUTGamePad::A)) return;
-        if (mSel == ROW_ACTIVE) {
-            changeState(menu, 1);
+        if (mSel == ROW_SAVE || mSel == ROW_LOAD) {
+            changeState(menu, 1, mSel == ROW_LOAD);
         } else if (mSel == ROW_CLEAR) {
             if (!gSavestateMgr) { menu->toast("Savestates unavailable"); return; }
-            mClearSlot = gSavestateMgr->activeSlot();
+            mClearSlot = gSavestateMgr->saveSlot();
             const SavestateManager::SlotInfo info = gSavestateMgr->slotInfo(mClearSlot);
             if (!info.valid) { menu->toast("This state is empty"); return; }
             mClearGeneration = info.generation;
@@ -4378,27 +4380,31 @@ public:
             menu->drawText(buttons, 320 - Menu::textWidth(buttons, 12) / 2, 272, 12, 12, cFooter());
             return;
         }
-        char active[24];
-        if (gSavestateMgr) snprintf(active, sizeof(active), "%lu / %u", gSavestateMgr->activeSlot() + 1, SavestateManager::kSlotCount);
-        else strcpy(active, "Unavailable");
-        const char *labels[] = {"Active state", "Clear selected state", "Save RNG state", "Savestate feedback", "Feedback display", "SD states"};
-        const char *values[] = {active, "Clear", gSettings.valueLabel(SETTING_SAVE_RNG_STATE),
+        char save[24], load[32];
+        formatSources(save, sizeof(save), load, sizeof(load));
+        const char *labels[] = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Feedback display", "SD states"};
+        const char *values[] = {save, load, "Clear", gSettings.valueLabel(SETTING_SAVE_RNG_STATE),
             gSettings.valueLabel(SETTING_SAVESTATE_FEEDBACK), "Edit", "Open"};
-        for (int row = 0; row < ROW_COUNT; ++row) {
+        const int listH = h - HELP_H - ROW_H;
+        const int start = listScrollStart(mSel, ROW_COUNT, listH / ROW_H);
+        const int end = clampi(start + listH / ROW_H, 0, ROW_COUNT);
+        for (int row = start; row < end; ++row) {
             const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK) &&
                 gSettings.favorite(row == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK);
-            drawValueRow(menu, x, y + row * ROW_H, w, labels[row], values[row], row == mSel, starred, false);
+            drawValueRow(menu, x, y + (row - start) * ROW_H, w, labels[row], values[row], row == mSel, starred, false);
         }
-        const int statusY = y + (ROW_COUNT + 1) * ROW_H;
+        drawScrollHints(menu, x, y, w, listH, start, end, ROW_COUNT);
+        const int statusY = y + listH + 4;
         for (u32 slot = 0; slot < SavestateManager::kSlotCount; ++slot) {
             const SavestateManager::SlotInfo info = gSavestateMgr ? gSavestateMgr->slotInfo(slot) : SavestateManager::SlotInfo{};
             char status[48];
             snprintf(status, sizeof(status), "State %lu: %s", slot + 1, info.valid ? "Saved" : "Empty");
             menu->drawText(status, x + 4 + slot * (w / SavestateManager::kSlotCount), statusY, FOOT_SZ, FOOT_SZ,
-                gSavestateMgr && gSavestateMgr->activeSlot() == slot ? cAccent() : cRow());
+                gSavestateMgr && gSavestateMgr->saveSlot() == slot ? cAccent() : cRow());
         }
-        const char *help = mSel == ROW_ACTIVE ? "Choose with A or C-stick left/right; this does not save or load."
-            : mSel == ROW_CLEAR ? "Remove only the selected saved state, after confirmation."
+        const char *help = mSel == ROW_SAVE ? "Save writes to this slot. Load keeps its own selection."
+            : mSel == ROW_LOAD ? "Choose a memory slot with A or C-stick; choose SD files on the SD page."
+            : mSel == ROW_CLEAR ? "Remove the memory state in the Save to slot, after confirmation."
             : mSel == ROW_RNG ? "Keep the game RNG with each state."
             : mSel == ROW_FEEDBACK ? "Show a message when saving or loading a state."
             : mSel == ROW_SD ? "Save states to SD and bring them back after restarting."
@@ -4406,8 +4412,16 @@ public:
         drawHelpLine(menu, x, y, w, h, help);
     }
 private:
-    enum { ROW_ACTIVE, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_EDITOR, ROW_SD, ROW_COUNT };
-    enum { SD_ACTIVE, SD_SAVE, SD_REFRESH, SD_NEXT, SD_FILES };
+    enum { ROW_SAVE, ROW_LOAD, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_EDITOR, ROW_SD, ROW_COUNT };
+    enum { SD_SAVE_SLOT, SD_LOAD_SLOT, SD_SAVE, SD_REFRESH, SD_NEXT, SD_FILES };
+    enum { NAME_NONE, NAME_SAVE, NAME_RENAME };
+    void formatSources(char *save, u32 saveSize, char *load, u32 loadSize) const {
+        if (!gSavestateMgr) { strcpy(save, "Unavailable"); strcpy(load, "Unavailable"); return; }
+        snprintf(save, saveSize, "State %lu", gSavestateMgr->saveSlot() + 1);
+        if (gSavestateMgr->loadSourceIsSD())
+            snprintf(load, loadSize, "SD: %.23s", gSavestateMgr->selectedSDName());
+        else snprintf(load, loadSize, "State %lu", gSavestateMgr->loadSlot() + 1);
+    }
     u32 sdCount() const {
         if (!gSavestateMgr || !gSavestateMgr->sdCatalogReady()) return 0;
         const u32 count = gSavestateMgr->sdCatalog().count;
@@ -4415,21 +4429,26 @@ private:
     }
     void updateSD(Menu *menu, TMarioGamePad *pad, u16 pressed) {
         if (SavestateManager::diskBusy()) {
+            if (mMetadataPending) return;
             if ((pressed & (JUTGamePad::A | JUTGamePad::B)) && gSavestateMgr) {
                 if (!gSavestateMgr->cancelSD()) menu->toast("Finishing the SD transfer; please wait");
                 focus();
             }
             return;
         }
-        if (mConfirmLoad) {
-            if (pressed & JUTGamePad::B) { mConfirmLoad = false; focus(); }
+        mMetadataPending = false;
+        if (mNameMode != NAME_NONE) { updateNameEditor(menu, pad, pressed); return; }
+        if (mConfirmLoad || mConfirmDelete) {
+            if (pressed & JUTGamePad::B) { mConfirmLoad = mConfirmDelete = false; focus(); }
             else if (pressed & JUTGamePad::A) {
-                const bool same = gSavestateMgr && gSavestateMgr->activeSlot() == mClearSlot &&
-                    gSavestateMgr->slotInfo(mClearSlot).generation == mClearGeneration;
-                if (!same) menu->toast("Selected state changed; choose the file again");
+                if (mConfirmDelete) {
+                    mMetadataPending = gSavestateMgr && gSavestateMgr->deleteSD(mArchiveId, mArchiveCrc);
+                    if (!mMetadataPending)
+                        menu->toast(gSavestateMgr ? gSavestateMgr->sdStatus() : "Savestates unavailable");
+                } else if (!sameSaveSlot()) menu->toast("Save slot changed; choose the file again");
                 else if (!gSavestateMgr->loadFromSD(mArchiveId, mArchiveCrc, mArchiveSize))
                     menu->toast(gSavestateMgr->sdStatus());
-                mConfirmLoad = false;
+                mConfirmLoad = mConfirmDelete = false;
                 focus();
             }
             return;
@@ -4440,21 +4459,30 @@ private:
         const u32 nav = menu->navigationInput(pad);
         if (nav & TMarioGamePad::CSTICK_UP) mSDsel = (u8)wrap(mSDsel - 1, SD_FILES + count);
         else if (nav & TMarioGamePad::CSTICK_DOWN) mSDsel = (u8)wrap(mSDsel + 1, SD_FILES + count);
-        if (mSDsel == SD_ACTIVE &&
+        if ((mSDsel == SD_SAVE_SLOT || mSDsel == SD_LOAD_SLOT) &&
             (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT))) {
-            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
+            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1, mSDsel == SD_LOAD_SLOT);
             return;
         }
-        if (!(pressed & JUTGamePad::A)) return;
-        if (mSDsel == SD_ACTIVE) { changeState(menu, 1); return; }
+        const u16 action = pressed & (JUTGamePad::A | JUTGamePad::Y | JUTGamePad::X | JUTGamePad::START);
+        if (!action || (action & (action - 1))) return;
+        if (mSDsel < SD_FILES && action != JUTGamePad::A) return;
+        if (mSDsel == SD_SAVE_SLOT || mSDsel == SD_LOAD_SLOT) {
+            changeState(menu, 1, mSDsel == SD_LOAD_SLOT); return;
+        }
         if (!gSavestateMgr || !gSavestateMgr->sdAvailable()) {
             menu->toast("SD states need Moonshine Launcher"); return;
         }
         if (mSDsel == SD_SAVE) {
-            if (!gSavestateMgr->slotInfo(gSavestateMgr->activeSlot()).valid) {
+            mClearSlot = gSavestateMgr->saveSlot();
+            const SavestateManager::SlotInfo info = gSavestateMgr->slotInfo(mClearSlot);
+            if (!info.valid) {
                 menu->toast("Save a memory state first"); return;
             }
-            if (!gSavestateMgr->saveToSD()) menu->toast(gSavestateMgr->sdStatus());
+            mClearGeneration = info.generation;
+            snprintf(mArchiveName, sizeof(mArchiveName), "State %lu - area %u episode %u",
+                mClearSlot + 1, info.area, info.episode);
+            beginNameEditor(NAME_SAVE);
         } else if (mSDsel == SD_REFRESH || mSDsel == SD_NEXT) {
             const bool next = mSDsel == SD_NEXT;
             if (next && (!gSavestateMgr->sdCatalogReady() || !gSavestateMgr->sdCatalog().more)) {
@@ -4469,11 +4497,61 @@ private:
             mArchiveSize = entry.packedSize;
             memcpy(mArchiveName, entry.name, sizeof(mArchiveName));
             mArchiveName[sizeof(mArchiveName) - 1] = 0;
-            mClearSlot = gSavestateMgr->activeSlot();
-            mClearGeneration = gSavestateMgr->slotInfo(mClearSlot).generation;
-            mConfirmLoad = true;
+            if (action == JUTGamePad::Y) {
+                if (!gSavestateMgr->selectSDForLoad(mArchiveId, mArchiveCrc, mArchiveSize, mArchiveName))
+                    menu->toast(gSavestateMgr->sdStatus());
+            } else if (action == JUTGamePad::START) beginNameEditor(NAME_RENAME);
+            else if (action == JUTGamePad::X) mConfirmDelete = true;
+            else {
+                mClearSlot = gSavestateMgr->saveSlot();
+                mClearGeneration = gSavestateMgr->slotInfo(mClearSlot).generation;
+                mConfirmLoad = true;
+            }
         }
         focus();
+    }
+    bool sameSaveSlot() const {
+        return gSavestateMgr && gSavestateMgr->saveSlot() == mClearSlot &&
+            gSavestateMgr->slotInfo(mClearSlot).generation == mClearGeneration;
+    }
+    void beginNameEditor(u8 mode) {
+        mNameMode = mode;
+        mNameLength = (u8)strlen(mArchiveName);
+        mNamePage = mNameCursor = 0;
+        mNameUpper = false;
+        focus();
+    }
+    void updateNameEditor(Menu *menu, TMarioGamePad *pad, u16 pressed) {
+        if (pressed & JUTGamePad::START) {
+            if (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::X) {
+                mNameMode = NAME_NONE; focus(); return;
+            }
+            u8 first = 0;
+            while (mArchiveName[first] == ' ') ++first;
+            while (mNameLength && mArchiveName[mNameLength - 1] == ' ') --mNameLength;
+            if (first >= mNameLength) { menu->toast("Enter a name first"); return; }
+            mNameLength -= first;
+            for (u8 i = 0; i < mNameLength; ++i) mArchiveName[i] = mArchiveName[first + i];
+            mArchiveName[mNameLength] = 0;
+            if (mNameMode == NAME_SAVE && !sameSaveSlot())
+                menu->toast("Save slot changed; start again");
+            else {
+                const bool accepted = gSavestateMgr && (mNameMode == NAME_SAVE
+                    ? gSavestateMgr->saveToSD(mArchiveName)
+                    : gSavestateMgr->renameSD(mArchiveId, mArchiveCrc, mArchiveName));
+                mMetadataPending = accepted && mNameMode == NAME_RENAME;
+                if (!accepted) menu->toast(gSavestateMgr ? gSavestateMgr->sdStatus() : "Savestates unavailable");
+            }
+            mNameMode = NAME_NONE;
+            focus();
+            return;
+        }
+        if (pressed & JUTGamePad::Z) { mNameLength = 0; mArchiveName[0] = 0; return; }
+        const u32 original = pad->mButtons.mRapidInput;
+        pad->mButtons.mRapidInput = pressed;
+        updateCreationKeyboardText(pad, mArchiveName, mNameLength,
+            sizeof(mArchiveName) - 1, mNamePage, mNameUpper, mNameCursor);
+        pad->mButtons.mRapidInput = original;
     }
     void drawSD(Menu *menu) {
         const int x = 80, y = 72, w = 480, h = 336;
@@ -4484,40 +4562,52 @@ private:
             menu->drawText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Working...",
                 x + 16, y + 76, 14, 14, cRowSel());
             menu->drawText("Keep the SD card connected until this finishes.", x + 16, y + 106, 12, 12, cRow());
-            menu->drawText(SUSAMUNE_GLYPH_A " / " SUSAMUNE_GLYPH_B " Cancel transfer",
+            menu->drawText(mMetadataPending ? "Finishing the SD update..."
+                : SUSAMUNE_GLYPH_A " / " SUSAMUNE_GLYPH_B " Cancel transfer",
                 x + 16, y + h - 26, 12, 12, cFooter());
             return;
         }
-        if (mConfirmLoad) {
+        if (mNameMode != NAME_NONE) {
+            drawCreationKeyboard(menu, mNameMode == NAME_SAVE ? "Name SD state" : "Rename SD state",
+                mArchiveName[0] ? mArchiveName : "(enter a name)", mNamePage, mNameUpper, mNameCursor);
+            return;
+        }
+        if (mConfirmLoad || mConfirmDelete) {
             char question[48];
-            snprintf(question, sizeof(question), "Import into state %lu?", mClearSlot + 1);
+            if (mConfirmDelete) strcpy(question, "Delete this SD state?");
+            else snprintf(question, sizeof(question), "Import into state %lu?", mClearSlot + 1);
             menu->drawText(question, x + 16, y + 66, 16, 16, cRowSel());
             menu->drawText(mArchiveName, x + 16, y + 100, 12, 12, cAccent());
-            menu->drawText("Replaces this memory state. The SD file stays saved.", x + 16, y + 138, 12, 12, cRow());
-            menu->drawText("Then use Load to restore it in the matching level.", x + 16, y + 164, 12, 12, cRow());
-            menu->drawText(SUSAMUNE_GLYPH_A " Import    " SUSAMUNE_GLYPH_B " Cancel",
+            menu->drawText(mConfirmDelete ? "Removes this file from SD. Memory states stay saved."
+                : "Replaces the Save to memory slot. The SD file stays saved.", x + 16, y + 138, 12, 12, cRow());
+            if (!mConfirmDelete) menu->drawText("Select that slot under Load from to use it.", x + 16, y + 164, 12, 12, cRow());
+            menu->drawText(mConfirmDelete ? SUSAMUNE_GLYPH_A " Delete    " SUSAMUNE_GLYPH_B " Cancel"
+                : SUSAMUNE_GLYPH_A " Import    " SUSAMUNE_GLYPH_B " Cancel",
                 x + 16, y + h - 26, 12, 12, cFooter());
             return;
         }
+        char save[24], load[32], sources[72];
+        formatSources(save, sizeof(save), load, sizeof(load));
+        snprintf(sources, sizeof(sources), "Save: %s   Load: %s", save, load);
+        menu->drawText(sources, x + 16, y + 42, 11, 11, cAccent());
         const int rows = SD_FILES + sdCount();
         if (mSDsel >= rows) mSDsel = rows - 1;
-        const int listY = y + 52, listH = 8 * ROW_H;
-        const int start = listScrollStart(mSDsel, rows, 8);
-        const int end = clampi(start + 8, 0, rows);
+        const int listY = y + 68, listH = 7 * ROW_H;
+        const int start = listScrollStart(mSDsel, rows, 7);
+        const int end = clampi(start + 7, 0, rows);
         for (int row = start; row < end; ++row) {
-            char name[48], value[24];
-            if (row == SD_ACTIVE) {
-                strcpy(name, "Active memory state");
-                snprintf(value, sizeof(value), "%lu / %u", gSavestateMgr ? gSavestateMgr->activeSlot() + 1 : 1,
-                    SavestateManager::kSlotCount);
-            } else if (row == SD_SAVE) { strcpy(name, "Save selected state to SD"); strcpy(value, "Save"); }
+            char name[48], value[32];
+            if (row == SD_SAVE_SLOT) { strcpy(name, "Save to"); strcpy(value, save); }
+            else if (row == SD_LOAD_SLOT) { strcpy(name, "Load from"); strcpy(value, load); }
+            else if (row == SD_SAVE) { strcpy(name, "Save memory state to SD"); strcpy(value, "Name..."); }
             else if (row == SD_REFRESH) { strcpy(name, "Refresh / first page"); strcpy(value, "Open"); }
             else if (row == SD_NEXT) { strcpy(name, "Next page"); strcpy(value,
                 gSavestateMgr && gSavestateMgr->sdCatalogReady() && gSavestateMgr->sdCatalog().more ? "Open" : "--"); }
             else {
                 const SusamuneStateCatalogEntry &entry = gSavestateMgr->sdCatalog().entries[row - SD_FILES];
                 snprintf(name, sizeof(name), "%.31s", entry.name);
-                strcpy(value, "Import");
+                strcpy(value, gSavestateMgr->loadSourceIsSD() && gSavestateMgr->selectedSDId() == entry.id
+                    ? "Load source" : "SD file");
             }
             drawValueRow(menu, x + 12, listY + (row - start) * ROW_H, w - 24,
                 name, value, row == mSDsel, false, false);
@@ -4525,27 +4615,33 @@ private:
         drawScrollHints(menu, x + 12, listY, w - 24, listH, start, end, rows);
         menu->drawText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Savestates unavailable",
             x + 16, y + h - 72, 12, 12, cFooter());
-        const char *help = mSDsel == SD_ACTIVE ? "Choose a slot. This does not save or load."
-            : mSDsel == SD_SAVE ? "Writes the selected memory state to a new SD file."
-            : mSDsel >= SD_FILES ? "Import this file, then use Load to restore gameplay."
+        const char *help = mSDsel == SD_SAVE_SLOT ? "Save and Import write to this memory slot."
+            : mSDsel == SD_LOAD_SLOT ? "Choose a memory slot here, or press Y on an SD file."
+            : mSDsel == SD_SAVE ? "Name a new SD file from the Save to memory slot."
+            : mSDsel >= SD_FILES ? "Y chooses this file for your Load bind; A copies it to memory."
             : "SD files stay saved after the console restarts.";
         menu->drawText(help, x + 16, y + h - 50, 12, 12, cRow());
-        menu->drawText(SUSAMUNE_GLYPH_A " Select    " SUSAMUNE_GLYPH_B " Back",
-            x + 16, y + h - 26, 12, 12, cFooter());
+        menu->drawText(mSDsel >= SD_FILES
+            ? SUSAMUNE_GLYPH_A " Import  " SUSAMUNE_GLYPH_Y " Load from  " SUSAMUNE_GLYPH_X " Delete  Start Rename  " SUSAMUNE_GLYPH_B " Back"
+            : SUSAMUNE_GLYPH_A " Select    " SUSAMUNE_GLYPH_B " Back",
+            x + 16, y + h - 26, 11, 11, cFooter());
     }
-    void changeState(Menu *menu, int direction) {
+    void changeState(Menu *menu, int direction, bool load) {
         if (!gSavestateMgr) { menu->toast("Savestates unavailable"); return; }
-        const u32 next = (u32)wrap((int)gSavestateMgr->activeSlot() + direction, SavestateManager::kSlotCount);
-        if (!gSavestateMgr->selectSlot(next)) { menu->toast("State is busy; try again"); return; }
-        char message[24];
-        snprintf(message, sizeof(message), "State %lu selected", next + 1);
-        menu->toast(message);
+        const u32 current = load ? gSavestateMgr->loadSlot() : gSavestateMgr->saveSlot();
+        const u32 next = (u32)wrap((int)current + direction, SavestateManager::kSlotCount);
+        if (!(load ? gSavestateMgr->selectLoadSlot(next) : gSavestateMgr->selectSaveSlot(next)))
+            menu->toast("State is busy; try again");
     }
     u8 mSel;
     u8 mSDsel;
     bool mSD;
     bool mConfirmClear;
     bool mConfirmLoad;
+    bool mConfirmDelete;
+    u8 mNameMode, mNameLength, mNamePage, mNameCursor;
+    bool mNameUpper;
+    bool mMetadataPending;
     u32 mClearSlot;
     u32 mClearGeneration;
     u32 mArchiveId, mArchiveCrc, mArchiveSize;
@@ -4673,9 +4769,14 @@ private:
     static BindId bindAt(int row) {
         for (int id = 0; id < BIND_COUNT; ++id) {
             if (id == BIND_PRACTICE_SPIN_CW || id == BIND_PRACTICE_SPIN_CCW ||
-                id == BIND_SAVESTATE_CYCLE) continue;
+                id == BIND_SAVESTATE_CYCLE || id == BIND_SAVESTATE_CYCLE_SAVE ||
+                id == BIND_SAVESTATE_CYCLE_LOAD) continue;
             if (row-- == 0) return (BindId)id;
-            if (id == BIND_SAVESTATE_LOAD && row-- == 0) return BIND_SAVESTATE_CYCLE;
+            if (id == BIND_SAVESTATE_LOAD) {
+                if (row-- == 0) return BIND_SAVESTATE_CYCLE_SAVE;
+                if (row-- == 0) return BIND_SAVESTATE_CYCLE_LOAD;
+                if (row-- == 0) return BIND_SAVESTATE_CYCLE;
+            }
         }
         return BIND_REGRAB_OBJECT;
     }
@@ -6114,6 +6215,7 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
         "Practice", practiceChildren, 7);
     mTabs[mNumTabs++] = new (sILsHubBuf) NestedMenuTab(
         "Runs", runChildren, 5);
+    mTabs[mNumTabs++] = records;
     mTabs[mNumTabs++] = ghosts;
     mTabs[mNumTabs++] = new (sMenuRuntime.displayHub) NestedMenuTab(
         "Display", displayChildren, 4);

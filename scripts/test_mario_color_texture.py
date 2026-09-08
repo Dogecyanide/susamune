@@ -14,6 +14,20 @@ def block_offset(x, y):
     return ((y // 8) * 32 + x // 8) * 32 + ((y % 8) // 4 * 2 + (x % 8) // 4) * 8
 
 
+def block_pixels(data, offset):
+    a, b = struct.unpack_from('>HH', data, offset)
+    def rgb(value):
+        return (value >> 11, (value >> 5) & 63, value & 31)
+    colors = [rgb(a), rgb(b)]
+    if a > b:
+        colors += [tuple((2 * colors[0][i] + colors[1][i]) // 3 for i in range(3)),
+                   tuple((colors[0][i] + 2 * colors[1][i]) // 3 for i in range(3))]
+    else:
+        colors += [tuple((colors[0][i] + colors[1][i]) // 2 for i in range(3)), None]
+    return [colors[(data[offset + 4 + y] >> (6 - 2 * x)) & 3]
+            for y in range(4) for x in range(4)]
+
+
 class MarioColorTextureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -96,7 +110,36 @@ extern "C" __declspec(dllexport) void recolor(const unsigned char*s,unsigned cha
         result = self.recolor(source, 8, [(0, 0, 0)] * 7)
         a, b = struct.unpack_from('>HH', result, offset)
         self.assertGreater(a, b)
-        self.assertEqual(result[offset + 4:offset + 8], b'\xff' * 4)
+        self.assertEqual(block_pixels(result, offset), [(0, 0, 0)] * 16)
+
+    def test_quantized_solid_colors_do_not_sample_a_different_hue(self):
+        source = bytearray(32768)
+        regions = [(224, 180, 0), (72, 172, 1)]
+        # Opaque endpoints share a max channel and quantize to one tint;
+        # every original index, including both interpolants, is sampled.
+        for x, y, _ in regions:
+            struct.pack_into('>HHI', source, block_offset(x, y), 0xF820, 0xF800, 0x1B1B1B1B)
+        for color in [(255, 0, 255), (0, 255, 255), (255, 255, 0),
+                      (0, 0, 255), (255, 255, 255), (0, 0, 0)]:
+            for x, y, part in regions:
+                with self.subTest(color=color, part=part):
+                    result = self.recolor(source, 1 << part, [color] * 7)
+                    offset = block_offset(x, y)
+                    a, b = struct.unpack_from('>HH', result, offset)
+                    self.assertGreater(a, b)
+                    expected = (color[0] * 31 // 255, color[1] * 63 // 255,
+                                color[2] * 31 // 255)
+                    self.assertEqual(block_pixels(result, offset), [expected] * 16)
+
+    def test_cap_emblem_and_forearm_keep_original_colors(self):
+        source = bytearray(32768)
+        protected = [(192, 220, 0xFFDD, 0xF79C), (76, 216, 0xFC10, 0xDB0B)]
+        for x, y, a, b in protected:
+            struct.pack_into('>HHI', source, block_offset(x, y), a, b, 0x1B1B1B1B)
+        result = self.recolor(source, 3, [(255, 0, 255)] * 7)
+        for x, y, _, _ in protected:
+            offset = block_offset(x, y)
+            self.assertEqual(result[offset:offset + 8], source[offset:offset + 8])
 
     def test_alpha_mode_preserves_transparent_pixels(self):
         source = bytearray(32768)

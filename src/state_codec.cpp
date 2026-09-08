@@ -189,7 +189,7 @@ unsigned int workspaceSize() { return kWorkSize; }
 
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan *output, unsigned int outputCount) {
+                const WriteSpan *output, unsigned int outputCount, bool compact) {
     Result result = {INVALID_ARGUMENT, 0, 0, 0};
     result.status = checkSource(workspace, workspaceBytes, source, sourceCount,
                                 &result.rawBytes);
@@ -202,7 +202,8 @@ Result compress(void *workspace, unsigned int workspaceBytes,
     }
     tdefl_compressor *state = static_cast<tdefl_compressor *>(workspace);
     PackSink sink = {output, outputCount, 0};
-    if (tdefl_init(state, packOutput, &sink, TDEFL_WRITE_ZLIB_HEADER | 8) !=
+    const unsigned int probes = compact ? 8 : 1 | TDEFL_GREEDY_PARSING_FLAG;
+    if (tdefl_init(state, packOutput, &sink, TDEFL_WRITE_ZLIB_HEADER | probes) !=
         TDEFL_STATUS_OKAY) { result.status = CODEC_ERROR; return result; }
     for (unsigned int i = 0; i < sourceCount; ++i) {
         if (source[i].size && tdefl_compress_buffer(state, source[i].data,
@@ -254,6 +255,22 @@ Status decompress(void *workspace, unsigned int workspaceBytes,
     status = inflatePass(workspace, source, sourceCount, compressedBytes,
                          output, outputCount, expectedRaw, expectedAdler,
                          copy, copyContext);
+    return status == SUCCESS ? SUCCESS : COMMIT_FAILED;
+}
+
+Status decompressVerified(void *workspace, unsigned int workspaceBytes,
+                  const ReadSpan *source, unsigned int sourceCount,
+                  const WriteSpan *output, unsigned int outputCount,
+                  unsigned int expectedRaw, unsigned int expectedAdler,
+                  CopyBytes copy, void *copyContext) {
+    unsigned int compressedBytes, capacity;
+    Status status = checkSource(workspace, workspaceBytes, source, sourceCount, &compressedBytes);
+    if (status != SUCCESS) return status;
+    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity);
+    if (status != SUCCESS) return status;
+    if (!expectedRaw || capacity != expectedRaw) return INVALID_ARGUMENT;
+    status = inflatePass(workspace, source, sourceCount, compressedBytes,
+                         output, outputCount, expectedRaw, expectedAdler, copy, copyContext);
     return status == SUCCESS ? SUCCESS : COMMIT_FAILED;
 }
 

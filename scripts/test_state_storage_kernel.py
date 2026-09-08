@@ -10,7 +10,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 POOL, STAGING = 0xFA0000, 0x400000
 EXPANDED = POOL + 0x200000
-EXPORT, IMPORT, CATALOG, CANCEL = 1, 2, 3, 4
+EXPORT, IMPORT, CATALOG, CANCEL, RENAME, DELETE = 1, 2, 3, 4, 5, 6
 OK, IO, BAD, FULL, CANCELLED, STALE, CONFIG = 0, 2, 3, 4, 6, 7, 8
 
 
@@ -19,6 +19,11 @@ class Header(C.Structure):
         'magic', 'version', 'headerSize', 'metadataSize', 'packedSize', 'rawSize',
         'gameId', 'buildCrc', 'snapshotVersion', 'configId', 'metadataCrc', 'payloadCrc',
         'headerCrc', 'sceneKey', 'reserved0', 'reserved1')] + [('name', C.c_char * 32)]
+
+
+class NameRecord(C.Structure):
+    _fields_ = [(n, C.c_uint) for n in ('magic','version','archiveId','generation')] + [
+        ('name',C.c_char*32)] + [(n,C.c_uint) for n in ('checksum','archiveChecksum','reserved0','reserved1')]
 
 
 ADAPTER = r'''
@@ -33,6 +38,13 @@ static u8 stateExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE + 64];
 #define STATE_STAGING (stateStaging + 32)
 static int f_mkdir_char(const char *p) { (void)p; return FR_EXIST; }
 static bool failRename;
+static bool failUnlink;
+static char failOpenPath[128];
+static int f_open_char(FIL *file,const char *path,u32 flags) {
+ if(failOpenPath[0] && !strcmp(path,failOpenPath))return FR_DISK_ERR;
+ return fixture_open(file,path,flags);
+}
+static int f_unlink_char(const char *path) {return failUnlink?FR_DISK_ERR:fixture_unlink(path);}
 static int f_rename_char(const char *from,const char *to) {
  if(failRename) return FR_DISK_ERR;
  int index=lookup(from); if(index<0) return FR_NO_FILE;
@@ -44,7 +56,7 @@ static int f_rename_char(const char *from,const char *to) {
 EXPORTS = r'''
 __declspec(dllexport) void reset(void) {
  testCount=writeCount=readBytes=readCalls=dirCalls=maxRead=writeBytes=0;
- failWriteAfter=0xFFFFFFFFu; failSync=failRename=false; directoryResult=FR_OK;
+ failWriteAfter=0xFFFFFFFFu; failSync=failRename=failUnlink=false; failOpenPath[0]=0; directoryResult=FR_OK;
  memset(testFiles,0,sizeof(testFiles)); memset(statePool,0x5A,sizeof(statePool));
  memset(stateStaging,0xA5,sizeof(stateStaging)); memset(stateExtra,0xC3,sizeof(stateExtra)); SusamuneStateStorageInit();
 }
@@ -87,6 +99,13 @@ __declspec(dllexport) const void *mailbox(void) {return &stateMailbox;}
 __declspec(dllexport) const void *pool(void) {return STATE_POOL;}
 __declspec(dllexport) const void *staging(void) {return STATE_STAGING;}
 __declspec(dllexport) const void *extra(void) {return STATE_POOL_EXTRA;}
+__declspec(dllexport) void reboot(void) {SusamuneStateStorageInit();}
+__declspec(dllexport) void requestName(const char *name) {memset(stateMailbox.requestName,0,32);for(u32 i=0;i<32&&name[i];++i)stateMailbox.requestName[i]=name[i];}
+__declspec(dllexport) void unlinkFailure(u32 value) {failUnlink=value;}
+__declspec(dllexport) void openFailure(const char *name) {copystr(failOpenPath,name);}
+__declspec(dllexport) void clearIo(void) {readBytes=writeBytes=0;}
+__declspec(dllexport) u32 reads(void) {return readBytes;}
+__declspec(dllexport) u32 writes(void) {return writeBytes;}
 __declspec(dllexport) void failures(u32 after,u32 sync,u32 rename) {
  failWriteAfter=after; failSync=sync; failRename=rename;
 }
@@ -112,6 +131,7 @@ class StateStorageKernelTests(unittest.TestCase):
         fixture = fixture.replace('#define FIXTURE_FILES 60000', '#define FIXTURE_FILES 100')
         fixture = fixture.replace('#define FIXTURE_WRITES 80', '#define FIXTURE_WRITES 8')
         fixture = fixture.replace('#define FIXTURE_FILE_BYTES 1400000', '#define FIXTURE_FILE_BYTES 6000000')
+        fixture = fixture.replace('f_open_char(', 'fixture_open(').replace('f_unlink_char(', 'fixture_unlink(')
         source = (ROOT / 'launcher/kernel/SusamuneStateStorage.c').read_text()
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         start = source.index('static u32 BootConfigId(void)')
@@ -130,6 +150,8 @@ class StateStorageKernelTests(unittest.TestCase):
         cls.lib.prepare.argtypes = [C.c_void_p, C.c_uint, C.c_uint, C.c_void_p, C.c_uint]
         cls.lib.add.argtypes = [C.c_char_p, C.c_void_p, C.c_uint]
         cls.lib.file.argtypes = [C.c_char_p, C.POINTER(C.c_uint)]
+        cls.lib.requestName.argtypes = [C.c_char_p]
+        cls.lib.openFailure.argtypes = [C.c_char_p]
         for name in ('mailbox', 'pool', 'staging', 'extra', 'file'):
             getattr(cls.lib, name).restype = C.c_void_p
 
@@ -163,6 +185,141 @@ class StateStorageKernelTests(unittest.TestCase):
         self.command(EXPORT, offset=offset, size=len(data))
         self.assertEqual(self.finish(), OK)
         return self.file(), data, meta
+
+    def rename(self, crc, name=b'Renamed', id=1):
+        self.lib.requestName(name)
+        self.command(RENAME,id,crc=crc)
+        return self.finish()
+
+    def catalog(self):
+        self.command(CATALOG)
+        self.assertEqual(self.finish(),OK)
+        m=self.lib.mailbox()
+        count=C.c_uint.from_address(m+192).value
+        return [(C.c_uint.from_address(m+224+64*i).value,
+                 C.string_at(m+256+64*i,32).split(b'\0')[0]) for i in range(count)]
+
+    def test_names_survive_reboot_without_rewriting_archive_or_changing_identity(self):
+        archive,_,_=self.export()
+        h=Header.from_buffer_copy(archive)
+        self.lib.clearIo()
+        self.assertEqual(self.rename(h.headerCrc,b'Bianco practice'),OK)
+        self.assertEqual(self.lib.writes(),64)
+        self.assertLessEqual(self.lib.reads(),224)
+        self.assertEqual(self.file(),archive)
+        self.assertEqual(C.string_at(self.lib.mailbox()+7936,32).split(b'\0')[0],b'Bianco practice')
+        record=NameRecord.from_buffer_copy(self.file(suffix='name0'))
+        self.assertEqual((record.generation,record.archiveChecksum),(1,h.headerCrc))
+        self.lib.reboot()
+        self.assertEqual(self.catalog(),[(1,b'Bianco practice')])
+        self.assertEqual(self.rename(h.headerCrc,b'Second name'),OK)
+        self.lib.reboot()
+        self.assertEqual(self.catalog(),[(1,b'Second name')])
+        self.command(IMPORT,1,0,h.packedSize,h.headerCrc)
+        self.assertEqual(self.finish(),OK)
+        restored=Header.from_buffer_copy(C.string_at(self.lib.mailbox()+96,96))
+        self.assertEqual(restored.headerCrc,h.headerCrc)
+        self.assertEqual(restored.name,b'Bianco 3')
+        self.assertEqual(C.string_at(self.lib.mailbox()+7936,32).split(b'\0')[0],b'Second name')
+
+    def test_rename_failures_keep_active_generation_and_unchanged_payload(self):
+        archive,_,_=self.export()
+        crc=Header.from_buffer_copy(archive).headerCrc
+        self.assertEqual(self.rename(crc,b'First'),OK)
+        self.assertEqual(self.rename(crc,b'Current'),OK)
+        copies=[self.file(suffix=f'name{i}') for i in range(2)]
+        for fault in ('short','sync','rename','unlink','read'):
+            with self.subTest(fault=fault):
+                self.lib.reset();self.buffers=[];self.add(1,archive)
+                for i,data in enumerate(copies):self.add(1,data,f'name{i}')
+                if fault=='short':self.lib.failures(63,0,0)
+                if fault=='sync':self.lib.failures(0xFFFFFFFF,1,0)
+                if fault=='rename':self.lib.failures(0xFFFFFFFF,0,1)
+                if fault=='unlink':self.lib.unlinkFailure(1)
+                if fault=='read':self.lib.openFailure(b'/moonshine_states/state_00000001.name0')
+                self.assertEqual(self.rename(crc,b'New'),IO)
+                self.lib.failures(0xFFFFFFFF,0,0);self.lib.unlinkFailure(0);self.lib.openFailure(b'')
+                self.lib.reboot()
+                self.assertEqual(self.catalog(),[(1,b'Current')])
+                self.assertEqual(self.file(),archive)
+
+    def test_torn_or_other_archive_names_are_ignored_and_future_names_are_not_overwritten(self):
+        archive,_,_=self.export();crc=Header.from_buffer_copy(archive).headerCrc
+        self.assertEqual(self.rename(crc,b'First'),OK)
+        self.assertEqual(self.rename(crc,b'Second'),OK)
+        first=self.file(suffix='name0');second=self.file(suffix='name1')
+        for fault in ('crc','truncated','identity','future','generation'):
+            with self.subTest(fault=fault):
+                changed=bytearray(second)
+                r=NameRecord.from_buffer(changed)
+                if fault=='crc':r.checksum^=1
+                elif fault=='identity':r.archiveChecksum^=1
+                elif fault=='future':r.version=2
+                elif fault=='generation':r.generation=0xFFFFFFFF
+                if fault not in ('crc','truncated'):
+                    r.checksum=0;r.checksum=zlib.crc32(changed)
+                if fault=='truncated':changed=changed[:-1]
+                self.lib.reset();self.buffers=[];self.add(1,archive);self.add(1,first,'name0');self.add(1,bytes(changed),'name1')
+                self.assertEqual(self.catalog(),[(1,b'Second' if fault=='generation' else b'First')])
+                if fault in ('future','generation'):
+                    self.assertEqual(self.rename(crc,b'New'),IO if fault=='future' else FULL)
+                    self.assertEqual(self.file(suffix='name1'),changed)
+
+    def test_mutations_pin_archive_identity_and_never_touch_payload_or_old_slots(self):
+        archive,_,_=self.export();crc=Header.from_buffer_copy(archive).headerCrc
+        for command in (RENAME,DELETE):
+            self.lib.requestName(b'Name')
+            self.command(command,1,crc=crc^1)
+            self.assertEqual(self.finish(),STALE)
+            self.assertEqual(self.file(),archive)
+            self.command(command,2,crc=crc)
+            self.assertEqual(self.finish(),5)
+            self.assertEqual(self.file(),archive)
+        for name in (b'',b'x'*32,b'a\nb'):
+            self.lib.requestName(name)
+            self.command(RENAME,1,crc=crc)
+            self.assertEqual(self.finish(),9)
+        self.assertEqual(C.string_at(self.lib.staging(),64),b'\xA5'*64)
+
+    def test_delete_reserves_id_removes_only_selected_file_and_reuses_no_payload_space(self):
+        archive,data,meta=self.export();crc=Header.from_buffer_copy(archive).headerCrc
+        self.add(7,archive)
+        self.assertEqual(self.rename(crc,b'Delete this'),OK)
+        self.lib.clearIo();self.command(DELETE,1,crc=crc)
+        self.assertEqual(self.finish(),OK)
+        self.assertEqual(self.lib.writes(),96)
+        self.assertIsNone(self.file());self.assertIsNone(self.file(suffix='name0'))
+        self.assertEqual(self.file(7),archive)
+        self.assertEqual(len(self.file(suffix='used')),96)
+        self.lib.reboot();self.assertEqual(self.catalog(),[(7,b'Bianco 3')])
+        self.lib.prepare(self.buffer(data),len(data),32,self.buffer(meta),len(meta))
+        self.command(EXPORT,offset=32,size=len(data))
+        self.assertEqual(self.finish(),OK)
+        self.assertIsNone(self.file());self.assertEqual(self.file(2),archive)
+
+    def test_delete_failures_preserve_archive_and_cancel_before_commit_has_no_mutation(self):
+        archive,_,_=self.export();crc=Header.from_buffer_copy(archive).headerCrc
+        for fault in ('short','sync','unlink'):
+            with self.subTest(fault=fault):
+                self.lib.reset();self.buffers=[];self.add(1,archive)
+                if fault=='short':self.lib.failures(20,0,0)
+                if fault=='sync':self.lib.failures(0xFFFFFFFF,1,0)
+                if fault=='unlink':self.lib.unlinkFailure(1)
+                self.command(DELETE,1,crc=crc);self.assertEqual(self.finish(),IO)
+                self.assertEqual(self.file(),archive)
+                self.lib.failures(0xFFFFFFFF,0,0);self.lib.unlinkFailure(0);self.lib.clearIo()
+                self.command(DELETE,1,crc=crc);self.assertEqual(self.finish(),OK)
+                self.assertEqual(self.lib.writes(),96)
+                self.assertEqual(self.file(suffix='used'),archive[:96])
+        for command in (RENAME,DELETE):
+            self.lib.reset();self.buffers=[];self.add(1,archive);self.lib.requestName(b'Changed')
+            self.command(command,1,crc=crc)
+            self.assertEqual(self.lib.run(3),-1)
+            self.command(CANCEL,session=22)
+            self.assertEqual(self.finish(),CANCELLED)
+            self.assertEqual(self.file(),archive)
+            self.assertIsNone(self.file(suffix='name0'))
+            self.assertIsNone(self.file(suffix='used'))
 
     def test_atomic_export_crc_and_roundtrip_across_two_bounded_segments(self):
         data = (bytes(range(256)) * ((STAGING + 12345) // 256 + 1))[:STAGING + 12345]

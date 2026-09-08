@@ -32,6 +32,23 @@ def function(source: str, signature: str) -> str:
 
 
 class NestedMenuContracts(unittest.TestCase):
+    def test_records_is_a_root_and_reuses_the_runs_shortcut(self) -> None:
+        menu = text("src/menu.cpp")
+        constructor = menu[menu.index("Menu::Menu()") : menu.index("bool Menu::openGhostPBSave(")]
+        release = re.sub(r"#if ENABLE_DEBUG_WARPS.*?#endif", "", constructor, flags=re.S)
+        roots = re.findall(r"mTabs\[mNumTabs\+\+\] = (.*?);", release, re.S)
+        titles = []
+        for root in roots:
+            if "NestedMenuTab" in root:
+                titles.append(re.search(r'"([^"]+)"', root).group(1))
+            else:
+                titles.append({"starred": "Quick", "records": "Records", "ghosts": "Ghosts"}[root.strip()])
+        self.assertEqual(titles, ["Quick", "Practice", "Runs", "Records", "Ghosts", "Display", "System"])
+        self.assertIn("{ iling, stageLoader, records, pbSafety, timer }", constructor)
+        self.assertEqual(constructor.count("new (sRecordsBuf) RecordsTab()"), 1)
+        capacity = int(re.search(r"kMaxTabs = (\d+)", text("include/susamune/menu.hxx")).group(1))
+        self.assertLessEqual(len(roots) + 2, capacity, "Debug roots must fit the existing fixed menu storage")
+
     def test_nested_pages_cover_every_setting_in_their_category_once(self) -> None:
         menu = text("src/menu.cpp")
         settings = re.findall(

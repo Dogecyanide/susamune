@@ -52,7 +52,9 @@
     X(BIND_PRACTICE_STOP,        "practice_stop")                             \
     X(BIND_PRACTICE_SPIN_CW,     "practice_spin_clockwise")                   \
     X(BIND_PRACTICE_SPIN_CCW,    "practice_spin_counterclockwise")             \
-    X(BIND_SAVESTATE_CYCLE,     "savestate_cycle")
+    X(BIND_SAVESTATE_CYCLE,     "savestate_cycle")                            \
+    X(BIND_SAVESTATE_CYCLE_SAVE, "savestate_cycle_save")                       \
+    X(BIND_SAVESTATE_CYCLE_LOAD, "savestate_cycle_load")
 
 // The bindable buttons, as (GameCube button bit, ini token, menu glyph). The
 // mod defines the regional glyph macros in glyphs.hxx; the launcher ignores

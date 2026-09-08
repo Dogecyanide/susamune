@@ -1,8 +1,18 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 5B0EC1B1
+V2.3.0 pre-release · Build C4AF447B
 
 Latest update:
+
+- **Records** is a top-level tab again, between Runs and Ghosts. Its shortcut inside Runs remains available.
+- Faster memory-state saves and loads, with less work spent checking SD files. Waits still depend on the scene, saved ghost length and available space; the measured improvements are from Dolphin and need Wii feedback.
+- **Save to** and **Load from** are independent. Save can write State 1 while Load keeps using State 2 or an SD file. New optional cycle-save and cycle-load shortcuts start unassigned; the older cycle-both shortcut is preserved.
+- SD files can be named before saving, renamed with Start, or deleted with X and confirmation. On a file, **A** imports it into the Save to memory slot without changing Load from. **Y** chooses the file for the normal Load shortcut; it loads through temporary space and preserves all three memory slots. Exceptionally full memory can leave too little temporary space, in which case the load is refused without discarding states.
+- **Checking storage devices...** remains visible during the menu's slower second device scan. That scan previously ran after a background-only frame had cleared the status text.
+- Fixed red specks on magenta Mario cap/shirt colours. Texture colours that round to one value now stay that colour, without a red sample being introduced. Skin and emblem selection are unchanged.
+- The previous build received real Wii confirmation for SD restoration after reboot, full ghost continuation with frame advance, aligned timer displays and kept colours surviving reboot. The new controls above still need focused feedback; the short latest section of TESTING.md replaces a full retest.
+
+Previous release — 5B0EC1B1:
 
 - Mario colours in the Creation editor: cap, shirt, overalls, gloves, shoes, sunglasses and Sunshine shirt. Each part has Original/Custom and its own RGB; skin stays unchanged.
 - FLUDD colours use the same editor for paint, metal, straps, tank, the four nozzle colours, sprayed water and water highlights. Original restores the normal appearance. Water colours cover the stream, mist and splashes; sea water and Yoshi juice keep their normal colours.
@@ -10,12 +20,12 @@ Latest update:
 - Savestates now keep a recording's whole ghost history up to the saved moment. Load, change the continuation and finish to produce a full-level TAS ghost; the abandoned future is removed. These ghosts remain shareable and cannot earn ordinary PBs.
 - The three compressed states now share 17.625 MiB with this launcher. Replacing a state can reuse its old space after the new state is proved to fit; needing a temporary second copy no longer causes that save to fail. If it still cannot fit, all old states remain.
 - **Practice > Savestates > SD states** saves a memory state as a new file in `/moonshine_states`. Import a file into a memory slot, then use Load. The files remain after reboot; the three memory slots themselves do not.
-- SD states require the same mod build, game region, launcher setup, level/episode and compatible loaded resources. Unsupported or damaged files are refused before replacing a memory state. Real-console power-off and reload testing remains a priority for this pre-release.
+- SD states require the same mod build, game region, launcher setup, level/episode and compatible loaded resources. Unsupported or damaged files are refused before replacing a memory state. That build's basic Wii reboot restore has since been confirmed by a tester; this is not cross-build or cross-region state sharing.
 
 Earlier three-state and practice feedback update:
 
-- Up to three compressed savestates share the available memory. Choose Active state under Practice > Savestates; existing Save/Load shortcuts use that selection. An optional Savestate: cycle states shortcut starts unassigned.
-- Clear selected state asks for confirmation. Nothing is removed automatically, and a save that cannot fit preserves all previous states. Use the new SD states page to keep a separate copy across reboots.
+- Added three compressed savestates sharing the available memory, initially using one Active state choice for Save and Load. The latest update separates those choices and retains the older combined cycle shortcut.
+- Added confirmation when clearing a memory state. Nothing is removed automatically, and a save that cannot fit preserves all previous states. The SD states page keeps a separate copy across reboots.
 - Local input replay stays attached to its original starting state when another state is selected or saved. Replacing or clearing its starting state invalidates the take.
 
 - Pause accepts held gameplay buttons. Releasing and pressing a button again between steps now registers on the next Step; held buttons do not create extra presses.
@@ -23,7 +33,7 @@ Earlier three-state and practice feedback update:
 - Removed queued spin actions and shortcuts. Manual stick input remains available during frame advance.
 - Sunshine timer Appearance can be Original or Custom, for All or individual characters, TIME and streak. Original restores retail shading while retaining custom colours and placement.
 - Empty personal ghost rows offer to save the latest recording instead of requesting another scan.
-- Startup frames now finish copying before display, addressing missing one-off status text such as Checking storage devices.
+- Startup frames finish copying before display. The separate blank screen during the later device scan is fixed in the latest update above.
 
 Controls and ghost library update:
 
@@ -55,7 +65,7 @@ Earlier feedback update:
 - Ghost input teaching tracks and existing split timestamps; older pose-only ghosts remain readable.
 - Ghost input panels sit above the native HUD in Watch and racing views.
 - Split comparisons: Off, PB, sum of best segments, or a selected ghost. No new level checkpoint definitions.
-- Six menu roots: Quick, Practice, Runs, Ghosts, Display, System.
+- Initially grouped the menu into six roots; Records has since returned as the seventh top-level tab in this update.
 - Native Sunshine timer position and size controls through scoped display transforms.
 - Reduced launcher startup work, CISO asset reading, and richer crash diagnostics.
 - Oversized, incomplete or unreadable external patch files cancel boot with a clear error.

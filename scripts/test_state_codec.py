@@ -69,6 +69,10 @@ __declspec(dllexport) void packMany(void *w,unsigned int ws,const StateCodec::Re
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,StateCodec::Result *r) {
  *r=StateCodec::compress(w,ws,s,n,d,dn);
 }
+__declspec(dllexport) void packMode(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int compact,StateCodec::Result *r) {
+ *r=StateCodec::compress(w,ws,s,n,d,dn,compact!=0);
+}
 __declspec(dllexport) int check(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,unsigned int raw,unsigned int adler) {
  return StateCodec::validate(w,ws,s,n,raw,adler);
@@ -76,6 +80,10 @@ __declspec(dllexport) int check(void *w,unsigned int ws,const StateCodec::ReadSp
 __declspec(dllexport) int unpack(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
  return StateCodec::decompress(w,ws,s,n,d,dn,raw,adler);
+}
+__declspec(dllexport) int unpackVerified(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
+ return StateCodec::decompressVerified(w,ws,s,n,d,dn,raw,adler);
 }
 struct CopyPolicy {unsigned int calls,bytes;};
 void copyPolicy(void *p,void *d,const void *s,unsigned int n) {
@@ -86,6 +94,11 @@ __declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec:
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler,
  CopyPolicy *policy) {
  return StateCodec::decompress(w,ws,s,n,d,dn,raw,adler,copyPolicy,policy);
+}
+__declspec(dllexport) int unpackVerifiedPolicy(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler,
+ CopyPolicy *policy) {
+ return StateCodec::decompressVerified(w,ws,s,n,d,dn,raw,adler,copyPolicy,policy);
 }
 }
 ''', encoding="ascii")
@@ -101,11 +114,14 @@ __declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec:
                                  C.POINTER(Span), C.POINTER(Result)]
         cls.lib.packMany.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                      C.POINTER(Span), C.c_uint, C.POINTER(Result)]
+        cls.lib.packMode.argtypes = cls.lib.packMany.argtypes[:-1]+[C.c_uint,C.POINTER(Result)]
         cls.lib.check.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                   C.c_uint, C.c_uint]
         cls.lib.unpack.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                    C.POINTER(Span), C.c_uint, C.c_uint, C.c_uint]
         cls.lib.unpackPolicy.argtypes = cls.lib.unpack.argtypes + [C.POINTER(C.c_uint)]
+        cls.lib.unpackVerified.argtypes = cls.lib.unpack.argtypes
+        cls.lib.unpackVerifiedPolicy.argtypes = cls.lib.unpackPolicy.argtypes
 
     def setUp(self):
         self.work = Guarded(self.lib.workspace())
@@ -136,6 +152,72 @@ __declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec:
         self.assertEqual((status, policy[0], policy[1]), (CORRUPT, 0, 0))
         self.assertEqual([b.data() for b in buffers], before)
 
+    def test_verified_scatter_decode_retains_copy_policy_and_exact_output(self):
+        for compact in (False, True):
+            data=bytes(range(251))*401+random.Random(678).randbytes(65001)
+            measured,_=self.pack(self.source(data),compact=compact)
+            packed,encoded=self.pack(self.source(data,[1,32767,32768]),
+                                     [1,measured.compressed-1],compact=compact)
+            self.assertEqual(packed.status,SUCCESS)
+            source=self.source(encoded,[0,1,2,32768,len(encoded)-1])
+            buffers=[Guarded(n) for n in (0,1,32766,2,len(data)-32769)]
+            output=(Span*len(buffers))(*[Span(b.ptr,b.size) for b in buffers])
+            policy=(C.c_uint*2)()
+            status=self.lib.unpackVerifiedPolicy(self.work.ptr,self.work.size,source,len(source),
+                output,len(output),len(data),packed.adler,policy)
+            self.assertEqual(status,SUCCESS)
+            self.assertEqual(policy[1],len(data))
+            self.assertGreater(policy[0],3)
+            self.assertEqual(b''.join(b.data()for b in buffers),data)
+            self.assertTrue(all(b.guards()for b in buffers))
+
+    def test_verified_decode_keeps_workspace_descriptor_source_and_destination_guards(self):
+        data=b'verified ownership'*3000
+        source=self.source(zlib.compress(data))
+        target=Guarded(len(data))
+        output=(Span*1)(Span(target.ptr,target.size))
+        source_bytes=C.string_at(C.addressof(source),C.sizeof(source))
+        output_bytes=C.string_at(C.addressof(output),C.sizeof(output))
+        invalid_sources=[
+            (self.work.ptr+1,self.work.size,source,1,INVALID),
+            (self.work.ptr,self.work.size-1,source,1,WORKSPACE),
+            (self.work.ptr,self.work.size,source,0,INVALID),
+            (self.work.ptr,self.work.size,source,65,INVALID),
+            (self.work.ptr,self.work.size,C.cast(self.work.ptr,C.POINTER(Span)),1,INVALID),
+            (self.work.ptr,self.work.size,(Span*1)(Span(self.work.ptr,1)),1,INVALID),
+        ]
+        for wp,ws,sp,count,expected in invalid_sources:
+            self.assertEqual(self.lib.unpackVerified(wp,ws,sp,count,output,1,
+                len(data),zlib.adler32(data)),expected)
+        for dest,count,raw in (
+            (output,0,len(data)),(output,65,len(data)),
+            (C.cast(self.work.ptr,C.POINTER(Span)),1,len(data)),
+            ((Span*1)(Span(self.work.ptr,len(data))),1,len(data)),
+            ((Span*1)(Span(source[0].data,len(data))),1,len(data)),
+            ((Span*1)(Span(C.addressof(source),len(data))),1,len(data)),
+            ((Span*1)(Span(C.addressof(output),len(data))),1,len(data)),
+            ((Span*2)(Span(target.ptr,len(data)//2),Span(target.ptr+1,len(data)-len(data)//2)),2,len(data)),
+            (output,1,len(data)+1),(output,1,0),
+        ):
+            self.assertEqual(self.lib.unpackVerified(self.work.ptr,self.work.size,source,1,
+                dest,count,raw,zlib.adler32(data)),INVALID)
+        self.assertEqual(target.data(),bytes([0xa7])*len(data))
+        self.assertTrue(target.guards())
+        self.assertEqual(C.string_at(C.addressof(source),C.sizeof(source)),source_bytes)
+        self.assertEqual(C.string_at(C.addressof(output),C.sizeof(output)),output_bytes)
+
+    def test_verified_decode_failure_is_fatal_commit_failure_not_safe_corruption(self):
+        data=random.Random(241).randbytes(70003)
+        encoded=zlib.compress(data)
+        target=Guarded(len(data));output=(Span*1)(Span(target.ptr,target.size))
+        for compressed,adler in ((encoded,zlib.adler32(data)^1),(encoded[:-1],zlib.adler32(data))):
+            source=self.source(compressed)
+            C.memset(target.ptr,0xa7,len(data))
+            status=self.lib.unpackVerified(self.work.ptr,self.work.size,source,1,output,1,len(data),adler)
+            self.assertEqual(status,COMMIT)
+            self.assertNotEqual(target.data(),bytes([0xa7])*len(data))
+            self.assertTrue(target.guards())
+
     def tearDown(self):
         self.assertTrue(self.work.guards())
 
@@ -147,11 +229,11 @@ __declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec:
         spans._owners = buffers
         return spans
 
-    def pack(self, source, capacities=None):
+    def pack(self, source, capacities=None, compact=False):
         guards = [Guarded(n) for n in capacities] if capacities is not None else []
         output = (Span * 2)(*[Span(g.ptr, g.size) for g in guards]) if guards else None
         result = Result()
-        self.lib.pack(self.work.ptr, self.work.size, source, len(source), output, C.byref(result))
+        self.lib.packMode(self.work.ptr, self.work.size, source, len(source), output, 2, compact, C.byref(result))
         for guard in guards:
             self.assertTrue(guard.guards())
         return result, b"".join(g.data() for g in guards)
@@ -309,6 +391,52 @@ __declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec:
         self.assertEqual(zlib.decompress(encoded), data)
         print(f"Private Sunshine sample: raw={len(data)}, deflate={result.compressed}, "
               f"workspace={self.work.size}; one Bianco sample, not an all-scene bound")
+
+    def test_fast_and_compact_fuzz_cover_short_inputs_dict_wrap_and_scatter_boundaries(self):
+        randomizer=random.Random(50821)
+        sizes=[1,2,3,4,5,7,255,256,257,258,259,4095,4096,4097,
+               32766,32767,32768,32769,32770,65535,65536,65537,98307]
+        sizes += [randomizer.randrange(1,180000) for _ in range(24)]
+        for index,size in enumerate(sizes):
+            for kind in range(4):
+                if kind==0:data=bytes([index&255])*size
+                elif kind==1:data=(bytes(range(251))*((size+250)//251))[:size]
+                elif kind==2:data=randomizer.randbytes(size)
+                else:
+                    block=randomizer.randbytes(min(size,8191))
+                    data=bytearray((block*((size+len(block)-1)//len(block)))[:size])
+                    for at in range(1,size,257):data[at]^=(at&255)
+                    data=bytes(data)
+                cuts=sorted([0,size]+[randomizer.randrange(size+1) for _ in range(7)])
+                source=self.source(data,cuts)
+                for compact in (False,True):
+                    with self.subTest(size=size,kind=kind,compact=compact):
+                        measured,_=self.pack(source,compact=compact)
+                        self.assertEqual((measured.status,measured.raw,measured.adler),
+                                         (SUCCESS,size,zlib.adler32(data)))
+                        split=randomizer.randrange(measured.compressed+1)
+                        packed,encoded=self.pack(source,[split,measured.compressed-split],compact)
+                        self.assertEqual((packed.status,packed.compressed),(SUCCESS,measured.compressed))
+                        self.assertEqual(zlib.decompress(encoded),data)
+                        status,decoded=self.decode(encoded,size,measured.adler,cuts=[1,len(encoded)-1])
+                        self.assertEqual((status,decoded),(SUCCESS,data))
+                        if index%8==0:
+                            short,_=self.pack(source,[1,measured.compressed-2],compact)
+                            self.assertEqual((short.status,short.compressed),(FULL,measured.compressed))
+
+    def test_compact_real_capture_roundtrip_and_full_count(self):
+        path=ROOT/'build/foxtrot-held-input/private-us-bianco-state.bin'
+        if not path.exists():self.skipTest('Private Sunshine capture is deliberately not distributed')
+        data=path.read_bytes();source=self.source(data,[448,32767,32768,65537,0x800000])
+        compact,_=self.pack(source,compact=True)
+        fast,_=self.pack(source)
+        self.assertLess(compact.compressed,fast.compressed)
+        packed,encoded=self.pack(source,[compact.compressed//2,compact.compressed-compact.compressed//2],True)
+        self.assertEqual(packed.status,SUCCESS)
+        self.assertEqual(zlib.decompress(encoded),data)
+        self.assertEqual(self.decode(encoded,len(data),compact.adler),(SUCCESS,data))
+        short,_=self.pack(source,[0,compact.compressed-1],True)
+        self.assertEqual((short.status,short.compressed,short.adler),(FULL,compact.compressed,compact.adler))
 
 
 if __name__ == "__main__":

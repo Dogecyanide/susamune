@@ -508,7 +508,7 @@ extern "C" void afterDraw() {
     // immediately afterward: director, fader, audio, and the current frame's
     // GPU work are all complete, while the next game frame has not begun.
     THPPlayerDrawDone();
-    if (gSavestateMgr && !SavestateManager::diskBusy() && !gQftDisplay.editing() && !gInputDisplay.editing() &&
+    if (gSavestateMgr && !gQftDisplay.editing() && !gInputDisplay.editing() &&
         !gMetadataDisplay.editing() && !gCreationExtras.editing() && !MarioColors::editing() && !FluddColors::editing() &&
         !StageLoader::resultOwnsInput() && !Ghost::observerStatsSuppressed())
         gSavestateMgr->processPendingLoad();

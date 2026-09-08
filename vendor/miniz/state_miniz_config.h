@@ -7,6 +7,7 @@
 #define MINIZ_NO_ZLIB_APIS
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 0
+#define MINIZ_PORTABLE_FAST_DEFLATE 1
 #define NDEBUG
 
 // Retain the vendored fork's freestanding guard on both PPC and host tests.
