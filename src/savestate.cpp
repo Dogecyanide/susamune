@@ -74,10 +74,13 @@
 #include "susamune/warp_wheel.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/settings.hxx"
+#include "susamune/state_codec.hxx"
+#include "susamune/state_slot_pool.h"
 #include "Dolphin/CARD.h"
 #include "Dolphin/GX.h"
 #include "Dolphin/mem.h"
 #include "Dolphin/OS.h"
+#include "Dolphin/printf.h"
 #include "Dolphin/string.h"
 #include "JKernel/JKRHeap.hxx"
 #include "JUtility/JUTGamePad.hxx"
@@ -98,11 +101,13 @@
 #if IS_EMULATOR
 // Dolphin: a region in the emulator's "free" space.
 static const u32 kSnapshotBase = SUSAMUNE_DOLPHIN_SNAPSHOT_PPC_BASE;
+static const u32 kStagingBase = SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE;
 #else
 // Wii: a dedicated 16 MiB window. The custom Nintendont memory map relocates
 // all of its former users below this address; the ARM kernel begins exactly at
 // the window's exclusive end.
 static const u32 kSnapshotBase = SUSAMUNE_MEM2_SNAPSHOT_PPC_BASE;
+static const u32 kStagingBase = SUSAMUNE_STATE_STAGING_PPC_BASE;
 #endif
 
 // How much MEM2 we promise not to step outside of. The actual snapshot is
@@ -230,7 +235,7 @@ const int kNumPointedAllocs = sizeof(kPointedAllocs) / sizeof(kPointedAllocs[0])
 // One header lives at the very start of the snapshot buffer; the saved
 // bytes follow at kHeaderSize.
 const u32 kSnapshotMagic   = 0x53555341u; // 'SUSA'
-const u32 kSnapshotVersion = 13u;         // feature-patch state follows settings
+const u32 kSnapshotVersion = 14u;
 const u32 kHeaderSize      = 0x120u;
 // One slot per static range, one per pointed alloc, plus one for the heap.
 const int kMaxRegions      = kNumStaticRanges + kNumPointedAllocs + 1;
@@ -262,16 +267,78 @@ struct SavestateHeader {
 static_assert(sizeof(SavestateHeader) <= kHeaderSize,
               "savestate header no longer fits in its reserved space");
 
-inline SavestateHeader *headerPtr() {
-    return reinterpret_cast<SavestateHeader *>(kSnapshotBase);
+struct StoredState {
+    SavestateHeader header;
+    QFTTimer::SavestateData timer;
+    ILing::SavestateData attempt;
+    u32 generation;
+    u32 rawSize;
+    u32 packedSize;
+    u32 adler32;
+    u32 parentEpisode;
+    u32 metadataTag;
+};
+
+StateSlotPool sPool;
+StoredState sSlots[SavestateManager::kSlotCount];
+StoredState sCandidate;
+u32 sActiveSlot;
+u32 sNextGeneration;
+u32 sPendingSlot;
+u32 sPendingGeneration;
+bool sAwaitingLoadApproval;
+bool sBusy;
+static_assert(STATE_SLOT_POOL_COUNT == SavestateManager::kSlotCount,
+              "state slot counts differ");
+static_assert(StateCodec::kWorkspaceLimit <= SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+              "state codec workspace overlaps packed states");
+
+u8 *poolBytes() { return reinterpret_cast<u8 *>(kSnapshotBase); }
+void *codecWorkspace() {
+    return reinterpret_cast<void *>(kSnapshotBase + SUSAMUNE_STATE_POOL_SIZE);
 }
-inline u8 *bufferPtr() {
-    return reinterpret_cast<u8 *>(kSnapshotBase + kHeaderSize);
+
+u32 metadataTag(const StoredState &slot) {
+    const u8 *bytes = reinterpret_cast<const u8 *>(&slot);
+    u32 value = 2166136261u;
+    for (u32 i = 0; i < __builtin_offsetof(StoredState, metadataTag); ++i)
+        value = (value ^ bytes[i]) * 16777619u;
+    return value;
+}
+
+bool validStore() {
+    if (!StateSlotPoolValid(&sPool, SUSAMUNE_STATE_POOL_SIZE)) return false;
+    for (u32 i = 0; i < SavestateManager::kSlotCount; ++i) {
+        const StoredState &slot = sSlots[i];
+        if (!sPool.slots[i].size) {
+            if (slot.header.magic) return false;
+            continue;
+        }
+        if (slot.header.magic != kSnapshotMagic || !slot.generation ||
+            slot.packedSize != sPool.slots[i].size ||
+            slot.metadataTag != metadataTag(slot)) return false;
+    }
+    return true;
+}
+
+u32 nextGeneration() {
+    if (++sNextGeneration == 0) ++sNextGeneration;
+    return sNextGeneration;
+}
+
+u32 parentEpisode() {
+    return TFlagManager::smInstance
+        ? TFlagManager::smInstance->getFlag(0x40003) : 0;
+}
+
+void rebaseMissionStopwatch(OSTime previousTime) {
+    if (!gpMarDirector) return;
+    gpMarDirector->mStopwatch.mLast += OSGetTime() - previousTime;
+    DCStoreRange(&gpMarDirector->mStopwatch, sizeof(OSStopwatch));
 }
 
 __attribute__((noinline)) u32 captureRegion(SavestateHeader *h, u32 offset,
                                             u32 addr, u32 size) {
-    memcpy(bufferPtr() + offset, reinterpret_cast<const void *>(addr), size);
     RegionEntry &region = h->regions[h->region_count++];
     region.addr         = addr;
     region.size         = size;
@@ -422,9 +489,11 @@ SavestateManager::SavestateManager() {
     setStatus("ready");
 #endif
 
-    // Mark the snapshot buffer empty so a stale MEM2 load doesn't
-    // accidentally pass the magic check after a cold boot.
-    headerPtr()->magic = 0;
+    memset(&sPool, 0, sizeof(sPool));
+    memset(sSlots, 0, sizeof(sSlots));
+    sActiveSlot = sNextGeneration = 0;
+    sPendingSlot = sPendingGeneration = 0;
+    sAwaitingLoadApproval = sBusy = false;
 }
 
 #if ENABLE_SAVESTATE_DBG
@@ -448,7 +517,57 @@ void SavestateManager::feedback(const char *debug, const char *message) {
     mFeedbackFrames = Menu::kToastFrames;
 }
 
+u32 SavestateManager::activeSlot() const { return sActiveSlot; }
+
+SavestateManager::SlotInfo SavestateManager::slotInfo(u32 slot) const {
+    SlotInfo info = {};
+    if (slot >= kSlotCount || !validStore()) return info;
+    const StoredState &saved = sSlots[slot];
+    info.valid = saved.header.magic == kSnapshotMagic;
+    info.area = saved.header.area_id;
+    info.episode = saved.header.episode_id;
+    info.generation = saved.generation;
+    info.packedBytes = saved.packedSize;
+    return info;
+}
+
+bool SavestateManager::selectSlot(u32 slot) {
+    if (slot >= kSlotCount || sBusy) return false;
+    sActiveSlot = slot;
+    char text[48];
+    snprintf(text, sizeof(text), "State %lu selected - %s", slot + 1,
+             slotInfo(slot).valid ? "saved" : "empty");
+    if (gMenu) gMenu->toast(text);
+    return true;
+}
+
+bool SavestateManager::cycleSlot() { return selectSlot((sActiveSlot + 1) % kSlotCount); }
+
+bool SavestateManager::clearSlot(u32 slot, u32 expectedGeneration) {
+    if (sBusy || mLoadPending || sAwaitingLoadApproval || !validStore() ||
+        slot >= kSlotCount || !sSlots[slot].header.magic ||
+        sSlots[slot].generation != expectedGeneration) return false;
+    sBusy = true;
+    if (!StateSlotPoolClear(&sPool, poolBytes(), SUSAMUNE_STATE_POOL_SIZE, slot)) {
+        sBusy = false;
+        return false;
+    }
+    memset(&sSlots[slot], 0, sizeof(sSlots[slot]));
+    sSlots[slot].generation = nextGeneration();
+    sBusy = false;
+    PracticeSession::onSavestateCleared(slot, expectedGeneration);
+    return true;
+}
+
 bool SavestateManager::saveState() {
+    if (sBusy || mLoadPending || sAwaitingLoadApproval) {
+        feedback("E:busy", "Wait for the pending state load");
+        return false;
+    }
+    if (!validStore()) {
+        feedback("E:store", "State memory damaged - restart game");
+        return false;
+    }
     // Refuse while a stage load is in flight or the intro sequence is playing;
     // the heap is not yet stable there. See inLoadTransition().
     if (inLoadTransition()) {
@@ -514,25 +633,21 @@ bool SavestateManager::saveState() {
         gpMSound->stopAllSound();
     }
 
-    // NOTE (disabled): draining the GP here (GXDrawDone) would guarantee the
-    // frame's async GXCopyTex writes -- e.g. the pollution "goop" texture
-    // copied back to mPollutionMap -- have landed in RAM before we read it,
-    // at the cost of a one-frame stall. Not needed in practice: on console
-    // the buffer is at worst one frame stale, and on Dolphin correctness
-    // depends on Texture Cache Accuracy = Safe, not on this. Re-enable if a
-    // console test shows a torn/stale goop snapshot. (#include "Dolphin/GX.h")
-    // GXDrawDone();
+    // Compression reads live regions for longer than the old raw copy.
+    GXDrawDone();
 
     // We are called from inside onUpdate, which runs on the main thread
     // between director->direct() and rendering. That is already the most
     // quiescent point in the frame, but disable interrupts anyway so we
     // don't race a VI retrace callback that touches heap objects.
+    sBusy = true;
     bool ints = OSDisableInterrupts();
     // Silence the DAC for the whole interrupts-off window so the frozen audio
     // DMA doesn't buzz; restored just before interrupts come back.
     bool dma = muteAudioDma();
 
-    SavestateHeader *h = headerPtr();
+    memset(&sCandidate, 0, sizeof(sCandidate));
+    SavestateHeader *h = &sCandidate.header;
     h->magic        = 0; // committed at end as a torn-write guard
     h->version      = kSnapshotVersion;
     h->game_version = SUSAMUNE_GAME_VERSION;
@@ -581,27 +696,66 @@ bool SavestateManager::saveState() {
     // Heap last (largest payload).
     offset = captureRegion(h, offset, heapStart, heapSize);
 
-    // Push the bytes out of dcache so a subsequent uncached read (e.g. by
-    // a future load that swaps the BAT or by debug tooling) sees them.
-    DCStoreRange(headerPtr(), kHeaderSize);
-    DCStoreRange(bufferPtr(), offset);
-
-    // Commit magic last. After this point the snapshot is loadable.
+    sCandidate.parentEpisode = parentEpisode();
+    gQFTTimer.captureSavestate(sCandidate.timer);
+    ILing::captureSavestate(sCandidate.attempt);
+    StateCodec::ReadSpan source[kMaxRegions];
+    for (u32 i = 0; i < h->region_count; ++i)
+        source[i] = {reinterpret_cast<const void *>(h->regions[i].addr), h->regions[i].size};
+    StateCodec::WriteSpan output[2] = {
+        {reinterpret_cast<void *>(kStagingBase), SUSAMUNE_STATE_STAGING_SIZE},
+        {poolBytes() + sPool.used, SUSAMUNE_STATE_POOL_SIZE - sPool.used},
+    };
+    const StateCodec::Result result = StateCodec::compress(codecWorkspace(),
+        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source, h->region_count, output);
+    const bool fits = result.status == StateCodec::SUCCESS && result.rawBytes == offset &&
+        StateSlotPoolCanCommit(&sPool, SUSAMUNE_STATE_POOL_SIZE, sActiveSlot,
+                               result.compressedBytes, SUSAMUNE_STATE_STAGING_SIZE);
+    if (!fits) {
+        rebaseMissionStopwatch(h->save_time);
+        unmuteAudioDma(dma);
+        OSRestoreInterrupts(ints);
+        sBusy = false;
+        feedback("E:space", result.status == StateCodec::SUCCESS ||
+            result.status == StateCodec::OUTPUT_FULL ?
+            "State won't fit - clear another slot" : "State could not be compressed");
+        return false;
+    }
+    sCandidate.rawSize = offset;
+    sCandidate.packedSize = result.compressedBytes;
+    sCandidate.adler32 = result.adler32;
+    sCandidate.generation = nextGeneration();
     h->magic = kSnapshotMagic;
-    DCStoreRange(&h->magic, sizeof(h->magic));
+    sCandidate.metadataTag = metadataTag(sCandidate);
+    if (!StateSlotPoolCommit(&sPool, poolBytes(), SUSAMUNE_STATE_POOL_SIZE,
+        sActiveSlot, result.compressedBytes, reinterpret_cast<const u8 *>(kStagingBase),
+        SUSAMUNE_STATE_STAGING_SIZE)) __builtin_trap();
+    sSlots[sActiveSlot] = sCandidate;
+    DCStoreRange(poolBytes(), sPool.used);
 
+    // The mission countdown must not charge time spent compressing a state.
+    rebaseMissionStopwatch(h->save_time);
     unmuteAudioDma(dma);
     OSRestoreInterrupts(ints);
+    sBusy = false;
 
-    gQFTTimer.onSavestateSaved();
-    ILing::onSavestateSaved();
-    PracticeSession::onSavestateSaved();
-    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, 0);
-    feedback("saved", "Savestate saved");
+    PracticeSession::onSavestateSaved(sActiveSlot, sCandidate.generation);
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, sActiveSlot + 1);
+    char text[48];
+    snprintf(text, sizeof(text), "State %lu saved", sActiveSlot + 1);
+    feedback("saved", text);
     return true;
 }
 
 bool SavestateManager::loadState() {
+    return loadSlot(sActiveSlot, slotInfo(sActiveSlot).generation);
+}
+
+bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
+    if (sBusy || mLoadPending || sAwaitingLoadApproval) {
+        feedback("E:busy", "Wait for the pending state load");
+        return false;
+    }
     // Refuse while a stage load is in flight or the intro sequence is playing;
     // overwriting a heap the setup thread is still filling crashes. See
     // inLoadTransition().
@@ -610,9 +764,18 @@ bool SavestateManager::loadState() {
         return false;
     }
 
-    SavestateHeader *h = headerPtr();
+    if (!validStore() || slot >= kSlotCount) {
+        feedback("E:store", "State memory damaged - restart game");
+        return false;
+    }
+    StoredState &saved = sSlots[slot];
+    SavestateHeader *h = &saved.header;
     if (h->magic != kSnapshotMagic) {
         feedback("E:nosnap", "No savestate yet");
+        return false;
+    }
+    if (!expectedGeneration || saved.generation != expectedGeneration) {
+        feedback("E:changed", "That state changed - choose it again");
         return false;
     }
     if (h->version != kSnapshotVersion) {
@@ -659,12 +822,14 @@ bool SavestateManager::loadState() {
     // complicated -- the heap freeAll()s and gets re-populated by the
     // new director's setup -- and not the use case we're after.
     if (h->area_id    != gpApplication.mCurrentScene.mAreaID
-     || h->episode_id != gpApplication.mCurrentScene.mEpisodeID) {
+     || h->episode_id != gpApplication.mCurrentScene.mEpisodeID
+     || saved.parentEpisode != parentEpisode()) {
         feedback("E:scene", "Savestate belongs to another area");
         return false;
     }
 
-    if (!validSnapshotRegions(h, heapStart, heapEnd)) {
+    if (!validSnapshotRegions(h, heapStart, heapEnd) ||
+        h->regions[h->region_count - 1].buf_offset + heapSize != saved.rawSize) {
         feedback("E:badsnap", "Savestate is damaged - save again");
         return false;
     }
@@ -692,16 +857,33 @@ bool SavestateManager::loadState() {
     // direct callers of loadState() receive the same safety guarantee.
     GXDrawDone();
 
+    sBusy = true;
     bool ints = OSDisableInterrupts();
     // Silence the DAC across the interrupts-off restore so the frozen audio
     // DMA doesn't buzz; restored just before interrupts come back.
     bool dma = muteAudioDma();
 
+    const OSTime restoreStarted = OSGetTime();
+    const StateCodec::ReadSpan compressed = {
+        poolBytes() + sPool.slots[slot].offset, saved.packedSize};
+    StateCodec::WriteSpan destinations[kMaxRegions];
+    for (u32 i = 0; i < h->region_count; ++i)
+        destinations[i] = {reinterpret_cast<void *>(h->regions[i].addr), h->regions[i].size};
+    const StateCodec::Status restored = StateCodec::decompress(codecWorkspace(),
+        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, &compressed, 1, destinations,
+        h->region_count, saved.rawSize, saved.adler32);
+    if (restored == StateCodec::COMMIT_FAILED) __builtin_trap();
+    if (restored != StateCodec::SUCCESS) {
+        rebaseMissionStopwatch(restoreStarted);
+        unmuteAudioDma(dma);
+        OSRestoreInterrupts(ints);
+        sBusy = false;
+        feedback("E:badsnap", "State is damaged - save again");
+        return false;
+    }
     for (u32 i = 0; i < h->region_count; i++) {
         const RegionEntry &r = h->regions[i];
-        memcpy(reinterpret_cast<void *>(r.addr), bufferPtr() + r.buf_offset,
-               r.size);
-        // memcpy() has already placed the restored bytes in D-cache, so the
+        // Decompression has placed the restored bytes in D-cache, so the
         // CPU can use them immediately. Store them for GX/DMA visibility, but
         // do not flush-and-invalidate the whole stage heap: doing so makes the
         // next frame fault every restored line back in from RAM.
@@ -723,17 +905,14 @@ bool SavestateManager::loadState() {
     // across the save/load gap instead of rewinding. Shift mLast forward by
     // exactly that real-time gap so OSCheckStopwatch() reproduces the same
     // value it had at save time.
-    if (gpMarDirector) {
-        OSTime delta                = OSGetTime() - h->save_time;
-        gpMarDirector->mStopwatch.mLast += delta;
-        DCStoreRange(&gpMarDirector->mStopwatch, sizeof(OSStopwatch));
-    }
+    rebaseMissionStopwatch(h->save_time);
 
     unmuteAudioDma(dma);
     OSRestoreInterrupts(ints);
+    sBusy = false;
 
     featuresOnSavestateLoaded(h->feature_state);
-    gQFTTimer.onSavestateLoaded();
+    gQFTTimer.restoreSavestate(saved.timer);
     SplitEvents::onSavestateLoaded();
     SplitStats::onSavestateLoaded();
     Ghost::onSavestateLoaded();
@@ -744,11 +923,13 @@ bool SavestateManager::loadState() {
     // An armed warp lives in mod BSS, outside the restored game snapshot.
     // Cancel it before ILing adopts the save-time attempt state.
     LevelWarp::cancelPending();
-    ILing::onSavestateLoaded();
+    ILing::restoreSavestate(saved.attempt);
     Records::onSavestateLoaded();
     PracticeSession::onSavestateLoaded();
-    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 2, 0);
-    feedback("loaded", "Savestate loaded");
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 2, slot + 1);
+    char text[48];
+    snprintf(text, sizeof(text), "State %lu loaded", slot + 1);
+    feedback("loaded", text);
     return true;
 }
 
@@ -768,19 +949,29 @@ void SavestateManager::updateHook() {
         gBinds.get(BIND_ATTEMPT_ADD) == gBinds.get(BIND_SAVESTATE_LOAD);
 
     const bool approvedLoad = WarpWheel::takeSavestateLoadApproval();
-    // A card-busy load may remain queued for several frames. Do not let a
-    // later save replace the one snapshot that request is waiting to restore.
+    if (sAwaitingLoadApproval && !approvedLoad && !WarpWheel::promptPending())
+        sAwaitingLoadApproval = false;
     if (mLoadPending) return;
-    if (approvedLoad) {
+    if (approvedLoad && sAwaitingLoadApproval) {
+        sAwaitingLoadApproval = false;
         mLoadPending = true;
         mLoadWaitFrames = 0;
         SET_STATUS("loading");
+    } else if (sAwaitingLoadApproval) {
+        return;
     } else if (!counterOwnsSave &&
                gBinds.wasPressed(BIND_SAVESTATE_SAVE)) {
         saveState();
     } else if (!counterOwnsLoad &&
-               gBinds.wasPressed(BIND_SAVESTATE_LOAD) &&
-               WarpWheel::requestSavestateLoad()) {
+               gBinds.wasPressed(BIND_SAVESTATE_LOAD)) {
+        // Pin before the unsaved-ghost prompt; changing selection cannot
+        // redirect a confirmation or a card-busy load to another state.
+        sPendingSlot = sActiveSlot;
+        sPendingGeneration = slotInfo(sPendingSlot).generation;
+        if (!WarpWheel::requestSavestateLoad()) {
+            sAwaitingLoadApproval = true;
+            return;
+        }
         // TApplication still runs the fader and gpMSound->mainLoop(), then
         // submits the rest of the frame after this hook returns. Restoring here
         // made those systems consume half-live/half-restored state. Defer the
@@ -788,6 +979,8 @@ void SavestateManager::updateHook() {
         mLoadPending = true;
         mLoadWaitFrames = 0;
         SET_STATUS("loading");
+    } else if (gBinds.wasPressed(BIND_SAVESTATE_CYCLE)) {
+        cycleSlot();
     }
 }
 
@@ -810,7 +1003,7 @@ void SavestateManager::processPendingLoad() {
     // Clear first so a rejected snapshot is not retried every frame.
     mLoadPending = false;
     mLoadWaitFrames = 0;
-    loadState();
+    loadSlot(sPendingSlot, sPendingGeneration);
 }
 
 void SavestateManager::draw(Menu *menu) {

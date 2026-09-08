@@ -33,20 +33,22 @@ class SavestateFeatureResyncTests(unittest.TestCase):
         self.assertIn("writeGameCode(addr, gPatchOrig[originalIndex]);", restore)
 
     def test_reconciliation_runs_after_copy_and_before_runtime_callbacks(self):
-        copy_at = SAVESTATE.index(
+        restore_at = SAVESTATE.index("StateCodec::decompress(codecWorkspace()")
+        stored_at = SAVESTATE.index(
             "for (u32 i = 0; i < h->region_count; i++)"
         )
         resync_at = SAVESTATE.index(
             "featuresOnSavestateLoaded(h->feature_state);"
         )
-        iling_at = SAVESTATE.index("ILing::onSavestateLoaded();")
-        self.assertLess(copy_at, resync_at)
+        iling_at = SAVESTATE.index("ILing::restoreSavestate(saved.attempt);")
+        self.assertLess(restore_at, stored_at)
+        self.assertLess(stored_at, resync_at)
         self.assertLess(resync_at, iling_at)
 
     def test_snapshot_layout_version_was_bumped(self):
         version = re.search(r"kSnapshotVersion\s*=\s*(\d+)u", SAVESTATE)
         self.assertIsNotNone(version)
-        self.assertGreaterEqual(int(version.group(1)), 13)
+        self.assertGreaterEqual(int(version.group(1)), 14)
 
 
 if __name__ == "__main__":

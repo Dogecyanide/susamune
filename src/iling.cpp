@@ -554,6 +554,20 @@ struct AttemptState {
     u32 serial;
 };
 
+struct SavedAttemptData {
+    AttemptState attempt;
+    s32 secondNozzleFlag;
+    s32 bowserNozzleFlag;
+    u8 secondNozzle;
+    bool pinnaEygRestart;
+    bool temporaryRocket;
+    bool bowserShieldPending;
+    bool bowserShieldActive;
+    u8 reserved[7];
+};
+static_assert(sizeof(SavedAttemptData) == sizeof(ILing::SavestateData),
+              "IL savestate sidecar layout changed");
+
 #if IS_EMULATOR
 #define sPbProfiles (*reinterpret_cast<s32 (*)[SUSAMUNE_ILING_PROFILE_COUNT] \
                                             [SUSAMUNE_ILING_PB_MAX_SLOTS]>( \
@@ -2275,6 +2289,34 @@ void onSavestateSaved() {
     sSavedAttemptState = sAttemptState;
     sSavedPinnaEygRestart = sPinnaEygRestart;
     sHaveSavedAttempt = true;
+}
+
+void captureSavestate(SavestateData &out) {
+    SavedAttemptData saved = {};
+    saved.attempt = sAttemptState;
+    saved.secondNozzleFlag = sSavedSecondNozzleFlag;
+    saved.bowserNozzleFlag = sSavedBowserNozzleFlag;
+    saved.secondNozzle = sSavedSecondNozzle;
+    saved.pinnaEygRestart = sPinnaEygRestart;
+    saved.temporaryRocket = sTemporaryRocketActive;
+    saved.bowserShieldPending = sBowserNozzleShieldPending;
+    saved.bowserShieldActive = sBowserNozzleShieldActive;
+    memcpy(&out, &saved, sizeof(saved));
+}
+
+void restoreSavestate(const SavestateData &data) {
+    SavedAttemptData saved;
+    memcpy(&saved, &data, sizeof(saved));
+    sSavedAttemptState = saved.attempt;
+    sSavedSecondNozzleFlag = saved.secondNozzleFlag;
+    sSavedBowserNozzleFlag = saved.bowserNozzleFlag;
+    sSavedSecondNozzle = saved.secondNozzle;
+    sSavedPinnaEygRestart = saved.pinnaEygRestart;
+    sTemporaryRocketActive = saved.temporaryRocket;
+    sBowserNozzleShieldPending = saved.bowserShieldPending;
+    sBowserNozzleShieldActive = saved.bowserShieldActive;
+    sHaveSavedAttempt = true;
+    onSavestateLoaded();
 }
 
 void onSavestateLoaded() {

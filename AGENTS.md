@@ -14,6 +14,7 @@ The current branch is **Moonshine Launcher FOXTROT, V2.3.0 pre-release**. The ar
 - Dolphin keeps the 436-byte `Menu` object in MEM1 because its embedded `J2DTextBox` reaches retail paired-single matrix instructions that Dolphin 5.0 cannot JIT against fake MEM2. Scalar tab storage stays in the fixed emulated window. Wii keeps its actual MEM2 menu storage.
 - Ghost V5 appends bounded input samples and up to six existing split endpoints. New level split definitions remain excluded. Ghost comparison freezes compatible target timestamps and reports unavailable data without guessing.
 - Ghost storage protocol 5 pages personal/imported catalogs in the existing fixed cache. Stable personal IDs and exact import filenames identify operations across pages; the old 45/12-entry and ten-hour library quotas are retired. Save allocates a new file, with A/B envelopes preserving existing files. The per-recording limit remains unchanged.
+- Savestates now have three compressed memory slots. `state_codec.cpp` uses vendored miniz with a fixed 320 KiB workspace at the end of the existing snapshot window; the remaining `0xFA0000` bytes form the packed slot pool. Saving stages a complete candidate in the audited Sunshine-only `0x91300000..0x91700000` temporary window plus unused pool tail before committing. Capacity failure preserves every old slot; there is no eviction. See `doc/foxtrot-state-codec.md` for ownership and the DI guard. State metadata, QFT/IL sidecars, selected slot and generations live in mod storage. Pending loads and practice replay pin slot/generation. Cycle states is an appended bind, unassigned by default. Format 14 is memory-only; SD/reboot restoration remains unimplemented.
 - Menu roots are Quick, Practice, Runs, Ghosts, Display and System. New IDs are append-only. Native timer position/size lives in `native_timer_layout.cpp`, scoped strictly around HUD drawing. Its shared editor supports Original/Custom appearance for All or individual characters, TIME and streak; Original preserves live retail colour endpoints. The mode mask uses reserved wallkick-style bytes without moving configuration offsets.
 - FOXTROT packaging includes EN/JA guides, a test sheet and a crash decoder. Release installation remains governed by the SD deployment section below.
 
@@ -119,7 +120,7 @@ Three buckets:
 ### Invariants enforced before load
 
 - Snapshot magic matches (`'SUSA' = 0x53555341`)
-- Snapshot version matches (`kSnapshotVersion`, currently 13; bump when the layout breaks)
+- Snapshot version matches (`kSnapshotVersion`, currently 14; bump when the layout breaks)
 - Snapshot region matches (`game_version` in the header vs `SUSAMUNE_GAME_VERSION`) — a JP snapshot won't load on a US/PAL build and vice versa
 - `gpApplication.mCurrentHeap` is at the same address as save time (heap moved → all pointers stale)
 - Heap size matches
@@ -134,7 +135,7 @@ In MEM2. Configured via `kSnapshotBase` near the top of `savestate.cpp`, gated o
 - **Dolphin** (`#if IS_EMULATOR`): `0x70000000` — emulator's "free" space.
 - **Wii (Nintendont)**: `0x91F00000–0x92F00000` — a dedicated 16 MB window whose exclusive end is the Nintendont ARM kernel. `include/susamune/mem2_map.h` is the shared source of truth for both PPC aliases and ARM physical addresses; compile-time adjacency/alias checks prevent launcher buffers from entering the window.
 
-Buffer is sized at 16 MB reserved (`kSnapshotReservedSize`). Layout: a 0x120-byte header (magic, version, heap addr/size, area/episode, feature state, and region table) at the base, then the region payloads packed back-to-back. A load reconciles the restored Fast Text/Fruit-timeout patch bytes with the settings that are live now; the snapshot never rewinds the user's current settings.
+The gameplay window is 15.9375 MiB, ending before configuration. Its first `0xFA0000` bytes hold three compressed slots and its last `0x50000` bytes hold codec workspace. Each slot's 0x120-byte region manifest, integrity fields, generation and QFT/IL sidecars live in mod storage. A load reconciles the restored Fast Text/Fruit-timeout patch bytes with the settings that are live now; the snapshot never rewinds the user's current settings.
 
 ## Settings persistence (`susamune.ini`)
 

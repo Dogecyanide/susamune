@@ -28,6 +28,7 @@ class PracticeTimerTests(unittest.TestCase):
             "bool QFTTimer::practiceAssisted()",
             "void QFTTimer::beginPracticePause()", "void QFTTimer::endPracticePause()",
             "bool QFTTimer::currentQf(", "u32 QFTTimer::attemptSerial()",
+            "void QFTTimer::captureSavestate(", "void QFTTimer::restoreSavestate(",
             "void QFTTimer::onSavestateSaved()", "void QFTTimer::onSavestateLoaded()"))
         ghost = ROOT / "src/ghost.cpp"
         functions += function_source(ghost, "s32 recordQf(").replace(
@@ -39,7 +40,11 @@ class PracticeTimerTests(unittest.TestCase):
 #include "susamune/qft_timer.hxx"
 #include "susamune/ghost_clock.h"
 struct TimerState {u8 stopped,restart,stopReason,pad;s32 offsetQf,freezeQf,freezeFrames;};
-static TimerState state,sSavedState;
+static TimerState state;
+static const int kSectionHistoryCount=16;
+''' + function_source(timer, "struct SavedTimerData {") + r''';
+#define memcpy __builtin_memcpy
+static QFTTimer::SavestateData sSavedTimer,slots[3],candidate;
 static volatile TimerState *sState=&state;
 static s32 death,plant,transition;
 static u16 target;
@@ -54,16 +59,16 @@ static const int STOP_NONE=0;
 static TMarDirector director,other;
 static TMarDirector *gpMarDirector=&director,*sStageDirector=&director,*sPracticeDirector;
 static bool sStageReady,sStagePending,sResetRequested,sPracticeHolding,sHaveSavedState;
-static bool sPracticeAssisted,sSavedPracticeAssisted,sBigShown;
+static bool sPracticeAssisted,sBigShown;
 static u8 sBigUpdatePass;
-static u32 sAttemptSerial,sPracticeSerial,sSavedAttemptSerial;
+static u32 sAttemptSerial,sPracticeSerial;
 static s32 sPracticeStartQf,sPracticeFreezeQf,sPracticeDeathQf,sPracticePlantQf,sPracticeTransitionQf;
 static u16 sPracticeTransitionTarget;
-static bool sFinalConsumed,sSavedFinalConsumed,sBigRaised,sSavedBigRaised,sRetailTimerOwned,sSavedRetailTimerOwned;
+static bool sFinalConsumed,sBigRaised,sRetailTimerOwned;
 static J2DPane *sBigTimerPane;
-static const int kSectionHistoryCount=16,kMaxQf=107892;
-static s32 sSectionQf[16],sSavedSectionQf[16],sLastSectionQf,sSavedLastSectionQf;
-static u8 sSectionCount,sSectionNext,sSavedSectionCount,sSavedSectionNext;
+static const int kMaxQf=107892;
+static s32 sSectionQf[16],sLastSectionQf;
+static u8 sSectionCount,sSectionNext;
 J2DPane *bigTimerPane(void *) {return nullptr;}
 QFTTimer gQFTTimer;
 static bool holding,pausedMode;
@@ -88,7 +93,7 @@ void releaseObserverMario(bool){}
 extern "C" __declspec(dllexport) void reset(s32 qf,s32 offset) {
     gpMarDirector=sStageDirector=&director;director.unk5C=qf;director.mCurState=4;director._260=1;
     state={0,0,0,0,offset,0,0};sStageReady=true;sStagePending=sResetRequested=false;
-    sPracticeHolding=sPracticeAssisted=sSavedPracticeAssisted=holding=pausedMode=false;
+    sPracticeHolding=sPracticeAssisted=holding=pausedMode=false;
     sAttemptSerial=sGhostAttemptSerial=7;sHaveSavedState=false;
     death=plant=-1;transition=0;target=0xffff;
     sRecordClock={};sFrameAssisted=true;sFrameFrozen=false;sRecord.runFlags=0;
@@ -127,6 +132,16 @@ extern "C" __declspec(dllexport) void boundary(unsigned which) {
     if(which==2)sStageReady=false;
 }
 extern "C" __declspec(dllexport) void save() {gQFTTimer.onSavestateSaved();}
+extern "C" __declspec(dllexport) void saveSlot(unsigned slot,unsigned commit) {
+    gQFTTimer.captureSavestate(candidate);
+    if(commit)slots[slot]=candidate;
+}
+extern "C" __declspec(dllexport) void section(s32 qf) {
+    sLastSectionQf=qf;sSectionQf[0]=qf;
+}
+extern "C" __declspec(dllexport) void loadSlot(unsigned slot,s32 qf) {
+    director.unk5C=qf;gQFTTimer.restoreSavestate(slots[slot]);
+}
 extern "C" __declspec(dllexport) void load(s32 qf) {
     director.unk5C=qf;gQFTTimer.onSavestateLoaded();
 }
@@ -236,6 +251,35 @@ extern "C" __declspec(dllexport) s32 ghost(unsigned held,unsigned watcher) {
         self.assertEqual(self.lib.value(10), 0)
         self.hold()
         self.assertEqual(self.lib.value(0), 96)
+
+    def test_three_slots_restore_their_own_clock_sections_and_assistance(self):
+        for slot, (qf, offset, assisted) in enumerate(((100, -4, 0), (200, -44, 1), (500, 12, 0))):
+            self.lib.reset(qf, offset)
+            if assisted:
+                self.hold(40)
+            if slot == 2:
+                self.lib.stop()
+            self.lib.section(81 + slot * 11)
+            self.lib.saveSlot(slot, 1)
+        for slot, (qf, value, assisted) in enumerate(((100, 96, 0), (240, 156, 1), (500, 512, 0))):
+            self.lib.reset(900, 99)
+            self.lib.events(1000, 1001, 1002, 1004)
+            self.lib.begin()
+            self.lib.loadSlot(slot, qf)
+            self.lib.end()
+            self.assertEqual((self.lib.value(0), self.lib.value(8), self.lib.value(9),
+                              self.lib.value(10), self.lib.value(12)),
+                             (value, 81 + slot * 11, 81 + slot * 11, 0, assisted))
+
+    def test_failed_slot_save_does_not_replace_sidecar_or_change_live_time(self):
+        self.lib.saveSlot(1, 1)
+        self.hold(40)
+        self.lib.advance(28)
+        before = [self.lib.value(i) for i in range(13)]
+        self.lib.saveSlot(1, 0)
+        self.assertEqual([self.lib.value(i) for i in range(13)], before)
+        self.lib.loadSlot(1, 100)
+        self.assertEqual((self.lib.value(0), self.lib.value(12)), (96, 0))
 
     def test_actual_watch_call_order_keeps_step_elapsed_before_next_hold(self):
         for watcher in (1, 2):

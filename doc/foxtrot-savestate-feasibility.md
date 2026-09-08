@@ -1,5 +1,13 @@
 # Sunshine: two memory states and SD states after reboot
 
+**Implementation update:** the current source implements three compressed memory
+slots, a menu selector and an optional unassigned Cycle states bind. Replacement
+must fit before any occupied slot is changed; nothing is automatically evicted.
+Each slot owns its QFT/IL data, and replay pins its original slot and generation.
+The staging audit is complete; see [the codec audit](foxtrot-state-codec.md).
+SD archives and reboot restoration remain unimplemented. The investigation below
+records the earlier single-state build and the evidence behind this work.
+
 Feasibility investigation, 2026-09-08. No SD savestate feature was implemented;
 the DarkMoonshine project was left unchanged. A private Sunshine snapshot was
 captured during the input-fix smoke test for the compression measurement below.
@@ -178,3 +186,33 @@ image; the design must either retain recovery data or keep the game frozen and
 recover through a controlled scene restart. A successful pre-read cannot guarantee
 the next read succeeds. This recovery policy and reboot compatibility need proving
 before exposing direct streaming as a user-facing Load action.
+
+## Agreed controls for the multi-state version
+
+The user chose this control scheme on September 8:
+
+- Keep the existing **Save state** and **Load state** binds. Both act on the
+  currently selected memory slot.
+- Add **Active state** to the Savestates menu, showing each supported slot's
+  number and whether it is empty or saved. Changing it selects a slot without
+  saving, loading or replacing anything.
+- Add an optional **Cycle states** bind, **unassigned by default**. It selects
+  the next supported memory slot, including empty slots, and wraps to the first.
+  A short notification identifies the selected slot and its status.
+- Future SD state browsing, saving and loading will live in the menu and will
+  not require additional default controller combinations.
+
+Append the bind ID and stable INI key after the existing IDs; preserve
+all saved bindings, including reserved spin IDs. A default mask of zero persists
+as `none`. Place the control beside Savestates through menu presentation instead
+of reordering persisted IDs. The menu and shortcut use the same selection operation.
+
+A pending load must retain its original slot and snapshot generation through
+confirmation, the card wait and the post-render restore. Slot changes must not
+redirect that operation. Input takes must likewise retain their original slot
+and generation; QFT/IL sidecars belong to each slot. If Cycle shares a press
+with Save or Load, Save/Load takes precedence and cycling is suppressed.
+
+These controls are implemented with three compressed slots. The previous
+`F6962C1F` release has one resident state. Capacity is checked for every save;
+three unusually large states are not guaranteed to fit together.

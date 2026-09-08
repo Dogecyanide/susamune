@@ -53,8 +53,18 @@ class QftTimerHudContracts(unittest.TestCase):
             source.index("sBigUpdatePass = 0;"),
         )
         self.assertIn("pane->add(0, 60);", source)
-        self.assertRegex(source, r"sSavedBigRaised\s*=\s*sBigRaised;")
-        self.assertRegex(source, r"sBigRaised\s*=\s*sSavedBigRaised;")
+        capture = source.split("void QFTTimer::captureSavestate(", 1)[1].split(
+            "void QFTTimer::restoreSavestate(", 1
+        )[0]
+        restore = source.split("void QFTTimer::restoreSavestate(", 1)[1].split(
+            "void QFTTimer::onSavestateSaved()", 1
+        )[0]
+        self.assertRegex(capture, r"saved.bigRaised\s*=\s*sBigRaised;")
+        self.assertLess(capture.index("saved.bigRaised"),
+                        capture.index("memcpy(&out, &saved, sizeof(saved));"))
+        self.assertLess(restore.index("memcpy(&saved, &data, sizeof(saved));"),
+                        restore.index("sBigRaised"))
+        self.assertRegex(restore, r"sBigRaised\s*=\s*saved.bigRaised;")
 
 
 if __name__ == "__main__":

@@ -67,7 +67,11 @@ class QFTTimer {
   // Consume exact custom endpoints used by the Any% Plaza ILs.
   bool consumeCustom(bool death, s32 *qf);
 
-  // Keep the native timer in the same one-slot savestate as the director.
+  // Session-only sidecar; capture does not replace any committed slot.
+  struct SavestateData { u32 words[24]; };
+  void captureSavestate(SavestateData &out) const;
+  void restoreSavestate(const SavestateData &saved);
+  // Legacy one-slot callers.
   void onSavestateSaved();
   void onSavestateLoaded();
 };

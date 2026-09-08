@@ -31,6 +31,7 @@
 #include "susamune/records_persistence.hxx"
 #include "susamune/rng_control.hxx"
 #include "susamune/settings.hxx"
+#include "susamune/savestate.hxx"
 #include "susamune/split_stats.hxx"
 #include "susamune/stage_loader.hxx"
 #include "susamune/stage_targets.hxx"
@@ -56,6 +57,8 @@
 
 // Presentation occupies the added arena span; fixed timer scratch stays below it.
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+
+extern SavestateManager *gSavestateMgr;
 
 // Objects are placement-new'd into BSS buffers so the menu needs no heap.
 
@@ -4254,6 +4257,126 @@ static_assert(BIND_REGRAB_OBJECT == 0 &&
 
 }  // namespace
 
+class SavestatesTab : public MenuTab {
+public:
+    SavestatesTab() : mSel(0), mConfirmClear(false), mClearSlot(0), mClearGeneration(0) { focus(); }
+    const char *title() const override { return "Savestates"; }
+    const char *summary() const override { return "Choose a state to save or load during this session."; }
+    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
+    bool grabsInput() const override { return mConfirmClear || gCreationExtras.editing(); }
+    bool fullScreen() const override { return grabsInput(); }
+    bool suppressesBinds() const override {
+        return grabsInput() || (JUTGamePad::mPadStatus[0].mButton &
+            (JUTGamePad::A | JUTGamePad::X)) != 0;
+    }
+    bool favoriteHint() const override { return mSel == ROW_RNG || mSel == ROW_FEEDBACK; }
+    void update(Menu *menu, TMarioGamePad *pad) override {
+        if (gCreationExtras.editing()) {
+            gCreationExtras.updateEditor(pad);
+            if (!gCreationExtras.editing()) focus();
+            return;
+        }
+        const u16 pressed = mInput.update();
+        if (mConfirmClear) {
+            if (pressed & JUTGamePad::B) {
+                mConfirmClear = false;
+                focus();
+            } else if (pressed & JUTGamePad::A) {
+                const bool cleared = gSavestateMgr &&
+                    gSavestateMgr->clearSlot(mClearSlot, mClearGeneration);
+                menu->toast(cleared ? "State cleared" : "State changed or busy; try again");
+                mConfirmClear = false;
+                focus();
+            }
+            return;
+        }
+        const u32 nav = menu->navigationInput(pad);
+        if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, ROW_COUNT);
+        else if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, ROW_COUNT);
+        if (mSel == ROW_ACTIVE &&
+            (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT))) {
+            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
+            return;
+        }
+        if ((pressed & JUTGamePad::X) && favoriteHint()) {
+            const SettingId setting = mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK;
+            gSettings.toggleFavorite(setting);
+            menu->toast(gSettings.favorite(setting) ? "Added to Shined" : "Removed from Shined");
+            return;
+        }
+        if (!(pressed & JUTGamePad::A)) return;
+        if (mSel == ROW_ACTIVE) {
+            changeState(menu, 1);
+        } else if (mSel == ROW_CLEAR) {
+            if (!gSavestateMgr) { menu->toast("Savestates unavailable"); return; }
+            mClearSlot = gSavestateMgr->activeSlot();
+            const SavestateManager::SlotInfo info = gSavestateMgr->slotInfo(mClearSlot);
+            if (!info.valid) { menu->toast("This state is empty"); return; }
+            mClearGeneration = info.generation;
+            mConfirmClear = true;
+            mInput.begin(JUTGamePad::A | JUTGamePad::B);
+        } else if (mSel == ROW_EDITOR) {
+            gCreationExtras.beginSavestateFeedbackEditor();
+        } else {
+            gSettings.cycle(mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK, 1);
+        }
+    }
+    void draw(Menu *menu, int x, int y, int w, int h) override {
+        if (gCreationExtras.editing()) { gCreationExtras.drawEditor(menu); return; }
+        if (mConfirmClear) {
+            char question[48];
+            snprintf(question, sizeof(question), "Clear state %lu?", mClearSlot + 1);
+            menu->fillBox(88, 176, 464, 128, Color(8, 11, 20, 245));
+            menu->drawText(question, 320 - Menu::textWidth(question, 16) / 2, 198, 16, 16, cRowSel());
+            const char *detail = "Other states stay saved.";
+            menu->drawText(detail, 320 - Menu::textWidth(detail, 12) / 2, 230, 12, 12, cRow());
+            const char *buttons = SUSAMUNE_GLYPH_A " Clear    " SUSAMUNE_GLYPH_B " Cancel";
+            menu->drawText(buttons, 320 - Menu::textWidth(buttons, 12) / 2, 272, 12, 12, cFooter());
+            return;
+        }
+        char active[24];
+        if (gSavestateMgr) snprintf(active, sizeof(active), "%lu / %u", gSavestateMgr->activeSlot() + 1, SavestateManager::kSlotCount);
+        else strcpy(active, "Unavailable");
+        const char *labels[] = {"Active state", "Clear selected state", "Save RNG state", "Savestate feedback", "Feedback display"};
+        const char *values[] = {active, "Clear", gSettings.valueLabel(SETTING_SAVE_RNG_STATE),
+            gSettings.valueLabel(SETTING_SAVESTATE_FEEDBACK), "Edit"};
+        for (int row = 0; row < ROW_COUNT; ++row) {
+            const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK) &&
+                gSettings.favorite(row == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK);
+            drawValueRow(menu, x, y + row * ROW_H, w, labels[row], values[row], row == mSel, starred, false);
+        }
+        const int statusY = y + (ROW_COUNT + 1) * ROW_H;
+        for (u32 slot = 0; slot < SavestateManager::kSlotCount; ++slot) {
+            const SavestateManager::SlotInfo info = gSavestateMgr ? gSavestateMgr->slotInfo(slot) : SavestateManager::SlotInfo{};
+            char status[48];
+            snprintf(status, sizeof(status), "State %lu: %s", slot + 1, info.valid ? "Saved" : "Empty");
+            menu->drawText(status, x + 4, statusY + slot * 17, FOOT_SZ, FOOT_SZ,
+                gSavestateMgr && gSavestateMgr->activeSlot() == slot ? cAccent() : cRow());
+        }
+        const char *help = mSel == ROW_ACTIVE ? "Choose with A or C-stick left/right; this does not save or load."
+            : mSel == ROW_CLEAR ? "Remove only the selected saved state, after confirmation."
+            : mSel == ROW_RNG ? "Keep the game RNG with each state."
+            : mSel == ROW_FEEDBACK ? "Show a message when saving or loading a state."
+            : "Change the savestate message's position and appearance.";
+        drawHelpLine(menu, x, y, w, h, help);
+    }
+private:
+    enum { ROW_ACTIVE, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_EDITOR, ROW_COUNT };
+    void changeState(Menu *menu, int direction) {
+        if (!gSavestateMgr) { menu->toast("Savestates unavailable"); return; }
+        const u32 next = (u32)wrap((int)gSavestateMgr->activeSlot() + direction, SavestateManager::kSlotCount);
+        if (!gSavestateMgr->selectSlot(next)) { menu->toast("State is busy; try again"); return; }
+        char message[24];
+        snprintf(message, sizeof(message), "State %lu selected", next + 1);
+        menu->toast(message);
+    }
+    u8 mSel;
+    bool mConfirmClear;
+    u32 mClearSlot;
+    u32 mClearGeneration;
+    RawPromptInput mInput;
+};
+
 class BindsTab : public MenuTab {
 public:
     BindsTab() : mSel(0) {}
@@ -4284,9 +4407,9 @@ public:
 
         const u32 rapid = menu->navigationInput(pad);
         if (rapid & TMarioGamePad::CSTICK_UP) {
-            do { mSel = wrap(mSel - 1, BIND_COUNT); } while (!visibleBind(mSel));
+            mSel = bindAt(wrap(displayIndex(mSel) - 1, visibleCount()));
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            do { mSel = wrap(mSel + 1, BIND_COUNT); } while (!visibleBind(mSel));
+            mSel = bindAt(wrap(displayIndex(mSel) + 1, visibleCount()));
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
             jumpSection(-1);
         } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
@@ -4317,8 +4440,8 @@ public:
         char text[kBindTextMax];
         int  ry = y;
         int row = 0;
-        for (int i = 0; i < BIND_COUNT && row < end; i++) {
-            if (!visibleBind(i)) continue;
+        for (int item = 0; item < visibleCount() && row < end; item++) {
+            const int i = bindAt(item);
             const char *section = sectionName(i);
             if (section) {
                 if (row >= start) {
@@ -4370,8 +4493,20 @@ public:
     }
 
 private:
-    static bool visibleBind(int id) {
-        return id != BIND_PRACTICE_SPIN_CW && id != BIND_PRACTICE_SPIN_CCW;
+    static int visibleCount() { return BIND_COUNT - 2; }
+    static BindId bindAt(int row) {
+        for (int id = 0; id < BIND_COUNT; ++id) {
+            if (id == BIND_PRACTICE_SPIN_CW || id == BIND_PRACTICE_SPIN_CCW ||
+                id == BIND_SAVESTATE_CYCLE) continue;
+            if (row-- == 0) return (BindId)id;
+            if (id == BIND_SAVESTATE_LOAD && row-- == 0) return BIND_SAVESTATE_CYCLE;
+        }
+        return BIND_REGRAB_OBJECT;
+    }
+    static int displayIndex(int id) {
+        for (int row = 0; row < visibleCount(); ++row)
+            if (bindAt(row) == id) return row;
+        return 0;
     }
 
     const char *sectionName(int bind) const {
@@ -4383,23 +4518,19 @@ private:
     }
 
     __attribute__((always_inline)) u32 displayMetrics() const {
-        int selectedRow = 0, count = 0;
-        for (int i = 0; i < BIND_COUNT; ++i) {
-            if (!visibleBind(i)) continue;
-            ++count;
-            if (i < mSel) ++selectedRow;
-        }
+        const int selectedItem = displayIndex(mSel);
+        int selectedRow = selectedItem;
         for (int i = 0; i < kBindSectionCount; i++) {
-            if (kBindSectionStarts[i] <= mSel) selectedRow++;
+            if (displayIndex(kBindSectionStarts[i]) <= selectedItem) selectedRow++;
         }
-        return ((u32)(count + kBindSectionCount) << 16) |
+        return ((u32)(visibleCount() + kBindSectionCount) << 16) |
                (u16)selectedRow;
     }
 
     void jumpSection(int direction) {
         if (direction > 0) {
             for (int i = 0; i < kBindSectionCount; i++) {
-                if (kBindSectionStarts[i] > mSel) {
+                if (displayIndex(kBindSectionStarts[i]) > displayIndex(mSel)) {
                     mSel = kBindSectionStarts[i];
                     return;
                 }
@@ -4407,7 +4538,7 @@ private:
             mSel = kBindSectionStarts[0];
         } else if (direction < 0) {
             for (int i = kBindSectionCount - 1; i >= 0; i--) {
-                if (kBindSectionStarts[i] < mSel) {
+                if (displayIndex(kBindSectionStarts[i]) < displayIndex(mSel)) {
                     mSel = kBindSectionStarts[i];
                     return;
                 }
@@ -5671,7 +5802,7 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 qol[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
     u8 cosmetic[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
     u8 misc[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
-    u8 savestate[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
+    u8 savestate[sizeof(SavestatesTab)] __attribute__((aligned(8)));
     u8 ui[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
     u8 timer[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
     u8 rng[sizeof(CategorySettingsTab)] __attribute__((aligned(8)));
@@ -5775,9 +5906,7 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     MenuTab *pbSafety = new (sPbSafetyBuf) PBSafetyTab();
     MenuTab *practice =
         new (sMiscBuf) CategorySettingsTab(TITLE_MISC, SETTING_CAT_MISC);
-    MenuTab *savestate =
-        new (sSavestateBuf) CategorySettingsTab(TITLE_SAVESTATE,
-                                                SETTING_CAT_SAVESTATE);
+    MenuTab *savestate = new (sSavestateBuf) SavestatesTab();
     MenuTab *timer =
         new (sTimerBuf) CategorySettingsTab(TITLE_TIMER, SETTING_CAT_TIMER);
     MenuTab *gameplay =

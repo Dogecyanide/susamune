@@ -1,8 +1,8 @@
 # Moonshine Launcher FOXTROT — final test checklist
 
-**V2.3.0 pre-release · Build F6962C1F**
+**V2.3.0 pre-release · Build 4B066C30**
 
-This is the complete reference checklist. Keep earlier results; you do not need to repeat everything. For this update, focus on startup text, frame advance, saving from an empty ghost row, and the Sunshine timer's Original/Custom appearance. Use the full package so the launcher and game files match.
+This is the complete reference checklist. Keep earlier results; you do not need to repeat everything. For this update, focus on the three savestates in section 10, plus any unchecked startup text, frame advance, empty ghost row or Sunshine timer fixes. Use the full package so the launcher and game files match.
 
 **Tester:**  
 **Platform:** Wii / Wii U / Dolphin — version:  
@@ -45,7 +45,7 @@ Audio and some effects may continue while paused. Pause/step-assisted attempts m
 
 - [ ] Save a savestate during normal gameplay. Choose **Practice > Input replay (experimental) > Record from savestate**, close the menu and release buttons. Run, jump and spray briefly, then open the menu to stop and keep the take.
 - [ ] Choose **Replay recorded inputs**. It should start from the saved state and repeat the take. Check B/Start cancels. Report any different movement or mismatch message, with the scene and actions recorded.
-- [ ] Replace the savestate or change scenes and confirm the old take cannot play from the wrong starting point. If settings change incompatibly, replay should refuse with a clear message.
+- [ ] Select or save another state, then replay the take: it should still use its original starting state. Replace or clear that original state, or change scenes, and check the old take refuses to play. Incompatible settings should also produce a clear refusal.
 
 This is a short, experimental, session-only input take. It is separate from saved/shareable ghosts.
 
@@ -86,8 +86,9 @@ No new checkpoints were added. Missing or incompatible split data legitimately s
 ## 10. Normal practice and saving
 
 - [ ] Play a busy level such as **Bianco 5**. Use the menu, savestate save/load, restart and warp wheel. Report crashes, freezes, new slowdown or lost controls.
-- [ ] Load a savestate after moving, changing health/water or using the camera. Check Mario and the scene return correctly and you can continue playing normally.
-- [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile.
+- [ ] **Three states:** Save different positions in states 1, 2 and 3 under **Practice > Savestates**. Select and load each; Mario, health/water and the camera should return correctly. Changing Active state alone should do nothing to the scene. If you assign **Savestate: cycle states**, check it changes the selection too.
+- [ ] **Keeping states:** Cancel Clear once, then confirm it on a disposable state. Only that state should become Empty; the others should still load. If a save reports insufficient space, every earlier state—including the one you tried to replace—should remain usable.
+- [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile. The three practice states should be Empty: they are kept only in memory.
 
 ## Results to send back
 

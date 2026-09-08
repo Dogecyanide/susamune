@@ -1529,14 +1529,14 @@ class SplitContractTests(unittest.TestCase):
         self.assertLess(activate, patch)
 
         savestate = SAVESTATE_SOURCE.read_text(encoding="utf-8")
-        loaded = savestate.index("gQFTTimer.onSavestateLoaded();")
+        loaded = savestate.index("gQFTTimer.restoreSavestate(saved.timer);")
         split_events = savestate.index(
             "SplitEvents::onSavestateLoaded();", loaded
         )
         split_stats = savestate.index(
             "SplitStats::onSavestateLoaded();", split_events
         )
-        iling = savestate.index("ILing::onSavestateLoaded();", split_stats)
+        iling = savestate.index("ILing::restoreSavestate(saved.attempt);", split_stats)
         self.assertLess(loaded, split_events)
         self.assertLess(split_events, split_stats)
         self.assertLess(split_stats, iling)

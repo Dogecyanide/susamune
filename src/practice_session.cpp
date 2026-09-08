@@ -76,7 +76,14 @@ static_assert(__builtin_offsetof(TMarioGamePad, _A4) == 0xa4 &&
               sizeof(TMarioGamePad) == 0xf0, "practice meaning layout");
 
 PadHistory sBeforeRead;
-PadHistory sSeedPad;
+struct PracticeSeed {
+    PadHistory pad;
+    u32 generation;
+    u32 stage;
+    u32 heap;
+    bool valid;
+};
+PracticeSeed sSeeds[SavestateManager::kSlotCount];
 TMarioGamePad *sReadPad;
 SusamunePracticeInput sPhysical;
 SusamunePracticeInput sConsumed;
@@ -101,25 +108,34 @@ bool sCameraApplied;
 bool sRecord;
 bool sReplay;
 bool sOwnLoad;
-bool sSeedValid;
 bool sFrameInjected;
 u8 sLoadKind;
 u8 sMenuAction;
 u16 sLoadWait;
 u32 sStageGeneration;
-u32 sSeedGeneration;
 u32 sTapeSeed;
+u32 sTapeSlot;
+u32 sLoadSlot;
+u32 sLoadGeneration;
 u32 sCount;
 u32 sCursor;
 u32 sSteps;
 u32 sSettingsHash;
 u32 sTapeHash;
-u32 sSeedStage;
 u32 sTapeStage;
-u32 sSeedHeap;
 u16 sPriorButtons;
 u16 sStripButtons;
 const char *sStatus = "Save a state before recording";
+
+bool seedMatches(u32 slot, u32 generation) {
+    if (!gSavestateMgr || slot >= SavestateManager::kSlotCount || !generation)
+        return false;
+    const SavestateManager::SlotInfo info = gSavestateMgr->slotInfo(slot);
+    const PracticeSeed &seed = sSeeds[slot];
+    return info.valid && info.generation == generation && seed.valid &&
+           seed.generation == generation && seed.stage == sStageGeneration &&
+           seed.heap == reinterpret_cast<u32>(gpApplication.mCurrentHeap);
+}
 
 alignas(32) u32 sPadReadTail[2];
 alignas(32) u32 sMovementTail[2];
@@ -574,7 +590,8 @@ void beforeStageSetup() {
     sFreeze = false;
     sAssisted = false;
     sHaveRead = false;
-    sSeedValid = false;
+    for (u32 i = 0; i < SavestateManager::kSlotCount; ++i)
+        sSeeds[i].valid = false;
     sSteps = 0;
     sCount = 0;
     sCursor = 0;
@@ -718,8 +735,9 @@ void afterDraw() {
     if (!sLoadKind || (gMenu && gMenu->shown()) || WarpWheel::shown() ||
         StageLoader::resultOwnsInput()) return;
     if (sPhysical.buttons) return;
-    if (!normalStage() || !sSeedValid || sSeedStage != sStageGeneration ||
-        sSeedHeap != reinterpret_cast<u32>(gpApplication.mCurrentHeap)) {
+    const u32 slot = sLoadSlot;
+    const u32 generation = sLoadGeneration;
+    if (!normalStage() || !seedMatches(slot, generation)) {
         stopTape("Save a new gameplay state first");
         return;
     }
@@ -729,7 +747,7 @@ void afterDraw() {
     }
     const u8 kind = sLoadKind;
     sOwnLoad = true;
-    const bool loaded = gSavestateMgr && gSavestateMgr->loadState();
+    const bool loaded = gSavestateMgr->loadSlot(slot, generation);
     sOwnLoad = false;
     sLoadKind = 0;
     sLoadWait = 0;
@@ -737,7 +755,7 @@ void afterDraw() {
         stopTape("Couldn't load recording's savestate");
         return;
     }
-    restorePad(sSeedPad, gpApplication.mGamePads[0]);
+    restorePad(sSeeds[slot].pad, gpApplication.mGamePads[0]);
     sHaveRead = false;
     sPaused = false;
     sFreeCamera = false;
@@ -745,7 +763,8 @@ void afterDraw() {
     if (kind == 1) {
         sCount = 0;
         sTapeHash = 0;
-        sTapeSeed = sSeedGeneration;
+        sTapeSeed = generation;
+        sTapeSlot = slot;
         sTapeStage = sStageGeneration;
         sSettingsHash = settingsHash();
         sRecord = true;
@@ -759,13 +778,38 @@ void afterDraw() {
     gBinds.suppressUntilRelease();
 }
 
-void onSavestateSaved() {
-    ++sSeedGeneration;
-    sSeedValid = normalStage();
-    sSeedStage = sStageGeneration;
-    sSeedHeap = reinterpret_cast<u32>(gpApplication.mCurrentHeap);
-    if (sSeedValid) capturePad(sSeedPad, gpApplication.mGamePads[0]);
-    if (sRecord || sReplay || sLoadKind) stopTape("Savestate replaced - input stopped");
+void onSavestateSaved(u32 slot, u32 generation) {
+    if (slot >= SavestateManager::kSlotCount || !generation) return;
+    const bool replacedTake = sTapeSlot == slot && sTapeSeed &&
+                              sTapeSeed != generation;
+    const bool replacedRequest = sLoadKind && sLoadSlot == slot &&
+                                 sLoadGeneration != generation;
+    PracticeSeed &seed = sSeeds[slot];
+    seed.generation = generation;
+    seed.valid = normalStage();
+    seed.stage = sStageGeneration;
+    seed.heap = reinterpret_cast<u32>(gpApplication.mCurrentHeap);
+    if (seed.valid) capturePad(seed.pad, gpApplication.mGamePads[0]);
+    if (replacedRequest || (replacedTake && (sRecord || sReplay)))
+        stopTape("Recording's savestate replaced - input stopped");
+    if (replacedTake) {
+        sCount = sCursor = 0;
+        sTapeSeed = sTapeHash = 0;
+    }
+}
+
+void onSavestateCleared(u32 slot, u32 generation) {
+    if (slot >= SavestateManager::kSlotCount || !generation) return;
+    if (sSeeds[slot].generation == generation) sSeeds[slot].valid = false;
+    const bool removedTake = sTapeSlot == slot && sTapeSeed == generation;
+    const bool removedRequest = sLoadKind && sLoadSlot == slot &&
+                                sLoadGeneration == generation;
+    if (removedRequest || (removedTake && (sRecord || sReplay)))
+        stopTape("Recording's savestate cleared - input stopped");
+    if (removedTake) {
+        sCount = sCursor = 0;
+        sTapeSeed = sTapeHash = 0;
+    }
 }
 
 void onSavestateLoaded() {
@@ -904,12 +948,18 @@ bool requestRecord() {
         message("Input sessions need a matching launcher");
         return false;
     }
-    if (!available() || !normalStage() || !sSeedValid ||
-        sSeedStage != sStageGeneration || Ghost::observerStatsSuppressed()) {
-        message("Save a normal gameplay state first");
+    const u32 slot = gSavestateMgr ? gSavestateMgr->activeSlot() :
+                                   SavestateManager::kSlotCount;
+    const u32 generation = gSavestateMgr ?
+        gSavestateMgr->slotInfo(slot).generation : 0;
+    if (!available() || !normalStage() || !seedMatches(slot, generation) ||
+        Ghost::observerStatsSuppressed()) {
+        message("Save gameplay in the selected slot first");
         return false;
     }
     stopTape(nullptr);
+    sLoadSlot = slot;
+    sLoadGeneration = generation;
     sLoadKind = 1;
     message("Close menu: reload savestate and record");
     return true;
@@ -921,7 +971,7 @@ bool requestPlayback() {
         return false;
     }
     if (!available() || !normalStage() || sCount == 0 ||
-        !sSeedValid || sTapeSeed != sSeedGeneration ||
+        !seedMatches(sTapeSlot, sTapeSeed) ||
         sTapeStage != sStageGeneration || Ghost::observerStatsSuppressed()) {
         message("Record a take with this savestate first");
         return false;
@@ -933,6 +983,8 @@ bool requestPlayback() {
         return false;
     }
     stopTape(nullptr);
+    sLoadSlot = sTapeSlot;
+    sLoadGeneration = sTapeSeed;
     sLoadKind = 2;
     message("Close menu: replay from saved state");
     return true;

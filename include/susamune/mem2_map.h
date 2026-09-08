@@ -98,6 +98,26 @@
 #define SUSAMUNE_MEM2_SNAPSHOT_PPC_BASE      0x91F00000u
 #define SUSAMUNE_MEM2_SNAPSHOT_SIZE          0x00FF0000u
 
+/* Packed states own this window; codec scratch stays outside committed data. */
+#define SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE  0x00050000u
+#define SUSAMUNE_STATE_POOL_SIZE \
+    (SUSAMUNE_MEM2_SNAPSHOT_SIZE - SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE)
+
+/* Sunshine-only, save-transaction reuse after IPL/Triforce handoff. No state
+ * remains here after Save returns; a fresh launcher/kernel owns it again. */
+#define SUSAMUNE_STATE_STAGING_PPC_BASE      NIN_MEM2_SEGABOOT_PPC_BASE
+#define SUSAMUNE_STATE_STAGING_SIZE          0x00400000u
+#define SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE 0x71500000u
+#if SUSAMUNE_STATE_STAGING_PPC_BASE + SUSAMUNE_STATE_STAGING_SIZE != NIN_MEM2_DI_SCRATCH_PPC_BASE
+#error State save staging exceeds the retired IPL/Triforce buffers
+#endif
+#if SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE != SUSAMUNE_DOLPHIN_GHOST_FILE_TRANSFER_PPC_BASE + SUSAMUNE_GHOST_FILE_TRANSFER_SIZE
+#error Dolphin state staging must follow the ghost transfer bank
+#endif
+#if SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE + SUSAMUNE_STATE_STAGING_SIZE > 0x72000000u
+#error Dolphin state staging exceeds the emulated aperture
+#endif
+
 /* Loader-only overlay. Music stops before the game can create a snapshot. */
 #define SUSAMUNE_LAUNCHER_MUSIC_PPC_BASE     SUSAMUNE_MEM2_SNAPSHOT_PPC_BASE
 #define SUSAMUNE_LAUNCHER_MUSIC_SIZE         0x00400000u

@@ -9,6 +9,7 @@
 #include "susamune/qft_timer.hxx"
 
 #include "Dolphin/OS.h"
+#include "Dolphin/mem.h"
 #include "Dolphin/printf.h"
 #include "SMS/GC2D/GCConsole2.hxx"
 #include "SMS/Player/Mario.hxx"
@@ -74,6 +75,21 @@ namespace {
   const u8 kFreezeFrames[] = {0, 15, 30, 60, 90, 150};
   const int kSectionHistoryCount = 16;
 
+  struct SavedTimerData {
+    TimerState timer;
+    s32 sectionQf[kSectionHistoryCount];
+    s32 lastSectionQf;
+    u32 attemptSerial;
+    u8 sectionCount;
+    u8 sectionNext;
+    bool finalConsumed;
+    bool bigRaised;
+    bool retailTimerOwned;
+    bool practiceAssisted;
+  };
+  static_assert(sizeof(SavedTimerData) == sizeof(QFTTimer::SavestateData),
+                "QFT sidecar layout changed");
+
   bool sStageReady;
   bool sStagePending;
   bool sResetRequested;
@@ -83,25 +99,16 @@ namespace {
   bool sRetailTimerOwned;
   u32 sAttemptSerial;
   TMarDirector *sStageDirector;
-  TimerState sSavedState;
+  QFTTimer::SavestateData sSavedTimer;
   bool sHaveSavedState;
-  bool sSavedFinalConsumed;
-  bool sSavedBigRaised;
-  bool sSavedRetailTimerOwned;
-  u32 sSavedAttemptSerial;
   s32 sSectionQf[kSectionHistoryCount];
-  s32 sSavedSectionQf[kSectionHistoryCount];
   s32 sLastSectionQf;
-  s32 sSavedLastSectionQf;
   u8 sSectionCount;
   u8 sSectionNext;
-  u8 sSavedSectionCount;
-  u8 sSavedSectionNext;
   J2DPane *sBigTimerPane;
   u8 sBigUpdatePass;
   bool sPracticeHolding;
   bool sPracticeAssisted;
-  bool sSavedPracticeAssisted;
   TMarDirector *sPracticeDirector;
   u32 sPracticeSerial;
   s32 sPracticeStartQf;
@@ -1075,56 +1082,66 @@ bool QFTTimer::consumeCustom(bool death, s32 *qf) {
   return consumeCustomEvent(death ? sDeathQf : sPlantQf, qf);
 }
 
-void QFTTimer::onSavestateSaved() {
-  sSavedPracticeAssisted = sPracticeAssisted;
-  sSavedState.stopped      = sState->stopped;
-  sSavedState.restart      = sState->restart;
-  sSavedState.stopReason   = sState->stopReason;
-  sSavedState.pad          = 0;
-  sSavedState.offsetQf     = sState->offsetQf;
-  sSavedState.freezeQf     = sState->freezeQf;
-  sSavedState.freezeFrames = sState->freezeFrames;
-  sSavedFinalConsumed      = sFinalConsumed;
-  sSavedBigRaised          = sBigRaised;
-  sSavedRetailTimerOwned    = sRetailTimerOwned;
-  sSavedAttemptSerial      = sAttemptSerial;
-  sSavedLastSectionQf      = sLastSectionQf;
-  sSavedSectionCount       = sSectionCount;
-  sSavedSectionNext        = sSectionNext;
+void QFTTimer::captureSavestate(SavestateData &out) const {
+  SavedTimerData saved = {};
+  saved.practiceAssisted = sPracticeAssisted;
+  saved.timer.stopped      = sState->stopped;
+  saved.timer.restart      = sState->restart;
+  saved.timer.stopReason   = sState->stopReason;
+  saved.timer.offsetQf     = sState->offsetQf;
+  saved.timer.freezeQf     = sState->freezeQf;
+  saved.timer.freezeFrames = sState->freezeFrames;
+  saved.finalConsumed      = sFinalConsumed;
+  saved.bigRaised          = sBigRaised;
+  saved.retailTimerOwned   = sRetailTimerOwned;
+  saved.attemptSerial      = sAttemptSerial;
+  saved.lastSectionQf      = sLastSectionQf;
+  saved.sectionCount       = sSectionCount;
+  saved.sectionNext        = sSectionNext;
   for (int i = 0; i < kSectionHistoryCount; i++)
-    sSavedSectionQf[i] = sSectionQf[i];
-  sHaveSavedState          = true;
+    saved.sectionQf[i] = sSectionQf[i];
+  memcpy(&out, &saved, sizeof(saved));
 }
 
-void QFTTimer::onSavestateLoaded() {
+void QFTTimer::restoreSavestate(const SavestateData &data) {
+  SavedTimerData saved;
+  memcpy(&saved, &data, sizeof(saved));
   sPracticeHolding = false;
-  if (!sHaveSavedState)
-    return;
-  sPracticeAssisted = sSavedPracticeAssisted;
-  sState->stopped      = sSavedState.stopped;
-  sState->restart      = sSavedState.restart;
-  sState->stopReason   = sSavedState.stopReason;
+  sPracticeAssisted = saved.practiceAssisted;
+  sState->stopped      = saved.timer.stopped;
+  sState->restart      = saved.timer.restart;
+  sState->stopReason   = saved.timer.stopReason;
   sState->pad          = 0;
-  sState->offsetQf     = sSavedState.offsetQf;
-  sState->freezeQf     = sSavedState.freezeQf;
-  sState->freezeFrames = sSavedState.freezeFrames;
-  sFinalConsumed       = sSavedFinalConsumed;
-  sBigRaised           = sSavedBigRaised;
-  sRetailTimerOwned     = sSavedRetailTimerOwned;
+  sState->offsetQf     = saved.timer.offsetQf;
+  sState->freezeQf     = saved.timer.freezeQf;
+  sState->freezeFrames = saved.timer.freezeFrames;
+  sFinalConsumed       = saved.finalConsumed;
+  sBigRaised           = saved.bigRaised;
+  sRetailTimerOwned    = saved.retailTimerOwned;
   sBigTimerPane         = sBigRaised && gpMarDirector
                               ? bigTimerPane(gpMarDirector->mGCConsole)
                               : nullptr;
-  sAttemptSerial       = sSavedAttemptSerial;
-  sLastSectionQf       = sSavedLastSectionQf;
-  sSectionCount        = sSavedSectionCount;
-  sSectionNext         = sSavedSectionNext;
+  sAttemptSerial      = saved.attemptSerial;
+  sLastSectionQf      = saved.lastSectionQf;
+  sSectionCount       = saved.sectionCount;
+  sSectionNext        = saved.sectionNext;
   for (int i = 0; i < kSectionHistoryCount; i++)
-    sSectionQf[i] = sSavedSectionQf[i];
+    sSectionQf[i] = saved.sectionQf[i];
   // Hook scratch is outside the snapshot. Drop events from the abandoned
   // future so a pre-finish state waits for the endpoint again.
   *sDeathQf            = -1;
   *sPlantQf            = -1;
   *sTransitionTarget   = 0xFFFF;
+}
+
+void QFTTimer::onSavestateSaved() {
+  captureSavestate(sSavedTimer);
+  sHaveSavedState = true;
+}
+
+void QFTTimer::onSavestateLoaded() {
+  sPracticeHolding = false;
+  if (sHaveSavedState) restoreSavestate(sSavedTimer);
 }
 
 #undef QFT_OFF

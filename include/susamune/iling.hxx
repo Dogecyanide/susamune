@@ -73,6 +73,9 @@ void onWarpTail();
 void resetAfterObserver();
 void beforeStageSetup();
 void onStageSetup();
+struct SavestateData { u32 words[16]; };
+void captureSavestate(SavestateData &out);
+void restoreSavestate(const SavestateData &saved);
 void onSavestateSaved();
 void onSavestateLoaded();
 // Revoke PB, Records and challenge credit without changing the QFT clock.

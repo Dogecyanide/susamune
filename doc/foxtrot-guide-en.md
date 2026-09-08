@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Frame-input and timer feedback update
+V2.3.0 pre-release · Three savestates and practice feedback update
 
 FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
 
@@ -55,6 +55,14 @@ Free camera also works in the ordinary Start pause. It remains usable while step
 
 Practice pause, stepping and free camera also work in Ghost Watch and Watch2. The ghost playhead stays still while paused. You can keep free camera active when resuming Watch. B or Start exits Watch; opening the mod menu with its full combo leaves Watch active.
 
+## Three savestates
+
+Open **Practice > Savestates** and choose **Active state** with A or C-stick left/right. Each of the three states shows Saved or Empty. Your usual Save and Load shortcuts now use the selected state; changing the selection alone does not save or load anything. **System > Button binds > Savestate: cycle states** is an optional shortcut with no button assigned by default.
+
+The three states share a limited amount of memory and are compressed to fit more. Nothing is deleted automatically. If a new save cannot fit, all previous states remain, including the state you tried to replace. **Clear selected state** asks for confirmation before freeing that state's space; the other states stay saved. Loading still requires the stage and episode where the state was made.
+
+These states are **memory-only**: closing the game or rebooting loses them. They are not saved to the SD card.
+
 ## Record and replay an input take
 
 1. Save a savestate during normal gameplay.
@@ -63,7 +71,7 @@ Practice pause, stepping and free camera also work in Ghost Watch and Watch2. Th
 4. Play the sequence, then open the mod menu to stop recording and keep the take. Stop recording or replay is on the same page; you can assign it a shortcut with X.
 5. Select Replay recorded inputs. It reloads the same seed state and replays the take.
 
-A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. It exists only in memory for this session. Replacing the savestate or changing scenes invalidates it. Changed settings are rejected. B or Start aborts playback.
+A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. It exists only in memory for this session and stays attached to its starting state, even if you select or save another slot. Replacing or clearing that starting state, or changing scenes, invalidates the take. Changed settings are rejected. B or Start aborts playback.
 
 Playback is experimental. It compares a small fingerprint of Mario, RNG and counters after each consumed frame, and pauses on the first mismatch. A matched fingerprint is not proof that every enemy, particle or timed event stayed identical. Keep important ghost tracks separately; this local take is not a shareable replay file.
 

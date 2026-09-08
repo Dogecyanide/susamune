@@ -239,7 +239,7 @@ class SplitEventContractTests(unittest.TestCase):
         self.assertLess(main.rindex("gQFTTimer.update();", direct, update), update)
         savestate = source_text(SAVESTATE)
         self.assertLess(
-            savestate.index("gQFTTimer.onSavestateLoaded();"),
+            savestate.index("gQFTTimer.restoreSavestate(saved.timer);"),
             savestate.index("SplitEvents::onSavestateLoaded();"),
         )
         source = source_text()

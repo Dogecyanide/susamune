@@ -1,6 +1,10 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release, frame-input and timer feedback update.
+V2.3.0 pre-release, three-state and practice feedback update.
+
+- Up to three compressed savestates share the available memory. Choose Active state under Practice > Savestates; existing Save/Load shortcuts use that selection. An optional Savestate: cycle states shortcut starts unassigned.
+- Clear selected state asks for confirmation. Nothing is removed automatically, and a save that cannot fit preserves all previous states. These states are memory-only and do not survive closing the game or rebooting.
+- Local input replay stays attached to its original starting state when another state is selected or saved. Replacing or clearing its starting state invalidates the take.
 
 - Pause accepts held gameplay buttons. Releasing and pressing a button again between steps now registers on the next Step; held buttons do not create extra presses.
 - QFT stops during frame holds and advances on Step. A small TAS label stays beside it for the assisted attempt.

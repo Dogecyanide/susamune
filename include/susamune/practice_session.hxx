@@ -18,7 +18,8 @@ bool ownsGameplayInput();
 void afterDirect(s32 appState, bool gameplayActive);
 // Service replay loads only after the existing GX completion barrier.
 void afterDraw();
-void onSavestateSaved();
+void onSavestateSaved(u32 slot, u32 generation);
+void onSavestateCleared(u32 slot, u32 generation);
 void onSavestateLoaded();
 void draw(Menu *menu);
 
