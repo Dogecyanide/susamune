@@ -27,6 +27,7 @@ enum { SETTING_ATTEMPT_COUNTER, SETTING_ATTEMPT_IN_STAGE_CONTROLS };
 enum { CARD_ERROR_BUSY = -1 };
 static u32 sActiveSlot, sPendingSlot, sPendingGeneration;
 static bool sAwaitingLoadApproval;
+static bool diskOwned;
 static u32 generations[3], saveCalls, loadCalls, cycleCalls, feedbackCalls;
 static u32 loadedSlot, loadedGeneration, pendingAtLoad;
 struct Settings {
@@ -53,6 +54,7 @@ bool requestSavestateLoad() { prompt = requestNeedsPrompt; return !prompt; }
 class SavestateManager {
 public:
     bool mLoadPending;
+    static bool diskBusy() { return diskOwned; }
     u32 mLoadWaitFrames;
     struct SlotInfo { u32 generation; };
     SlotInfo slotInfo(u32 slot) { return { generations[slot] }; }
@@ -75,6 +77,7 @@ public:
 API void reset() {
     sActiveSlot = sPendingSlot = sPendingGeneration = 0;
     sAwaitingLoadApproval = manager.mLoadPending = false;
+    diskOwned = false;
     manager.mLoadWaitFrames = 0;
     saveCalls = loadCalls = cycleCalls = feedbackCalls = 0;
     loadedSlot = loadedGeneration = pendingAtLoad = 0;
@@ -92,6 +95,7 @@ API void promptMode(u32 value) { WarpWheel::requestNeedsPrompt = value != 0; }
 API void approve() { WarpWheel::prompt = false; WarpWheel::approved = true; }
 API void cancel() { WarpWheel::prompt = WarpWheel::approved = false; }
 API void busy(u32 value) { card.busy = value != 0; }
+API void disk(u32 value) { diskOwned = value != 0; }
 API void noCard() { gpCardManager = 0; }
 API void counter(u32 value) { gSettings.values[0] = gSettings.values[1] = value != 0; }
 API void binding(u32 id, u32 value) { gBinds.values[id] = value; }
@@ -245,6 +249,16 @@ API u32 get(u32 key) {
         self.lib.press(1)
         self.lib.update()
         self.assertEqual(self.lib.get(4), 1)
+
+    def test_disk_ownership_blocks_new_binds_and_preserves_a_queued_load(self):
+        self.lib.disk(1)
+        self.lib.press(7); self.lib.update(); self.lib.process()
+        self.assertEqual([self.lib.get(i) for i in (4, 5, 6)], [0, 0, 0])
+        self.lib.disk(0); self.lib.press(2); self.lib.update()
+        self.lib.disk(1); self.lib.process()
+        self.assertEqual([self.lib.get(i) for i in (1, 3, 5)], [1, 0, 0])
+        self.lib.disk(0); self.lib.process()
+        self.assert_loaded(0, 101)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,7 @@ public:
     void endHudDraw();
     const CreationStyle &nativeTimerStyle() const { return mNativeTimerStyle; }
     bool nativeTimerColorsEnabled() const;
-    const u8 *nativeTimerRgb(const J2DPane *pane) const;
+    const u8 *nativeTimerRgb(const J2DPane *pane, bool *custom = nullptr) const;
     bool editingNativeTimer() const {
         return mEditMode == EDIT_NATIVE_TIMER && mEditor.editing();
     }

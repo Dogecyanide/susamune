@@ -38,7 +38,7 @@ CARD_MAGIC = 0x53554346
 CFG_MAGIC = 0x53434647
 CFG_VERSION = 2
 CARD_VERSION_V5 = 5
-CARD_VERSION = 7
+CARD_VERSION = 8
 CARD_SECTOR_SIZE = 0x2000
 CFG_V5_SIZE = 5016
 CFG_SIZE = 5152
@@ -320,7 +320,7 @@ class PersistenceSourceContracts(unittest.TestCase):
 
     def test_dolphin_v5_migration_has_explicit_shifted_fields(self) -> None:
         for contract in (
-            "constexpr u16 kRecordVersion = 7;",
+            "constexpr u16 kRecordVersion = 9;",
             "struct RecordV5",
             "u8 cfg[5016];",
             "kProfilesOffsetV1 = 2784",

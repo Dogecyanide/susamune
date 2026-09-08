@@ -21,7 +21,8 @@ class SavestateMenuTests(unittest.TestCase):
         state_source = source[source.index("class SavestatesTab :"):]
         state_methods = "\n".join(function(state_source, name).replace(" override", "") for name in (
             "void focus() override", "bool grabsInput() const override", "bool favoriteHint() const override",
-            "void update(Menu *menu, TMarioGamePad *pad) override", "void changeState(Menu *menu, int direction)"))
+            "void update(Menu *menu, TMarioGamePad *pad) override", "void changeState(Menu *menu, int direction)",
+            "u32 sdCount() const", "void updateSD(Menu *menu, TMarioGamePad *pad, u16 pressed)"))
         bind_source = source[source.index("class BindsTab :"):]
         bind_methods = "\n".join(function(bind_source, name) for name in (
             "static int visibleCount()", "static BindId bindAt(int row)",
@@ -33,6 +34,7 @@ class SavestateMenuTests(unittest.TestCase):
         shim = r'''
 #include "susamune/binds_list.h"
 #include "susamune/settings_list.h"
+#include "susamune/state_storage.h"
 typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
 #define ID(name,key) name,
 enum BindId {SUSAMUNE_BIND_LIST(ID) BIND_COUNT};
@@ -48,6 +50,7 @@ static const u16 defaults[]={
 static_assert(sizeof(defaults)/sizeof(defaults[0])==BIND_COUNT,"bind descriptors drifted");
 extern "C" int snprintf(char*out,unsigned long long,const char*,...){out[0]=0;return 0;}
 extern "C" void *memset(void*d,int v,unsigned long long n){u8*p=(u8*)d;while(n--)*p++=(u8)v;return d;}
+extern "C" void *memcpy(void*d,const void*s,unsigned long long n){u8*p=(u8*)d;const u8*q=(const u8*)s;while(n--)*p++=*q++;return d;}
 struct JUTGamePad {enum {A=0x100,B=0x200,X=0x400};struct Status{u16 mButton;};static Status mPadStatus[1];};
 JUTGamePad::Status JUTGamePad::mPadStatus[1];
 struct TMarioGamePad {enum {CSTICK_UP=1,CSTICK_DOWN=2,CSTICK_LEFT=4,CSTICK_RIGHT=8};u32 nav;};
@@ -60,21 +63,33 @@ struct Extras {bool edit;bool editing(){return edit;}void updateEditor(TMarioGam
  void beginSavestateFeedbackEditor(){edit=true;}}gCreationExtras;
 struct SavestateManager {
  enum{kSlotCount=3};struct SlotInfo{bool valid;u8 area,episode;u32 generation,packedBytes;};
- SlotInfo slots[3];u32 active;bool busy;int selections,clears;u32 clearTarget,clearGeneration;
+ SlotInfo slots[3];u32 active;bool busy,available,ready;int selections,clears,exports,imports,refreshes,cancels;
+ u32 clearTarget,clearGeneration,importId,importCrc,importSize,after;SusamuneStateCatalog catalog;
  u32 activeSlot()const{return active;}SlotInfo slotInfo(u32 i)const{return slots[i];}
  bool selectSlot(u32 i){if(busy||i>=3)return false;active=i;selections++;return true;}
  bool clearSlot(u32 i,u32 generation){clearTarget=i;clearGeneration=generation;
   if(busy||i>=3||!slots[i].valid||slots[i].generation!=generation)return false;
   slots[i].valid=false;clears++;return true;}
+ static bool diskBusy();
+ bool sdAvailable()const{return available;}bool sdCatalogReady()const{return ready;}
+ const SusamuneStateCatalog&sdCatalog()const{return catalog;}
+ const char*sdStatus()const{return "status";}
+ bool saveToSD(){if(busy)return false;exports++;busy=true;return true;}
+ bool loadFromSD(u32 id,u32 crc,u32 size){if(busy)return false;imports++;importId=id;importCrc=crc;importSize=size;busy=true;return true;}
+ bool refreshSD(u32 id=0){if(busy)return false;after=id;refreshes++;busy=true;return true;}
+ bool cancelSD(){cancels++;return true;}
 };
 static SavestateManager manager;SavestateManager*gSavestateMgr=&manager;
+bool SavestateManager::diskBusy(){return manager.busy;}
 '''
         body = r'''
 class SavestatesTab {public:
- enum {ROW_ACTIVE,ROW_CLEAR,ROW_RNG,ROW_FEEDBACK,ROW_EDITOR,ROW_COUNT};
- SavestatesTab():mSel(0),mConfirmClear(false),mClearSlot(0),mClearGeneration(0){focus();}
+ enum {ROW_ACTIVE,ROW_CLEAR,ROW_RNG,ROW_FEEDBACK,ROW_EDITOR,ROW_SD,ROW_COUNT};
+ enum {SD_ACTIVE,SD_SAVE,SD_REFRESH,SD_NEXT,SD_FILES};
+ SavestatesTab():mSel(0),mSDsel(0),mSD(false),mConfirmClear(false),mConfirmLoad(false),mClearSlot(0),mClearGeneration(0){focus();}
  STATE_METHODS
- u8 mSel;bool mConfirmClear;u32 mClearSlot,mClearGeneration;RawPromptInput mInput;
+ u8 mSel,mSDsel;bool mSD,mConfirmClear,mConfirmLoad;u32 mClearSlot,mClearGeneration;
+ u32 mArchiveId,mArchiveCrc,mArchiveSize;char mArchiveName[32];RawPromptInput mInput;
 };
 STARTS
 enum{kBindSectionCount=sizeof(kBindSectionStarts)/sizeof(kBindSectionStarts[0])};
@@ -82,6 +97,9 @@ class BindsTab {public:BIND_METHODS int mSel;};
 static void reset(){
  memset(&manager,0,sizeof(manager));gSavestateMgr=&manager;gCreationExtras.edit=false;gSettings.cycles=0;
  for(unsigned i=0;i<3;i++)manager.slots[i]={true,1,2,11+i,100};
+ manager.available=true;manager.ready=true;manager.catalog.count=2;manager.catalog.more=1;manager.catalog.nextId=72;
+ manager.catalog.entries[0]={51,500,0,0,0,0,41,0,"First"};
+ manager.catalog.entries[1]={72,700,0,0,0,0,42,0,"Second"};
  JUTGamePad::mPadStatus[0].mButton=0;
 }
 static void press(SavestatesTab&t,Menu&m,u16 held,u32 nav=0){
@@ -124,6 +142,52 @@ extern "C" __declspec(dllexport) int navigation(int row,int direction){
  reset();SavestatesTab tab;Menu menu={};tab.mSel=row;
  press(tab,menu,0,direction<0?TMarioGamePad::CSTICK_UP:TMarioGamePad::CSTICK_DOWN);return tab.mSel;
 }
+extern "C" __declspec(dllexport) int sdImport(int test){
+ reset();SavestatesTab tab;Menu menu={};tab.mSD=true;tab.mSDsel=SavestatesTab::SD_FILES+1;
+ if(test==6)manager.slots[0].valid=false;
+ press(tab,menu,JUTGamePad::A);
+ if(!tab.mConfirmLoad||manager.imports||tab.mArchiveId!=72)return 1;
+ for(int i=0;i<9;i++)press(tab,menu,JUTGamePad::A);
+ if(manager.imports)return 2;
+ manager.catalog.entries[1]={99,900,0,0,0,0,98,0,"Replaced catalogue"};
+ if(test==1)manager.active=1;
+ if(test==2)manager.slots[0].generation++;
+ if(test==3)manager.busy=true;
+ press(tab,menu,0);press(tab,menu,test==4?JUTGamePad::B:JUTGamePad::A);
+ if(test==3)return manager.imports==0&&manager.cancels==1&&tab.mSD?0:3;
+ if(tab.mConfirmLoad)return 4;
+ const bool imported=test==0||test==5||test==6;
+ if(manager.imports!=(int)imported)return 5;
+ if(imported&&(manager.importId!=72||manager.importCrc!=42||manager.importSize!=700))return 6;
+ if(test==5){for(int i=0;i<9;i++)press(tab,menu,JUTGamePad::A);if(manager.cancels)return 7;}
+ return manager.clears==0&&manager.exports==0?0:8;
+}
+extern "C" __declspec(dllexport) int sdActions(int test){
+ reset();SavestatesTab tab;Menu menu={};tab.mSD=true;
+ if(test==0||test==1){tab.mSDsel=SavestatesTab::SD_SAVE;if(test==1)manager.slots[0].valid=false;
+  press(tab,menu,JUTGamePad::A);return manager.exports==(test==0)&&!manager.clears?0:1;}
+ if(test==2){tab.mSDsel=SavestatesTab::SD_NEXT;press(tab,menu,JUTGamePad::A);
+  return manager.refreshes==1&&manager.after==72?0:2;}
+ if(test==3){tab.mSDsel=SavestatesTab::SD_REFRESH;press(tab,menu,JUTGamePad::A);
+  return manager.refreshes==1&&manager.after==0?0:3;}
+ if(test==4){tab.mSDsel=SavestatesTab::SD_NEXT;manager.catalog.more=0;press(tab,menu,JUTGamePad::A);return manager.refreshes?4:0;}
+ if(test==5){manager.busy=true;tab.mSDsel=SavestatesTab::SD_SAVE;
+  press(tab,menu,JUTGamePad::B,TMarioGamePad::CSTICK_DOWN);
+  if(!tab.mSD||manager.cancels!=1||manager.exports||tab.mSDsel!=SavestatesTab::SD_SAVE)return 5;
+  manager.busy=false;press(tab,menu,JUTGamePad::B);if(!tab.mSD)return 6;
+  press(tab,menu,0);press(tab,menu,JUTGamePad::B);return tab.mSD?7:0;}
+ if(test==6){tab.mSDsel=255;manager.catalog.count=0;press(tab,menu,JUTGamePad::A);
+  return tab.mSDsel==SavestatesTab::SD_NEXT&&!manager.imports?0:8;}
+ if(test==7){manager.catalog.count=999;tab.mSDsel=11;press(tab,menu,0,TMarioGamePad::CSTICK_DOWN);
+  return tab.mSDsel==0&&tab.sdCount()==8?0:9;}
+ if(test==8){tab.mSD=false;tab.mSel=SavestatesTab::ROW_SD;manager.ready=false;
+  press(tab,menu,JUTGamePad::A);if(!tab.grabsInput()||manager.refreshes!=1)return 10;
+  for(int i=0;i<9;i++)press(tab,menu,JUTGamePad::A);return manager.cancels?11:0;}
+ if(test==9){manager.available=false;tab.mSDsel=SavestatesTab::SD_SAVE;press(tab,menu,JUTGamePad::A);return manager.exports?12:0;}
+ if(test==10){gSavestateMgr=0;tab.mSDsel=255;press(tab,menu,JUTGamePad::A);return tab.mSDsel==3?0:13;}
+ if(test==11){tab.mSDsel=SavestatesTab::SD_ACTIVE;press(tab,menu,0,TMarioGamePad::CSTICK_LEFT);return manager.active==2?0:14;}
+ return 99;
+}
 extern "C" __declspec(dllexport) int bindOrder(int row){return BindsTab::bindAt(row);}
 extern "C" __declspec(dllexport) int bindCount(){return BindsTab::visibleCount();}
 extern "C" __declspec(dllexport) int bindDefault(){return defaults[BIND_SAVESTATE_CYCLE];}
@@ -155,9 +219,19 @@ extern "C" __declspec(dllexport) int bindJump(int id,int direction){BindsTab tab
                 self.assertEqual(self.lib.clear(case), 0)
 
     def test_menu_navigation_remains_in_bounds(self):
-        for row in range(5):
-            self.assertEqual(self.lib.navigation(row, 1), (row + 1) % 5)
-            self.assertEqual(self.lib.navigation(row, -1), (row - 1) % 5)
+        for row in range(6):
+            self.assertEqual(self.lib.navigation(row, 1), (row + 1) % 6)
+            self.assertEqual(self.lib.navigation(row, -1), (row - 1) % 6)
+
+    def test_sd_import_requires_release_and_pins_file_and_destination(self):
+        for case in range(7):
+            with self.subTest(case=case):
+                self.assertEqual(self.lib.sdImport(case), 0)
+
+    def test_sd_actions_paging_bounds_and_transfer_lock(self):
+        for case in range(12):
+            with self.subTest(case=case):
+                self.assertEqual(self.lib.sdActions(case), 0)
 
     def test_cycle_bind_is_unassigned_and_grouped_without_changing_ids(self):
         expected = list(range(10)) + [31] + list(range(10, 29))

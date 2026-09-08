@@ -456,7 +456,7 @@ typedef char SusamuneGhostIndexTextOffset[
     __builtin_offsetof(struct SusamuneGhostIndexEntry, name) == 56u
         ? 1 : -1];
 typedef char SusamuneGhostMaxFileFitsTransfer[
-    SUSAMUNE_GHOST_MAX_FILE_SIZE <= 0x140000u ? 1 : -1];
+    SUSAMUNE_GHOST_MAX_FILE_SIZE <= 0x13E000u ? 1 : -1];
 typedef char SusamuneGhostRawPayloadLimit[
     SUSAMUNE_GHOST_MAX_SAMPLE_COUNT * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE ==
             SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE

@@ -120,7 +120,7 @@ class TeachingTests(unittest.TestCase):
         splits = [(i, 0x1AF7E430, 0, i, 0) for i in range(6)]
         data = teaching_file(inputs, splits, base)
         self.assertEqual(len(data), 1297992)
-        self.assertLessEqual(len(data), 0x140000)
+        self.assertLessEqual(len(data), 0x13E000)
         self.assertLessEqual(len(inputs) * 16, 0xE0000)
         self.assertEqual(ghost.validate_ghost(data)["teaching"]["input_count"], 54000)
 

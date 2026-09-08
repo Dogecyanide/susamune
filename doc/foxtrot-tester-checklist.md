@@ -1,13 +1,27 @@
 # Moonshine Launcher FOXTROT — final test checklist
 
-**V2.3.0 pre-release · Build 4B066C30**
+**V2.3.0 pre-release · Build 5B0EC1B1**
 
-This is the complete reference checklist. Keep earlier results; you do not need to repeat everything. For this update, focus on the three savestates in section 10, plus any unchecked startup text, frame advance, empty ghost row or Sunshine timer fixes. Use the full package so the launcher and game files match.
+This is the complete reference checklist. **Start with the latest changes below, then anything you previously marked Not tested. Keep earlier results; successful older checks do not need repeating.** Use the full package so the launcher and game files match.
 
 **Tester:**  
 **Platform:** Wii / Wii U / Dolphin — version:  
 **Game region:** JP / US / PAL  
 **Game source:** Disc / ISO / CISO — SD / USB
+
+## Start here — latest changes
+
+- [ ] **Mario colours:** In **Display > Appearance > Mario appearance > Mario colours**, try All in Custom white, then give a few parts different colours. Check the cap, clothes, gloves, shoes and sunglasses; skin should stay normal. Return a part to Original, then Custom. Try the Sunshine shirt if available.
+- [ ] **FLUDD colours:** On the same page, open **FLUDD colours**. Try white and a strong colour on the body, tank and nozzle parts, then switch between spray, hover, rocket and turbo. Try Sprayed water and Water highlights while spraying: the stream, outlet mist and impact splashes should change, while the sea and Yoshi juice stay normal. Original should restore each chosen part.
+- [ ] **Two timer displays:** Show Sunshine timer and compact QFT together. Pause, Step a few times, save/load a state, then resume. They should follow the same frame; the Sunshine timer rounds to hundredths, so `11.845` can display as `11.85`. Ordinary attempts should still time normally. Both timer appearance modes should remain usable.
+- [ ] **A full ghost after loading:** Start a fresh level and record a recognisable opening. Save a state partway through, continue briefly, load it and finish by a different route. Save and Watch the ghost: it should include the original opening and your new ending, without the discarded section or long frame-advance waits. It should say TAS, export normally and receive no ordinary PB credit.
+- [ ] **Three states and replacement:** Save different positions in all three slots, then replace one and load all three. The other two must stay intact. If a save reports insufficient space, all previous states must still work. The slots share 17.625 MiB; longer saved ghost recordings also use this space.
+- [ ] **SD state after power-off — main hardware check:** Save a memory state, open **Practice > Savestates > SD states**, and choose **Save selected state to SD**. Wait for completion. Fully turn off the console, boot the same package and game setup, and enter the same level/episode. Choose an active memory slot, refresh the SD list and import the file; then use your normal Load action. Check Mario's position, health/water, camera and timers, then play, save/load again and leave the level. Report the exact scene and any refusal message. This still needs real Wii/Wii U verification.
+- [ ] **SD choices and saved colours:** Cancel an import once; the current memory state and SD file should stay. An incompatible level/episode should give a clear refusal and preserve existing states. After the reboot above, confirm your kept Mario/FLUDD colours and Original/Custom choices survived. A file from another build, region or launcher setup is not expected to load.
+
+SD files are in `/moonshine_states` on the launcher's device. Keep the device connected until a transfer or cancellation finishes. Matching level names alone may not be enough: the loaded resources must also be compatible. There is no need to deliberately damage files or interrupt writes.
+
+Standalone Dolphin BPS builds do not provide SD states; mark those items **Not available** and test the memory slots normally.
 
 ## 1. Launcher and startup
 
@@ -88,7 +102,7 @@ No new checkpoints were added. Missing or incompatible split data legitimately s
 - [ ] Play a busy level such as **Bianco 5**. Use the menu, savestate save/load, restart and warp wheel. Report crashes, freezes, new slowdown or lost controls.
 - [ ] **Three states:** Save different positions in states 1, 2 and 3 under **Practice > Savestates**. Select and load each; Mario, health/water and the camera should return correctly. Changing Active state alone should do nothing to the scene. If you assign **Savestate: cycle states**, check it changes the selection too.
 - [ ] **Keeping states:** Cancel Clear once, then confirm it on a disposable state. Only that state should become Empty; the others should still load. If a save reports insufficient space, every earlier state—including the one you tried to replace—should remain usable.
-- [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile. The three practice states should be Empty: they are kept only in memory.
+- [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile. The three memory slots start Empty; separately saved SD states should remain in the SD list and can be imported again.
 
 ## Results to send back
 

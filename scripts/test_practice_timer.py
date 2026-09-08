@@ -23,6 +23,8 @@ class PracticeTimerTests(unittest.TestCase):
         timer = ROOT / "src/qft_timer.cpp"
         functions = "\n".join(function_source(timer, signature) for signature in (
             "s32 clampQf(", "s32 liveQf()", "s32 frozenDisplayQf()", "s32 compactQf()",
+            "s32 sunshineQf(", "s32 qfToMillis(", "s32 qfToRoundedCentis(",
+            "void updateBigTimer(", "void QFTTimer::update()",
             "void captureSection()", "void QFTTimer::beginFrame()",
             "void QFTTimer::onStageSetup(", "void QFTTimer::markPracticeAssisted()",
             "bool QFTTimer::practiceAssisted()",
@@ -51,7 +53,10 @@ static u16 target;
 static volatile s32 *sDeathQf=&death,*sPlantQf=&plant,*sTransitionQf=&transition;
 static volatile u16 *sTransitionTarget=&target;
 struct J2DPane {};
-class TMarDirector {public:enum {STATE_NORMAL=4,STATE_GAME_STARTING=2};s32 unk5C;void *mGCConsole;u8 mCurState;u8 _260;};
+struct TGCConsole2 {bool mIsTimerMoving;s32 value;
+    void startAppearTimer(int,int){}void setTimer(s32 v){value=v;}};
+static TGCConsole2 console;
+class TMarDirector {public:enum {STATE_NORMAL=4,STATE_GAME_STARTING=2};s32 unk5C;TGCConsole2 *mGCConsole;u8 mCurState;u8 _260;};
 struct TApplication {enum {CONTEXT_DIRECT_MAIN_LOOP=1};struct {u8 mAreaID;} mPrevScene;};
 static TApplication gpApplication;
 struct TGameSequence {enum {AREA_OPTION=15,AREA_DOLPIC=1};};
@@ -77,6 +82,13 @@ void restoreBigTimerPosition(){}
 void ensureCoreHooks(){}
 void applyFreezeConfig(){}
 void resetSections(){sSectionCount=sSectionNext=0;sLastSectionQf=0;}
+enum {SETTING_TIMER_SUNSHINE_VISIBILITY=1,SUNSHINE_ALWAYS=0,SUNSHINE_SHINE_ONLY=1};
+static struct Settings {u8 get(int){return 0;}} gSettings;
+bool finalStop(){return state.stopped&&state.stopReason!=0;}
+void hideBigTimer(){}
+bool missionCounterOnScreen(TGCConsole2*){return false;}
+void raiseBigTimer(TGCConsole2*){}
+static s32 nativeDrawn;
 static SusamuneGhostClock sRecordClock;
 static bool sFrameAssisted,sFrameFrozen;
 static u32 sGhostAttemptSerial;
@@ -92,6 +104,7 @@ void releaseObserverMario(bool){}
 ''' + functions + r'''
 extern "C" __declspec(dllexport) void reset(s32 qf,s32 offset) {
     gpMarDirector=sStageDirector=&director;director.unk5C=qf;director.mCurState=4;director._260=1;
+    console={false,-1};director.mGCConsole=&console;sBigShown=sRetailTimerOwned=false;
     state={0,0,0,0,offset,0,0};sStageReady=true;sStagePending=sResetRequested=false;
     sPracticeHolding=sPracticeAssisted=holding=pausedMode=false;
     sAttemptSerial=sGhostAttemptSerial=7;sHaveSavedState=false;
@@ -135,6 +148,22 @@ extern "C" __declspec(dllexport) void save() {gQFTTimer.onSavestateSaved();}
 extern "C" __declspec(dllexport) void saveSlot(unsigned slot,unsigned commit) {
     gQFTTimer.captureSavestate(candidate);
     if(commit)slots[slot]=candidate;
+}
+extern "C" __declspec(dllexport) void renderFrame(unsigned paused,unsigned held,s32 ticks) {
+    pausedMode=paused!=0;holding=held!=0;gQFTTimer.beginFrame();
+    if(holding)gQFTTimer.beginPracticePause();
+    gQFTTimer.update();nativeDrawn=console.value;
+    director.unk5C+=ticks;
+    gQFTTimer.endPracticePause();gQFTTimer.update();
+}
+extern "C" __declspec(dllexport) s32 display(unsigned which) {
+    if(which==0)return nativeDrawn;
+    if(which==1)return qfToRoundedCentis(compactQf());
+    if(which==2)return console.value;
+    return qfToMillis(compactQf());
+}
+extern "C" __declspec(dllexport) void ownNative(unsigned yes) {
+    console.mIsTimerMoving=yes!=0;console.value=54321;
 }
 extern "C" __declspec(dllexport) void section(s32 qf) {
     sLastSectionQf=qf;sSectionQf[0]=qf;
@@ -213,6 +242,49 @@ extern "C" __declspec(dllexport) s32 ghost(unsigned held,unsigned watcher) {
         self.assertEqual(self.lib.value(12), 1)
         self.lib.stage(1)
         self.assertEqual(self.lib.value(12), 0)
+
+    def test_screenshot_native_11_88_and_compact_11_845_use_the_same_held_frame(self):
+        self.lib.reset(1428, -4)
+        self.lib.renderFrame(1, 1, 4)
+        self.assertEqual(self.lib.display(3), 11845)
+        self.assertEqual(self.lib.display(0), 1185)
+        self.assertEqual(self.lib.display(2), 1185)
+
+    def test_native_and_compact_match_each_hold_step_and_resume_draw_phase(self):
+        self.lib.renderFrame(0, 0, 4)
+        self.assertEqual(self.lib.display(0), self.lib.display(1))
+        for _ in range(5):
+            self.lib.renderFrame(1, 1, 4)
+            self.assertEqual(self.lib.display(0), self.lib.display(1))
+            self.assertEqual(self.lib.display(2), self.lib.display(1))
+            self.lib.renderFrame(1, 0, 4)
+            self.assertEqual(self.lib.display(0), self.lib.display(1))
+            self.assertEqual(self.lib.display(2), self.lib.display(1))
+        self.lib.renderFrame(0, 0, 4)
+        self.assertEqual(self.lib.display(0), self.lib.display(1))
+
+    def test_saved_held_timer_resumes_both_displays_at_its_own_frame(self):
+        self.lib.renderFrame(1, 1, 4)
+        expected=self.lib.display(1)
+        self.lib.saveSlot(0, 1)
+        saved_director=self.lib.value(6)
+        self.lib.renderFrame(1, 0, 4)
+        self.lib.renderFrame(1, 1, 4)
+        self.lib.loadSlot(0, saved_director)
+        self.lib.renderFrame(1, 1, 4)
+        self.assertEqual([self.lib.display(i) for i in range(3)], [expected]*3)
+
+    def test_native_final_captures_and_retail_mission_timer_stay_unchanged(self):
+        self.lib.stop()
+        self.lib.renderFrame(1, 1, 4)
+        self.assertEqual(self.lib.display(0), self.lib.display(1))
+        self.lib.reset(100, -4)
+        self.lib.events(80, -1, -1, 84)
+        self.lib.renderFrame(0, 0, 4)
+        self.assertEqual(self.lib.display(0), self.lib.display(1))
+        self.lib.ownNative(1)
+        self.lib.renderFrame(1, 1, 4)
+        self.assertEqual((self.lib.display(0), self.lib.display(2)), (54321,54321))
 
     def test_finished_timer_does_not_rewind_while_paused(self):
         self.lib.stop()

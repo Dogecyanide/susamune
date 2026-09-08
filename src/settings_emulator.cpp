@@ -4,6 +4,8 @@
 
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/fludd_colors.hxx"
 #include "susamune/emulator_persistence.hxx"
 #include "susamune/input_display.hxx"
 #include "susamune/metadata_display.hxx"
@@ -45,6 +47,8 @@ void Settings::save() {
         gMetadataDisplay.clearDirty();
         gQftDisplay.clearDirty();
         gCreationExtras.clearDirty();
+        MarioColors::clearDirty();
+        FluddColors::clearDirty();
         return;
     }
 
@@ -76,7 +80,7 @@ SettingsSaveState Settings::pollSave() {
         mSaveState = SETTINGS_SAVE_OK;
         if (mDirty || gBinds.dirty() || gInputDisplay.dirty() ||
             gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-            gCreationExtras.dirty()) {
+            gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
             save();
         }
         break;

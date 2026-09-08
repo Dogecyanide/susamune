@@ -5,7 +5,7 @@
   "base_addr": 2151833632,
   "iso_size": 1459978240,
   "source_crc32": "C3B17583",
-  "mod_region_size": 524288,
+  "mod_region_size": 655360,
   "first_file_offset": 12246152,
   "dol": {
     "iso_offset": 122880,
@@ -323,9 +323,9 @@
       "crc32": "89BB9C51"
     },
     {
-      "offset": 4761792,
-      "size": 12015424,
-      "crc32": "52C32553"
+      "offset": 4892864,
+      "size": 11884352,
+      "crc32": "01EB6ED5"
     },
     {
       "offset": 4237568,

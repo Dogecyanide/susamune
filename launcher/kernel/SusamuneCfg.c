@@ -111,6 +111,20 @@ static const char *const CreationColorKeys[SUSAMUNE_CREATION_COLOR_COUNT] =
 	"menu_background_rgb"
 };
 
+static const char *const MarioColorKeys[SUSAMUNE_MARIO_COLORS_COUNT] =
+{
+	"mario_cap_rgb", "mario_shirt_rgb", "mario_overalls_rgb",
+	"mario_gloves_rgb", "mario_shoes_rgb", "mario_sunglasses_rgb",
+	"mario_sunshine_shirt_rgb"
+};
+static const char *const FluddColorKeys[SUSAMUNE_FLUDD_COLORS_COUNT] =
+{
+    "fludd_paint_rgb", "fludd_metal_rgb", "fludd_straps_rgb", "fludd_model_tank_rgb",
+    "fludd_spray_nozzle_rgb", "fludd_hover_nozzle_rgb", "fludd_rocket_nozzle_rgb",
+    "fludd_turbo_nozzle_rgb", "fludd_water_rgb", "fludd_water_highlight_rgb"
+};
+
+
 // Enough for the whole file: the settings plus display payloads for all
 // three versions, section headers, and the comment banner.
 // A file larger than this is refused rather than truncated (see WriteIniFile).
@@ -369,6 +383,16 @@ static int CommitIniFile(const char *path, const char *tempPath,
 static struct SusamuneCfg *CfgBlock(void)
 {
 	return SUSAMUNE_CFG_PHYS_PTR;
+}
+
+static struct SusamuneMarioColorsCfg *MarioColorsBlock(void)
+{
+	return SUSAMUNE_MARIO_COLORS_PHYS_PTR;
+}
+
+static struct SusamuneFluddColorsCfg *FluddColorsBlock(void)
+{
+	return SUSAMUNE_FLUDD_COLORS_PHYS_PTR;
 }
 
 static struct SusamuneProgressCfg *ProgressBlock(void)
@@ -5202,10 +5226,57 @@ static void ApplyNativeTimerStyleKey(struct SusamuneNativeTimerStyleCfg *cfg,
 // not, the mod is asked to author them (SUSAMUNE_CFG_FLAG_NO_CONFIG).
 static bool SawSettingsSection = false;
 
+static void ApplyMarioColorsKey(struct SusamuneMarioColorsCfg *cfg,
+	                            const char *key, const char *text,
+	                            u8 *explicitEnabled)
+{
+	u8 rgb[3], value;
+	u32 i;
+	if (strcmp(key, "mario_colors_enabled") == 0)
+	{
+		if (ParseQftU8(text, &value) && value <= SUSAMUNE_MARIO_COLORS_MASK)
+			cfg->enabled = *explicitEnabled = value;
+		return;
+	}
+	for (i = 0; i < SUSAMUNE_MARIO_COLORS_COUNT; ++i)
+		if (strcmp(key, MarioColorKeys[i]) == 0 && ParseQftRgb(text, rgb))
+		{
+			memcpy(cfg->rgb[i], rgb, sizeof(rgb));
+			// An explicit mask wins even when it appears before the RGB keys.
+			if (*explicitEnabled == 0xff) cfg->enabled |= 1u << i;
+			return;
+		}
+}
+
+static void ApplyFluddColorsKey(struct SusamuneFluddColorsCfg *cfg,
+	                            const char *key, const char *text,
+	                            u16 *explicitEnabled)
+{
+	u8 rgb[3];
+	u16 value;
+	u32 i;
+	if (strcmp(key, "fludd_colors_enabled") == 0)
+	{
+		if (ParseU16(text, &value) && value <= SUSAMUNE_FLUDD_COLORS_MASK)
+			cfg->enabled = *explicitEnabled = value;
+		return;
+	}
+	for (i = 0; i < SUSAMUNE_FLUDD_COLORS_COUNT; ++i)
+		if (strcmp(key, FluddColorKeys[i]) == 0 && ParseQftRgb(text, rgb))
+		{
+			memcpy(cfg->rgb[i], rgb, sizeof(rgb));
+			// An explicit mask wins even when it appears before the RGB keys.
+			if (*explicitEnabled == 0xffff) cfg->enabled |= 1u << i;
+			return;
+		}
+}
+
 static void ParseIni(char *text, struct SusamuneCfg *cfg)
 {
 	char *line = text;
 	enum IniSection section = SECTION_OTHER;
+	u8 marioEnabled = 0xff;
+	u16 fluddEnabled = 0xffff;
 
 	SawSettingsSection = false;
 
@@ -5289,6 +5360,8 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
 			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
 			ApplyNativeTimerModesKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
+			ApplyMarioColorsKey(MarioColorsBlock(), Trim(line), Trim(eq + 1), &marioEnabled);
+			ApplyFluddColorsKey(FluddColorsBlock(), Trim(line), Trim(eq + 1), &fluddEnabled);
 		}
 
 		line = next;
@@ -5642,6 +5715,34 @@ static void EmitNativeTimerStyle(FIL *f, int *err,
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_brightness = %u\r\n", cfg->textBrightness));
 }
 
+static void EmitMarioColors(FIL *f, int *err,
+	                        const struct SusamuneMarioColorsCfg *colors)
+{
+	char line[80];
+	u32 i;
+	if (colors->magic != SUSAMUNE_MARIO_COLORS_MAGIC ||
+	    colors->version != SUSAMUNE_MARIO_COLORS_VERSION) return;
+	for (i = 0; i < SUSAMUNE_MARIO_COLORS_COUNT; ++i)
+		Emit(f, err, line, (u32)_sprintf(line, "%s = %u,%u,%u\r\n",
+			MarioColorKeys[i], colors->rgb[i][0], colors->rgb[i][1], colors->rgb[i][2]));
+	Emit(f, err, line, (u32)_sprintf(line, "mario_colors_enabled = %u\r\n",
+		colors->enabled & SUSAMUNE_MARIO_COLORS_MASK));
+}
+
+static void EmitFluddColors(FIL *f, int *err,
+	                        const struct SusamuneFluddColorsCfg *colors)
+{
+	char line[80];
+	u32 i;
+	if (colors->magic != SUSAMUNE_FLUDD_COLORS_MAGIC ||
+	    colors->version != SUSAMUNE_FLUDD_COLORS_VERSION) return;
+	for (i = 0; i < SUSAMUNE_FLUDD_COLORS_COUNT; ++i)
+		Emit(f, err, line, (u32)_sprintf(line, "%s = %u,%u,%u\r\n",
+			FluddColorKeys[i], colors->rgb[i][0], colors->rgb[i][1], colors->rgb[i][2]));
+	Emit(f, err, line, (u32)_sprintf(line, "fludd_colors_enabled = %u\r\n",
+		colors->enabled & SUSAMUNE_FLUDD_COLORS_MASK));
+}
+
 static void EmitCreationSection(FIL *f, int *err,
 	                            const struct SusamuneCfg *cfg)
 {
@@ -5787,6 +5888,8 @@ static void EmitCreationSection(FIL *f, int *err,
 		f, err, "dust", &cfg->movementStyle.dust,
 		SUSAMUNE_DUST_STYLE_COLOR_COUNT);
 	EmitNativeTimerStyle(f, err, &cfg->nativeTimerStyle);
+	EmitMarioColors(f, err, MarioColorsBlock());
+	EmitFluddColors(f, err, FluddColorsBlock());
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
 		     (((u32)cfg->wallkickStyle.nativeTimerCustomMask[0] << 8) |
@@ -6184,9 +6287,27 @@ static void InitMovementStyleDefaults(struct SusamuneMovementStyleCfg *cfg)
 	InitMovementOverlayStyleDefaults(&cfg->dust);
 }
 
+static void InitMarioColorsDefaults(struct SusamuneMarioColorsCfg *colors)
+{
+	memset(colors, 0, sizeof(*colors));
+	colors->magic = SUSAMUNE_MARIO_COLORS_MAGIC;
+	colors->version = SUSAMUNE_MARIO_COLORS_VERSION;
+	memset(colors->rgb, 255, sizeof(colors->rgb));
+}
+
+static void InitFluddColorsDefaults(struct SusamuneFluddColorsCfg *colors)
+{
+	memset(colors, 0, sizeof(*colors));
+	colors->magic = SUSAMUNE_FLUDD_COLORS_MAGIC;
+	colors->version = SUSAMUNE_FLUDD_COLORS_VERSION;
+	memset(colors->rgb, 255, sizeof(colors->rgb));
+}
+
 void SusamuneCfgInit(void)
 {
 	struct SusamuneCfg *cfg = CfgBlock();
+	struct SusamuneMarioColorsCfg *marioColors = MarioColorsBlock();
+	struct SusamuneFluddColorsCfg *fluddColors = FluddColorsBlock();
 	struct SusamuneProgressCfg *progress = ProgressBlock();
 	struct SusamuneStagePlaylistsCfg *playlists = StagePlaylistBlock();
 	struct SusamuneStageTargetsCfg *targets = StageTargetBlock();
@@ -6206,6 +6327,8 @@ void SusamuneCfgInit(void)
 	// stale one left by an earlier boot would be adopted wholesale by a mod
 	// that happens to be running now.
 	memset(cfg, 0, sizeof(struct SusamuneCfg));
+	memset(marioColors, 0, sizeof(*marioColors));
+	memset(fluddColors, 0, sizeof(*fluddColors));
 	memset(progress, 0, sizeof(struct SusamuneProgressCfg));
 	memset(playlists, 0, sizeof(struct SusamuneStagePlaylistsCfg));
 	memset(targets, 0, sizeof(struct SusamuneStageTargetsCfg));
@@ -6222,6 +6345,8 @@ void SusamuneCfgInit(void)
 		// The launcher device was different from drive 0 and could not be
 		// mounted. Zero magic advertises an unsupported backend to the mod.
 		sync_after_write(cfg, sizeof(struct SusamuneCfg));
+		sync_after_write(marioColors, sizeof(*marioColors));
+		sync_after_write(fluddColors, sizeof(*fluddColors));
 		sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 		sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
 		sync_after_write(targets, sizeof(struct SusamuneStageTargetsCfg));
@@ -6235,6 +6360,8 @@ void SusamuneCfgInit(void)
 		// settings and no section of the ini that belongs to this run. Leaving
 		// magic zeroed is what makes the mod (if any) report "no launcher".
 		sync_after_write(cfg, sizeof(struct SusamuneCfg));
+		sync_after_write(marioColors, sizeof(*marioColors));
+		sync_after_write(fluddColors, sizeof(*fluddColors));
 		sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 		sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
 		sync_after_write(targets, sizeof(struct SusamuneStageTargetsCfg));
@@ -6293,6 +6420,8 @@ void SusamuneCfgInit(void)
 	InitCreationDefaults(&cfg->creation);
 	InitWallkickStyleDefaults(&cfg->wallkickStyle);
 	InitMovementStyleDefaults(&cfg->movementStyle);
+	InitMarioColorsDefaults(marioColors);
+	InitFluddColorsDefaults(fluddColors);
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -6306,7 +6435,10 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_CREATION |
 	                 SUSAMUNE_CFG_FLAG_WALLKICK_STYLE |
 	                 SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE |
-	                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE;
+	                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE |
+	                 SUSAMUNE_CFG_FLAG_MARIO_COLORS |
+	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
+	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION;
 	if (InitPbFiles(cfg, region))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_ILING_PBS |
 		              SUSAMUNE_CFG_FLAG_ILING_PROFILES;
@@ -6395,6 +6527,8 @@ void SusamuneCfgInit(void)
 	}
 
 	sync_after_write(cfg, sizeof(struct SusamuneCfg));
+	sync_after_write(marioColors, sizeof(*marioColors));
+	sync_after_write(fluddColors, sizeof(*fluddColors));
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
 	sync_after_write(targets, sizeof(struct SusamuneStageTargetsCfg));
@@ -6434,6 +6568,8 @@ void SusamuneCfgService(void)
 	                 sizeof(cfg->wallkickStyle));
 	sync_before_read(&cfg->movementStyle,
 	                 sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
+	sync_before_read(MarioColorsBlock(), sizeof(struct SusamuneMarioColorsCfg));
+	sync_before_read(FluddColorsBlock(), sizeof(struct SusamuneFluddColorsCfg));
 	seq = cfg->saveSeq;
 
 	ret = WriteIniFile(cfg);

@@ -147,6 +147,39 @@ Track sPlayback;
 // Watch 2 borrows the record slot's MEM2 payload, but its metadata must not
 // participate in recording, PB, or storage-ack ownership.
 Track sObserverSecondary;
+const u32 kSavedPrefixMagic = 0x53475046u; // SGPF
+struct SavedPrefix {
+    u32 magic;
+    u32 capturedQf;
+    Track track;
+    SusamuneGhostClock clock;
+    u32 serial;
+    s32 lastSampleQf;
+    s32 clockLastQf;
+    s32 clockEpochStartQf;
+    s32 pendingPreviousClockQf;
+    s32 boundaryPriorQf;
+    s32 liveParentEpisode;
+    u16 clockObservations;
+    u16 boundaryBaseSegmentCount;
+    u8 phase;
+    u8 flags;
+    u8 liveArea;
+    u8 liveEpisode;
+    u8 liveRouteParentArea;
+    u8 liveRouteFlags;
+    u8 endpoint;
+};
+enum SavedPrefixFlags {
+    PREFIX_RECORDING = 1,
+    PREFIX_STAGE_PENDING = 2,
+    PREFIX_HAD_ROUTE = 4,
+    PREFIX_CONTINUE = 8,
+    PREFIX_BOUNDARY = 16,
+    PREFIX_LIVE_ROUTE = 32,
+};
+static_assert(sizeof(SavedPrefix) <= sizeof(SavestateData),
+              "ghost prefix metadata exceeded its snapshot sidecar");
 u32 sAttemptSerial;
 s32 sLastSampleQf;
 SusamuneGhostClock sRecordClock;
@@ -156,6 +189,8 @@ u32 sPlaybackCursor;
 s32 sPlaybackCursorQf;
 u16 sPlaybackSegment;
 bool sRecording;
+bool sRestoredPrefix;
+u8 sRestoredEndpoint;
 bool sGhostVisible;
 bool sStageRoutePending;
 bool sPendingHadLiveRoute;
@@ -506,6 +541,8 @@ u32 nextPBToken() {
 
 void clearRecord() {
     clearTrack(sRecord);
+    sRestoredPrefix = false;
+    sRestoredEndpoint = ILing::SAVED_GHOST_END_NONE;
     bumpRecordToken();
     sRecordIdentityToken = sRecordToken;
 }
@@ -530,6 +567,15 @@ s32 recordQf(s32 liveQf) {
     SusamuneGhostClockObserve(&sRecordClock, gQFTTimer.attemptSerial(),
                              liveQf, sFrameFrozen && tas);
     return SusamuneGhostClockMap(&sRecordClock, liveQf);
+}
+
+void updateRestoredRecorder() {
+    if (sAttemptSerial != gQFTTimer.attemptSerial() ||
+        (!sRecording && !sPendingContinueRecording)) return;
+    if (sRestoredPrefix) ILing::updateSavestateGhostEndpoint(sRestoredEndpoint);
+    // A child scene can arm a new IL while this assisted full-route prefix carries on.
+    if (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS)
+        ILing::invalidateForAssist();
 }
 
 void releaseObserverMario(bool restore) {
@@ -2764,6 +2810,7 @@ void update() {
         return;
     }
 
+    updateRestoredRecorder();
     s32 qf;
     bool stopped;
     if (!gQFTTimer.currentQf(&qf, &stopped) || !gpMarDirector) {
@@ -3722,6 +3769,174 @@ void releaseSavedRecording(u32 recordToken) {
         sRecord.pbToken = 0;
         if (sPlaybackPinned && !sRecording) clearRecord();
     }
+}
+
+namespace {
+
+bool recorderBanksValid() {
+    const __UINTPTR_TYPE__ record = reinterpret_cast<__UINTPTR_TYPE__>(sRecord.samples);
+    const __UINTPTR_TYPE__ play = reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.samples);
+    const bool first = record == SUSAMUNE_GHOST_RECORD_PPC_BASE;
+    if ((!first && record != SUSAMUNE_GHOST_PLAY_PPC_BASE) ||
+        play != (first ? SUSAMUNE_GHOST_PLAY_PPC_BASE : SUSAMUNE_GHOST_RECORD_PPC_BASE) ||
+        reinterpret_cast<__UINTPTR_TYPE__>(sRecord.segments) != record + kSegmentTableOffset ||
+        reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.segments) != play + kSegmentTableOffset)
+        return false;
+    if (!sRecord.inputs && !sPlayback.inputs) return true;
+#if IS_EMULATOR
+    const __UINTPTR_TYPE__ inputRecord = SUSAMUNE_DOLPHIN_GHOST_INPUT_RECORD_PPC_BASE;
+    const __UINTPTR_TYPE__ inputPlay = SUSAMUNE_DOLPHIN_GHOST_INPUT_PLAY_PPC_BASE;
+#else
+    const __UINTPTR_TYPE__ inputRecord = SUSAMUNE_GHOST_INPUT_RECORD_PPC_BASE;
+    const __UINTPTR_TYPE__ inputPlay = SUSAMUNE_GHOST_INPUT_PLAY_PPC_BASE;
+#endif
+    return reinterpret_cast<__UINTPTR_TYPE__>(sRecord.inputs) == (first ? inputRecord : inputPlay) &&
+           reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.inputs) == (first ? inputPlay : inputRecord);
+}
+
+bool decodeSavedPrefix(const SavestateData &data, SavedPrefix *saved) {
+    memcpy(saved, &data, sizeof(*saved));
+    if (!saved->magic) {
+        for (u32 i = 0; i < sizeof(data.words) / sizeof(data.words[0]); ++i)
+            if (data.words[i]) return false;
+        return true;
+    }
+    const Track &track = saved->track;
+    if (saved->magic != kSavedPrefixMagic ||
+        track.samples || track.segments || track.inputs ||
+        !track.count || track.count > kMaxSamples ||
+        !track.segmentCount || track.segmentCount > kMaxSegments ||
+        track.inputCount > SUSAMUNE_GHOST_INPUT_MAX_COUNT ||
+        track.splitCount > SUSAMUNE_GHOST_SPLIT_MAX_COUNT ||
+        track.attachmentCount > SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT ||
+        (track.attachmentFlags & ~SUSAMUNE_GHOST_V4_ATTACHMENT_FLAGS) ||
+        (track.teachingFlags & ~SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED) ||
+        (track.formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+         track.formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V5) ||
+        !validRouteTuple(track.area, track.episode, track.routeParentArea,
+                         track.routeFlags, track.parentEpisode) ||
+        track.endQf < track.startQf || track.endQf > 0x7fffffffu ||
+        track.endQf - track.startQf > static_cast<u32>(kMaxDurationQf) ||
+        saved->lastSampleQf != static_cast<s32>(track.endQf) ||
+        saved->capturedQf > 0x7fffffffu ||
+        saved->phase > CLOCK_WAIT_STAGE ||
+        saved->endpoint > ILing::SAVED_GHOST_END_DEATH ||
+        (saved->flags & ~63u) ||
+        !(saved->flags & (PREFIX_RECORDING | PREFIX_CONTINUE)) ||
+        ((saved->flags & PREFIX_BOUNDARY) &&
+         saved->boundaryBaseSegmentCount > track.segmentCount) ||
+        track.failure != RECORD_FAILURE_NONE || track.completed ||
+        (saved->clock.ready && (saved->clock.serial != saved->serial ||
+             saved->clock.liveQf < 0 ||
+             saved->clock.omittedQf > static_cast<u32>(saved->clock.liveQf) ||
+             saved->clock.liveQf > static_cast<s32>(saved->capturedQf))) ||
+        track.endQf > static_cast<u32>(SusamuneGhostClockMap(
+            &saved->clock, static_cast<s32>(saved->capturedQf)))) return false;
+    return true;
+}
+
+} // namespace
+
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]) {
+    memset(&out, 0, sizeof(out));
+    memset(spans, 0, sizeof(spans));
+    if (observerStatsSuppressed() ||
+        (!sRecording && !sPendingContinueRecording) || !sRecord.count) return true;
+    if (!recorderBanksValid() || (sRecord.inputCount && !sRecord.inputs)) return false;
+    s32 qf;
+    if (!gQFTTimer.currentQf(&qf) || qf < 0 ||
+        sAttemptSerial != gQFTTimer.attemptSerial()) return false;
+    SavedPrefix saved = {};
+    saved.magic = kSavedPrefixMagic;
+    saved.capturedQf = static_cast<u32>(qf);
+    saved.track = sRecord;
+    saved.track.samples = nullptr;
+    saved.track.segments = nullptr;
+    saved.track.inputs = nullptr;
+    saved.clock = sRecordClock;
+    saved.serial = sAttemptSerial;
+    saved.lastSampleQf = sLastSampleQf;
+    saved.clockLastQf = sClockLastQf;
+    saved.clockEpochStartQf = sClockEpochStartQf;
+    saved.pendingPreviousClockQf = sPendingPreviousClockQf;
+    saved.boundaryPriorQf = sBoundaryPriorQf;
+    saved.liveParentEpisode = sLiveParentEpisode;
+    saved.clockObservations = sClockObservations;
+    saved.boundaryBaseSegmentCount = sBoundaryBaseSegmentCount;
+    saved.phase = sClockPhase;
+    saved.flags = (sRecording ? PREFIX_RECORDING : 0) |
+        (sStageRoutePending ? PREFIX_STAGE_PENDING : 0) |
+        (sPendingHadLiveRoute ? PREFIX_HAD_ROUTE : 0) |
+        (sPendingContinueRecording ? PREFIX_CONTINUE : 0) |
+        (sBoundaryPending ? PREFIX_BOUNDARY : 0) |
+        (sLiveRouteValid ? PREFIX_LIVE_ROUTE : 0);
+    saved.liveArea = sLiveArea;
+    saved.liveEpisode = sLiveEpisode;
+    saved.liveRouteParentArea = sLiveRouteParentArea;
+    saved.liveRouteFlags = sLiveRouteFlags;
+    saved.endpoint = sRestoredPrefix ? sRestoredEndpoint : ILing::savestateGhostEndpoint();
+    memcpy(&out, &saved, sizeof(saved));
+    if (!decodeSavedPrefix(out, &saved)) return false;
+    spans[0] = {sRecord.samples, sRecord.count * static_cast<u32>(sizeof(Sample))};
+    spans[1] = {sRecord.segments, sRecord.segmentCount * static_cast<u32>(sizeof(Segment))};
+    spans[2] = {sRecord.inputs, sRecord.inputCount * static_cast<u32>(sizeof(SusamuneGhostInputSample))};
+    return true;
+}
+
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]) {
+    memset(spans, 0, sizeof(spans));
+    SavedPrefix saved;
+    if (!decodeSavedPrefix(data, &saved)) return false;
+    if (!saved.magic) return true;
+    if (!recorderBanksValid() || (saved.track.inputCount && !sRecord.inputs)) return false;
+    spans[0] = {sRecord.samples, saved.track.count * static_cast<u32>(sizeof(Sample))};
+    spans[1] = {sRecord.segments, saved.track.segmentCount * static_cast<u32>(sizeof(Segment))};
+    spans[2] = {sRecord.inputs, saved.track.inputCount * static_cast<u32>(sizeof(SusamuneGhostInputSample))};
+    return true;
+}
+
+void restoreSavestate(const SavestateData &data) {
+    SavedPrefix saved;
+    if (!decodeSavedPrefix(data, &saved)) __builtin_trap();
+    onSavestateLoaded();
+    if (!saved.magic) return;
+    Sample *samples = sRecord.samples;
+    Segment *segments = sRecord.segments;
+    SusamuneGhostInputSample *inputs = sRecord.inputs;
+    sRecord = saved.track;
+    sRecord.samples = samples;
+    sRecord.segments = segments;
+    sRecord.inputs = inputs;
+    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED | SUSAMUNE_GHOST_RUN_TAS;
+    sRestoredPrefix = true;
+    sRestoredEndpoint = saved.endpoint;
+    sRecord.pb = false;
+    sRecord.pbToken = 0;
+    bumpRecordToken();
+    sRecordIdentityToken = sRecordToken;
+    sRecordClock = saved.clock;
+    sAttemptSerial = saved.serial;
+    sLastSampleQf = saved.lastSampleQf;
+    sClockLastQf = saved.clockLastQf;
+    sClockEpochStartQf = saved.clockEpochStartQf;
+    sPendingPreviousClockQf = saved.pendingPreviousClockQf;
+    sBoundaryPriorQf = saved.boundaryPriorQf;
+    sLiveParentEpisode = saved.liveParentEpisode;
+    sClockObservations = saved.clockObservations;
+    sBoundaryBaseSegmentCount = saved.boundaryBaseSegmentCount;
+    sClockPhase = static_cast<ClockPhase>(saved.phase);
+    sRecording = (saved.flags & PREFIX_RECORDING) != 0;
+    sStageRoutePending = (saved.flags & PREFIX_STAGE_PENDING) != 0;
+    sPendingHadLiveRoute = (saved.flags & PREFIX_HAD_ROUTE) != 0;
+    sPendingContinueRecording = (saved.flags & PREFIX_CONTINUE) != 0;
+    sBoundaryPending = (saved.flags & PREFIX_BOUNDARY) != 0;
+    sLiveRouteValid = (saved.flags & PREFIX_LIVE_ROUTE) != 0;
+    sLiveArea = saved.liveArea;
+    sLiveEpisode = saved.liveEpisode;
+    sLiveRouteParentArea = saved.liveRouteParentArea;
+    sLiveRouteFlags = saved.liveRouteFlags;
 }
 
 void onSavestateLoaded() {

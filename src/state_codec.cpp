@@ -85,6 +85,7 @@ Status checkOutput(void *workspace, unsigned int workspaceBytes,
 
 struct PackSink {
     const WriteSpan *spans;
+    unsigned int count;
     unsigned int written;
 };
 
@@ -97,7 +98,7 @@ int packOutput(const void *data, int length, void *context) {
     sink->written += remaining;
     if (!sink->spans) return 1;
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
-    for (unsigned int i = 0; i < 2 && remaining; ++i) {
+    for (unsigned int i = 0; i < sink->count && remaining; ++i) {
         const WriteSpan &span = sink->spans[i];
         if (offset >= span.size) { offset -= span.size; continue; }
         const unsigned int room = span.size - offset;
@@ -114,6 +115,8 @@ int packOutput(const void *data, int length, void *context) {
 struct ScatterSink {
     const WriteSpan *spans;
     unsigned int count, index, offset;
+    CopyBytes copy;
+    void *context;
 
     bool put(const unsigned char *bytes, unsigned int size) {
         while (size) {
@@ -124,8 +127,9 @@ struct ScatterSink {
             if (index == count) return false;
             const unsigned int room = spans[index].size - offset;
             const unsigned int amount = size < room ? size : room;
-            memcpy(static_cast<unsigned char *>(spans[index].data) + offset,
-                   bytes, amount);
+            void *destination = static_cast<unsigned char *>(spans[index].data) + offset;
+            if (copy) copy(context, destination, bytes, amount);
+            else memcpy(destination, bytes, amount);
             bytes += amount;
             size -= amount;
             offset += amount;
@@ -137,10 +141,11 @@ struct ScatterSink {
 Status inflatePass(void *workspace, const ReadSpan *source,
                    unsigned int sourceCount, unsigned int compressedBytes,
                    const WriteSpan *output, unsigned int outputCount,
-                   unsigned int expectedRaw, unsigned int expectedAdler) {
+                   unsigned int expectedRaw, unsigned int expectedAdler,
+                   CopyBytes copy = 0, void *copyContext = 0) {
     InflateWorkspace *work = static_cast<InflateWorkspace *>(workspace);
     tinfl_init(&work->state);
-    ScatterSink sink = {output, outputCount, 0, 0};
+    ScatterSink sink = {output, outputCount, 0, 0, copy, copyContext};
     unsigned int input = 0, decoded = 0, spanIndex = 0, spanOffset = 0;
     const unsigned char empty = 0;
     for (;;) {
@@ -184,7 +189,7 @@ unsigned int workspaceSize() { return kWorkSize; }
 
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan output[2]) {
+                const WriteSpan *output, unsigned int outputCount) {
     Result result = {INVALID_ARGUMENT, 0, 0, 0};
     result.status = checkSource(workspace, workspaceBytes, source, sourceCount,
                                 &result.rawBytes);
@@ -192,11 +197,11 @@ Result compress(void *workspace, unsigned int workspaceBytes,
     unsigned int capacity = 0;
     if (output) {
         result.status = checkOutput(workspace, workspaceBytes, source, sourceCount,
-                                    output, 2, &capacity);
+                                    output, outputCount, &capacity);
         if (result.status != SUCCESS) return result;
     }
     tdefl_compressor *state = static_cast<tdefl_compressor *>(workspace);
-    PackSink sink = {output, 0};
+    PackSink sink = {output, outputCount, 0};
     if (tdefl_init(state, packOutput, &sink, TDEFL_WRITE_ZLIB_HEADER | 8) !=
         TDEFL_STATUS_OKAY) { result.status = CODEC_ERROR; return result; }
     for (unsigned int i = 0; i < sourceCount; ++i) {
@@ -231,7 +236,8 @@ Status validate(void *workspace, unsigned int workspaceBytes,
 Status decompress(void *workspace, unsigned int workspaceBytes,
                   const ReadSpan *source, unsigned int sourceCount,
                   const WriteSpan *output, unsigned int outputCount,
-                  unsigned int expectedRaw, unsigned int expectedAdler) {
+                  unsigned int expectedRaw, unsigned int expectedAdler,
+                  CopyBytes copy, void *copyContext) {
     unsigned int compressedBytes, capacity;
     Status status = checkSource(workspace, workspaceBytes, source, sourceCount,
                                 &compressedBytes);
@@ -246,7 +252,8 @@ Status decompress(void *workspace, unsigned int workspaceBytes,
     // Validated immutable input makes the second pass identical. Never disguise
     // a broken ownership invariant as a harmless preflight rejection.
     status = inflatePass(workspace, source, sourceCount, compressedBytes,
-                         output, outputCount, expectedRaw, expectedAdler);
+                         output, outputCount, expectedRaw, expectedAdler,
+                         copy, copyContext);
     return status == SUCCESS ? SUCCESS : COMMIT_FAILED;
 }
 

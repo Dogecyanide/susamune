@@ -66,6 +66,15 @@ void commitWarpStart();
 void cancelPendingWarp();
 void clearPB(int entry);
 void update();
+// A restored TAS recorder may finish without rearming IL records or splits.
+enum SavestateGhostEndpoint : u8 {
+    SAVED_GHOST_END_NONE,
+    SAVED_GHOST_END_TRANSITION,
+    SAVED_GHOST_END_PLANT,
+    SAVED_GHOST_END_DEATH,
+};
+u8 savestateGhostEndpoint();
+void updateSavestateGhostEndpoint(u8 endpoint);
 // Called at LevelWarp's transition tail, after the old director is finished
 // but before the destination director is constructed.
 void onWarpTail();

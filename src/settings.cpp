@@ -15,6 +15,8 @@
 #include "Dolphin/OS.h"  // DCInvalidateRange, DCStoreRange
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/fludd_colors.hxx"
 #include "susamune/input_display.hxx"
 #include "susamune/metadata_display.hxx"
 #include "susamune/mem2_map.h"
@@ -225,6 +227,8 @@ void Settings::resetDefaults() {
     gMetadataDisplay.resetDefaults();
     gQftDisplay.resetDefaults();
     gCreationExtras.resetDefaults();
+    MarioColors::resetDefaults();
+    FluddColors::resetDefaults();
 
     for (int i = 0; i < SETTING_COUNT; i++) {
         mValues[i] = defaultValue(kSettingDescs[i]);
@@ -296,6 +300,8 @@ void Settings::save() {
         gMetadataDisplay.clearDirty();
         gQftDisplay.clearDirty();
         gCreationExtras.clearDirty();
+        MarioColors::clearDirty();
+        FluddColors::clearDirty();
         return;
     }
 
@@ -313,6 +319,10 @@ void Settings::save() {
                  sizeof(cfg->wallkickStyle));
     DCStoreRange((void *)&cfg->movementStyle,
                  sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS)
+        DCStoreRange(SUSAMUNE_MARIO_COLORS_LIVE_PTR, sizeof(SusamuneMarioColorsCfg));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
+        DCStoreRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(SusamuneFluddColorsCfg));
 
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
@@ -364,7 +374,7 @@ SettingsSaveState Settings::pollSave() {
             // longer owned by the old transaction.
             if (mDirty || gBinds.dirty() || gInputDisplay.dirty() ||
                 gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-                gCreationExtras.dirty()) {
+                gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
                 save();
             }
         }
@@ -441,6 +451,18 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
     gCreationExtras.adoptNativeTimer(
         (cfg->flags & SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE)
             ? &cfg->nativeTimerStyle : nullptr);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_MARIO_COLORS_LIVE_PTR, sizeof(SusamuneMarioColorsCfg));
+#endif
+        MarioColors::adopt(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
+    }
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(SusamuneFluddColorsCfg));
+#endif
+        FluddColors::adopt(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
+    }
 
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
@@ -468,6 +490,12 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
     gCreationExtras.stageMovementInto(&cfg->movementStyle);
     gCreationExtras.stageNativeTimerInto(&cfg->nativeTimerStyle);
     gCreationExtras.clearDirty();
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS)
+        MarioColors::stageInto(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
+        FluddColors::stageInto(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
+    MarioColors::clearDirty();
+    FluddColors::clearDirty();
 }
 
 void Settings::set(SettingId id, u8 value) {

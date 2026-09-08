@@ -2,6 +2,7 @@
 #define _SUSAMUNE_SAVESTATE_HXX
 
 #include <Dolphin/types.h>
+#include "susamune/state_storage.h"
 
 class Menu;
 
@@ -23,6 +24,17 @@ public:
     bool selectSlot(u32 slot);
     bool cycleSlot();
     bool clearSlot(u32 slot, u32 expectedGeneration);
+
+    static bool diskBusy();
+    void updateDisk();
+    bool saveToSD(const char *name = nullptr);
+    bool loadFromSD(u32 archiveId, u32 expectedHeaderCrc, u32 packedBytes);
+    bool refreshSD(u32 afterId = 0);
+    bool cancelSD();
+    bool sdAvailable() const;
+    bool sdCatalogReady() const;
+    const SusamuneStateCatalog &sdCatalog() const;
+    const char *sdStatus() const;
 
     // Called once per frame from main.cpp's onUpdate hook. Polls the d-pad
     // and triggers saves. Loads are queued until the post-render hook so the

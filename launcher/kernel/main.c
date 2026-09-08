@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneCfg.h"
 #include "SusamuneCrash.h"
 #include "SusamuneGhost.h"
+#include "SusamuneStateStorage.h"
 #include "susamune/susamune_cfg.h"
 
 #include "diskio.h"
@@ -392,6 +393,7 @@ int _main( int argc, char *argv[] )
 	// but is parked on its queue until the game starts asking for reads.
 	SusamuneCfgInit();
 	SusamuneGhostInit();
+	SusamuneStateStorageInit();
 	SusamuneCrashInit();
 
 	BootStatus(10, s_size, s_cnt);
@@ -541,6 +543,10 @@ int _main( int argc, char *argv[] )
 		else if(SusamuneGhostPending())
 		{
 			SusamuneGhostService();
+		}
+		else if(SusamuneStateStoragePending())
+		{
+			SusamuneStateStorageService();
 		}
 		else if(SaveCard == true) /* DI IRQ indicates we might read async, so dont write at the same time */
 		{

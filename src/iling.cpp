@@ -2358,6 +2358,34 @@ void invalidateForAssist(u8 reasons) {
     SplitStats::invalidateAttempt();
 }
 
+u8 savestateGhostEndpoint() {
+    if (!sRunning || !sAttemptReady) return SAVED_GHOST_END_NONE;
+    switch (sFinishKind) {
+    case FINISH_TRANSITION: return SAVED_GHOST_END_TRANSITION;
+    case FINISH_PLANT: return SAVED_GHOST_END_PLANT;
+    case FINISH_DEATH: return SAVED_GHOST_END_DEATH;
+    default: return SAVED_GHOST_END_NONE;
+    }
+}
+
+void updateSavestateGhostEndpoint(u8 endpoint) {
+    if (sRunning) return;
+    s32 qf;
+    switch (endpoint) {
+    case SAVED_GHOST_END_PLANT:
+    case SAVED_GHOST_END_DEATH:
+        gQFTTimer.consumeCustom(endpoint == SAVED_GHOST_END_DEATH, &qf);
+        break;
+    case SAVED_GHOST_END_TRANSITION: {
+        u16 target;
+        gQFTTimer.consumeTransition(&qf, &target);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 bool achievementChimeBlocked() {
     return sAchievementChimeBlockFrames > 0;
 }

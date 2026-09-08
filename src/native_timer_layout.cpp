@@ -143,11 +143,12 @@ bool beginDraw(J2DScreen *screen) {
             J2DPicture *picture = static_cast<J2DPicture *>(saved.pane);
             saved.white = picture->mColorMask;
             saved.black = picture->mColorOverlay;
-            const u8 *rgb = gCreationExtras.nativeTimerRgb(picture);
+            bool custom = false;
+            const u8 *rgb = gCreationExtras.nativeTimerRgb(picture, &custom);
             if (rgb) {
                 for (unsigned c = 0; c < 3; ++c) {
                     (&picture->mColorMask.r)[c] = rgb[c];
-                    (&picture->mColorOverlay.r)[c] = rgb[c];
+                    if (custom) (&picture->mColorOverlay.r)[c] = rgb[c];
                 }
             }
             applyBrightness(picture->mColorMask, style.textBrightness);

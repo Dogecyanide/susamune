@@ -131,13 +131,14 @@ API unsigned int get(unsigned int key) {
         failure = function_source(SOURCE, "if (!fits)")
         success = save[save.index(failure) + len(failure):]
         call = "rebaseMissionStopwatch(h->save_time);"
-        self.assertEqual(save.count(call), 2)
+        self.assertEqual(save.count(call), 3)
         self.assertLess(save.index("StateCodec::compress("), save.index(failure))
         for branch in (failure, success):
             self.assertEqual(branch.count(call), 1)
             self.assertLess(branch.index(call), branch.index("unmuteAudioDma(dma);"))
             self.assertLess(branch.index(call), branch.index("OSRestoreInterrupts(ints);"))
-        self.assertLess(success.index("StateSlotPoolCommit("), success.index(call))
+        self.assertLess(save.index("commitPackedState("), save.index(failure))
+        self.assertLess(success.index("sSlots[sActiveSlot] = sCandidate;"), success.index(call))
 
     def test_restore_rebases_saved_time_after_decode_and_before_interrupts(self):
         load = function_source(SOURCE, "bool SavestateManager::loadSlot(")
@@ -146,7 +147,11 @@ API unsigned int get(unsigned int key) {
         started = "const OSTime restoreStarted = OSGetTime();"
         failed_call = "rebaseMissionStopwatch(restoreStarted);"
         failed = function_source(SOURCE, "if (restored != StateCodec::SUCCESS)")
-        self.assertEqual(load.count(failed_call), 1)
+        self.assertEqual(load.count(failed_call), 2)
+        owners = function_source(SOURCE, "if (!StateArchiveProfile::matches(saved.archiveProfile, sLiveArchiveProfile))")
+        self.assertIn(failed_call, owners)
+        self.assertNotIn(call, owners)
+        self.assertLess(owners.index(failed_call), owners.index("OSRestoreInterrupts(ints);"))
         self.assertLess(load.index(started), load.index("StateCodec::decompress("))
         self.assertLess(load.index("StateCodec::decompress("), load.index(failed))
         self.assertIn(failed_call, failed)

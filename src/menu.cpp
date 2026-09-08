@@ -12,10 +12,13 @@
 // =====================================================================
 
 #include "susamune/menu.hxx"
+#include <Dolphin/mem.h>
 #include "susamune/practice_session.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/fludd_colors.hxx"
 #include "susamune/glyphs.hxx"
 #include "susamune/input_display.hxx"
 #include "susamune/iling.hxx"
@@ -3472,7 +3475,8 @@ public:
     }
     bool grabsInput() const override {
         return resetConfirm() ||
-               (hasVisualEditor() && gCreationExtras.editing());
+               (hasVisualEditor() && gCreationExtras.editing()) ||
+               (hasMarioColorsEditor() && (MarioColors::editing() || FluddColors::editing()));
     }
     bool fullScreen() const override { return grabsInput(); }
 
@@ -3494,6 +3498,14 @@ public:
                     }
                 }
             }
+            return;
+        }
+        if (hasMarioColorsEditor() && MarioColors::editing()) {
+            MarioColors::updateEditor(pad);
+            return;
+        }
+        if (hasMarioColorsEditor() && FluddColors::editing()) {
+            FluddColors::updateEditor(pad);
             return;
         }
         if (hasVisualEditor() && gCreationExtras.editing()) {
@@ -3531,6 +3543,10 @@ public:
                     gCreationExtras.beginSavestateFeedbackEditor();
                 else if (hasNativeTimerEditor())
                     gCreationExtras.beginNativeTimerEditor();
+                else if (hasMarioColorsEditor()) {
+                    if (mSel == settings) MarioColors::beginEditor();
+                    else FluddColors::beginEditor();
+                }
                 else if (hasMovementEditors()) {
                     const int editor = mSel - settings;
                     if (editor == 0) gCreationExtras.beginWallkickEditor();
@@ -3579,6 +3595,14 @@ public:
                            232, 12, 12, cRow());
             menu->drawText(hint, 320 - Menu::textWidth(hint, 12) / 2,
                            270, 12, 12, cFooter());
+            return;
+        }
+        if (hasMarioColorsEditor() && MarioColors::editing()) {
+            MarioColors::drawEditor(menu);
+            return;
+        }
+        if (hasMarioColorsEditor() && FluddColors::editing()) {
+            FluddColors::drawEditor(menu);
             return;
         }
         if (hasVisualEditor() && gCreationExtras.editing()) {
@@ -3635,6 +3659,7 @@ public:
             } else {
                 name = hasFeedbackEditor() ? "Feedback display"
                      : hasNativeTimerEditor() ? "Sunshine timer editor"
+                     : hasMarioColorsEditor() ? (i == settings ? "Mario colours" : "FLUDD colours")
                      : hasMovementEditors()
                            ? movementEditorName(i - settings)
                      : i == settings ? "Factory reset"
@@ -3692,11 +3717,16 @@ private:
                currentPage().ids == kDisplayNativeSettings;
     }
     bool hasVisualEditor() const {
-        return hasFeedbackEditor() || hasMovementEditors() || hasNativeTimerEditor();
+        return hasFeedbackEditor() || hasMovementEditors() || hasNativeTimerEditor() ||
+               hasMarioColorsEditor();
+    }
+    bool hasMarioColorsEditor() const {
+        return isAppearance() && mMode &&
+               currentPage().ids == kAppearanceMarioSettings;
     }
     bool hasFactoryReset() const { return mCat == SETTING_CAT_MISC; }
     int extraRows() const {
-        return hasFactoryReset() ? 2 : hasMovementEditors() ? 3
+        return (hasFactoryReset() || hasMarioColorsEditor()) ? 2 : hasMovementEditors() ? 3
              : (hasFeedbackEditor() || hasNativeTimerEditor()) ? 1 : 0;
     }
 
@@ -3774,6 +3804,9 @@ private:
         if (mSel < settings) return settingHelp((SettingId)ids[mSel]);
         if (hasFeedbackEditor()) return "Changes the savestate status popup layout.";
         if (hasNativeTimerEditor()) return "Move, resize and style the original Sunshine timer.";
+        if (hasMarioColorsEditor()) return mSel == settings
+            ? "Choose Original or custom colours for each outfit part."
+            : "Colour each FLUDD part and the water it sprays.";
         if (hasMovementEditors()) return "Changes this display's position, size and colours.";
         return mSel == settings
                    ? "Restores settings, binds and layouts to defaults."
@@ -4259,17 +4292,19 @@ static_assert(BIND_REGRAB_OBJECT == 0 &&
 
 class SavestatesTab : public MenuTab {
 public:
-    SavestatesTab() : mSel(0), mConfirmClear(false), mClearSlot(0), mClearGeneration(0) { focus(); }
+    SavestatesTab() : mSel(0), mSDsel(0), mSD(false), mConfirmClear(false),
+        mConfirmLoad(false), mClearSlot(0), mClearGeneration(0), mArchiveId(0),
+        mArchiveCrc(0), mArchiveSize(0) { mArchiveName[0] = 0; focus(); }
     const char *title() const override { return "Savestates"; }
-    const char *summary() const override { return "Choose a state to save or load during this session."; }
-    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
-    bool grabsInput() const override { return mConfirmClear || gCreationExtras.editing(); }
+    const char *summary() const override { return "Choose a memory state, or save and browse SD states."; }
+    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X); }
+    bool grabsInput() const override { return mSD || mConfirmClear || gCreationExtras.editing(); }
     bool fullScreen() const override { return grabsInput(); }
     bool suppressesBinds() const override {
         return grabsInput() || (JUTGamePad::mPadStatus[0].mButton &
             (JUTGamePad::A | JUTGamePad::X)) != 0;
     }
-    bool favoriteHint() const override { return mSel == ROW_RNG || mSel == ROW_FEEDBACK; }
+    bool favoriteHint() const override { return !mSD && (mSel == ROW_RNG || mSel == ROW_FEEDBACK); }
     void update(Menu *menu, TMarioGamePad *pad) override {
         if (gCreationExtras.editing()) {
             gCreationExtras.updateEditor(pad);
@@ -4277,6 +4312,7 @@ public:
             return;
         }
         const u16 pressed = mInput.update();
+        if (mSD) { updateSD(menu, pad, pressed); return; }
         if (mConfirmClear) {
             if (pressed & JUTGamePad::B) {
                 mConfirmClear = false;
@@ -4317,12 +4353,20 @@ public:
             mInput.begin(JUTGamePad::A | JUTGamePad::B);
         } else if (mSel == ROW_EDITOR) {
             gCreationExtras.beginSavestateFeedbackEditor();
+        } else if (mSel == ROW_SD) {
+            mSD = true;
+            mSDsel = 0;
+            focus();
+            if (gSavestateMgr && gSavestateMgr->sdAvailable() &&
+                !gSavestateMgr->sdCatalogReady() && !SavestateManager::diskBusy())
+                gSavestateMgr->refreshSD();
         } else {
             gSettings.cycle(mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK, 1);
         }
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         if (gCreationExtras.editing()) { gCreationExtras.drawEditor(menu); return; }
+        if (mSD) { drawSD(menu); return; }
         if (mConfirmClear) {
             char question[48];
             snprintf(question, sizeof(question), "Clear state %lu?", mClearSlot + 1);
@@ -4337,9 +4381,9 @@ public:
         char active[24];
         if (gSavestateMgr) snprintf(active, sizeof(active), "%lu / %u", gSavestateMgr->activeSlot() + 1, SavestateManager::kSlotCount);
         else strcpy(active, "Unavailable");
-        const char *labels[] = {"Active state", "Clear selected state", "Save RNG state", "Savestate feedback", "Feedback display"};
+        const char *labels[] = {"Active state", "Clear selected state", "Save RNG state", "Savestate feedback", "Feedback display", "SD states"};
         const char *values[] = {active, "Clear", gSettings.valueLabel(SETTING_SAVE_RNG_STATE),
-            gSettings.valueLabel(SETTING_SAVESTATE_FEEDBACK), "Edit"};
+            gSettings.valueLabel(SETTING_SAVESTATE_FEEDBACK), "Edit", "Open"};
         for (int row = 0; row < ROW_COUNT; ++row) {
             const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK) &&
                 gSettings.favorite(row == ROW_RNG ? SETTING_SAVE_RNG_STATE : SETTING_SAVESTATE_FEEDBACK);
@@ -4350,18 +4394,145 @@ public:
             const SavestateManager::SlotInfo info = gSavestateMgr ? gSavestateMgr->slotInfo(slot) : SavestateManager::SlotInfo{};
             char status[48];
             snprintf(status, sizeof(status), "State %lu: %s", slot + 1, info.valid ? "Saved" : "Empty");
-            menu->drawText(status, x + 4, statusY + slot * 17, FOOT_SZ, FOOT_SZ,
+            menu->drawText(status, x + 4 + slot * (w / SavestateManager::kSlotCount), statusY, FOOT_SZ, FOOT_SZ,
                 gSavestateMgr && gSavestateMgr->activeSlot() == slot ? cAccent() : cRow());
         }
         const char *help = mSel == ROW_ACTIVE ? "Choose with A or C-stick left/right; this does not save or load."
             : mSel == ROW_CLEAR ? "Remove only the selected saved state, after confirmation."
             : mSel == ROW_RNG ? "Keep the game RNG with each state."
             : mSel == ROW_FEEDBACK ? "Show a message when saving or loading a state."
+            : mSel == ROW_SD ? "Save states to SD and bring them back after restarting."
             : "Change the savestate message's position and appearance.";
         drawHelpLine(menu, x, y, w, h, help);
     }
 private:
-    enum { ROW_ACTIVE, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_EDITOR, ROW_COUNT };
+    enum { ROW_ACTIVE, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_EDITOR, ROW_SD, ROW_COUNT };
+    enum { SD_ACTIVE, SD_SAVE, SD_REFRESH, SD_NEXT, SD_FILES };
+    u32 sdCount() const {
+        if (!gSavestateMgr || !gSavestateMgr->sdCatalogReady()) return 0;
+        const u32 count = gSavestateMgr->sdCatalog().count;
+        return count < SUSAMUNE_STATE_CATALOG_COUNT ? count : SUSAMUNE_STATE_CATALOG_COUNT;
+    }
+    void updateSD(Menu *menu, TMarioGamePad *pad, u16 pressed) {
+        if (SavestateManager::diskBusy()) {
+            if ((pressed & (JUTGamePad::A | JUTGamePad::B)) && gSavestateMgr) {
+                if (!gSavestateMgr->cancelSD()) menu->toast("Finishing the SD transfer; please wait");
+                focus();
+            }
+            return;
+        }
+        if (mConfirmLoad) {
+            if (pressed & JUTGamePad::B) { mConfirmLoad = false; focus(); }
+            else if (pressed & JUTGamePad::A) {
+                const bool same = gSavestateMgr && gSavestateMgr->activeSlot() == mClearSlot &&
+                    gSavestateMgr->slotInfo(mClearSlot).generation == mClearGeneration;
+                if (!same) menu->toast("Selected state changed; choose the file again");
+                else if (!gSavestateMgr->loadFromSD(mArchiveId, mArchiveCrc, mArchiveSize))
+                    menu->toast(gSavestateMgr->sdStatus());
+                mConfirmLoad = false;
+                focus();
+            }
+            return;
+        }
+        if (pressed & JUTGamePad::B) { mSD = false; focus(); return; }
+        const u32 count = sdCount();
+        if (mSDsel >= SD_FILES + count) mSDsel = SD_FILES + count - 1;
+        const u32 nav = menu->navigationInput(pad);
+        if (nav & TMarioGamePad::CSTICK_UP) mSDsel = (u8)wrap(mSDsel - 1, SD_FILES + count);
+        else if (nav & TMarioGamePad::CSTICK_DOWN) mSDsel = (u8)wrap(mSDsel + 1, SD_FILES + count);
+        if (mSDsel == SD_ACTIVE &&
+            (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT))) {
+            changeState(menu, (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
+            return;
+        }
+        if (!(pressed & JUTGamePad::A)) return;
+        if (mSDsel == SD_ACTIVE) { changeState(menu, 1); return; }
+        if (!gSavestateMgr || !gSavestateMgr->sdAvailable()) {
+            menu->toast("SD states need Moonshine Launcher"); return;
+        }
+        if (mSDsel == SD_SAVE) {
+            if (!gSavestateMgr->slotInfo(gSavestateMgr->activeSlot()).valid) {
+                menu->toast("Save a memory state first"); return;
+            }
+            if (!gSavestateMgr->saveToSD()) menu->toast(gSavestateMgr->sdStatus());
+        } else if (mSDsel == SD_REFRESH || mSDsel == SD_NEXT) {
+            const bool next = mSDsel == SD_NEXT;
+            if (next && (!gSavestateMgr->sdCatalogReady() || !gSavestateMgr->sdCatalog().more)) {
+                menu->toast("No more SD states"); return;
+            }
+            const u32 after = next ? gSavestateMgr->sdCatalog().nextId : 0;
+            if (!gSavestateMgr->refreshSD(after)) menu->toast(gSavestateMgr->sdStatus());
+        } else {
+            const SusamuneStateCatalogEntry &entry = gSavestateMgr->sdCatalog().entries[mSDsel - SD_FILES];
+            mArchiveId = entry.id;
+            mArchiveCrc = entry.headerCrc;
+            mArchiveSize = entry.packedSize;
+            memcpy(mArchiveName, entry.name, sizeof(mArchiveName));
+            mArchiveName[sizeof(mArchiveName) - 1] = 0;
+            mClearSlot = gSavestateMgr->activeSlot();
+            mClearGeneration = gSavestateMgr->slotInfo(mClearSlot).generation;
+            mConfirmLoad = true;
+        }
+        focus();
+    }
+    void drawSD(Menu *menu) {
+        const int x = 80, y = 72, w = 480, h = 336;
+        menu->fillBox(0, 0, 640, 480, cBackdrop());
+        menu->fillBox(x, y, w, h, cPanel());
+        menu->drawText("SD savestates", x + 16, y + 16, 18, 18, cTitle());
+        if (SavestateManager::diskBusy()) {
+            menu->drawText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Working...",
+                x + 16, y + 76, 14, 14, cRowSel());
+            menu->drawText("Keep the SD card connected until this finishes.", x + 16, y + 106, 12, 12, cRow());
+            menu->drawText(SUSAMUNE_GLYPH_A " / " SUSAMUNE_GLYPH_B " Cancel transfer",
+                x + 16, y + h - 26, 12, 12, cFooter());
+            return;
+        }
+        if (mConfirmLoad) {
+            char question[48];
+            snprintf(question, sizeof(question), "Import into state %lu?", mClearSlot + 1);
+            menu->drawText(question, x + 16, y + 66, 16, 16, cRowSel());
+            menu->drawText(mArchiveName, x + 16, y + 100, 12, 12, cAccent());
+            menu->drawText("Replaces this memory state. The SD file stays saved.", x + 16, y + 138, 12, 12, cRow());
+            menu->drawText("Then use Load to restore it in the matching level.", x + 16, y + 164, 12, 12, cRow());
+            menu->drawText(SUSAMUNE_GLYPH_A " Import    " SUSAMUNE_GLYPH_B " Cancel",
+                x + 16, y + h - 26, 12, 12, cFooter());
+            return;
+        }
+        const int rows = SD_FILES + sdCount();
+        if (mSDsel >= rows) mSDsel = rows - 1;
+        const int listY = y + 52, listH = 8 * ROW_H;
+        const int start = listScrollStart(mSDsel, rows, 8);
+        const int end = clampi(start + 8, 0, rows);
+        for (int row = start; row < end; ++row) {
+            char name[48], value[24];
+            if (row == SD_ACTIVE) {
+                strcpy(name, "Active memory state");
+                snprintf(value, sizeof(value), "%lu / %u", gSavestateMgr ? gSavestateMgr->activeSlot() + 1 : 1,
+                    SavestateManager::kSlotCount);
+            } else if (row == SD_SAVE) { strcpy(name, "Save selected state to SD"); strcpy(value, "Save"); }
+            else if (row == SD_REFRESH) { strcpy(name, "Refresh / first page"); strcpy(value, "Open"); }
+            else if (row == SD_NEXT) { strcpy(name, "Next page"); strcpy(value,
+                gSavestateMgr && gSavestateMgr->sdCatalogReady() && gSavestateMgr->sdCatalog().more ? "Open" : "--"); }
+            else {
+                const SusamuneStateCatalogEntry &entry = gSavestateMgr->sdCatalog().entries[row - SD_FILES];
+                snprintf(name, sizeof(name), "%.31s", entry.name);
+                strcpy(value, "Import");
+            }
+            drawValueRow(menu, x + 12, listY + (row - start) * ROW_H, w - 24,
+                name, value, row == mSDsel, false, false);
+        }
+        drawScrollHints(menu, x + 12, listY, w - 24, listH, start, end, rows);
+        menu->drawText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Savestates unavailable",
+            x + 16, y + h - 72, 12, 12, cFooter());
+        const char *help = mSDsel == SD_ACTIVE ? "Choose a slot. This does not save or load."
+            : mSDsel == SD_SAVE ? "Writes the selected memory state to a new SD file."
+            : mSDsel >= SD_FILES ? "Import this file, then use Load to restore gameplay."
+            : "SD files stay saved after the console restarts.";
+        menu->drawText(help, x + 16, y + h - 50, 12, 12, cRow());
+        menu->drawText(SUSAMUNE_GLYPH_A " Select    " SUSAMUNE_GLYPH_B " Back",
+            x + 16, y + h - 26, 12, 12, cFooter());
+    }
     void changeState(Menu *menu, int direction) {
         if (!gSavestateMgr) { menu->toast("Savestates unavailable"); return; }
         const u32 next = (u32)wrap((int)gSavestateMgr->activeSlot() + direction, SavestateManager::kSlotCount);
@@ -4371,9 +4542,14 @@ private:
         menu->toast(message);
     }
     u8 mSel;
+    u8 mSDsel;
+    bool mSD;
     bool mConfirmClear;
+    bool mConfirmLoad;
     u32 mClearSlot;
     u32 mClearGeneration;
+    u32 mArchiveId, mArchiveCrc, mArchiveSize;
+    char mArchiveName[32];
     RawPromptInput mInput;
 };
 
@@ -6196,7 +6372,7 @@ void Menu::hide() {
     mShown = false;
     if (gSettings.dirty() || gBinds.dirty() || gInputDisplay.dirty() ||
         gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-        gCreationExtras.dirty()) {
+        gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
         requestSettingsSave();
     }
 }
@@ -6221,7 +6397,7 @@ void Menu::pollSettingsSave() {
         // stale snapshot and leaving the dirty correction only in RAM.
         if (gSettings.dirty() || gBinds.dirty() ||
             gInputDisplay.dirty() || gMetadataDisplay.dirty() ||
-            gQftDisplay.dirty() || gCreationExtras.dirty()) {
+            gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
             requestSettingsSave();
         } else {
             toast("Settings saved");
@@ -6342,7 +6518,7 @@ void Menu::update(TMarioGamePad *pad) {
         // dirty() so merely opening and closing the menu never touches storage.
         if (!mShown && (gSettings.dirty() || gBinds.dirty() ||
                         gInputDisplay.dirty() || gMetadataDisplay.dirty() ||
-                        gQftDisplay.dirty() || gCreationExtras.dirty())) {
+                        gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty())) {
             requestSettingsSave();
         }
         return;

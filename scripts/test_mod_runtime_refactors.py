@@ -274,7 +274,7 @@ class SavestateDebugTextTests(unittest.TestCase):
         )
 
     def test_snapshot_format_and_sequence_gate_are_current(self) -> None:
-        self.assertIn("const u32 kSnapshotVersion = 14u;", self.savestate)
+        self.assertIn("const u32 kSnapshotVersion = 15u;", self.savestate)
         process = _function(
             self.savestate,
             r"void SavestateManager::processPendingLoad\(\)",

@@ -5,11 +5,16 @@ slots, a menu selector and an optional unassigned Cycle states bind. Replacement
 must fit before any occupied slot is changed; nothing is automatically evicted.
 Each slot owns its QFT/IL data, and replay pins its original slot and generation.
 The staging audit is complete; see [the codec audit](foxtrot-state-codec.md).
-SD archives and reboot restoration remain unimplemented. The investigation below
-records the earlier single-state build and the evidence behind this work.
+SD archives and guarded reboot restoration are now implemented; see the
+[SD-state implementation and test evidence](foxtrot-sd-states.md). The optional
+2 MiB pool extension is gated on launcher capability. A fresh-process Dolphin
+restore passed with exact position, QFT and full-level ghost prefix; real SD/Wii
+restoration remains a hardware test. The investigation below records the earlier
+single-state build and the evidence behind this work.
 
-Feasibility investigation, 2026-09-08. No SD savestate feature was implemented;
-the DarkMoonshine project was left unchanged. A private Sunshine snapshot was
+Original feasibility investigation, 2026-09-08. At that investigation's end no
+SD feature was implemented; the later implementation is documented above.
+The DarkMoonshine project was left unchanged. A private Sunshine snapshot was
 captured during the input-fix smoke test for the compression measurement below.
 
 **Recommendation:** reboot-persistent Sunshine states are a credible feature,

@@ -123,8 +123,8 @@ arena_lo = {
 # generous; the mod must fit within it. MUST match
 # SUSAMUNE_MOD_REGION_SIZE in mod_bin.h.
 mod_region_size = 0xC0000
-# Packed DOL sections reuse the established disc relocation extent.
-mod_dol_storage_size = 0x80000
+# Disc storage covers both runtime spans; it does not reserve game memory.
+mod_dol_storage_size = 0xA0000
 
 # Tail of the region reserved for the asm caves' fixed-address scratch, which
 # the blob must not grow into. MUST match SUSAMUNE_SCRATCH in mod_bin.h.

@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Three savestates and practice feedback update
+V2.3.0 pre-release · Build 5B0EC1B1
 
 FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
 
@@ -41,6 +41,8 @@ You can press Pause or Step during loading, the stage intro, or while Mario cann
 
 Practice pause stops gameplay and the QFT. Each Step advances one normal game frame, and the QFT advances with it. Music and the game's background clocks keep running. A small **TAS** appears beside the QFT for an assisted attempt. These attempts cannot earn an ordinary PB; restart the stage to begin a fresh attempt.
 
+The Sunshine timer and compact QFT now show the same frame during a practice hold or Step, including after a savestate load. They use different precision: compact `11.845` can appear as `11.85` on the Sunshine timer. Ordinary QFT timing calculations and event hooks have not changed.
+
 With free camera **Off**, hold A and press Step to jump on that frame. You can also start Pause while holding A, and other gameplay buttons work alongside Pause and Step. To press A again on a later step, release it and press it again before stepping. Holding A continuously counts as keeping it held. The Pause or Step shortcut itself does not reach Mario, including any assigned L/R trigger until you release it. When choosing Step or Resume from the menu, release A to continue.
 
 For spins, use the main stick yourself: choose the next direction before each Step. Free camera must be Off so the stick controls Mario.
@@ -59,9 +61,21 @@ Practice pause, stepping and free camera also work in Ghost Watch and Watch2. Th
 
 Open **Practice > Savestates** and choose **Active state** with A or C-stick left/right. Each of the three states shows Saved or Empty. Your usual Save and Load shortcuts now use the selected state; changing the selection alone does not save or load anything. **System > Button binds > Savestate: cycle states** is an optional shortcut with no button assigned by default.
 
-The three states share a limited amount of memory and are compressed to fit more. Nothing is deleted automatically. If a new save cannot fit, all previous states remain, including the state you tried to replace. **Clear selected state** asks for confirmation before freeing that state's space; the other states stay saved. Loading still requires the stage and episode where the state was made.
+The three states share **17.625 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear selected state** asks for confirmation before freeing that state's space; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
 
-These states are **memory-only**: closing the game or rebooting loses them. They are not saved to the SD card.
+The three memory slots start empty after closing the game or rebooting. To keep a state, save a separate SD copy before closing the game.
+
+## Keep a state on SD
+
+1. Make a normal memory savestate and select its slot.
+2. Open **Practice > Savestates > SD states > Save selected state to SD**. Wait until the save finishes. It creates a new file in `/moonshine_states` on the launcher's device.
+3. After rebooting, use the same mod build, game region and launcher setup, then enter the same level and episode. Secret areas also need the same parent episode.
+4. Open **SD states**, choose **Active memory state**, then **Refresh / first page**. Select the file and confirm its import. This replaces the chosen memory slot; the SD file remains saved.
+5. Use your ordinary **Load** action to restore gameplay from that slot.
+
+The game also checks that its loaded resources match the saved state. A matching level name alone may not be enough. Unsupported setups, incompatible files and damaged files are refused before replacing a memory slot. SD states are specific to their build and game setup; they are not cross-region sharing files like ghosts.
+
+Keep the storage device connected until the transfer or its cancellation finishes. SD files survive power-off, but this experimental feature still needs real Wii/Wii U power-off-and-load testing. Use the latest section of TESTING.md when reporting a result.
 
 ## Record and replay an input take
 
@@ -87,6 +101,8 @@ In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same co
 
 Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
 
+Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. Local input takes remain separate and are not saved to SD.
+
 In Display > Timer and splits > Timer and splits, choose the comparison: **Off → PB → SOB → Ghost**. SOB means the cumulative sum of your best recorded segments. Ghost uses the selected race target's compatible split timestamps. Missing or incompatible timestamps show `--`; no checkpoint timing is guessed.
 
 These controls are also under Runs > Timer and splits. **Level splits** is the overlay toggle on the first page.
@@ -103,6 +119,15 @@ The first option, **Appearance**, lets you choose **Original** or **Custom**. Le
 
 **Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours. In RGB controls, hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
 
+**Display > Appearance > Mario appearance** contains **Mario colours** and **FLUDD colours**, both using the same Creation editor. Press Start to select All or one part. Choose Original/Custom independently for each part; changing RGB selects Custom. Original keeps the stored custom RGB for later. Keep/Discard/Reset and Y for one-unit RGB adjustments work here too.
+
+| Editor | Parts |
+|---|---|
+| Mario colours — 7 | Cap, shirt, overalls, gloves, shoes, sunglasses, Sunshine shirt |
+| FLUDD colours — 10 | Body paint, metal, straps, tank, spray nozzle, hover nozzle, rocket nozzle, turbo nozzle, sprayed water, water highlights |
+
+Mario's skin stays unchanged. Sprayed water covers the stream, outlet mist and impact splashes; sea water and Yoshi juice keep their normal colours. Keep the edits to save the colours and each part's Original/Custom choice for the next boot.
+
 **Metadata** adds Field gap, Row gap, Fields per row and Value widths. C-stick left/right decreases or increases these values. Choose horizontal layout to arrange several fields per row; Fields per row limits the number before wrapping. Auto wraps at the screen edge. Stable widths keep values aligned as digits change; Compact reduces empty space. Per-character colours remain attached to their original fields.
 
 ## Dolphin
@@ -110,6 +135,8 @@ The first option, **Appearance**, lets you choose **Original** or **Custom**. Le
 Use the matching regional BPS patch with a clean ISO; the Wii launcher ZIP is for the Homebrew Channel. For mod settings persistence, enable a memory card in slot B. Set Texture Cache Accuracy to Safe so savestate loads restore goop correctly. Keep ordinary Sunshine saves and Moonshine's slot-B settings file when updating.
 
 Use a current Dolphin release for frame tools. The same FOXTROT image accepts paused-menu input in Dolphin 2606a JIT and 5.0 Interpreter, but Dolphin 5.0 JIT can leave that input stuck.
+
+The SD states menu requires Moonshine Launcher's storage service; standalone Dolphin BPS builds do not provide it. Their three memory slots still work. The BPS patch now has a 640 KiB disc storage extent; this does not increase the game's MEM1 reservation.
 
 ## Reports and limitations
 

@@ -621,7 +621,12 @@ namespace {
     return clampQf(sState->offsetQf + gpMarDirector->unk5C - 4);
   }
 
-  s32 sunshineQf() {
+  s32 sunshineQf(bool afterDirect) {
+    if (PracticeSession::paused()) {
+      // A held pass omits the ticks that normally separate the two HUD draws.
+      // Before a Step, retain the native HUD's earlier render phase.
+      return (sPracticeHolding || afterDirect) ? compactQf() : liveQf();
+    }
     // Loading zones hold the visible split while the real clock carries on.
     if (!sState->stopped && *sTransitionTarget != 0xFFFF)
       return frozenDisplayQf();
@@ -746,7 +751,7 @@ namespace {
       gpMarDirector->mGCConsole->startAppearTimer(0, 0);
       sBigShown = true;
     }
-    gpMarDirector->mGCConsole->setTimer(qfToRoundedCentis(sunshineQf()));
+    gpMarDirector->mGCConsole->setTimer(qfToRoundedCentis(sunshineQf(afterDirect)));
     if (afterDirect && missionCounterOnScreen(console))
       raiseBigTimer(console);
   }

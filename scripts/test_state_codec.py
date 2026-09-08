@@ -65,6 +65,10 @@ __declspec(dllexport) void pack(void *w,unsigned int ws,const StateCodec::ReadSp
  unsigned int n,const StateCodec::WriteSpan *d,StateCodec::Result *r) {
  *r=StateCodec::compress(w,ws,s,n,d);
 }
+__declspec(dllexport) void packMany(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,StateCodec::Result *r) {
+ *r=StateCodec::compress(w,ws,s,n,d,dn);
+}
 __declspec(dllexport) int check(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,unsigned int raw,unsigned int adler) {
  return StateCodec::validate(w,ws,s,n,raw,adler);
@@ -72,6 +76,16 @@ __declspec(dllexport) int check(void *w,unsigned int ws,const StateCodec::ReadSp
 __declspec(dllexport) int unpack(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
  return StateCodec::decompress(w,ws,s,n,d,dn,raw,adler);
+}
+struct CopyPolicy {unsigned int calls,bytes;};
+void copyPolicy(void *p,void *d,const void *s,unsigned int n) {
+ CopyPolicy *policy=(CopyPolicy*)p;++policy->calls;policy->bytes+=n;
+ memcpy(d,s,n);
+}
+__declspec(dllexport) int unpackPolicy(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler,
+ CopyPolicy *policy) {
+ return StateCodec::decompress(w,ws,s,n,d,dn,raw,adler,copyPolicy,policy);
 }
 }
 ''', encoding="ascii")
@@ -85,14 +99,42 @@ __declspec(dllexport) int unpack(void *w,unsigned int ws,const StateCodec::ReadS
         cls.lib.workspace.restype = C.c_uint
         cls.lib.pack.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                  C.POINTER(Span), C.POINTER(Result)]
+        cls.lib.packMany.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
+                                     C.POINTER(Span), C.c_uint, C.POINTER(Result)]
         cls.lib.check.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                   C.c_uint, C.c_uint]
         cls.lib.unpack.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                    C.POINTER(Span), C.c_uint, C.c_uint, C.c_uint]
+        cls.lib.unpackPolicy.argtypes = cls.lib.unpack.argtypes + [C.POINTER(C.c_uint)]
 
     def setUp(self):
         self.work = Guarded(self.lib.workspace())
         self.assertLessEqual(self.work.size, 0x50000)
+
+    def test_copy_policy_runs_only_after_complete_validation(self):
+        data = bytes(range(256)) * 300
+        encoded = zlib.compress(data)
+        source = self.source(encoded, [3, len(encoded) // 2])
+        buffers = [Guarded(12345), Guarded(len(data) - 12345)]
+        output = (Span * 2)(*[Span(b.ptr, b.size) for b in buffers])
+        policy = (C.c_uint * 2)()
+        args = (self.work.ptr, self.work.size, source, len(source), output, 2,
+                len(data), zlib.adler32(data))
+        self.assertEqual(self.lib.unpackPolicy(*args, policy), SUCCESS)
+        self.assertEqual(policy[1], len(data))
+        self.assertGreater(policy[0], 2)
+        self.assertEqual(b''.join(b.data() for b in buffers), data)
+        for b in buffers:
+            self.assertTrue(b.guards())
+        broken = bytearray(encoded)
+        broken[-1] ^= 1
+        source = self.source(bytes(broken))
+        policy = (C.c_uint * 2)()
+        before = [b.data() for b in buffers]
+        status = self.lib.unpackPolicy(self.work.ptr, self.work.size, source, 1,
+                                      output, 2, len(data), zlib.adler32(data), policy)
+        self.assertEqual((status, policy[0], policy[1]), (CORRUPT, 0, 0))
+        self.assertEqual([b.data() for b in buffers], before)
 
     def tearDown(self):
         self.assertTrue(self.work.guards())
@@ -147,6 +189,42 @@ __declspec(dllexport) int unpack(void *w,unsigned int ws,const StateCodec::ReadS
             packed, _ = self.pack(source, [capacity // 2, capacity - capacity // 2])
             self.assertEqual((packed.status, packed.compressed, packed.adler),
                              (FULL, expected.compressed, zlib.adler32(data)))
+
+    def test_three_compression_outputs_cross_both_pool_banks_and_validate_extra_span(self):
+        data = random.Random(52).randbytes(70001)
+        source = self.source(data, [12345])
+        expected, _ = self.pack(source)
+        for sizes in ((4096, 13000, expected.compressed - 17096),
+                      (0, 1, expected.compressed - 1), (1, 0, expected.compressed - 1),
+                      (1, 2, expected.compressed - 4)):
+            guards = [Guarded(n) for n in sizes]
+            output = (Span * 3)(*[Span(g.ptr, g.size) for g in guards])
+            result = Result()
+            self.lib.packMany(self.work.ptr, self.work.size, source, len(source),
+                              output, 3, C.byref(result))
+            self.assertEqual((result.compressed, result.raw, result.adler),
+                             (expected.compressed, len(data), zlib.adler32(data)))
+            if sum(sizes) == expected.compressed:
+                self.assertEqual(result.status, SUCCESS)
+                self.assertEqual(zlib.decompress(b"".join(g.data() for g in guards)), data)
+            else:
+                self.assertEqual(result.status, FULL)
+            for guard in guards:
+                self.assertTrue(guard.guards())
+        original = [g.data() for g in guards]
+        for count in (0, 65):
+            self.lib.packMany(self.work.ptr, self.work.size, source, len(source),
+                              output, count, C.byref(result))
+            self.assertEqual(result.status, INVALID)
+        output[2] = Span(source[0].data, 8)
+        self.lib.packMany(self.work.ptr, self.work.size, source, len(source),
+                          output, 3, C.byref(result))
+        self.assertEqual(result.status, INVALID)
+        output[2] = Span(guards[0].ptr, 1)
+        self.lib.packMany(self.work.ptr, self.work.size, source, len(source),
+                          output, 3, C.byref(result))
+        self.assertEqual(result.status, INVALID)
+        self.assertEqual([g.data() for g in guards], original)
 
     def test_standard_zlib_stream_and_split_header_checksum(self):
         data = b"abc123" * 18000

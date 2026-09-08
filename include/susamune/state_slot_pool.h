@@ -2,6 +2,11 @@
 #define SUSAMUNE_STATE_SLOT_POOL_H
 
 enum { STATE_SLOT_POOL_COUNT = 3 };
+enum {
+    STATE_SLOT_REPLACE_REFUSE,
+    STATE_SLOT_REPLACE_STAGED,
+    STATE_SLOT_REPLACE_RECOMPRESS,
+};
 typedef struct StateSlotPoolEntry {
     unsigned int offset;
     unsigned int size;
@@ -56,17 +61,28 @@ static inline void StateSlotPoolMove(unsigned char *dst,
     }
 }
 
+static inline int StateSlotPoolPlanReplace(const StateSlotPool *pool,
+                                           unsigned int capacity,
+                                           unsigned int slot,
+                                           unsigned int packedSize,
+                                           unsigned int stagingSize) {
+    if (!StateSlotPoolValid(pool, capacity) || slot >= STATE_SLOT_POOL_COUNT ||
+        !packedSize) return STATE_SLOT_REPLACE_REFUSE;
+    const unsigned int retained = pool->used - pool->slots[slot].size;
+    if (packedSize > capacity - retained) return STATE_SLOT_REPLACE_REFUSE;
+    if (packedSize <= stagingSize ||
+        packedSize - stagingSize <= capacity - pool->used)
+        return STATE_SLOT_REPLACE_STAGED;
+    return STATE_SLOT_REPLACE_RECOMPRESS;
+}
+
 static inline int StateSlotPoolCanCommit(const StateSlotPool *pool,
                                          unsigned int capacity,
                                          unsigned int slot,
                                          unsigned int packedSize,
                                          unsigned int stagingSize) {
-    if (!StateSlotPoolValid(pool, capacity) || slot >= STATE_SLOT_POOL_COUNT ||
-        !packedSize) return 0;
-    const unsigned int retained = pool->used - pool->slots[slot].size;
-    if (packedSize > capacity - retained) return 0;
-    return packedSize <= stagingSize ||
-           packedSize - stagingSize <= capacity - pool->used;
+    return StateSlotPoolPlanReplace(pool, capacity, slot, packedSize, stagingSize) ==
+           STATE_SLOT_REPLACE_STAGED;
 }
 
 static inline int StateSlotPoolClear(StateSlotPool *pool, unsigned char *bytes,
@@ -82,6 +98,33 @@ static inline int StateSlotPoolClear(StateSlotPool *pool, unsigned char *bytes,
             pool->slots[i].offset -= size;
     pool->slots[slot].offset = pool->slots[slot].size = 0;
     pool->used -= size;
+    return 1;
+}
+
+/* Destructive: call only after a complete count/checksum pass, while its input
+ * remains immutable. The second compression must match before publication. */
+static inline int StateSlotPoolReclaimForReplace(StateSlotPool *pool,
+                                                 unsigned char *bytes,
+                                                 unsigned int capacity,
+                                                 unsigned int slot,
+                                                 unsigned int packedSize) {
+    if (!bytes || StateSlotPoolPlanReplace(pool, capacity, slot, packedSize, 0) ==
+                      STATE_SLOT_REPLACE_REFUSE) return 0;
+    if (pool->slots[slot].size)
+        return StateSlotPoolClear(pool, bytes, capacity, slot);
+    return 1;
+}
+
+static inline int StateSlotPoolCommitPrepared(StateSlotPool *pool,
+                                             unsigned int capacity,
+                                             unsigned int slot,
+                                             unsigned int packedSize) {
+    if (!StateSlotPoolValid(pool, capacity) || slot >= STATE_SLOT_POOL_COUNT ||
+        pool->slots[slot].size || !packedSize || packedSize > capacity - pool->used)
+        return 0;
+    pool->slots[slot].offset = pool->used;
+    pool->slots[slot].size = packedSize;
+    pool->used += packedSize;
     return 1;
 }
 

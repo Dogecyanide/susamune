@@ -36,6 +36,7 @@ public:
         CAP_ALL        = 0x7f,
         CAP_OFFSET_POSITION = 1 << 7,
         CAP_COLOR_MODE = 1 << 8,
+        CAP_RGB_ENABLES_CUSTOM = 1 << 9,
     };
 
     enum UpdateResult {

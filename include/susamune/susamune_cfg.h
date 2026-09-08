@@ -317,6 +317,31 @@ struct SusamuneNativeTimerStyleCfg {
     unsigned char present;
 };
 
+#define SUSAMUNE_MARIO_COLORS_MAGIC 0x4D434F4Cu
+#define SUSAMUNE_MARIO_COLORS_VERSION 1u
+#define SUSAMUNE_MARIO_COLORS_COUNT 7u
+#define SUSAMUNE_MARIO_COLORS_MASK 0x7Fu
+struct SusamuneMarioColorsCfg {
+    unsigned int magic;
+    unsigned short version;
+    unsigned char enabled;
+    unsigned char reserved0;
+    unsigned char rgb[SUSAMUNE_MARIO_COLORS_COUNT][3];
+    unsigned char reserved[3];
+};
+
+#define SUSAMUNE_FLUDD_COLORS_MAGIC 0x464C434Cu
+#define SUSAMUNE_FLUDD_COLORS_VERSION 1u
+#define SUSAMUNE_FLUDD_COLORS_COUNT 10u
+#define SUSAMUNE_FLUDD_COLORS_MASK 0x3FFu
+struct SusamuneFluddColorsCfg {
+    unsigned int magic;
+    unsigned short version;
+    unsigned short enabled;
+    unsigned char rgb[SUSAMUNE_FLUDD_COLORS_COUNT][3];
+    unsigned char reserved[26];
+};
+
 // Metadata Display keeps a compact in-game configuration plus an optional
 // hand-authored template. The template is edited in susamune.ini; the game
 // menu only selects it and edits the live overlay's layout.
@@ -485,6 +510,9 @@ struct SusamuneMetadataStyleCfg {
 // Kernel/backend understands Rollout and Dust Creation styles.
 #define SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE 0x4000u
 #define SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE 0x10000u
+#define SUSAMUNE_CFG_FLAG_MARIO_COLORS 0x20000u
+#define SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION 0x40000u
+#define SUSAMUNE_CFG_FLAG_FLUDD_COLORS 0x80000u
 // The ini existed (or storage recovery was attempted), but it could not be
 // read completely and safely. The mod must keep this boot's defaults
 // read-only rather than regenerating a possibly valid file from them.
@@ -1217,6 +1245,38 @@ struct SusamuneCfg {
 #define SUSAMUNE_STAGE_PLAYLIST_PHYS_PTR \
     ((struct SusamuneStagePlaylistsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
                                           SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET))
+
+#define SUSAMUNE_MARIO_COLORS_CFG_OFFSET 0x18E0u
+#define SUSAMUNE_MARIO_COLORS_PPC_PTR \
+    ((struct SusamuneMarioColorsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_MARIO_COLORS_CFG_OFFSET))
+#define SUSAMUNE_MARIO_COLORS_PHYS_PTR \
+    ((struct SusamuneMarioColorsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_MARIO_COLORS_CFG_OFFSET))
+#define SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE 0x71900000u
+#if defined(IS_EMULATOR) && IS_EMULATOR
+#define SUSAMUNE_MARIO_COLORS_LIVE_PTR \
+    ((struct SusamuneMarioColorsCfg *)SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE)
+#else
+#define SUSAMUNE_MARIO_COLORS_LIVE_PTR SUSAMUNE_MARIO_COLORS_PPC_PTR
+#endif
+typedef char susamune_mario_colors_size_check[(sizeof(struct SusamuneMarioColorsCfg) == 32) ? 1 : -1];
+typedef char susamune_mario_colors_gap_check[(SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET + sizeof(struct SusamuneStagePlaylistsCfg) == SUSAMUNE_MARIO_COLORS_CFG_OFFSET && SUSAMUNE_MARIO_COLORS_CFG_OFFSET + 32 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_mario_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE == SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE + SUSAMUNE_STATE_STAGING_SIZE && SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 <= 0x72000000u) ? 1 : -1];
+
+#define SUSAMUNE_FLUDD_COLORS_CFG_OFFSET 0x1900u
+#define SUSAMUNE_FLUDD_COLORS_PPC_PTR \
+    ((struct SusamuneFluddColorsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_FLUDD_COLORS_CFG_OFFSET))
+#define SUSAMUNE_FLUDD_COLORS_PHYS_PTR \
+    ((struct SusamuneFluddColorsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_FLUDD_COLORS_CFG_OFFSET))
+#define SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE 0x71900020u
+#if defined(IS_EMULATOR) && IS_EMULATOR
+#define SUSAMUNE_FLUDD_COLORS_LIVE_PTR \
+    ((struct SusamuneFluddColorsCfg *)SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE)
+#else
+#define SUSAMUNE_FLUDD_COLORS_LIVE_PTR SUSAMUNE_FLUDD_COLORS_PPC_PTR
+#endif
+typedef char susamune_fludd_colors_size_check[(sizeof(struct SusamuneFluddColorsCfg) == 64) ? 1 : -1];
+typedef char susamune_fludd_colors_gap_check[(SUSAMUNE_MARIO_COLORS_CFG_OFFSET + sizeof(struct SusamuneMarioColorsCfg) == SUSAMUNE_FLUDD_COLORS_CFG_OFFSET && SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + 64 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 == SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE && SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE + 64 <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
 
 #define SUSAMUNE_STAGE_TARGETS_PPC_PTR \
     ((struct SusamuneStageTargetsCfg *)SUSAMUNE_MEM2_STAGE_TARGETS_PPC_BASE)

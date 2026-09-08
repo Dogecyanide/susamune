@@ -274,6 +274,10 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
             } else if (optionEnabled(mOption)) {
                 resetOption(*mStyle, defaults, mTextRgb, defaultRgb,
                             defaultRgbSlots, mTextSlots, mOption, mTextTarget);
+                if (mOption <= OPTION_TEXT_B && mCustomMask &&
+                    (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
+                    *mCustomMask |= mTextTarget ? 1u << (mTextTarget - 1)
+                                                : (1u << mTextSlots) - 1u;
             } else {
                 if (mCapabilities & CAP_POSITION) {
                     mStyle->x = defaults.x;
@@ -347,10 +351,10 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         return result | UPDATE_CHANGED | UPDATE_MODE_CHANGED;
     } else if (mOption <= OPTION_TEXT_B) {
         adjustTextChannel(mTextRgb, mTextSlots, mTextTarget,
-                          mOption - OPTION_TEXT_R, delta);
-        if (mCustomMask)
+                           mOption - OPTION_TEXT_R, delta);
+        if (mCustomMask && (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
             *mCustomMask |= mTextTarget ? 1u << (mTextTarget - 1)
-                                       : (1u << mTextSlots) - 1u;
+                                        : (1u << mTextSlots) - 1u;
     } else if (mOption == OPTION_PADDING) {
         if (mStyle->padding == 0xff) {
             if (delta > 0) mStyle->padding = 0;
@@ -380,7 +384,9 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
         if (optionEnabled((u8)i)) optionCount++;
     const bool layoutControls = mCapabilities & (CAP_POSITION | CAP_SCALE);
     const int optionRows = optionCount > 5 ? 5 : optionCount;
-    const int panelH = 92 + optionRows * 14 + (layoutControls ? 17 : 0);
+    const bool colorModes = optionEnabled(OPTION_COLOR_MODE);
+    const int panelH = 92 + optionRows * 14 + (layoutControls ? 17 : 0) +
+                       (colorModes ? 14 : 0);
     menu->fillBox(8, panelY, 624, panelH, Color(0, 0, 0, 215));
 
     menu->drawText(title, 18, panelY + 9, 16, 16,
@@ -439,6 +445,14 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
         menu->drawText(status, 18, infoY, 11, 11,
                        Color(190, 220, 255, 255));
         infoY += 18;
+    }
+
+    if (colorModes) {
+        menu->drawText((mCapabilities & CAP_RGB_ENABLES_CUSTOM)
+                           ? "Original: retail colours   Custom: your RGB   RGB edits select Custom"
+                           : "Original: shaded tint   Custom: flat colour   RGB works in both",
+                       18, infoY, 9, 9, Color(190, 220, 255, 255));
+        infoY += 14;
     }
 
     int shown = 0;

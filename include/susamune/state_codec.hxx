@@ -5,6 +5,8 @@ namespace StateCodec {
 
 struct ReadSpan { const void *data; unsigned int size; };
 struct WriteSpan { void *data; unsigned int size; };
+typedef void (*CopyBytes)(void *context, void *destination,
+                          const void *source, unsigned int size);
 enum Status {
     SUCCESS,
     INVALID_ARGUMENT,
@@ -30,7 +32,7 @@ unsigned int workspaceSize();
 // OUTPUT_FULL still reports the complete required size; partial output is invalid.
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan output[2]);
+                const WriteSpan *output, unsigned int outputCount = 2);
 
 // Input spans contain exactly the stream's bytes, excluding allocation padding.
 Status validate(void *workspace, unsigned int workspaceBytes,
@@ -40,10 +42,13 @@ Status validate(void *workspace, unsigned int workspaceBytes,
 // Validates the whole stream before writing. Source and span descriptors must
 // remain immutable, with exclusive workspace ownership, through both passes.
 // COMMIT_FAILED means writes may have begun: the caller must not resume gameplay.
+// An optional copy policy runs only after validation, and must not fail or mutate
+// source/workspace/descriptors. The caller validates its policy before this call.
 Status decompress(void *workspace, unsigned int workspaceBytes,
                   const ReadSpan *source, unsigned int sourceCount,
                   const WriteSpan *output, unsigned int outputCount,
-                  unsigned int expectedRaw, unsigned int expectedAdler);
+                  unsigned int expectedRaw, unsigned int expectedAdler,
+                  CopyBytes copy = 0, void *copyContext = 0);
 
 } // namespace StateCodec
 #endif

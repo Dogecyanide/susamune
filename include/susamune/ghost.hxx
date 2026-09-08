@@ -3,6 +3,7 @@
 
 #include <Dolphin/types.h>
 #include "susamune/practice_input.h"
+#include "susamune/state_codec.hxx"
 
 class Menu;
 class TMarDirector;
@@ -63,6 +64,14 @@ void afterDirect(s32 appState);
 void update();
 void draw(Menu *menu);
 void onSavestateLoaded();
+enum { kSavestateSpanCount = 3 };
+struct SavestateData { u32 words[128]; };
+// Prefix bytes join the game snapshot; metadata never supplies restore addresses.
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]);
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]);
+void restoreSavestate(const SavestateData &data);
 void invalidateForAssist();
 void captureInput(const SusamunePracticeInput &input);
 void captureSplit(u16 route, u8 endpoint, s32 absoluteQf);

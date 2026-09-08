@@ -881,16 +881,24 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
 }
 
 bool CreationExtras::nativeTimerColorsEnabled() const {
-    return mNativeTimerCustomMask != 0;
+    for (unsigned i = 0; i < 15; ++i)
+        if ((mNativeTimerCustomMask & (1u << i)) ||
+            (mColorPresent & SUSAMUNE_CREATION_COLOR(nativeTimerColorSlot(i))))
+            return true;
+    return false;
 }
 
-const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane) const {
+const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane, bool *custom) const {
     if (rngControlInvalidatesIl()) return nullptr;
     for (unsigned i = 0; i < 15; ++i) {
         const unsigned picture = i == 14 ? 0 : i + 11;
         const unsigned slot = nativeTimerColorSlot(i);
+        const bool flat = mNativeTimerCustomMask & (1u << i);
         if (mHudPictures[picture] == pane &&
-            (mNativeTimerCustomMask & (1u << i))) return mColors[slot];
+            (flat || (mColorPresent & SUSAMUNE_CREATION_COLOR(slot)))) {
+            if (custom) *custom = flat;
+            return mColors[slot];
+        }
     }
     return nullptr;
 }
@@ -1305,9 +1313,9 @@ void CreationExtras::updateEditor(TMarioGamePad *pad) {
         if (result & (CreationEditor::UPDATE_CHANGED | CreationEditor::UPDATE_CANCELLED)) {
             for (int i = 0; i < 15; ++i) {
                 const int slot = nativeTimerColorSlot(i);
-                if ((result & (CreationEditor::UPDATE_COLOR_CHANGED |
-                               CreationEditor::UPDATE_MODE_CHANGED)) &&
-                    (mNativeTimerCustomMask & (1u << i)) &&
+                if (((result & CreationEditor::UPDATE_COLOR_CHANGED) ||
+                     ((result & CreationEditor::UPDATE_MODE_CHANGED) &&
+                      (mNativeTimerCustomMask & (1u << i)))) &&
                     (!mEditor.target() || mEditor.target() == i + 1))
                     mColorPresent |= SUSAMUNE_CREATION_COLOR(slot);
                 copyRgb(mColors[slot], mWordBackup[i]);

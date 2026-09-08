@@ -51,6 +51,15 @@ __declspec(dllexport) int clear(StateSlotPool*p,unsigned char*b,unsigned c,
                               unsigned s) {
     return StateSlotPoolClear(p,b,c,s);
 }
+__declspec(dllexport) int plan(StateSlotPool*p,unsigned c,unsigned s,unsigned n,unsigned z) {
+    return StateSlotPoolPlanReplace(p,c,s,n,z);
+}
+__declspec(dllexport) int reclaim(StateSlotPool*p,unsigned char*b,unsigned c,unsigned s,unsigned n) {
+    return StateSlotPoolReclaimForReplace(p,b,c,s,n);
+}
+__declspec(dllexport) int prepared(StateSlotPool*p,unsigned c,unsigned s,unsigned n) {
+    return StateSlotPoolCommitPrepared(p,c,s,n);
+}
 }
 ''', encoding="ascii")
         dll = work / "pool.dll"
@@ -65,6 +74,9 @@ __declspec(dllexport) int clear(StateSlotPool*p,unsigned char*b,unsigned c,
         cls.lib.commit.argtypes = [C.POINTER(Pool), C.c_void_p, C.c_uint,
                                    C.c_uint, C.c_uint, C.c_void_p, C.c_uint]
         cls.lib.clear.argtypes = [C.POINTER(Pool), C.c_void_p, C.c_uint, C.c_uint]
+        cls.lib.plan.argtypes = [C.POINTER(Pool)] + [C.c_uint] * 4
+        cls.lib.reclaim.argtypes = [C.POINTER(Pool), C.c_void_p] + [C.c_uint] * 3
+        cls.lib.prepared.argtypes = [C.POINTER(Pool)] + [C.c_uint] * 3
 
     def make_pool(self, sizes, order=(0, 1, 2), capacity=24):
         pool = Pool()
@@ -139,6 +151,44 @@ __declspec(dllexport) int clear(StateSlotPool*p,unsigned char*b,unsigned c,
         self.replace((6, 3, 3), (1, 0, 2), 0, 6, 5, 12)
         self.replace((4, 3, 3), (2, 1, 0), 1, 6, 6, 12)
 
+    def test_full_pool_replacement_reclaims_only_selected_after_count_pass(self):
+        for sizes in ((6, 3, 3), (4, 4, 4), (1, 5, 6), (0, 6, 6)):
+            for order in itertools.permutations(range(3)):
+                for slot in range(3):
+                    for packed in (1, 3, 4, 6, 7, 13):
+                        pool, buf, expected = self.make_pool(sizes, order, 12)
+                        before = metadata(pool), bytes(buf)
+                        fits = packed <= 12 - (pool.used - sizes[slot])
+                        for staging in (0, 1, 5, 12):
+                            staged = packed <= staging + 12 - pool.used
+                            self.assertEqual(self.lib.plan(C.byref(pool), 12, slot, packed, staging),
+                                             0 if not fits else 1 if staged else 2)
+                            self.assertEqual((metadata(pool), bytes(buf)), before)
+                        self.assertEqual(bool(self.lib.reclaim(C.byref(pool), buf, 12, slot, packed)), fits)
+                        if not fits:
+                            self.assertEqual((metadata(pool), bytes(buf)), before)
+                            continue
+                        expected.pop(slot, None)
+                        self.assert_contents(pool, buf, expected, 12)
+                        candidate = bytes((151 + i * 7) % 256 for i in range(packed))
+                        buf[pool.used:pool.used + packed] = candidate
+                        self.assertTrue(self.lib.prepared(C.byref(pool), 12, slot, packed))
+                        expected[slot] = candidate
+                        self.assert_contents(pool, buf, expected, 12)
+
+    def test_prepared_publish_refuses_occupied_bad_slot_size_and_overflow(self):
+        pool, buf, _ = self.make_pool((3, 4, 0), capacity=12)
+        before = metadata(pool), bytes(buf)
+        for selected, packed in ((0, 3), (3, 2), (2, 0), (2, 6), (2, 0xFFFFFFFF)):
+            self.assertFalse(self.lib.prepared(C.byref(pool), 12, selected, packed))
+            self.assertEqual((metadata(pool), bytes(buf)), before)
+        self.assertFalse(self.lib.reclaim(C.byref(pool), None, 12, 0, 3))
+        self.assertFalse(self.lib.reclaim(None, buf, 12, 0, 3))
+        self.assertFalse(self.lib.prepared(None, 12, 0, 3))
+        pool = Pool((Entry * 3)(Entry(0, 0xFFFFFFFF), Entry(), Entry()), 0xFFFFFFFF)
+        self.assertEqual(self.lib.plan(C.byref(pool), 0xFFFFFFFF, 0, 0xFFFFFFFF, 0), 2)
+        self.assertEqual(self.lib.plan(C.byref(pool), 0xFFFFFFFF, 1, 1, 0xFFFFFFFF), 0)
+
     def test_clear_compacts_each_slot_and_empty_clear_does_nothing(self):
         for order in itertools.permutations(range(3)):
             pool, buf, expected = self.make_pool((3, 4, 5), order)
@@ -170,6 +220,9 @@ __declspec(dllexport) int clear(StateSlotPool*p,unsigned char*b,unsigned c,
                 self.assertFalse(self.lib.valid(C.byref(pool), 24))
                 self.assertFalse(self.lib.commit(C.byref(pool), buf, 24, 0, 4, staging, 8))
                 self.assertFalse(self.lib.clear(C.byref(pool), buf, 24, 0))
+                self.assertFalse(self.lib.reclaim(C.byref(pool), buf, 24, 0, 4))
+                self.assertFalse(self.lib.prepared(C.byref(pool), 24, 0, 4))
+                self.assertEqual(self.lib.plan(C.byref(pool), 24, 0, 4, 8), 0)
                 self.assertEqual((metadata(pool), bytes(buf)), before)
 
     def test_argument_and_unsigned_capacity_boundaries(self):
