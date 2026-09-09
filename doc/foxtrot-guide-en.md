@@ -1,8 +1,8 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build C4AF447B
+V2.3.0 pre-release · Build 08BDB4CD
 
-FOXTROT adds tools for studying movement and comparing attempts. New level splits are deliberately excluded: each checkpoint still needs to be designed and tested individually.
+FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
 ## Install and update
 
@@ -27,6 +27,10 @@ Open the mod menu with your configured menu combo (default Y + Start). Use L/R f
 - **Ghosts:** race, watch, save and manage ghost tracks.
 - **Display:** layout editors, HUD overlays, timer/split display and appearance.
 - **System:** button binds and the built-in quick guide.
+
+In **Runs > ILs**, press **Z** on a supported row to choose its starting episode. Use C-stick Up/Down, A to keep or B to cancel. The choice is shown beside its PB and saved separately for JP, US and PAL. This is available for the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden, and all ten Full Reds ILs.
+
+**Runs > Timer and splits > Level splits** enables the checkpoint display. New routes include the handmade checkpoints for the remaining levels and Full Reds. A route can have up to eight segments, including its finish. Old attempt counts and records remain; individual segment times are carried forward only when their start and end checkpoints still match. See the split reference in TESTING.md when checking a particular route.
 
 ## Pause and advance
 
@@ -66,6 +70,10 @@ Open **Practice > Savestates**. **Save to** chooses which memory slot your Save 
 
 Each of the three states shows Saved or Empty. **System > Button binds** has optional **Savestate: cycle save slot** and **Savestate: cycle load slot** shortcuts, both unassigned by default. The older **Savestate: cycle both slots** shortcut remains available for existing binds.
 
+Hold your **Load** shortcut to keep gameplay still after the state restores. Release it when you are ready to move. If you were already using practice pause, releasing Load keeps that pause; use Resume or Step as usual.
+
+If the saved state is in an intro, the intro finishes first. Keep Load held to stop on Mario's first controllable frame, or release it early to let play continue. A previous practice pause still takes effect when Mario becomes controllable.
+
 The three states share **17.938 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
 
 The three memory slots start empty after closing the game or rebooting. To keep a state, save a separate SD copy before closing the game.
@@ -84,7 +92,9 @@ The three memory slots start empty after closing the game or rebooting. To keep 
 | **Start — Rename** | Edit the file's display name. Start finishes; X + Start cancels. |
 | **X — Delete** | Ask to delete this SD file. Cancelling keeps it; memory states are unaffected. |
 
-Loading from SD reads the file each time, so it can take longer than a memory load. It needs temporary space: 4 MiB plus the unused part of the state pool. If the memory slots are exceptionally full, there may not be room for that file. A refusal keeps all existing states; clear a disposable memory slot or use a smaller file before trying again.
+Loading from SD reads the file each time, so it can take longer than a memory load. It can now load large files even when the three memory slots are full, provided one of those slots is a working state for the current scene and setup. That state provides a recovery point if an SD read fails. You do not need to select it as Load from. The three saved slots stay intact.
+
+If a read fails after restoration has started, the game loads that recovery state and tells you which slot it used. If no suitable recovery state exists and temporary space is too small, loading is refused safely. Importing into a memory slot still requires enough room for the imported state.
 
 The game also checks that its loaded resources match the saved state. A matching level name alone may not be enough. Unsupported setups, incompatible files and damaged files are refused before replacing a memory slot. SD states are specific to their build and game setup; they are not cross-region sharing files like ghosts.
 

@@ -14,7 +14,8 @@
 #include "susamune/ghost_model_asset.h"
 #include "susamune/ciso_reader.h"
 
-#define SHADOW_INPUT_SIZE         0x1000u
+#define SHADOW_INPUT_SIZE         0x8000u
+#define SHADOW_CACHE_SIZE         0x1000u
 #define SHADOW_HISTORY_SIZE       0x1000u
 #define SHADOW_RARC_META_MAX      0x10000u
 #define SHADOW_DECODED_MIN_SIZE   0x40000u
@@ -109,7 +110,7 @@ typedef char ShadowAssetHeaderSize[
 	sizeof(ShadowAssetHeader) == SUSAMUNE_GHOST_SHADOW_ASSET_HEADER_SIZE ? 1 : -1];
 
 static u8 sDiscReadScratch[SHADOW_INPUT_SIZE + 0x20] ATTRIBUTE_ALIGN(32);
-static u8 sReadCache[2][SHADOW_INPUT_SIZE] ATTRIBUTE_ALIGN(32);
+static u8 sReadCache[2][SHADOW_CACHE_SIZE] ATTRIBUTE_ALIGN(32);
 static unsigned short sCisoMap[SUSAMUNE_CISO_MAP_COUNT];
 
 static const AssetSpec sAssets[] = {
@@ -267,10 +268,10 @@ static bool ReaderRead(ShadowReader *reader, u64 offset, void *data, u32 size)
 			memcpy(data, sReadCache[i] + (u32)(offset - reader->cacheStart[i]), size);
 			return true;
 		}
-	start = offset & ~(u64)(SHADOW_INPUT_SIZE - 1u);
-	if (offset - start + size > SHADOW_INPUT_SIZE)
+	start = offset & ~(u64)(SHADOW_CACHE_SIZE - 1u);
+	if (offset - start + size > SHADOW_CACHE_SIZE)
 		return ReaderLogicalRead(reader, offset, data, size);
-	amount = SHADOW_INPUT_SIZE;
+	amount = SHADOW_CACHE_SIZE;
 	if (limit != 0)
 	{
 		if (start >= limit)

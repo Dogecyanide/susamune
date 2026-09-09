@@ -1,10 +1,10 @@
 # Moonshine Launcher FOXTROT — final test checklist
 
-**V2.3.0 pre-release · Build 00B63258**
+**V2.3.0 pre-release · Build 08BDB4CD**
 
 **Only the four checks below are requested for this update.** Keep successful earlier results. The later sections are a reference for anything still marked Not tested; they are not a request to repeat the whole checklist. Use the complete package so the launcher and game files match.
 
-SD states work and the earlier load times received positive Wii feedback. This pass focuses on the launcher guide, input replay and further reductions in save/load waits.
+This pass focuses on the new IL episode choices, held Load, crowded-memory SD loading and handmade splits. The checkpoint tables below are a reference for dividing routes among testers.
 
 **Tester:**  
 **Platform:** Wii / Wii U / Dolphin — version:  
@@ -12,6 +12,21 @@ SD states work and the earlier load times received positive Wii feedback. This p
 **Game source:** Disc / ISO / CISO — SD / USB
 
 ## Start here — latest changes
+
+- [ ] **Choose an IL episode:** In **Runs > ILs**, press **Z** on a 100-coin, supported Hidden or Full Reds row. Pick a different episode, press A, and start it. Confirm the right episode loads and the intended Shine still finishes that IL. Reboot once and check your choice remains. Also cancel one edit with B: the old choice should remain.
+- [ ] **Hold Load:** Make a state in your usual practice spot. Load it and keep the shortcut held: Mario should stay still until release, with no repeated reloads. Then try once while already practice-paused: releasing Load should leave it paused, and Step should still work.
+
+  If your state is saved during an intro, let the intro finish while holding Load: it should stop on Mario's first controllable frame. Releasing early lets play continue, unless you had practice pause on already.
+- [ ] **SD load with three saved slots:** Make a fresh SD state from this build, keep three memory states saved in that same level/setup, and load the SD file using **Y** then your Load shortcut. Afterward, load each memory slot and confirm they all remain. Report a refusal exactly as shown. There is no need to unplug the SD or damage a file. On the next normal launch, also note whether startup feels quicker and whether its text/theme remain visible.
+- [ ] **Pick a few new split routes:** Enable **Runs > Timer and splits > Level splits** and choose routes from the [checkpoint reference below](#new-checkpoint-reference). Each listed event should advance the display once, in order, and the finish should complete it. A Full Reds route should retain its approach checkpoints after entering the secret. Tell us the route and first missing, early or repeated split. Nobody needs to cover every route alone.
+
+SD files are in `/moonshine_states` on the launcher's device. Use the same build, region, launcher setup, level and episode; secrets also need the same parent episode. Keep the device connected until the operation finishes. If a read fails during restoration, the game should report the memory slot it restored for recovery. All three saved slots must remain.
+
+Standalone Dolphin BPS builds do not provide SD states; mark that part **Not available** and test the memory slots normally.
+
+## Previous update — 00B63258, reference only
+
+These checks are retained for unfinished reports; successful results do not need repeating.
 
 - [ ] **Guide on the TV:** Choose **Guide** on the launcher home screen. Open a topic with A, scroll with Up/Down, turn a page with Left/Right and return with B. The text should fit and remain readable with your theme.
 - [ ] **Input replay:** Turn **Save RNG state** On and make a fresh gameplay state. Under **Practice > Input replay**, choose **Record from savestate**, then release the confirming A button. Walk and jump briefly, open the menu to stop recording, and replay it a few times. Mario should stop immediately when the menu opens, and replay should start consistently. If it stops or refuses, send the exact message and what you recorded.
@@ -91,7 +106,7 @@ This is a short, experimental, session-only input take. It is separate from save
 - [ ] Under **Runs > Timer and splits**, enable **Level splits**. On a supported route with recorded times, try Off, PB, SOB and Ghost comparison. PB compares against your best run; SOB uses your best segments.
 - [ ] **Reported sharing bug:** Export a new **Bianco 3 Secret ghost on PAL** and race it on **JP** with Ghost comparison. Existing checkpoints should show differences instead of `--`. Other region pairings are useful too.
 
-No new checkpoints were added. Missing or incompatible split data legitimately shows `--`.
+Those earlier builds used the existing checkpoints. The new checkpoint reference below applies to this update. Missing or incompatible comparison data still legitimately shows `--`.
 
 ## 9. Layout editor and colours
 
@@ -110,6 +125,104 @@ No new checkpoints were added. Missing or incompatible split data legitimately s
 - [ ] **Three states:** Save different positions in states 1, 2 and 3 under **Practice > Savestates**, then replace one and load each using Load from. The other two must stay intact. Changing Save to or Load from alone should do nothing to the scene. The slots share 17.625 MiB; longer saved ghost recordings also use that space.
 - [ ] **Keeping states:** Cancel Clear once, then confirm it on a disposable state. Only that state should become Empty; the others should still load. If a save reports insufficient space, every earlier state—including the one you tried to replace—should remain usable.
 - [ ] Save your edits and reboot once. Check binds, camera options, layouts, custom text, records and saved/imported ghosts remain correct for your region/profile. The three memory slots start Empty; separately saved SD states should remain in the SD list and can be imported again.
+
+## New checkpoint reference
+
+**Pick routes you already know; this is not a checklist to complete alone.** Read each row from left to right. The normal IL finish comes after the listed checkpoints. “Reds 2 / 5 / 8” means the red-coin counter reaching 2, then 5, then 8. Each should count once. Full and inside-only entries are separate routes.
+
+### Bianco and Ricco
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Bianco 1 | Roll out over the wall → first, second and third plant hits |
+| Bianco 3 Reds | Reds 2 / 5 / 8 |
+| Bianco 6 Reds | Reds 3 / 6 / 8 |
+| Bianco 8 | Reds 2 / 5 / 8 |
+| Ricco 4 Reds | Reds 1 / 4 / 6 / 8 |
+| Ricco 8 | Mount Yoshi **or** collect the Rocket Nozzle; either starts the same single split |
+
+### Gelato
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Gelato 1 Full | Make the sandcastle appear → enter the secret → cross the two approach markers inside |
+| Gelato 1 Secret | Cross those two inside approach markers |
+| Gelato 1 Reds | Reds 3 / 5 / 8 |
+| Gelato 2 | Clear mirrors 1 / 2 / 3 |
+| Gelato 3 | Land the first, second and third successful boss ground pounds |
+| Gelato 4 Full | Collect Rocket Nozzle → enter the secret → reds 2 / 7 / 8 |
+| Gelato 4 Inside | Reds 2 / 7 / 8 |
+| Gelato 5 | Talk to Piantissimo |
+| Gelato 6 | Reds 1 / 4 / 8 |
+
+For the Gelato 1 inside markers, follow the normal forward route: they are the two requested X-position crossings, 6400 then 13560. Backtracking should not add repeats.
+
+### Pinna
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Pinna 1 | Talk to the Noki at Mecha-Bowser → boss hits 1 / 2 / 3 / 4 |
+| Pinna 2 Reds | Reds 2 / 5 / 7 |
+| Pinna 6 Full | Mount Yoshi → enter the secret → start the existing inside rail |
+| Pinna 6 Reds | Reds 2 / 3 / 6 / 8 |
+| Pinna 8 | Talk to the balloon-ride Noki → balloons 6 / 11 / 20 |
+
+### Sirena, Noki and Pianta
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Sirena 2 Reds | Press the red-coin switch → reds 3 / 5 / 6 / 8 |
+| Sirena 4 Reds | Reds 3 / 6 / 8 |
+| Sirena 8 | Reds 2 / 3 / 6 / 8 |
+| Noki 6 Reds | Press the red-coin switch → reds 2 / 4 / 6 / 8 |
+| Noki 8 | Enter the underwater area → red coin 8 |
+| Noki Hidden | Launch from the spring pad under the gold bird → make the gold bird’s Shine appear |
+| Pianta 5 Reds | Reds 2 / 3 / 6 / 8 |
+| Pianta 8 | Reds 2 / 4 / 6 / 8 |
+| Pianta Hidden | Rise through the requested height marker, Y 9700 |
+
+### Full Reds
+
+The approach stays part of the run after entering the secret. Use the default starting episode first; episode-choice testing can be a separate attempt.
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Bianco 3 Full Reds | Enter secret → reds 2 / 5 / 8 |
+| Bianco 6 Full Reds | Enter secret → reds 3 / 6 / 8 |
+| Ricco 4 Full Reds | Existing approach spin jump → enter secret → reds 1 / 4 / 6 / 8 |
+| Gelato 1 Full Reds | Make sandcastle appear → enter secret → reds 3 / 5 / 8 |
+| Pinna 2 Full Reds | Enter secret → reds 2 / 5 / 7 |
+| Pinna 6 Full Reds | Mount Yoshi → enter secret → reds 2 / 3 / 6 / 8 |
+| Sirena 2 Full Reds | Talk outside → enter secret → press red-coin switch → reds 3 / 5 / 6 / 8 |
+| Sirena 4 Full Reds | First talk → second talk → enter secret → reds 3 / 6 / 8 |
+| Noki 6 Full Reds | Cross the existing Y 4000 approach marker → enter secret → press red-coin switch → reds 2 / 4 / 6 / 8 |
+| Pianta 5 Full Reds | Existing approach spin jump → enter secret → reds 2 / 3 / 6 / 8 |
+
+Sirena 2 and Noki 6 Full Reds use all eight segments once their finish is included. Their final rows should stay visible and complete normally.
+
+### Shared route types
+
+| Routes | Checkpoints before the finish |
+|---|---|
+| Main-course 100 coins: Bianco, Ricco, Gelato, Pinna, Sirena, Noki, Pianta | Coins 10 / 25 / 50 / 75 / 100, in the chosen episode |
+| Shadow Mario: Delfino, Bianco 7, Ricco 7, Gelato 7, Pinna 7, Noki 7, Pianta 7 | Actually start talking to Shadow Mario after catching him. Merely standing nearby should not split. |
+| Sirena 7 | Talk outside → actually talk to Shadow Mario inside |
+| Airstrip opening | Begin the FLUDD cutscene → plant hits 1 / 2 / 3 |
+| Bianco Plant, Gelato Plant, Travel Skip | Plant hits 1 / 2 / 3 |
+
+### Plaza and bonus areas
+
+| Route | Checkpoints before the finish |
+|---|---|
+| Airstrip Reds | Reds 2 / 4 / 6 / 8 |
+| Pachinko | Reds 4 / 6 / 8 |
+| Lily Pad | Reds 2 / 4 / 6 / 8 |
+| Grass Secret | Reds 2 / 4 / 6 / 8 |
+| Lighthouse, Left Bell, Beach Shine, Gold Bird | Make that route’s Shine appear |
+| Right Bell, Shine Gate | Collect Rocket Nozzle → make that route’s Shine appear |
+| Sirena Enter | Mount Yoshi |
+
+**Cop Secret stays inside-only with no intermediate split.** Slide, Box Game 1/2, Chuckster, Delfino 100, Underbell and the other Enter routes also retain their finish without new intermediate checkpoints. The remaining unchanged routes do not need another pass solely for this update.
 
 ## Results to send back
 

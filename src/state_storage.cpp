@@ -46,7 +46,7 @@ void syncImport(bool finished) {
     if (sImportSize > first) syncPool(sImportOffset, sImportSize - first, finished);
 }
 
-bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc) {
+bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize = 0) {
     if (!sAvailable || sPending.command || sResultReady) return false;
     memset(&sPending, 0, sizeof(sPending));
     if (++sSequence == 0) ++sSequence;
@@ -57,8 +57,9 @@ bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc) {
     sPending.poolOffset = offset;
     sPending.packedSize = size;
     sPending.expectedHeaderCrc = crc;
-    if (command == SUSAMUNE_STATE_CMD_IMPORT) {
-        sImportSize = size;
+    sPending.reserved = windowSize;
+    if (command == SUSAMUNE_STATE_CMD_IMPORT || command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
+        sImportSize = windowSize ? windowSize : size;
         sImportOffset = offset;
         syncImport(false);
     }
@@ -104,7 +105,8 @@ void update() {
     sResult.command = sPending.command;
     sResult.status = sMailbox->response.status;
     sResult.id = sMailbox->response.resultId;
-    const bool payload = sPending.command == SUSAMUNE_STATE_CMD_IMPORT || sPending.command == SUSAMUNE_STATE_CMD_EXPORT;
+    const bool window = sPending.command == SUSAMUNE_STATE_CMD_READ_WINDOW;
+    const bool payload = window || sPending.command == SUSAMUNE_STATE_CMD_IMPORT || sPending.command == SUSAMUNE_STATE_CMD_EXPORT;
     if (sResult.status == SUSAMUNE_STATE_OK &&
         (payload || sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE)) {
         DCInvalidateRange(&sMailbox->header, sizeof(sMailbox->header));
@@ -128,6 +130,15 @@ void update() {
             if (sResult.status == SUSAMUNE_STATE_OK) {
                 sResult.header = h;
                 memcpy(sResult.name, sMailbox->resultName, sizeof(sResult.name));
+                if (window) {
+                    DCInvalidateRange(&sMailbox->window, sizeof(sMailbox->window));
+                    sResult.window = sMailbox->window;
+                    bool valid = sResult.window.offset == sPending.poolOffset &&
+                        sResult.window.size == sPending.reserved &&
+                        sMailbox->response.transferred == sPending.reserved;
+                    for (u32 i = 0; i < 5; ++i) valid = valid && !sResult.window.reserved[i];
+                    if (!valid) sResult.status = SUSAMUNE_STATE_BAD_FILE;
+                }
             }
         }
     } else if (sPending.command == SUSAMUNE_STATE_CMD_CATALOG) {
@@ -182,6 +193,10 @@ bool startImport(u32 id, u32 crc, u32 size, u32 offset) {
     if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !SusamuneStateImportRange(offset, size)) return false;
     if (size > StatePoolMemoryCapacity(&memory) || !StatePoolMemoryRangeValid(&memory, offset, tail)) return false;
     return submit(SUSAMUNE_STATE_CMD_IMPORT, id, offset, size, crc);
+}
+bool startWindow(u32 id, u32 crc, u32 packed, u32 offset, u32 size) {
+    if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !SusamuneStateWindowRange(packed, offset, size)) return false;
+    return submit(SUSAMUNE_STATE_CMD_READ_WINDOW, id, offset, packed, crc, size);
 }
 bool refresh(u32 afterId) {
     if (afterId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) return false;

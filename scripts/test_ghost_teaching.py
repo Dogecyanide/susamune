@@ -88,7 +88,7 @@ class TeachingTests(unittest.TestCase):
         data = teaching_file()
         changes = [
             (8, struct.pack(">I", 54001)),
-            (12, struct.pack(">I", 7)),
+            (12, struct.pack(">I", 9)),
             (16, struct.pack(">I", 2)),
             (24, b"\x01"),
             (32, struct.pack(">I", 99)),
@@ -117,9 +117,9 @@ class TeachingTests(unittest.TestCase):
         samples += [(0, 0, 0, 0, 4, 0, 0)] * 26973
         base = build_ghost(version=4, samples=samples, start_qf=0)
         inputs = [(i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) for i in range(54000)]
-        splits = [(i, 0x1AF7E430, 0, i, 0) for i in range(6)]
+        splits = [(i, 0x1AF7E430, 0, i, 0) for i in range(8)]
         data = teaching_file(inputs, splits, base)
-        self.assertEqual(len(data), 1297992)
+        self.assertEqual(len(data), 1298016)
         self.assertLessEqual(len(data), 0x13E000)
         self.assertLessEqual(len(inputs) * 16, 0xE0000)
         self.assertEqual(ghost.validate_ghost(data)["teaching"]["input_count"], 54000)
@@ -174,7 +174,7 @@ class TeachingTests(unittest.TestCase):
                          teaching_file(inputs=[], splits=[(104, 1, 0, 0, 0)])]
                 samples = [(0, 0, 0, 0, 0, 0, 0)] + [(0, 0, 0, 0, 4, 0, 0)] * 26973
                 inputs = [(i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) for i in range(54000)]
-                valid.append(teaching_file(inputs, [(i, 1, 0, i, 0) for i in range(6)],
+                valid.append(teaching_file(inputs, [(i, 1, 0, i, 0) for i in range(8)],
                                            build_ghost(version=4, samples=samples, start_qf=0)))
                 for data in valid:
                     self.assertEqual(decoder.validate(data, len(data)), 1)

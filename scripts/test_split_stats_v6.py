@@ -52,7 +52,7 @@ B2_ROUTE = 13
 
 ROUTE_ENTRIES = tuple(schema.ROUTE_ENTRIES)
 V5_ROUTE_ENTRIES = tuple(schema.V5_ROUTE_ENTRIES)
-ROUTE_COUNTS = tuple(len(points) + 1 for points in schema.CHECKPOINTS)
+ROUTE_COUNTS = tuple(len(points) + 1 for points in schema.V8_CHECKPOINTS)
 V5_ROUTE_COUNTS = tuple(len(points) + 1 for points in schema.V5_CHECKPOINTS)
 ROUTE_FIRST = tuple(
     (0,) + tuple(accumulate(ROUTE_COUNTS[:-1]))
@@ -282,21 +282,21 @@ class SchemaContracts(unittest.TestCase):
         self.assertEqual(ROUTE_ENTRIES[V5_ROUTES:], missing)
 
     def test_schema_counts_hash_and_terminal_only_routes_are_frozen(self) -> None:
-        self.assertEqual(schema.EXPECTED_SCHEMA_HASH, SCHEMA_HASH)
-        self.assertEqual(schema.schema_hash(), SCHEMA_HASH)
+        self.assertEqual(schema.EXPECTED_V8_SCHEMA_HASH, SCHEMA_HASH)
+        self.assertEqual(schema.schema_hash(schema.V8_CHECKPOINTS), SCHEMA_HASH)
         self.assertEqual(schema.EXPECTED_V5_SCHEMA_HASH, V5_SCHEMA_HASH)
         self.assertEqual(schema.v5_schema_hash(), V5_SCHEMA_HASH)
-        self.assertEqual(sum(len(points) for points in schema.CHECKPOINTS),
+        self.assertEqual(sum(len(points) for points in schema.V8_CHECKPOINTS),
                          CHECKPOINTS)
         self.assertEqual(sum(ROUTE_COUNTS), SEGMENTS)
         self.assertEqual(ROUTE_COUNTS[10], 1)
         self.assertEqual(ROUTE_COUNTS[31], 1)
         for route in range(V5_ROUTES):
             if route not in TERMINAL_ONLY_CHANGED and route != B2_ROUTE:
-                self.assertEqual(schema.CHECKPOINTS[route],
+                self.assertEqual(schema.V8_CHECKPOINTS[route],
                                  schema.V5_CHECKPOINTS[route])
         self.assertEqual(
-            schema.CHECKPOINTS[B2_ROUTE],
+            schema.V8_CHECKPOINTS[B2_ROUTE],
             (
                 "scene=02:00;trigger=mario-status-enter;"
                 "status=rollout;y>=3200",
@@ -322,10 +322,13 @@ class SchemaContracts(unittest.TestCase):
                 "actor=petey;value=3",
             ),
         )
-        self.assertTrue(all(not points for points in schema.CHECKPOINTS[V5_ROUTES:]))
+        self.assertTrue(all(not points for points in schema.V8_CHECKPOINTS[V5_ROUTES:]))
 
     def test_source_route_table_consumes_bianco_fmv_slot(self) -> None:
-        routes = parse_route_table(SPLITS.read_text(encoding="utf-8"))
+        kernel = KERNEL.read_text(encoding="utf-8")
+        routes = tuple(zip(parse_numeric_array(kernel, "SplitV8RouteFirst"),
+                           ROUTE_ENTRIES,
+                           (count - 1 for count in parse_numeric_array(kernel, "SplitV8RouteCount"))))
         expected = tuple(
             (ROUTE_FIRST[i], ROUTE_ENTRIES[i], ROUTE_COUNTS[i] - 1)
             for i in range(ROUTES)
@@ -382,10 +385,10 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
     def test_v8_header_and_legacy_struct_sizes_are_frozen(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
         expected = {
-            "SUSAMUNE_SPLIT_STATS_VERSION": VERSION,
-            "SUSAMUNE_SPLIT_STATS_ROUTE_COUNT": ROUTES,
-            "SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT": SEGMENTS,
-            "SUSAMUNE_SPLIT_STATS_SCHEMA_HASH": SCHEMA_HASH,
+            "SUSAMUNE_SPLIT_STATS_VERSION_V8": VERSION,
+            "SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT": ROUTES,
+            "SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT": SEGMENTS,
+            "SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH": SCHEMA_HASH,
             "SUSAMUNE_SPLIT_STATS_V7_ROUTE_COUNT": V7_ROUTES,
             "SUSAMUNE_SPLIT_STATS_V7_SEGMENT_COUNT": V7_SEGMENTS,
             "SUSAMUNE_SPLIT_STATS_V7_SCHEMA_HASH": V7_SCHEMA_HASH,
@@ -401,16 +404,16 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
         self.assertRegex(
             header,
             r"routeStats\s*\[SUSAMUNE_SPLIT_STATS_REGION_COUNT\]\s*"
-            r"\[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT\];\s*"
+            r"\[SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT\];\s*"
             r"(?:/\*.*?\*/\s*|//[^\n]*\n\s*)*"
             r"unsigned int playedQf\s*\[SUSAMUNE_SPLIT_STATS_REGION_COUNT\]\s*"
-            r"\[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT\];\s*"
+            r"\[SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT\];\s*"
             r"unsigned int bestQf",
         )
-        self.assertIn("sizeof(struct SusamuneSplitStatsPayload) == 0x744C",
+        self.assertIn("sizeof(struct SusamuneSplitStatsPayloadV8) == 0x744C",
                       header)
-        self.assertIn("sizeof(struct SusamuneSplitStatsCfg) == 0x7500", header)
-        self.assertIn("sizeof(struct SusamuneSplitStatsFile) == 0x74A0", header)
+        self.assertIn("sizeof(struct SusamuneSplitStatsCfgV8) == 0x7500", header)
+        self.assertIn("sizeof(struct SusamuneSplitStatsFileV8) == 0x74A0", header)
         self.assertIn("sizeof(struct SusamuneSplitStatsPayloadV7) == 0x6E34",
                       header)
         self.assertIn("sizeof(struct SusamuneSplitStatsFileV7) == 0x6FE0",
@@ -439,7 +442,7 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
         self.assertEqual(macro(header, "SUSAMUNE_SPLIT_STATS_CFG_OFFSET"),
                          CFG_OFFSET)
         self.assertIn(
-            "SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfg) ==",
+            "SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfgV8) ==",
             header,
         )
         self.assertIn("SUSAMUNE_MEM2_PB_LIVE_PPC_BASE - SUSAMUNE_MEM2_CFG_PPC_BASE",
@@ -457,7 +460,7 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
         self.assertIn("susamune_il_stats_v6_b.bin", kernel)
         self.assertIn("susamune_il_stats_v5_a.bin", kernel)
         self.assertIn("susamune_il_stats_v5_b.bin", kernel)
-        init = function_block(kernel, "static bool InitSplitStatsFiles(")
+        init = function_block(kernel, "static bool InitSplitStatsV8Files(")
         self.assertIn("ReadSplitStatsV7File", init)
         self.assertIn("MigrateSplitStatsV7", init)
         self.assertIn("ReadSplitStatsV6File", init)
@@ -475,17 +478,17 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
     def test_future_or_unknown_current_files_disable_writes_and_fallback(self) -> None:
         kernel = KERNEL.read_text(encoding="utf-8")
         reader = function_block(
-            kernel, "static enum PbReadResult ReadSplitStatsFile("
+            kernel, "static enum PbReadResult ReadSplitStatsV8File("
         )
         self.assertIn("file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC", reader)
-        self.assertIn("file->version != SUSAMUNE_SPLIT_STATS_VERSION", reader)
+        self.assertIn("file->version != SUSAMUNE_SPLIT_STATS_VERSION_V8", reader)
         self.assertIn("!SplitStatsV8SchemaSupported(file->schemaHash)", reader)
         supported = function_block(kernel, "static bool SplitStatsV7SchemaSupported(")
         self.assertIn("SUSAMUNE_SPLIT_STATS_V7_SCHEMA_HASH", supported)
         self.assertIn("SUSAMUNE_SPLIT_STATS_PREVIOUS_SCHEMA_HASH", supported)
         self.assertGreaterEqual(reader.count("return PB_READ_UNSAFE;"), 3)
 
-        init = function_block(kernel, "static bool InitSplitStatsFiles(")
+        init = function_block(kernel, "static bool InitSplitStatsV8Files(")
         unsafe = init.index("if (readResult == PB_READ_UNSAFE)")
         unsafe_tail = init[unsafe:unsafe + 180]
         self.assertIn("safe = false;", unsafe_tail)
@@ -496,9 +499,9 @@ class LayoutAndPersistenceContracts(unittest.TestCase):
 
     def test_played_time_is_hashed_but_not_pb_range_validated(self) -> None:
         kernel = KERNEL.read_text(encoding="utf-8")
-        checksum = function_block(kernel, "static u32 SplitStatsChecksum(")
+        checksum = function_block(kernel, "static u32 SplitStatsV8Checksum(")
         self.assertIn("payload->playedQf[region][route]", checksum)
-        valid = function_block(kernel, "static bool SplitStatsPayloadValid(")
+        valid = function_block(kernel, "static bool SplitStatsV8PayloadValid(")
         self.assertIn("payload->bestQf[region][segment]", valid)
         self.assertNotIn("playedQf", valid)
         source = SPLITS.read_text(encoding="utf-8")
@@ -727,9 +730,9 @@ class MigrationContracts(unittest.TestCase):
 
     def test_kernel_route_arrays_and_special_migration_match_model(self) -> None:
         kernel = KERNEL.read_text(encoding="utf-8")
-        self.assertEqual(parse_numeric_array(kernel, "SplitRouteFirst"),
+        self.assertEqual(parse_numeric_array(kernel, "SplitV8RouteFirst"),
                          ROUTE_FIRST)
-        self.assertEqual(parse_numeric_array(kernel, "SplitRouteCount"),
+        self.assertEqual(parse_numeric_array(kernel, "SplitV8RouteCount"),
                          ROUTE_COUNTS)
         self.assertEqual(parse_numeric_array(kernel, "SplitV5RouteFirst"),
                          V5_ROUTE_FIRST)
@@ -757,11 +760,11 @@ class MigrationContracts(unittest.TestCase):
         self.assertIn("dst->routeStats[region][route].golds = 0", migration_v6)
         self.assertIn("if (b2 && local == 0)", migration_v6)
         self.assertIn("(b2 ? 1u : 0u)", migration_v6)
-        init = function_block(kernel, "static bool InitSplitStatsFiles(")
+        init = function_block(kernel, "static bool InitSplitStatsV8Files(")
         migrate_v6_call = init.index("MigrateSplitStatsV6")
-        self.assertIn("ResetSplitStatsPayload", init[:migrate_v6_call])
+        self.assertIn("ResetSplitStatsV8Payload", init[:migrate_v6_call])
         migrate_call = init.index("MigrateSplitStatsV5")
-        self.assertIn("ResetSplitStatsPayload", init[:migrate_call])
+        self.assertIn("ResetSplitStatsV8Payload", init[:migrate_call])
 
 
 class PlayedTimeContracts(unittest.TestCase):

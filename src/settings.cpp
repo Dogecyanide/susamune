@@ -16,6 +16,7 @@
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
 #include "susamune/mario_colors.hxx"
+#include "susamune/iling.hxx"
 #include "susamune/fludd_colors.hxx"
 #include "susamune/input_display.hxx"
 #include "susamune/metadata_display.hxx"
@@ -229,6 +230,7 @@ void Settings::resetDefaults() {
     gCreationExtras.resetDefaults();
     MarioColors::resetDefaults();
     FluddColors::resetDefaults();
+    ILing::resetEpisodeChoices();
 
     for (int i = 0; i < SETTING_COUNT; i++) {
         mValues[i] = defaultValue(kSettingDescs[i]);
@@ -323,6 +325,8 @@ void Settings::save() {
         DCStoreRange(SUSAMUNE_MARIO_COLORS_LIVE_PTR, sizeof(SusamuneMarioColorsCfg));
     if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
         DCStoreRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(SusamuneFluddColorsCfg));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES)
+        DCStoreRange(SUSAMUNE_IL_EPISODES_LIVE_PTR, sizeof(SusamuneILEpisodesCfg));
 
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
@@ -464,6 +468,13 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
         FluddColors::adopt(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
     }
 
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_IL_EPISODES_LIVE_PTR, sizeof(SusamuneILEpisodesCfg));
+#endif
+        ILing::adoptEpisodes(SUSAMUNE_IL_EPISODES_LIVE_PTR);
+    }
+
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
     mSaveState = SETTINGS_SAVE_IDLE;
@@ -494,6 +505,8 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
         MarioColors::stageInto(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
     if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
         FluddColors::stageInto(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES)
+        ILing::stageEpisodes(SUSAMUNE_IL_EPISODES_LIVE_PTR);
     MarioColors::clearDirty();
     FluddColors::clearDirty();
 }

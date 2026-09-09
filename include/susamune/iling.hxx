@@ -6,6 +6,7 @@
 #include "susamune/assist.hxx"
 
 class Menu;
+struct SusamuneILEpisodesCfg;
 namespace LevelWarp {
 struct Dest;
 }
@@ -19,6 +20,12 @@ void onPersistenceReady();
 int count();
 const char *label(int entry);
 const char *shortLabel(int entry);
+bool canChooseEpisode(int entry);
+int selectedEpisode(int entry);
+void setEpisode(int entry, int episode);
+void resetEpisodeChoices();
+void adoptEpisodes(const volatile SusamuneILEpisodesCfg *cfg);
+void stageEpisodes(volatile SusamuneILEpisodesCfg *cfg);
 // All IL catalogue entries, including bonus and 100-coin Shines, may streak.
 bool streakEntrySelectable(int entry);
 // A Streaking finish may be any Shine collected from the selected start scene.

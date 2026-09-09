@@ -39,7 +39,7 @@ ROUTES = 132
 SEGMENTS = 285
 REGIONS = 3
 PROFILES = 4
-SCHEMA_HASH = checkpoint_schema.EXPECTED_SCHEMA_HASH
+SCHEMA_HASH = checkpoint_schema.EXPECTED_V8_SCHEMA_HASH
 V2_SCHEMA_HASH = 0xE70B57F8
 PR7_SCHEMA_HASH = 0xB9B6E310
 UNSET = 0xFFFFFFFF
@@ -80,7 +80,7 @@ V5_ROUTE_COUNTS = (
     3, 5, 4, 2, 5, 3, 2, 4, 5, 4,
     2,
 )
-ROUTE_COUNTS = tuple(len(row) + 1 for row in checkpoint_schema.CHECKPOINTS)
+ROUTE_COUNTS = tuple(len(row) + 1 for row in checkpoint_schema.V8_CHECKPOINTS)
 ROUTE_FIRST = tuple(
     sum(ROUTE_COUNTS[:route])
     for route in range(ROUTES)
@@ -183,7 +183,7 @@ def generation_is_newer(candidate: int, current: int) -> bool:
 
 
 def schema_hash() -> int:
-    return checkpoint_schema.schema_hash()
+    return checkpoint_schema.schema_hash(checkpoint_schema.V8_CHECKPOINTS)
 
 
 def blank_payload() -> dict[str, list]:
@@ -621,7 +621,7 @@ class SplitContractTests(unittest.TestCase):
     def test_exact_layout_constants(self) -> None:
         text = HEADER.read_text(encoding="utf-8")
         expected = {
-            "SUSAMUNE_SPLIT_STATS_SCHEMA_HASH":
+            "SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH":
                 f"0x{SCHEMA_HASH:08X}u",
             "SUSAMUNE_SPLIT_STATS_V6_SCHEMA_HASH": "0xF7EAA0C4u",
             "SUSAMUNE_SPLIT_STATS_V5_SCHEMA_HASH": "0xA91743AAu",
@@ -632,13 +632,13 @@ class SplitContractTests(unittest.TestCase):
         }
         for name, value in expected.items():
             self.assertRegex(text, rf"#define\s+{name}\s+{value}")
-        self.assertIn("SUSAMUNE_SPLIT_STATS_VERSION        8u", text)
-        self.assertIn("SUSAMUNE_SPLIT_STATS_ROUTE_COUNT    132u", text)
-        self.assertIn("SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT  285u", text)
+        self.assertIn("SUSAMUNE_SPLIT_STATS_VERSION_V8     8u", text)
+        self.assertIn("SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT 132u", text)
+        self.assertIn("SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT 285u", text)
         self.assertIn("SUSAMUNE_ILING_PB_SLOT_COUNT          136u", text)
-        self.assertIn("sizeof(struct SusamuneSplitStatsPayload) == 0x744C", text)
-        self.assertIn("sizeof(struct SusamuneSplitStatsCfg) == 0x7500", text)
-        self.assertIn("sizeof(struct SusamuneSplitStatsFile) == 0x74A0", text)
+        self.assertIn("sizeof(struct SusamuneSplitStatsPayloadV8) == 0x744C", text)
+        self.assertIn("sizeof(struct SusamuneSplitStatsCfgV8) == 0x7500", text)
+        self.assertIn("sizeof(struct SusamuneSplitStatsFileV8) == 0x74A0", text)
         self.assertIn("sizeof(struct SusamuneSplitStatsFileV7) == 0x6FE0", text)
         self.assertIn("sizeof(struct SusamuneSplitStatsFileV5) == 0x47E0", text)
         self.assertIn("sizeof(struct SusamuneSplitStatsFileV4) == 0x47E0", text)
@@ -653,7 +653,7 @@ class SplitContractTests(unittest.TestCase):
         source = SPLITS.read_text(encoding="utf-8")
         self.assertNotIn("SPLIT_STATS_RUNTIME", text)
         self.assertIn("Runtime sStateStorage;", source)
-        self.assertIn("sizeof(Runtime) == 0x74A8", source)
+        self.assertIn("sizeof(Runtime) == 0x3790", source)
         self.assertEqual(MAILBOX_OFFSET + MAILBOX_SIZE, 0xF780)
 
     def test_route_indices_match_catalog_labels(self) -> None:
@@ -662,10 +662,10 @@ class SplitContractTests(unittest.TestCase):
         for entry, name in zip(ROUTE_ENTRIES, ROUTE_CATALOG_NAMES):
             self.assertEqual(labels[entry], name)
         source = SPLITS.read_text(encoding="utf-8")
-        for first, entry, checkpoints in zip(
-            ROUTE_FIRST, ROUTE_ENTRIES, ROUTE_CHECKPOINTS
-        ):
-            self.assertIn(f"{{{first}, {entry}, {checkpoints}}}", source)
+        first = 0
+        for entry, checkpoints in zip(ROUTE_ENTRIES, checkpoint_schema.CHECKPOINTS):
+            self.assertIn(f"{{{first}, {entry}, {len(checkpoints)}}}", source)
+            first += len(checkpoints) + 1
 
     def test_append_only_public_route_ids(self) -> None:
         text = SPLIT_API.read_text(encoding="utf-8")
@@ -722,7 +722,7 @@ class SplitContractTests(unittest.TestCase):
     def test_schema_hash_golden_vector(self) -> None:
         self.assertEqual(checkpoint_schema.ROUTE_ENTRIES, ROUTE_ENTRIES)
         self.assertEqual(
-            tuple(map(len, checkpoint_schema.CHECKPOINTS)),
+            tuple(map(len, checkpoint_schema.V8_CHECKPOINTS)),
             ROUTE_CHECKPOINTS,
         )
         self.assertEqual(schema_hash(), SCHEMA_HASH)
@@ -984,7 +984,7 @@ class SplitContractTests(unittest.TestCase):
                                  payload["pb"][region][profile][b2_end])
 
         kernel = KERNEL.read_text(encoding="utf-8")
-        self.assertIn("const u32 count = SplitRouteCount[route];", kernel)
+        self.assertIn("const u32 count = SplitV8RouteCount[route];", kernel)
 
     def test_v2_migration_preserves_history_but_resets_changed_routes(self) -> None:
         payload = blank_v2_payload()
@@ -1428,11 +1428,11 @@ class SplitContractTests(unittest.TestCase):
         self.assertIn("ReadSplitStatsV1File", source)
         self.assertIn("MigrateSplitStatsV1", source)
         self.assertIn("SUSAMUNE_SPLIT_STATS_FLAG_MIGRATED", source)
-        v5_read = source[source.index("static enum PbReadResult ReadSplitStatsFile") :]
+        v5_read = source[source.index("static enum PbReadResult ReadSplitStatsV8File") :]
         v5_read = v5_read[:v5_read.index("static bool SplitStatsV4PayloadValid")]
         self.assertGreaterEqual(v5_read.count("return PB_READ_UNSAFE;"), 4)
-        self.assertIn("struct SusamuneSplitStatsFile, generation", v5_read)
-        self.assertIn("file->checksum != SplitStatsChecksum(file)", v5_read)
+        self.assertIn("struct SusamuneSplitStatsFileV8, generation", v5_read)
+        self.assertIn("file->checksum != SplitStatsV8Checksum(file)", v5_read)
         self.assertIn("!SplitStatsV8SchemaSupported(file->schemaHash)", v5_read)
         v7_read = source[source.index("static enum PbReadResult ReadSplitStatsV7File") :]
         v7_read = v7_read[:v7_read.index("static void MigrateSplitStatsV7")]
@@ -1470,7 +1470,7 @@ class SplitContractTests(unittest.TestCase):
         self.assertIn("changedRoutes[] = {4, 5, 6}", migrate_pr7)
         self.assertIn("routeStats[region][route].golds = 0", migrate_pr7)
         self.assertIn("pbIdentityQf[region][profile][route]", migrate_pr7)
-        init_v2 = source[source.index("static bool InitSplitStatsFiles") :]
+        init_v2 = source[source.index("static bool InitSplitStatsV8Files") :]
         init_v2 = init_v2[:init_v2.index("static int WriteSplitStatsFile")]
         self.assertIn("selectedSchemaHash", init_v2)
         self.assertIn("MigrateSplitStatsPr7(&SplitStatsV2Selected);", init_v2)

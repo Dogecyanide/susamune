@@ -128,6 +128,9 @@ u32 sTapeStart;
 u16 sPriorButtons;
 u16 sStripButtons;
 u16 sStartRelease;
+u16 sLoadHoldButtons;
+bool sLoadHoldActive;
+bool sLoadHoldPending;
 char sReplayFailure[64];
 const char *sStatus = "Save a state before recording";
 
@@ -187,6 +190,11 @@ bool controlStage() {
             gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU);
 }
 
+bool introStage() {
+    return stageReady() &&
+           gpMarDirector->mCurState <= TMarDirector::STATE_GAME_STARTING;
+}
+
 bool observerTransition() {
     return Ghost::observerLoading() || Ghost::observerCleanupPending();
 }
@@ -224,6 +232,14 @@ bool activatePendingPause(bool secondaryTick = false) {
     sFreeze = true;
     invalidate();
     message("Gameplay paused - press Step to advance");
+    return true;
+}
+
+bool activatePendingLoadHold(bool secondaryTick = false) {
+    if (!sLoadHoldPending || sModal || !actionableStage(secondaryTick)) return false;
+    sLoadHoldPending = false;
+    sLoadHoldActive = true;
+    sFreeze = true;
     return true;
 }
 
@@ -579,8 +595,13 @@ extern "C" s32 susamunePracticeChangeState(TMarDirector *director) {
     if (sBorrowedPause) return TApplication::CONTEXT_DIRECT_MAIN_LOOP;
     const s32 result = reinterpret_cast<s32 (*)(TMarDirector *)>(kChangeState)(director);
     const bool secondaryTick = (director->mGameState & 0x4000u) == 0;
-    if (result <= TApplication::CONTEXT_DIRECT_MAIN_LOOP &&
-        activatePendingPause(secondaryTick)) {
+    bool pauseActivated = false;
+    bool loadActivated = false;
+    if (result <= TApplication::CONTEXT_DIRECT_MAIN_LOOP) {
+        pauseActivated = activatePendingPause(secondaryTick);
+        loadActivated = activatePendingLoadHold(secondaryTick);
+    }
+    if (pauseActivated || loadActivated) {
         sReadPad = gpApplication.mGamePads[0];
         sHaveRead = true;
         // Keep nextStateInitialize's newly enabled pad flags across the hold.
@@ -619,6 +640,7 @@ void init() {
 }
 
 void beforeStageSetup() {
+    cancelLoadHold();
     sCameraWaitButtons = false;
     restoreCamera();
     ++sStageGeneration;
@@ -646,9 +668,14 @@ void beforeDirect(bool modalOwnsInput) {
     sConsumedFrame = false;
     sStepping = false;
     sModal = modalOwnsInput;
+    if (sLoadHoldButtons && (sPhysical.error != 0 ||
+        (sPhysical.buttons & sLoadHoldButtons) != sLoadHoldButtons))
+        cancelLoadHold();
     const bool injectedBeforeDirect = sFrameInjected;
     activatePendingPause();
+    activatePendingLoadHold();
     if (!controlStage()) {
+        if (!introStage()) cancelLoadHold();
         sCameraWaitButtons = false;
         sPaused = false;
         sStepQueued = false;
@@ -686,7 +713,7 @@ void beforeDirect(bool modalOwnsInput) {
         }
         sMenuAction = 0;
     }
-    if (!sLoadKind && sPaused && normalStage() && !sModal && !sMenuAction && sStepQueued &&
+    if (!sLoadHoldActive && !sLoadKind && sPaused && normalStage() && !sModal && !sMenuAction && sStepQueued &&
         !actionsFastForwardActive()) {
         sStepping = true;
         sStepQueued = false;
@@ -698,7 +725,7 @@ void beforeDirect(bool modalOwnsInput) {
         inject(sConsumed, sReadPad);
         sReadPad->updateMeaning();
     }
-    sFreeze = (sPaused || sLoadKind) && !sStepping && normalStage();
+    sFreeze = (sPaused || sLoadKind || sLoadHoldActive) && !sStepping && normalStage();
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         retainPausedReleases(sReadPad);
     }
@@ -710,7 +737,7 @@ void beforeDirect(bool modalOwnsInput) {
 }
 
 bool freezeRequested() { return sFreeze; }
-bool ownsGameplayInput() { return sPaused || sFreeCamera || sReplay || sLoadKind != 0; }
+bool ownsGameplayInput() { return sPaused || sFreeCamera || sReplay || sLoadKind != 0 || sLoadHoldActive; }
 
 void afterDirect(s32 appState, bool gameplayActive) {
     gQFTTimer.endPracticePause();
@@ -722,6 +749,7 @@ void afterDirect(s32 appState, bool gameplayActive) {
     restoreCamera();
     // Retail keeps looping for WAIT (0) and DEFAULT (1).
     if (!stageReady() || appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP) {
+        cancelLoadHold();
         sCameraWaitButtons = false;
         if (sRecord || sReplay) stopTape("Input session ended: scene transition");
         sFreeCamera = false;
@@ -880,6 +908,16 @@ void onSavestateCleared(u32 slot, u32 generation) {
 }
 
 void onSavestateLoaded() {
+    const bool held = !sOwnLoad && sLoadHoldButtons && sPhysical.error == 0 &&
+        (sPhysical.buttons & sLoadHoldButtons) == sLoadHoldButtons;
+    sLoadHoldActive = held && controlStage();
+    sLoadHoldPending = held && introStage();
+    if (!sLoadHoldActive && !sLoadHoldPending) sLoadHoldButtons = 0;
+    // An intro must finish enabling Mario before the previous pause can resume.
+    if (sLoadHoldPending && sPaused) {
+        sPausePending = true;
+        sPaused = false;
+    }
     sCameraWaitButtons = false;
     sMenuAction = 0;
     restoreCamera();
@@ -890,6 +928,20 @@ void onSavestateLoaded() {
     if (!sOwnLoad) stopTape(nullptr);
     invalidate();
 }
+
+void armLoadHold(u16 buttons) {
+    sLoadHoldButtons = buttons;
+    sLoadHoldActive = false;
+    sLoadHoldPending = false;
+}
+
+void cancelLoadHold() {
+    sLoadHoldButtons = 0;
+    sLoadHoldActive = false;
+    sLoadHoldPending = false;
+}
+
+bool holdingLoad() { return sLoadHoldActive; }
 
 bool requestPauseToggle(bool fromMenu) {
     if (!available() || !sCollisionHooksReady || !sStateHookReady) {
@@ -1064,6 +1116,7 @@ void requestStop() {
 }
 
 void releaseForDeparture() {
+    cancelLoadHold();
     sCameraWaitButtons = false;
     const bool restoreInput = sFrameInjected || sPaused || sFreeCamera || sFreeze;
     restoreCamera();
@@ -1085,7 +1138,8 @@ void releaseForDeparture() {
     sStripButtons = 0;
 }
 
-bool paused() { return sPaused; }
+bool paused() { return sPaused || sLoadHoldActive; }
+bool manualPaused() { return sPaused; }
 bool pausePending() { return sPausePending; }
 bool freeCamera() { return sFreeCamera; }
 bool recording() { return sRecord; }

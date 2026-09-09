@@ -39,7 +39,7 @@ static void DCFlushRange(void *p,u32 n) {
 static void DCInvalidateRange(void *p,u32 n) {if(invalidateCount<32)invalidated[invalidateCount++]={p,n};}
 static u64 OSGetTime() {return 0x123456789ABCULL;}
 namespace StateStorage {
-struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];};
+struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];SusamuneStateWindowReceipt window;};
 bool busy();
 }
 '''
@@ -55,6 +55,13 @@ __declspec(dllexport) void reset(u32 pending) {
  StateStorage::init();
 }
 __declspec(dllexport) u32 beginImport(u32 size,u32 offset) {return StateStorage::startImport(7,999,size,offset);}
+__declspec(dllexport) u32 beginWindow(u32 packed,u32 offset,u32 size,u32 crc) {return StateStorage::startWindow(7,crc,packed,offset,size);}
+__declspec(dllexport) u32 prepareWindow(u32 packed) {
+ auto &h=testMailbox.header;memset(&h,0,sizeof(h));h.magic=SUSAMUNE_STATE_ARCHIVE_MAGIC;h.version=1;
+ h.headerSize=sizeof(h);h.metadataSize=8;h.packedSize=packed;h.rawSize=packed*2;h.gameId=0x474D5345;
+ h.buildCrc=12;h.snapshotVersion=15;h.configId=123;h.metadataCrc=SusamuneStateCrc(testMailbox.metadata,8);
+ h.headerCrc=SusamuneStateHeaderCrc(&h);return h.headerCrc;
+}
 __declspec(dllexport) u32 poolSize(void) {return SUSAMUNE_STATE_POOL_SIZE;}
 __declspec(dllexport) u32 stagingSize(void) {return SUSAMUNE_STATE_STAGING_SIZE;}
 __declspec(dllexport) u32 version(void) {return SUSAMUNE_STATE_STORAGE_VERSION;}
@@ -80,6 +87,16 @@ __declspec(dllexport) void acknowledge(u32 status,u32 change,u32 oldSeq) {
  if(oldSeq)testMailbox.response.ackSeq=oldSeq;
 }
 __declspec(dllexport) u32 result(void) {StateStorage::Result r;return StateStorage::takeResult(r)?r.status:999;}
+__declspec(dllexport) void windowReceipt(u32 corrupt) {
+ acknowledge(0,0,0);auto &r=testMailbox.receipt;auto &h=testMailbox.header;auto &w=testMailbox.window;
+ r.headerCrc=h.headerCrc;r.packedSize=h.packedSize;r.metadataSize=h.metadataSize;
+ r.reserved=SusamuneStateCrc(testMailbox.resultName,32);testMailbox.response.resultId=testMailbox.request.id;
+ w.offset=testMailbox.request.poolOffset;w.size=testMailbox.request.reserved;w.checksum=42;
+ testMailbox.response.transferred=w.size;
+ if(corrupt==1)w.offset++;if(corrupt==2)w.size--;if(corrupt==3)w.reserved[4]=1;
+ if(corrupt==4)testMailbox.response.transferred--;if(corrupt==5)testMailbox.metadata[0]^=1;
+ if(corrupt==6)testMailbox.response.resultId++;if(corrupt==7)r.headerCrc++;
+}
 __declspec(dllexport) void tick(void) {StateStorage::update();}
 __declspec(dllexport) u32 busy(void) {return StateStorage::busy();}
 __declspec(dllexport) u32 cancel(void) {return StateStorage::cancel();}
@@ -224,7 +241,7 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
 
     def test_previous_protocol_with_old_bank_boundary_exposes_no_service(self):
         self.assertGreater(self.lib.version(),3)
-        for version in (2,3):
+        for version in (2,3,4):
             with self.subTest(version=version):
                 self.lib.reset(0)
                 self.assertEqual(self.lib.setVersion(version),0)
@@ -286,6 +303,33 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
                 self.lib.mutationReceipt(corrupt);self.lib.tick()
                 if corrupt:self.assertEqual(self.lib.result(),3)
                 else:self.assertEqual(self.lib.renamedResult(),1)
+
+    def test_window_bounds_and_verified_receipt_before_releasing_staging(self):
+        for packed,offset,size in ((0,0,1),(100,100,1),(100,0,101),(100,0,0),
+                                   (0x500000,0,self.staging_size+1),(100,0xffffffff,10)):
+            self.assertEqual(self.lib.beginWindow(packed,offset,size,123),0)
+        for corrupt in range(8):
+            with self.subTest(corrupt=corrupt):
+                self.lib.reset(0)
+                crc=self.lib.prepareWindow(0x500123)
+                self.assertEqual(self.lib.beginWindow(0x500123,0x400000,0x100123,crc),1)
+                self.lib.clearCacheLog()
+                self.lib.windowReceipt(corrupt);self.lib.tick()
+                self.assertEqual(self.lib.result(),3 if corrupt else 0)
+                self.assertEqual(self.lib.stagingInvalidations(),1)
+                self.assertEqual(self.lib.busy(),0)
+
+    def test_canceled_window_rejects_late_read_receipt_and_keeps_ownership(self):
+        crc=self.lib.prepareWindow(0x500000)
+        self.assertEqual(self.lib.beginWindow(0x500000,0x400000,0x100000,crc),1)
+        old=self.lib.seq();self.lib.clearCacheLog()
+        self.assertEqual(self.lib.cancel(),1)
+        self.lib.acknowledge(0,0,old);self.lib.tick()
+        self.assertEqual(self.lib.stagingInvalidations(),0)
+        self.assertEqual(self.lib.busy(),1)
+        self.lib.acknowledge(6,0,0);self.lib.tick()
+        self.assertEqual(self.lib.result(),6)
+        self.assertEqual(self.lib.stagingInvalidations(),1)
 
 
 if __name__ == '__main__': unittest.main()

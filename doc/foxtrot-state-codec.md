@@ -65,6 +65,7 @@ ownership differs:
 | Local RAM state | Produced by this codec; compiled metadata/ranges and current packed CRC rechecked | One writing decode through `decompressVerified` |
 | SD file imported into RAM | ARM verifies file CRCs; PPC fully validates the stream before committing the slot; subsequent RAM loads recheck its cached CRC and live owner profile | One writing decode on later RAM loads |
 | SD file selected directly for Load | File checks and metadata/owner admission, then full stream validation while staged bytes remain owned | `decompress`: validation decode followed by writing decode |
+| SD file with insufficient staging space | Prevalidate a compatible local recovery state, then validate the complete SD stream and checksum each fixed window | Re-read checked windows through `decompressStreamVerified`; a late read error restores the prevalidated local state |
 
 `sPackedChecksums[3]` lives only in mod-owned RAM, outside `StoredState`, the game
 snapshot and every archive. A successful local save records a CRC over the exact
@@ -92,8 +93,16 @@ consumption and decoded length.
 `decompress` runs that pass before its scatter-writing pass. `decompressVerified`
 omits only the redundant first inflate; its writing pass still verifies the
 stream's end, length and checksum. Any failure after writing may have begun is
-`COMMIT_FAILED`, and the caller traps. It must not turn such a failure into a
-recoverable refusal and resume gameplay.
+`COMMIT_FAILED`. Immutable RAM/staged-source failures trap. The streamed SD path
+has a separately prevalidated local recovery state and restores it before any
+gameplay resumes; failure of that immutable recovery path also traps.
+
+`validateRestore` includes destination descriptor/overlap checks while decoding
+without writes. Stream readers lend bytes only inside a declared fixed buffer;
+the codec bounds every returned fragment against that buffer and the exact
+packed length. Validation and writing are separate calls because each second-pass
+SD window must match its first-pass checksum before being consumed. Stream state,
+output descriptors and codec workspace cannot overlap the replaceable buffer.
 
 Source bytes and descriptors remain immutable, and the workspace exclusively
 owned, for the entire operation. An optional retained-owner copy callback is

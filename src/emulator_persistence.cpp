@@ -15,11 +15,12 @@ namespace EmulatorPersistence {
 namespace {
 
 constexpr u32 kRecordMagic = 0x53554346u;  // 'SUCF'
-constexpr u16 kRecordVersion = 9;
+constexpr u16 kRecordVersion = 10;
 constexpr u32 kCfgSizeV6 = 5144;
 constexpr u32 kCfgSizeV7 = 5152;
 constexpr u32 kRecordPayloadSizeV8 = sizeof(SusamuneCfg) + sizeof(SusamuneMarioColorsCfg);
-constexpr u32 kRecordPayloadSize = kRecordPayloadSizeV8 + sizeof(SusamuneFluddColorsCfg);
+constexpr u32 kRecordPayloadSizeV9 = kRecordPayloadSizeV8 + sizeof(SusamuneFluddColorsCfg);
+constexpr u32 kRecordPayloadSize = kRecordPayloadSizeV9 + sizeof(SusamuneILEpisodesCfg);
 constexpr u32 kSectorSize = 0x2000;
 constexpr u32 kFileSize = kSectorSize * 2;
 constexpr char kFileName[] = "susamune_settings";
@@ -35,6 +36,7 @@ struct Record {
     SusamuneCfg cfg;
     SusamuneMarioColorsCfg marioColors;
     SusamuneFluddColorsCfg fluddColors;
+    SusamuneILEpisodesCfg ilEpisodes;
     u8 padding[kSectorSize - 32 - kRecordPayloadSize];
 };
 static_assert(sizeof(Record) == kSectorSize, "card record must fill one sector");
@@ -119,6 +121,7 @@ struct State {
     SusamuneCfg cfg;
     SusamuneMarioColorsCfg marioColors;
     SusamuneFluddColorsCfg fluddColors;
+    SusamuneILEpisodesCfg ilEpisodes;
     DVDDiskID diskID;
     u32 requested;
     u32 completed;
@@ -162,7 +165,8 @@ void initBlank(SusamuneCfg *cfg) {
                  SUSAMUNE_CFG_FLAG_ILING_PROFILES |
                  SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE |
                  SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE |
-                 SUSAMUNE_CFG_FLAG_MARIO_COLORS | SUSAMUNE_CFG_FLAG_FLUDD_COLORS;
+                 SUSAMUNE_CFG_FLAG_MARIO_COLORS | SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
+                 SUSAMUNE_CFG_FLAG_IL_EPISODES;
     cfg->ilingPbs.magic = SUSAMUNE_ILING_PB_MAGIC;
     cfg->ilingPbs.version = SUSAMUNE_ILING_PB_VERSION;
     cfg->ilingPbs.count = SUSAMUNE_ILING_PB_LEGACY_SLOT_COUNT;
@@ -308,6 +312,19 @@ void publishFluddColors() {
     DCStoreRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(sState->fluddColors));
 }
 
+void initILEpisodes(SusamuneILEpisodesCfg *choices) {
+    memset(choices, 0, sizeof(*choices));
+    choices->magic = SUSAMUNE_IL_EPISODE_MAGIC;
+    choices->version = SUSAMUNE_IL_EPISODE_VERSION;
+    choices->count = SUSAMUNE_IL_EPISODE_COUNT;
+}
+
+void publishILEpisodes() {
+    memcpy(SUSAMUNE_IL_EPISODES_LIVE_PTR, &sState->ilEpisodes,
+           sizeof(sState->ilEpisodes));
+    DCStoreRange(SUSAMUNE_IL_EPISODES_LIVE_PTR, sizeof(sState->ilEpisodes));
+}
+
 u32 checksum(Record *record) {
     const u32 saved = record->checksum;
     record->checksum = 0;
@@ -395,6 +412,16 @@ bool validV8(const Record *source) {
     Record *record = const_cast<Record *>(source);
     return record->magic == kRecordMagic && record->version == 8 &&
            record->payloadSize == kRecordPayloadSizeV8 &&
+           record->gameVersion == SUSAMUNE_GAME_VERSION &&
+           record->cfg.magic == SUSAMUNE_CFG_MAGIC &&
+           record->cfg.version == SUSAMUNE_CFG_VERSION &&
+           checksum(record) == record->checksum;
+}
+
+bool validV9(const Record *source) {
+    Record *record = const_cast<Record *>(source);
+    return record->magic == kRecordMagic && record->version == 9 &&
+           record->payloadSize == kRecordPayloadSizeV9 &&
            record->gameVersion == SUSAMUNE_GAME_VERSION &&
            record->cfg.magic == SUSAMUNE_CFG_MAGIC &&
            record->cfg.version == SUSAMUNE_CFG_VERSION &&
@@ -489,6 +516,7 @@ s32 writeRecordLocked() {
     memcpy(&record->cfg, &sState->cfg, sizeof(sState->cfg));
     memcpy(&record->marioColors, &sState->marioColors, sizeof(sState->marioColors));
     memcpy(&record->fluddColors, &sState->fluddColors, sizeof(sState->fluddColors));
+    memcpy(&record->ilEpisodes, &sState->ilEpisodes, sizeof(sState->ilEpisodes));
     record->checksum = checksum(record);
     OSUnlockMutex(&sState->mutex);
 
@@ -525,8 +553,10 @@ void initState() {
     initBlank(&sState->cfg);
     initMarioColors(&sState->marioColors);
     initFluddColors(&sState->fluddColors);
+    initILEpisodes(&sState->ilEpisodes);
     publishMarioColors();
     publishFluddColors();
+    publishILEpisodes();
 }
 
 void setIdentity() {
@@ -578,6 +608,7 @@ s32 loadRecords(void *mountWork, Record *record) {
                           slot * kSectorSize);
         if (result != CARD_ERROR_READY) break;
         const bool current = valid(record);
+        const bool v9 = !current && validV9(record);
         const bool v8 = !current && validV8(record);
         const bool v7 = !current && !v8 && validV7(record);
         const bool v6 = !current && !v7 && validV6(record);
@@ -587,15 +618,17 @@ s32 loadRecords(void *mountWork, Record *record) {
         const bool v2 = !current && !v5 && !v4 && !v3 && validV2(record);
         const bool v1 =
             !current && !v5 && !v4 && !v3 && !v2 && validV1(record);
-        if ((current || v8 || v7 || v6 || v5 || v4 || v3 || v2 || v1) &&
+        if ((current || v9 || v8 || v7 || v6 || v5 || v4 || v3 || v2 || v1) &&
             (!haveRecord || newer(record->generation, bestGeneration))) {
             initMarioColors(&sState->marioColors);
             initFluddColors(&sState->fluddColors);
-            if (current || v8) {
+            initILEpisodes(&sState->ilEpisodes);
+            if (current || v9 || v8) {
                 memcpy(&sState->cfg, &record->cfg, sizeof(sState->cfg));
                 memcpy(&sState->marioColors, &record->marioColors,
                        sizeof(sState->marioColors));
-                if (current) memcpy(&sState->fluddColors, &record->fluddColors, sizeof(sState->fluddColors));
+                if (current || v9) memcpy(&sState->fluddColors, &record->fluddColors, sizeof(sState->fluddColors));
+                if (current) memcpy(&sState->ilEpisodes, &record->ilEpisodes, sizeof(sState->ilEpisodes));
             } else if (v7) {
                 migrateRecordV7(&sState->cfg, &sState->marioColors, &record->cfg);
             } else if (v6) {
@@ -611,7 +644,7 @@ s32 loadRecords(void *mountWork, Record *record) {
                                  reinterpret_cast<const u8 *>(&record->cfg),
                                  oldSize, v4 || v5, v5);
             }
-            sState->cfg.flags |= SUSAMUNE_CFG_FLAG_FLUDD_COLORS;
+            sState->cfg.flags |= SUSAMUNE_CFG_FLAG_FLUDD_COLORS | SUSAMUNE_CFG_FLAG_IL_EPISODES;
             bestGeneration = record->generation;
             sState->activeRecord = slot;
             sState->initialSave = !current;
@@ -671,6 +704,7 @@ InitResult init() {
 
     publishMarioColors();
     publishFluddColors();
+    publishILEpisodes();
     sInitResult = INIT_READY;
     return sInitResult;
 }
@@ -734,6 +768,8 @@ u32 commit() {
            sizeof(sState->marioColors));
     memcpy(&sState->fluddColors, SUSAMUNE_FLUDD_COLORS_LIVE_PTR,
            sizeof(sState->fluddColors));
+    memcpy(&sState->ilEpisodes, SUSAMUNE_IL_EPISODES_LIVE_PTR,
+           sizeof(sState->ilEpisodes));
     const u32 ticket = ++sState->requested;
     OSUnlockMutex(&sState->mutex);
     return ticket;

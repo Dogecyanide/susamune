@@ -56,6 +56,10 @@ System > Button binds has separate cycle-save-slot and cycle-load-slot shortcuts
 
 You must be in the same level and episode to load a state. Nothing is deleted automatically if a new save cannot fit: all your previous states stay intact.
 
+Hold your Load shortcut to keep gameplay still after loading. Release it to move. If practice pause was already on, it stays on after you release Load.
+
+An intro finishes before the hold begins. Keep Load held to stop on Mario's first controllable frame, or release early to continue. A previous practice pause still takes effect when Mario can move.
+
 Clear save slot asks before clearing the slot under Save to. Other slots are kept.
 
 Memory states are lost when you close the game or reboot. Save a separate copy to SD if you want to keep one.
@@ -80,7 +84,9 @@ Start renames the file. X asks to delete it.
 
 Loading an SD file reads it each time. Import a frequently used state into memory for faster repeated loads.
 
-An SD load needs temporary space. If it refuses because your memory states are very full, clear a disposable memory slot and try again. A refusal keeps your existing states.
+Large SD files can load with three full memory slots if one saved slot matches the current scene and setup. That slot is kept as a recovery point; all three slots stay saved.
+
+If an SD read fails partway through, the game restores that recovery state and tells you its slot number. If there is no suitable recovery state and too little temporary space, loading is refused safely.
 
 SD states are specific to their build and setup. Use ghosts when you want to share an attempt across game regions.
 
@@ -169,6 +175,12 @@ A state made without an active ghost recording cannot invent the missing opening
 TAS attempts cannot earn an ordinary PB. Restart the stage to begin a fresh attempt.
 
 Runs > Timer and splits contains the Level splits display toggle. Display > Timer and splits has the same controls.
+
+The new handmade checkpoints include the remaining level routes and Full Reds. A route can have up to eight segments, including its finish. Existing records are kept where the checkpoint timing still means the same thing.
+
+In Runs > ILs, press Z on a supported row to choose its starting episode. Use C-stick Up/Down, A to keep or B to cancel. Your choice is saved separately for JP, US and PAL.
+
+Episode choices cover the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden, and the ten Full Reds ILs. Other IL starts stay fixed.
 
 Choose Off, PB, SOB or Ghost for comparison. SOB adds your best recorded segments together. Ghost compares against your selected race ghost.
 

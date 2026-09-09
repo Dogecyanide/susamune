@@ -1,17 +1,17 @@
 # Moonshine Launcher FOXTROT — latest changes
 
-**V2.3.0 pre-release · Build 00B63258**
+**V2.3.0 pre-release · Build 08BDB4CD**
 
-- **Read the guide in the launcher.** Choose **Guide** before launching Sunshine. Pick a topic with Up/Down and A, scroll with Up/Down, or move a page with Left/Right. B goes back. It works without opening a separate file.
+- **Choose the episode for more ILs.** In **Runs > ILs**, press **Z** on a supported row, choose an episode with the C-stick, then press A to keep it. This covers the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden and all ten Full Reds. Choices survive reboot and stay separate for JP, US and PAL.
 
-- **Input replay starts more reliably.** Fixed problems restoring its starting inputs and stopping a recording from the menu. Opening the menu now stops Mario immediately. The page shows **Starting** while it waits, and messages distinguish changed settings, damaged recordings and a replay that no longer matches the game. Replay remains experimental.
+- **Hold Load until you are ready.** Keep your Load shortcut held after a state restores, then release it to move. If practice pause was already on, it stays on after release.
 
-- **Less waiting for savestates.** Saving uses a faster format when it fits, with tighter compression available automatically when space is crowded. Loading and moving saved states also do less work. A save that cannot fit still keeps every previous state.
+- **The new handmade splits are here.** The remaining routes and Full Reds gain their requested checkpoints, with up to eight segments including the finish. Earlier attempt counts stay; segment records carry forward wherever the same checkpoints still define them. TESTING.md has a grouped reference so you can pick your own levels.
 
-- **A little more state space:** reclaimed **320 KiB** for the three memory slots without taking more memory from Sunshine's game heap.
+- **SD loads can work with three full memory slots.** A matching memory state provides a recovery point when the SD file is too large to stage at once. All three saved slots remain intact. If an SD read fails partway through, the game restores that recovery state and reports its slot. If neither a suitable recovery state nor enough temporary space is available, it refuses safely.
 
-For input replay, turn **Save RNG state** On and make a new memory state during gameplay. Choose **Record from savestate**, then release the A button used to confirm. Open the menu to stop and keep the take, then choose **Replay recorded inputs**. Keep that starting state; after importing an SD state, load it and make a new memory save before recording inputs.
+- **Less repeated reading while launching Sunshine.** The launcher reads its two character assets in larger batches, keeping the same file checks. We still need real-console feedback on the difference in startup time.
 
-SD states and the earlier load-time improvements have already received positive Wii feedback. **TESTING.md starts with only four checks for this update.** Keep successful earlier results; no full retest is needed.
+Use the complete package and make fresh SD states: they remain specific to their build, game region, setup and level/episode. Standalone Dolphin patches do not provide the SD service.
 
-**Make fresh SD states for this build.** They remain specific to their build, game region, setup and level/episode. Direct SD loads still preserve the three memory slots and may refuse if temporary space is too full. Standalone Dolphin patches do not provide the SD service.
+**Only four focused checks are requested in TESTING.md.** The route tables are there to divide split testing among volunteers. Keep previous successful results; there is no request to retest everything.

@@ -173,6 +173,7 @@ static char SplitStatsPaths[SUSAMUNE_PB_FILE_COUNT][SUSAMUNE_PB_PATH_SIZE];
 static union
 {
 	struct SusamuneSplitStatsFile current;
+	struct SusamuneSplitStatsFileV8 v8;
 	struct SusamuneSplitStatsFileV7 v7;
 	struct SusamuneSplitStatsFileV6 v6;
 	struct SusamuneSplitStatsFileV5 v5;
@@ -1795,7 +1796,7 @@ static int WriteStageTargetFile(const struct SusamuneStageTargetsCfg *targets)
 // Regional IL split/statistics binary files
 // ---------------------------------------------------------------------
 
-static const u16 SplitRouteFirst[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT] =
+static const u16 SplitV8RouteFirst[SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT] =
 {
 	0, 4, 7, 12, 16, 21, 24, 28, 32, 36,
 	38, 39, 43, 45, 51, 55, 57, 62, 67, 72,
@@ -1813,7 +1814,7 @@ static const u16 SplitRouteFirst[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT] =
 	283, 284
 };
 
-static const u8 SplitRouteCount[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT] =
+static const u8 SplitV8RouteCount[SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT] =
 {
 	4, 3, 5, 4, 5, 3, 4, 4, 4, 2,
 	1, 4, 2, 6, 4, 2, 5, 5, 5, 3,
@@ -1975,12 +1976,12 @@ static bool SplitStatsV7SchemaSupported(u32 schemaHash)
 
 static bool SplitStatsV8SchemaSupported(u32 schemaHash)
 {
-	return schemaHash == SUSAMUNE_SPLIT_STATS_SCHEMA_HASH ||
+	return schemaHash == SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH ||
 	       schemaHash == SUSAMUNE_SPLIT_STATS_V8_PREVIOUS_SCHEMA_HASH;
 }
 
-static bool SplitStatsPayloadValid(
-	const struct SusamuneSplitStatsPayload *payload)
+static bool SplitStatsV8PayloadValid(
+	const struct SusamuneSplitStatsPayloadV8 *payload)
 {
 	u32 region;
 	u32 profile;
@@ -1989,13 +1990,13 @@ static bool SplitStatsPayloadValid(
 
 	for (region = 0; region < SUSAMUNE_SPLIT_STATS_REGION_COUNT; region++)
 	{
-		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT; route++)
 		{
 			if (payload->routeStats[region][route].finishes >
 			    payload->routeStats[region][route].attempts)
 				return false;
 		}
-		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT;
 		     segment++)
 			if (!SplitStatsQfValid(payload->bestQf[region][segment]))
 				return false;
@@ -2003,13 +2004,13 @@ static bool SplitStatsPayloadValid(
 		for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
 		     profile++)
 		{
-			for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
+			for (route = 0; route < SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT;
 			     route++)
 			{
 				const u32 identity =
 					payload->pbIdentityQf[region][profile][route];
-				const u32 first = SplitRouteFirst[route];
-				const u32 end = first + SplitRouteCount[route];
+				const u32 first = SplitV8RouteFirst[route];
+				const u32 end = first + SplitV8RouteCount[route];
 				if (!SplitStatsQfValid(identity))
 					return false;
 				for (segment = first; segment < end; segment++)
@@ -2025,9 +2026,9 @@ static bool SplitStatsPayloadValid(
 	return true;
 }
 
-static u32 SplitStatsChecksum(const struct SusamuneSplitStatsFile *file)
+static u32 SplitStatsV8Checksum(const struct SusamuneSplitStatsFileV8 *file)
 {
-	const struct SusamuneSplitStatsPayload *payload = &file->payload;
+	const struct SusamuneSplitStatsPayloadV8 *payload = &file->payload;
 	u32 hash = 2166136261u;
 	u32 region;
 	u32 profile;
@@ -2045,7 +2046,7 @@ static u32 SplitStatsChecksum(const struct SusamuneSplitStatsFile *file)
 	hash = PbHashWord(hash, file->generation);
 	for (region = 0; region < SUSAMUNE_SPLIT_STATS_REGION_COUNT; region++)
 	{
-		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT; route++)
 		{
 			const struct SusamuneSplitRouteStats *stats =
 				&payload->routeStats[region][route];
@@ -2053,20 +2054,20 @@ static u32 SplitStatsChecksum(const struct SusamuneSplitStatsFile *file)
 			hash = PbHashWord(hash, stats->finishes);
 			hash = PbHashWord(hash, stats->golds);
 		}
-		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT; route++)
 			hash = PbHashWord(hash, payload->playedQf[region][route]);
-		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT;
 		     segment++)
 			hash = PbHashWord(hash, payload->bestQf[region][segment]);
 		for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
 		     profile++)
 		{
-			for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
+			for (route = 0; route < SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT;
 			     route++)
 				hash = PbHashWord(
 					hash,
 					payload->pbIdentityQf[region][profile][route]);
-			for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+			for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT;
 			     segment++)
 				hash = PbHashWord(
 					hash, payload->pbQf[region][profile][segment]);
@@ -2075,14 +2076,14 @@ static u32 SplitStatsChecksum(const struct SusamuneSplitStatsFile *file)
 	return hash;
 }
 
-static enum PbReadResult ReadSplitStatsFile(
-	const char *path, struct SusamuneSplitStatsFile *file)
+static enum PbReadResult ReadSplitStatsV8File(
+	const char *path, struct SusamuneSplitStatsFileV8 *file)
 {
 	FIL f;
 	UINT read = 0;
 	u32 size;
 	u32 prefixSize = __builtin_offsetof(
-		struct SusamuneSplitStatsFile, generation);
+		struct SusamuneSplitStatsFileV8, generation);
 	int ret;
 	int closeRet;
 
@@ -2103,7 +2104,7 @@ static enum PbReadResult ReadSplitStatsFile(
 			return PB_READ_UNSAFE;
 		if (size >= prefixSize &&
 		    file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
-		    (file->version != SUSAMUNE_SPLIT_STATS_VERSION ||
+		    (file->version != SUSAMUNE_SPLIT_STATS_VERSION_V8 ||
 		     !SplitStatsV8SchemaSupported(file->schemaHash)))
 			return PB_READ_UNSAFE;
 		return PB_READ_INVALID;
@@ -2113,15 +2114,15 @@ static enum PbReadResult ReadSplitStatsFile(
 	if (ret != FR_OK || read != sizeof(*file) || closeRet != FR_OK)
 		return PB_READ_UNSAFE;
 	if (file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
-	    file->version != SUSAMUNE_SPLIT_STATS_VERSION)
+	    file->version != SUSAMUNE_SPLIT_STATS_VERSION_V8)
 		return PB_READ_UNSAFE;
 	if (file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
-	    file->version == SUSAMUNE_SPLIT_STATS_VERSION &&
+	    file->version == SUSAMUNE_SPLIT_STATS_VERSION_V8 &&
 	    !SplitStatsV8SchemaSupported(file->schemaHash))
 		return PB_READ_UNSAFE;
 	if (file->magic != SUSAMUNE_SPLIT_STATS_FILE_MAGIC ||
-	    file->routeCount != SUSAMUNE_SPLIT_STATS_ROUTE_COUNT ||
-	    file->segmentCount != SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT ||
+	    file->routeCount != SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT ||
+	    file->segmentCount != SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT ||
 	    file->regionCount != SUSAMUNE_SPLIT_STATS_REGION_COUNT ||
 	    file->profileCount != SUSAMUNE_SPLIT_STATS_PROFILE_COUNT ||
 	    file->headerReserved != 0 ||
@@ -2130,8 +2131,8 @@ static enum PbReadResult ReadSplitStatsFile(
 	    !SplitStatsBytesZero(file->reserved0, sizeof(file->reserved0)) ||
 	    !SplitStatsBytesZero(file->reserved1, sizeof(file->reserved1)) ||
 	    !SplitStatsBytesZero(file->tailPad, sizeof(file->tailPad)) ||
-	    file->checksum != SplitStatsChecksum(file) ||
-	    !SplitStatsPayloadValid(&file->payload))
+	    file->checksum != SplitStatsV8Checksum(file) ||
+	    !SplitStatsV8PayloadValid(&file->payload))
 		return PB_READ_INVALID;
 	return PB_READ_VALID;
 }
@@ -2285,7 +2286,7 @@ static enum PbReadResult ReadSplitStatsV7File(
 }
 
 static void MigrateSplitStatsV7(
-	struct SusamuneSplitStatsPayload *dst,
+	struct SusamuneSplitStatsPayloadV8 *dst,
 	const struct SusamuneSplitStatsPayloadV7 *src)
 {
 	u32 region;
@@ -2468,7 +2469,7 @@ static enum PbReadResult ReadSplitStatsV6File(
 }
 
 static void MigrateSplitStatsV6(
-	struct SusamuneSplitStatsPayload *dst,
+	struct SusamuneSplitStatsPayloadV8 *dst,
 	const struct SusamuneSplitStatsPayloadV6 *src)
 {
 	u32 region;
@@ -2489,7 +2490,7 @@ static void MigrateSplitStatsV6(
 			{
 				if (b2 && local == 0)
 					continue;
-				dst->bestQf[region][SplitRouteFirst[route] + local +
+				dst->bestQf[region][SplitV8RouteFirst[route] + local +
 				                         (b2 ? 1u : 0u)] =
 					src->bestQf[region]
 					           [SplitV6RouteFirst[route] + local];
@@ -2506,7 +2507,7 @@ static void MigrateSplitStatsV6(
 					if (b2 && local == 0)
 						continue;
 					dst->pbQf[region][profile]
-					         [SplitRouteFirst[route] + local +
+					         [SplitV8RouteFirst[route] + local +
 					          (b2 ? 1u : 0u)] =
 						src->pbQf[region][profile]
 							         [SplitV6RouteFirst[route] + local];
@@ -2674,7 +2675,7 @@ static bool SplitStatsV5RouteBecameTerminal(u32 route)
 }
 
 static void MigrateSplitStatsV5(
-	struct SusamuneSplitStatsPayload *dst,
+	struct SusamuneSplitStatsPayloadV8 *dst,
 	const struct SusamuneSplitStatsPayloadV5 *src)
 {
 	u32 region;
@@ -2702,7 +2703,7 @@ static void MigrateSplitStatsV5(
 			{
 				if (b2 && local == 0)
 					continue;
-				dst->bestQf[region][SplitRouteFirst[route] + local +
+				dst->bestQf[region][SplitV8RouteFirst[route] + local +
 				                         (b2 ? 1u : 0u)] =
 					src->bestQf[region]
 					           [SplitV5RouteFirst[route] + local];
@@ -2717,7 +2718,7 @@ static void MigrateSplitStatsV5(
 				if (SplitStatsV5RouteBecameTerminal(route))
 				{
 					dst->pbQf[region][profile]
-					          [SplitRouteFirst[route]] = identity;
+					          [SplitV8RouteFirst[route]] = identity;
 					continue;
 				}
 				for (local = 0;
@@ -2726,7 +2727,7 @@ static void MigrateSplitStatsV5(
 					if (b2 && local == 0)
 						continue;
 					dst->pbQf[region][profile]
-					          [SplitRouteFirst[route] + local +
+					          [SplitV8RouteFirst[route] + local +
 					           (b2 ? 1u : 0u)] =
 						src->pbQf[region][profile]
 						         [SplitV5RouteFirst[route] + local];
@@ -2913,7 +2914,7 @@ static u32 SplitStatsMergeQf(u32 first, u32 second)
 }
 
 static void MigrateSplitStatsV4(
-	struct SusamuneSplitStatsPayload *dst,
+	struct SusamuneSplitStatsPayloadV8 *dst,
 	const struct SusamuneSplitStatsPayloadV4 *src)
 {
 	u32 region;
@@ -2942,14 +2943,14 @@ static void MigrateSplitStatsV4(
 				continue;
 
 			for (local = 0; !terminal &&
-			                local < SplitRouteCount[route]; local++)
+			                local < SplitV8RouteCount[route]; local++)
 			{
 				u32 oldLocal = local;
 				if (changed && local == removed)
 					continue;
 				if (changed && local > removed)
 					oldLocal++;
-				dst->bestQf[region][SplitRouteFirst[route] + local] =
+				dst->bestQf[region][SplitV8RouteFirst[route] + local] =
 					src->bestQf[region]
 					           [SplitV4RouteFirst[route] + oldLocal];
 			}
@@ -2963,10 +2964,10 @@ static void MigrateSplitStatsV4(
 				if (terminal)
 				{
 					dst->pbQf[region][profile]
-					          [SplitRouteFirst[route]] = identity;
+					          [SplitV8RouteFirst[route]] = identity;
 					continue;
 				}
-				for (local = 0; local < SplitRouteCount[route]; local++)
+				for (local = 0; local < SplitV8RouteCount[route]; local++)
 				{
 					u32 value;
 					if (changed && local == removed)
@@ -2987,7 +2988,7 @@ static void MigrateSplitStatsV4(
 						                  oldLocal];
 					}
 					dst->pbQf[region][profile]
-					         [SplitRouteFirst[route] + local] = value;
+					         [SplitV8RouteFirst[route] + local] = value;
 				}
 			}
 		}
@@ -3617,20 +3618,20 @@ static void MigrateSplitStatsV1(
 	}
 }
 
-static void ResetSplitStatsPayload(struct SusamuneSplitStatsPayload *payload)
+static void ResetSplitStatsV8Payload(struct SusamuneSplitStatsPayloadV8 *payload)
 {
 	memset(&payload->routeStats, 0, sizeof(payload->routeStats));
 	memset(&payload->playedQf, 0, sizeof(payload->playedQf));
 	memset(&payload->bestQf, 0xff,
 	       sizeof(*payload) -
-	           __builtin_offsetof(struct SusamuneSplitStatsPayload, bestQf));
+	           __builtin_offsetof(struct SusamuneSplitStatsPayloadV8, bestQf));
 }
 
 static void MigrateSplitStatsV8PreviousSchema(
-	struct SusamuneSplitStatsPayload *payload)
+	struct SusamuneSplitStatsPayloadV8 *payload)
 {
 	const u32 route = 13;
-	const u32 first = SplitRouteFirst[route];
+	const u32 first = SplitV8RouteFirst[route];
 	u32 region;
 	u32 profile;
 
@@ -3665,11 +3666,11 @@ static void MigrateSplitStatsV8PreviousSchema(
 }
 
 static void MigrateSplitStatsPreviousSchema(
-	struct SusamuneSplitStatsPayload *payload)
+	struct SusamuneSplitStatsPayloadV8 *payload)
 {
 	const u32 route = 13;
-	const u32 first = SplitRouteFirst[route];
-	const u32 count = SplitRouteCount[route];
+	const u32 first = SplitV8RouteFirst[route];
+	const u32 count = SplitV8RouteCount[route];
 	u32 region;
 	u32 profile;
 
@@ -3697,30 +3698,30 @@ static void ResetSplitStatsV4Payload(
 	       sizeof(*payload) - sizeof(payload->routeStats));
 }
 
-static void InitSplitStatsDefaults(struct SusamuneSplitStatsCfg *stats)
+static void InitSplitStatsV8Defaults(struct SusamuneSplitStatsCfgV8 *stats)
 {
 
 	memset(stats, 0, sizeof(*stats));
 	stats->magic = SUSAMUNE_SPLIT_STATS_MAGIC;
-	stats->version = SUSAMUNE_SPLIT_STATS_VERSION;
-	stats->routeCount = SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
-	stats->segmentCount = SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+	stats->version = SUSAMUNE_SPLIT_STATS_VERSION_V8;
+	stats->routeCount = SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT;
+	stats->segmentCount = SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT;
 	stats->regionCount = SUSAMUNE_SPLIT_STATS_REGION_COUNT;
 	stats->profileCount = SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
 	stats->payloadBytes = sizeof(stats->payload);
-	stats->schemaHash = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
-	ResetSplitStatsPayload(&stats->payload);
+	stats->schemaHash = SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH;
+	ResetSplitStatsV8Payload(&stats->payload);
 }
 
-static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
+static bool InitSplitStatsV8Files(struct SusamuneSplitStatsCfgV8 *stats)
 {
-	struct SusamuneSplitStatsFile *file = &SplitStatsFileScratch.current;
+	struct SusamuneSplitStatsFileV8 *file = &SplitStatsFileScratch.v8;
 	u32 fileIndex;
-	u32 selectedSchemaHash = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
+	u32 selectedSchemaHash = SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH;
 	bool safe = true;
 	bool migrated = false;
 
-	InitSplitStatsDefaults(stats);
+	InitSplitStatsV8Defaults(stats);
 	_sprintf(SplitStatsPaths[0], "%s/susamune_il_stats_v8_a.bin",
 	         SusamuneCfgStoragePrefix());
 	_sprintf(SplitStatsPaths[1], "%s/susamune_il_stats_v8_b.bin",
@@ -3730,7 +3731,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 	for (fileIndex = 0; fileIndex < SUSAMUNE_PB_FILE_COUNT; fileIndex++)
 	{
 		enum PbReadResult readResult =
-			ReadSplitStatsFile(SplitStatsPaths[fileIndex], file);
+			ReadSplitStatsV8File(SplitStatsPaths[fileIndex], file);
 		if (readResult == PB_READ_UNSAFE)
 		{
 			safe = false;
@@ -3744,7 +3745,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 			if (file->schemaHash != selectedSchemaHash)
 			{
 				if (file->schemaHash ==
-				        SUSAMUNE_SPLIT_STATS_SCHEMA_HASH)
+				        SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH)
 				{
 					memcpy(&stats->payload, &file->payload,
 					       sizeof(stats->payload));
@@ -3769,7 +3770,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 	}
 
 	if (safe && SplitStatsActiveFile >= 0 &&
-	    selectedSchemaHash != SUSAMUNE_SPLIT_STATS_SCHEMA_HASH)
+	    selectedSchemaHash != SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH)
 	{
 		MigrateSplitStatsV8PreviousSchema(&stats->payload);
 		migrated = true;
@@ -3823,7 +3824,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 			}
 			else
 			{
-				ResetSplitStatsPayload(&stats->payload);
+				ResetSplitStatsV8Payload(&stats->payload);
 				MigrateSplitStatsV7(&stats->payload, &v7->payload);
 				if (v7->schemaHash == SUSAMUNE_SPLIT_STATS_V7_SCHEMA_HASH)
 					MigrateSplitStatsV8PreviousSchema(&stats->payload);
@@ -3886,7 +3887,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 			}
 			else
 			{
-				ResetSplitStatsPayload(&stats->payload);
+				ResetSplitStatsV8Payload(&stats->payload);
 				MigrateSplitStatsV6(&stats->payload, &v6->payload);
 				SplitStatsGeneration = selectedGeneration;
 				migrated = true;
@@ -3945,7 +3946,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 			}
 			else
 			{
-				ResetSplitStatsPayload(&stats->payload);
+				ResetSplitStatsV8Payload(&stats->payload);
 				MigrateSplitStatsV5(&stats->payload, &v5->payload);
 				SplitStatsGeneration = selectedGeneration;
 				migrated = true;
@@ -4001,7 +4002,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 			}
 			else
 			{
-				ResetSplitStatsPayload(&stats->payload);
+				ResetSplitStatsV8Payload(&stats->payload);
 				MigrateSplitStatsV4(&stats->payload, &v4->payload);
 				SplitStatsGeneration = selectedGeneration;
 				migrated = true;
@@ -4053,7 +4054,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 				&SplitStatsFileScratch.v4.payload;
 			ResetSplitStatsV4Payload(v4Payload);
 			MigrateSplitStatsV3(v4Payload, selectedPayload);
-			ResetSplitStatsPayload(&stats->payload);
+			ResetSplitStatsV8Payload(&stats->payload);
 			MigrateSplitStatsV4(&stats->payload, v4Payload);
 			SplitStatsGeneration = selectedGeneration;
 			migrated = true;
@@ -4115,7 +4116,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 				MigrateSplitStatsPr7(&SplitStatsV2Selected);
 			ResetSplitStatsV4Payload(v4Payload);
 			MigrateSplitStatsV2(v4Payload, &SplitStatsV2Selected);
-			ResetSplitStatsPayload(&stats->payload);
+			ResetSplitStatsV8Payload(&stats->payload);
 			MigrateSplitStatsV4(&stats->payload, v4Payload);
 			SplitStatsGeneration = selectedGeneration;
 			migrated = true;
@@ -4165,7 +4166,7 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 				&SplitStatsFileScratch.v4.payload;
 			ResetSplitStatsV4Payload(v4Payload);
 			MigrateSplitStatsV1(v4Payload, &SplitStatsV1Selected);
-			ResetSplitStatsPayload(&stats->payload);
+			ResetSplitStatsV8Payload(&stats->payload);
 			MigrateSplitStatsV4(&stats->payload, v4Payload);
 			SplitStatsGeneration = selectedGeneration;
 			migrated = true;
@@ -4184,10 +4185,381 @@ static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
 	}
 	else
 	{
-		ResetSplitStatsPayload(&stats->payload);
+		ResetSplitStatsV8Payload(&stats->payload);
 		dbgprintf("Susamune: split persistence disabled to preserve unreadable files\r\n");
 	}
 	return safe;
+}
+
+
+static const u16 SplitRouteFirst[132] = {
+    0, 4, 7, 12, 16, 21, 24, 28, 32, 36, 38, 43,
+    47, 49, 55, 59, 61, 65, 70, 75, 78, 80, 84, 86,
+    90, 92, 95, 98, 104, 108, 110, 112, 118, 121, 123, 127,
+    130, 134, 136, 138, 141, 146, 149, 152, 158, 161, 167, 170,
+    173, 178, 182, 185, 190, 194, 196, 201, 204, 206, 210, 215,
+    219, 221, 226, 230, 234, 238, 244, 249, 251, 257, 262, 265,
+    269, 273, 277, 283, 287, 289, 293, 294, 295, 301, 305, 306,
+    310, 315, 320, 326, 332, 336, 341, 347, 353, 356, 359, 365,
+    370, 375, 377, 383, 388, 389, 393, 394, 399, 404, 406, 407,
+    408, 410, 413, 414, 417, 418, 419, 421, 423, 424, 425, 426,
+    428, 429, 430, 435, 440, 447, 453, 458, 465, 473, 480, 488,
+};
+static const u8 SplitRouteCount[132] = {
+    4, 3, 5, 4, 5, 3, 4, 4, 4, 2, 5, 4,
+    2, 6, 4, 2, 4, 5, 5, 3, 2, 4, 2, 4,
+    2, 3, 3, 6, 4, 2, 2, 6, 3, 2, 4, 3,
+    4, 2, 2, 3, 5, 3, 3, 6, 3, 6, 3, 3,
+    5, 4, 3, 5, 4, 2, 5, 3, 2, 4, 5, 4,
+    2, 5, 4, 4, 4, 6, 5, 2, 6, 5, 3, 4,
+    4, 4, 6, 4, 2, 4, 1, 1, 6, 4, 1, 4,
+    5, 5, 6, 6, 4, 5, 6, 6, 3, 3, 6, 5,
+    5, 2, 6, 5, 1, 4, 1, 5, 5, 2, 1, 1,
+    2, 3, 1, 3, 1, 1, 2, 2, 1, 1, 1, 2,
+    1, 1, 5, 5, 7, 6, 5, 7, 8, 7, 8, 7,
+};
+
+static bool SplitStatsCurrentSchemaSupported(u32 schemaHash)
+{
+    return schemaHash == SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
+}
+
+static bool SplitStatsPayloadValid(
+	const struct SusamuneSplitStatsPayload *payload)
+{
+	u32 region;
+	u32 profile;
+	u32 route;
+	u32 segment;
+
+	for (region = 0; region < SUSAMUNE_SPLIT_STATS_REGION_COUNT; region++)
+	{
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+		{
+			if (payload->routeStats[region][route].finishes >
+			    payload->routeStats[region][route].attempts)
+				return false;
+		}
+		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+		     segment++)
+			if (!SplitStatsQfValid(payload->bestQf[region][segment]))
+				return false;
+
+		for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
+		     profile++)
+		{
+			for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
+			     route++)
+			{
+				const u32 identity =
+					payload->pbIdentityQf[region][profile][route];
+				const u32 first = SplitRouteFirst[route];
+				const u32 end = first + SplitRouteCount[route];
+				if (!SplitStatsQfValid(identity))
+					return false;
+				for (segment = first; segment < end; segment++)
+				{
+					const u32 value =
+						payload->pbQf[region][profile][segment];
+					if (!SplitStatsQfValid(value))
+						return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static u32 SplitStatsChecksum(const struct SusamuneSplitStatsFile *file)
+{
+	const struct SusamuneSplitStatsPayload *payload = &file->payload;
+	u32 hash = 2166136261u;
+	u32 region;
+	u32 profile;
+	u32 route;
+	u32 segment;
+
+	hash = PbHashWord(hash, ((u32)file->version << 16) |
+	                         ((u32)file->routeCount << 8) |
+	                         file->regionCount);
+	hash = PbHashWord(hash, ((u32)file->segmentCount << 16) |
+	                         ((u32)file->profileCount << 8) |
+	                         file->headerReserved);
+	hash = PbHashWord(hash, file->payloadBytes);
+	hash = PbHashWord(hash, file->schemaHash);
+	hash = PbHashWord(hash, file->generation);
+	for (region = 0; region < SUSAMUNE_SPLIT_STATS_REGION_COUNT; region++)
+	{
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+		{
+			const struct SusamuneSplitRouteStats *stats =
+				&payload->routeStats[region][route];
+			hash = PbHashWord(hash, stats->attempts);
+			hash = PbHashWord(hash, stats->finishes);
+			hash = PbHashWord(hash, stats->golds);
+		}
+		for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+			hash = PbHashWord(hash, payload->playedQf[region][route]);
+		for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+		     segment++)
+			hash = PbHashWord(hash, payload->bestQf[region][segment]);
+		for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
+		     profile++)
+		{
+			for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
+			     route++)
+				hash = PbHashWord(
+					hash,
+					payload->pbIdentityQf[region][profile][route]);
+			for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+			     segment++)
+				hash = PbHashWord(
+					hash, payload->pbQf[region][profile][segment]);
+		}
+	}
+	return hash;
+}
+
+static enum PbReadResult ReadSplitStatsFile(
+	const char *path, struct SusamuneSplitStatsFile *file)
+{
+	FIL f;
+	UINT read = 0;
+	u32 size;
+	u32 prefixSize = __builtin_offsetof(
+		struct SusamuneSplitStatsFile, generation);
+	int ret;
+	int closeRet;
+
+	ret = f_open_char(&f, path, FA_READ | FA_OPEN_EXISTING);
+	if (ret == FR_NO_FILE || ret == FR_NO_PATH)
+		return PB_READ_INVALID;
+	if (ret != FR_OK)
+		return PB_READ_UNSAFE;
+	size = (u32)f_size(&f);
+	if (size != sizeof(*file))
+	{
+		memset(file, 0, sizeof(*file));
+		if (size >= prefixSize)
+			ret = f_read(&f, file, prefixSize, &read);
+		closeRet = f_close(&f);
+		if (ret != FR_OK || closeRet != FR_OK ||
+		    (size >= prefixSize && read != prefixSize))
+			return PB_READ_UNSAFE;
+		if (size >= prefixSize &&
+		    file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
+		    (file->version != SUSAMUNE_SPLIT_STATS_VERSION ||
+		     !SplitStatsCurrentSchemaSupported(file->schemaHash)))
+			return PB_READ_UNSAFE;
+		return PB_READ_INVALID;
+	}
+	ret = f_read(&f, file, sizeof(*file), &read);
+	closeRet = f_close(&f);
+	if (ret != FR_OK || read != sizeof(*file) || closeRet != FR_OK)
+		return PB_READ_UNSAFE;
+	if (file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
+	    file->version != SUSAMUNE_SPLIT_STATS_VERSION)
+		return PB_READ_UNSAFE;
+	if (file->magic == SUSAMUNE_SPLIT_STATS_FILE_MAGIC &&
+	    file->version == SUSAMUNE_SPLIT_STATS_VERSION &&
+	    !SplitStatsCurrentSchemaSupported(file->schemaHash))
+		return PB_READ_UNSAFE;
+	if (file->magic != SUSAMUNE_SPLIT_STATS_FILE_MAGIC ||
+	    file->routeCount != SUSAMUNE_SPLIT_STATS_ROUTE_COUNT ||
+	    file->segmentCount != SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT ||
+	    file->regionCount != SUSAMUNE_SPLIT_STATS_REGION_COUNT ||
+	    file->profileCount != SUSAMUNE_SPLIT_STATS_PROFILE_COUNT ||
+	    file->headerReserved != 0 ||
+	    file->payloadBytes != sizeof(file->payload) ||
+	    !SplitStatsCurrentSchemaSupported(file->schemaHash) ||
+	    !SplitStatsBytesZero(file->reserved0, sizeof(file->reserved0)) ||
+	    !SplitStatsBytesZero(file->reserved1, sizeof(file->reserved1)) ||
+	    !SplitStatsBytesZero(file->tailPad, sizeof(file->tailPad)) ||
+	    file->checksum != SplitStatsChecksum(file) ||
+	    !SplitStatsPayloadValid(&file->payload))
+		return PB_READ_INVALID;
+	return PB_READ_VALID;
+}
+
+static void ResetSplitStatsPayload(struct SusamuneSplitStatsPayload *payload)
+{
+	memset(&payload->routeStats, 0, sizeof(payload->routeStats));
+	memset(&payload->playedQf, 0, sizeof(payload->playedQf));
+	memset(&payload->bestQf, 0xff,
+	       sizeof(*payload) -
+	           __builtin_offsetof(struct SusamuneSplitStatsPayload, bestQf));
+}
+
+static void InitSplitStatsDefaults(struct SusamuneSplitStatsCfg *stats)
+{
+
+	memset(stats, 0, sizeof(*stats));
+	stats->magic = SUSAMUNE_SPLIT_STATS_MAGIC;
+	stats->version = SUSAMUNE_SPLIT_STATS_VERSION;
+	stats->routeCount = SUSAMUNE_SPLIT_STATS_ROUTE_COUNT;
+	stats->segmentCount = SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT;
+	stats->regionCount = SUSAMUNE_SPLIT_STATS_REGION_COUNT;
+	stats->profileCount = SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
+	stats->payloadBytes = sizeof(stats->payload);
+	stats->schemaHash = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
+	ResetSplitStatsPayload(&stats->payload);
+}
+
+// A segment survives only when both of its semantic endpoints are unchanged.
+static const u16 SplitV8SegmentMap[495] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 41, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+    56, 0xffffu, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+    69, 70, 71, 72, 73, 74, 0xffffu, 0xffffu, 0xffffu, 79, 80, 81,
+    0xffffu, 0xffffu, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+    94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+    0xffffu, 0xffffu, 108, 109, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 111, 112,
+    113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124,
+    125, 126, 127, 128, 0xffffu, 0xffffu, 131, 132, 133, 134, 135, 136,
+    137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148,
+    149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
+    161, 162, 0xffffu, 0xffffu, 0xffffu, 166, 167, 168, 169, 170, 171, 172,
+    173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184,
+    185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196,
+    0xffffu, 0xffffu, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208,
+    209, 210, 211, 212, 213, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 231, 232, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 235, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 253, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 255, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 259, 260,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 263, 0xffffu, 0xffffu, 0xffffu, 265, 266, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 269, 270, 271, 0xffffu, 0xffffu, 273, 274, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu, 0xffffu,
+    0xffffu, 0xffffu, 0xffffu,
+};
+static const u8 SplitV8RouteUnchanged[132] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+    0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1,
+    1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1,
+    1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1,
+    0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+static void MigrateSplitStatsV8(struct SusamuneSplitStatsPayload *dst,
+    const struct SusamuneSplitStatsPayloadV8 *src)
+{
+    u32 region, profile, route, segment;
+    ResetSplitStatsPayload(dst);
+    for (region = 0; region < SUSAMUNE_SPLIT_STATS_REGION_COUNT; region++)
+    {
+        for (route = 0; route < SUSAMUNE_SPLIT_STATS_ROUTE_COUNT; route++)
+        {
+            dst->routeStats[region][route] = src->routeStats[region][route];
+            dst->playedQf[region][route] = src->playedQf[region][route];
+            if (!SplitV8RouteUnchanged[route])
+                dst->routeStats[region][route].golds = 0;
+            for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT; profile++)
+                dst->pbIdentityQf[region][profile][route] =
+                    src->pbIdentityQf[region][profile][route];
+        }
+        for (segment = 0; segment < SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT; segment++)
+        {
+            const u32 previous = SplitV8SegmentMap[segment];
+            if (previous == 0xffffu) continue;
+            dst->bestQf[region][segment] = src->bestQf[region][previous];
+            for (profile = 0; profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT; profile++)
+                dst->pbQf[region][profile][segment] =
+                    src->pbQf[region][profile][previous];
+        }
+    }
+}
+
+static void SplitStatsCurrentPaths(void)
+{
+    _sprintf(SplitStatsPaths[0], "%s/susamune_il_stats_v9_a.bin",
+             SusamuneCfgStoragePrefix());
+    _sprintf(SplitStatsPaths[1], "%s/susamune_il_stats_v9_b.bin",
+             SusamuneCfgStoragePrefix());
+}
+
+static bool InitSplitStatsFiles(struct SusamuneSplitStatsCfg *stats)
+{
+    struct SusamuneSplitStatsFile *file = &SplitStatsFileScratch.current;
+    u32 fileIndex;
+    bool safe = true;
+    bool migrated = false;
+
+    InitSplitStatsDefaults(stats);
+    SplitStatsCurrentPaths();
+    SplitStatsGeneration = 0;
+    SplitStatsActiveFile = -1;
+    for (fileIndex = 0; fileIndex < SUSAMUNE_PB_FILE_COUNT; fileIndex++)
+    {
+        const enum PbReadResult readResult =
+            ReadSplitStatsFile(SplitStatsPaths[fileIndex], file);
+        if (readResult == PB_READ_UNSAFE)
+        {
+            safe = false;
+            continue;
+        }
+        if (readResult != PB_READ_VALID) continue;
+        if (SplitStatsActiveFile >= 0 && file->generation == SplitStatsGeneration)
+        {
+            if (memcmp(&file->payload, &stats->payload, sizeof(file->payload)) != 0)
+                safe = false;
+            continue;
+        }
+        if (SplitStatsActiveFile >= 0 &&
+            !PbGenerationIsNewer(file->generation, SplitStatsGeneration)) continue;
+        memcpy(&stats->payload, &file->payload, sizeof(stats->payload));
+        SplitStatsGeneration = file->generation;
+        SplitStatsActiveFile = (s32)fileIndex;
+    }
+    if (safe && SplitStatsActiveFile < 0)
+    {
+        struct SusamuneSplitStatsCfgV8 *legacy = SUSAMUNE_SPLIT_STATS_V8_PHYS_PTR;
+        safe = InitSplitStatsV8Files(legacy);
+        if (safe && (SplitStatsActiveFile >= 0 ||
+                     (legacy->flags & SUSAMUNE_SPLIT_STATS_FLAG_MIGRATED)))
+        {
+            MigrateSplitStatsV8(&stats->payload, &legacy->payload);
+            migrated = true;
+        }
+        SplitStatsActiveFile = -1;
+        SplitStatsCurrentPaths();
+    }
+    SplitStatsAckSeq = 0;
+    SplitStatsReady = safe;
+    if (safe)
+    {
+        stats->flags = SUSAMUNE_SPLIT_STATS_FLAG_WRITABLE;
+        if (migrated) stats->flags |= SUSAMUNE_SPLIT_STATS_FLAG_MIGRATED;
+    }
+    else
+    {
+        ResetSplitStatsPayload(&stats->payload);
+        dbgprintf("Susamune: split persistence disabled to preserve unreadable files\r\n");
+    }
+    return safe;
 }
 
 static int WriteSplitStatsFile(const struct SusamuneSplitStatsCfg *stats)
@@ -5271,6 +5643,24 @@ static void ApplyFluddColorsKey(struct SusamuneFluddColorsCfg *cfg,
 		}
 }
 
+#define IL_EPISODE_KEY(slot, key) "il_episode_" key,
+static const char *const ILEpisodeKeys[] = {
+	SUSAMUNE_IL_EPISODE_LIST(IL_EPISODE_KEY)
+};
+#undef IL_EPISODE_KEY
+
+static void ApplyILEpisodeKey(const char *key, const char *text)
+{
+	u32 i;
+	u8 value;
+	for (i = 0; i < SUSAMUNE_IL_EPISODE_COUNT; ++i)
+		if (strcmp(key, ILEpisodeKeys[i]) == 0 && ParseU8(text, &value) && value <= 8)
+		{
+			SUSAMUNE_IL_EPISODES_PHYS_PTR->episodes[i] = value;
+			return;
+		}
+}
+
 static void ParseIni(char *text, struct SusamuneCfg *cfg)
 {
 	char *line = text;
@@ -5362,6 +5752,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyNativeTimerModesKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMarioColorsKey(MarioColorsBlock(), Trim(line), Trim(eq + 1), &marioEnabled);
 			ApplyFluddColorsKey(FluddColorsBlock(), Trim(line), Trim(eq + 1), &fluddEnabled);
+			ApplyILEpisodeKey(Trim(line), Trim(eq + 1));
 		}
 
 		line = next;
@@ -5743,6 +6134,20 @@ static void EmitFluddColors(FIL *f, int *err,
 		colors->enabled & SUSAMUNE_FLUDD_COLORS_MASK));
 }
 
+static void EmitILEpisodes(FIL *f, int *err)
+{
+	const struct SusamuneILEpisodesCfg *choices = SUSAMUNE_IL_EPISODES_PHYS_PTR;
+	char line[80];
+	u32 i;
+	if (choices->magic != SUSAMUNE_IL_EPISODE_MAGIC ||
+	    choices->version != SUSAMUNE_IL_EPISODE_VERSION ||
+	    choices->count > SUSAMUNE_IL_EPISODE_COUNT) return;
+	for (i = 0; i < choices->count; ++i)
+		if (choices->episodes[i] <= 8)
+			Emit(f, err, line, (u32)_sprintf(line, "%s = %u\r\n",
+				ILEpisodeKeys[i], choices->episodes[i]));
+}
+
 static void EmitCreationSection(FIL *f, int *err,
 	                            const struct SusamuneCfg *cfg)
 {
@@ -5890,6 +6295,7 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitNativeTimerStyle(f, err, &cfg->nativeTimerStyle);
 	EmitMarioColors(f, err, MarioColorsBlock());
 	EmitFluddColors(f, err, FluddColorsBlock());
+	EmitILEpisodes(f, err);
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
 		     (((u32)cfg->wallkickStyle.nativeTimerCustomMask[0] << 8) |
@@ -6422,6 +6828,10 @@ void SusamuneCfgInit(void)
 	InitMovementStyleDefaults(&cfg->movementStyle);
 	InitMarioColorsDefaults(marioColors);
 	InitFluddColorsDefaults(fluddColors);
+	memset(SUSAMUNE_IL_EPISODES_PHYS_PTR, 0, sizeof(struct SusamuneILEpisodesCfg));
+	SUSAMUNE_IL_EPISODES_PHYS_PTR->magic = SUSAMUNE_IL_EPISODE_MAGIC;
+	SUSAMUNE_IL_EPISODES_PHYS_PTR->version = SUSAMUNE_IL_EPISODE_VERSION;
+	SUSAMUNE_IL_EPISODES_PHYS_PTR->count = SUSAMUNE_IL_EPISODE_COUNT;
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -6438,6 +6848,7 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE |
 	                 SUSAMUNE_CFG_FLAG_MARIO_COLORS |
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
+	                 SUSAMUNE_CFG_FLAG_IL_EPISODES |
 	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
 	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED;
 	if (InitPbFiles(cfg, region))
@@ -6452,7 +6863,7 @@ void SusamuneCfgInit(void)
 	InitSplitStatsFiles(splitStats);
 	// Publish even a read-only snapshot so the UI can distinguish an unsafe
 	// future/unreadable journal from a launcher with no backend.
-	cfg->flags |= SUSAMUNE_CFG_FLAG_SPLIT_STATS;
+	cfg->flags |= SUSAMUNE_CFG_FLAG_SPLIT_STATS_V9;
 
 	settingsReadSafe = false;
 	noConfig = false;
@@ -6530,6 +6941,7 @@ void SusamuneCfgInit(void)
 	sync_after_write(cfg, sizeof(struct SusamuneCfg));
 	sync_after_write(marioColors, sizeof(*marioColors));
 	sync_after_write(fluddColors, sizeof(*fluddColors));
+	sync_after_write(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
 	sync_after_write(targets, sizeof(struct SusamuneStageTargetsCfg));
@@ -6571,6 +6983,7 @@ void SusamuneCfgService(void)
 	                 sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
 	sync_before_read(MarioColorsBlock(), sizeof(struct SusamuneMarioColorsCfg));
 	sync_before_read(FluddColorsBlock(), sizeof(struct SusamuneFluddColorsCfg));
+	sync_before_read(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	seq = cfg->saveSeq;
 
 	ret = WriteIniFile(cfg);

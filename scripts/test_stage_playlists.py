@@ -425,10 +425,13 @@ class PlaylistFormatTests(unittest.TestCase):
         self.assertIn("entryFinish(selected) == FINISH_SHINE", matcher)
         self.assertIn("entryFinish(completed) == FINISH_SHINE", matcher)
         self.assertIn(
-            "sameCourseEpisode(selected.start, completed.start)", matcher
+            "sameCourseEpisode(start, completed.start)", matcher
         )
         self.assertIn("isBonusShine(completed)", matcher)
-        self.assertIn("sameCourse(selected.start, completed.start)", matcher)
+        self.assertIn("sameCourse(start, completed.start)", matcher)
+        self.assertIn("sRunning && sSelectedEntry == selectedEntry", matcher)
+        self.assertIn("? sAttemptStart", matcher)
+        self.assertIn(": selectedStart(selectedEntry)", matcher)
 
         episode_matcher = iling[
             iling.index("u8 parentOrSelf"):

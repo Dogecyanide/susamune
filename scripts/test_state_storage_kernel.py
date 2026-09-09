@@ -10,6 +10,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 POOL = STAGING = EXPANDED = None  # Filled from the compiled worker's shared map.
 EXPORT, IMPORT, CATALOG, CANCEL, RENAME, DELETE = 1, 2, 3, 4, 5, 6
+WINDOW = 7
 OK, IO, BAD, FULL, CANCELLED, STALE, CONFIG = 0, 2, 3, 4, 6, 7, 8
 
 
@@ -37,6 +38,11 @@ static u8 stateExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE + 64];
 #define STATE_STAGING (stateStaging + 32)
 static int f_mkdir_char(const char *p) { (void)p; return FR_EXIST; }
 static bool failRename;
+static u32 failReadAfter = 0xffffffffu;
+static int f_read(FIL *file,void *out,UINT amount,UINT *done) {
+ if(readBytes>=failReadAfter){*done=0;return FR_DISK_ERR;}
+ return fixture_read(file,out,amount,done);
+}
 static bool failUnlink;
 static char failOpenPath[128];
 static int f_open_char(FIL *file,const char *path,u32 flags) {
@@ -56,6 +62,7 @@ EXPORTS = r'''
 __declspec(dllexport) void reset(void) {
  testCount=writeCount=readBytes=readCalls=dirCalls=maxRead=writeBytes=0;
  failWriteAfter=0xFFFFFFFFu; failSync=failRename=failUnlink=false; failOpenPath[0]=0; directoryResult=FR_OK;
+ failReadAfter=0xffffffffu;
  memset(testFiles,0,sizeof(testFiles)); memset(statePool,0x5A,sizeof(statePool));
  memset(stateStaging,0xA5,sizeof(stateStaging)); memset(stateExtra,0xC3,sizeof(stateExtra)); SusamuneStateStorageInit();
 }
@@ -64,6 +71,8 @@ __declspec(dllexport) void submit(u32 command,u32 id,u32 offset,u32 size,u32 crc
  ++r->seq; r->command=command; r->id=id; r->session=session;
  r->poolOffset=offset; r->packedSize=size; r->expectedHeaderCrc=crc; r->reserved=0;
 }
+__declspec(dllexport) void windowSize(u32 size) {stateMailbox.request.reserved=size;}
+__declspec(dllexport) void readFailure(u32 after) {failReadAfter=after;}
 __declspec(dllexport) int run(u32 limit) {
  for(u32 i=0;i<limit;++i) {
   u32 reads=readBytes,writes=writeBytes,dirs=dirCalls;
@@ -134,6 +143,7 @@ class StateStorageKernelTests(unittest.TestCase):
         fixture = fixture.replace('#define FIXTURE_WRITES 80', '#define FIXTURE_WRITES 8')
         fixture = fixture.replace('#define FIXTURE_FILE_BYTES 1400000', '#define FIXTURE_FILE_BYTES 6000000')
         fixture = fixture.replace('f_open_char(', 'fixture_open(').replace('f_unlink_char(', 'fixture_unlink(')
+        fixture = fixture.replace('f_read(', 'fixture_read(')
         source = (ROOT / 'launcher/kernel/SusamuneStateStorage.c').read_text()
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         start = source.index('static u32 BootConfigId(void)')
@@ -202,6 +212,61 @@ class StateStorageKernelTests(unittest.TestCase):
         count=C.c_uint.from_address(m+192).value
         return [(C.c_uint.from_address(m+224+64*i).value,
                  C.string_at(m+256+64*i,32).split(b'\0')[0]) for i in range(count)]
+
+    def window(self, header, offset, size):
+        self.command(WINDOW,1,offset,header.packedSize,header.headerCrc)
+        self.lib.windowSize(size)
+        return self.finish()
+
+    def test_windows_read_requested_file_bytes_without_touching_three_slot_pool(self):
+        data=bytes(range(251))*23000
+        archive,data,meta=self.export(data=data)
+        h=Header.from_buffer_copy(archive)
+        pool=C.string_at(self.lib.pool(),POOL)
+        extra=C.string_at(self.lib.extra(),EXPANDED-POOL)
+        for offset,size in ((0,STAGING),(STAGING,len(data)-STAGING),(123,70001),(len(data)-1,1)):
+            with self.subTest(offset=offset,size=size):
+                self.lib.clearIo()
+                self.assertEqual(self.window(h,offset,size),OK)
+                self.assertEqual(C.string_at(self.lib.staging(),size),data[offset:offset+size])
+                receipt=(C.c_uint*8).from_address(self.lib.mailbox()+7968)
+                self.assertEqual(list(receipt),[offset,size,zlib.crc32(data[offset:offset+size]),0,0,0,0,0])
+                self.assertLessEqual(self.lib.reads(),size+96+len(meta)+224)
+        self.assertEqual(C.string_at(self.lib.pool(),POOL),pool)
+        self.assertEqual(C.string_at(self.lib.extra(),EXPANDED-POOL),extra)
+
+    def test_window_refuses_bad_bounds_identity_and_metadata_before_payload(self):
+        archive,data,meta=self.export()
+        h=Header.from_buffer_copy(archive)
+        for offset,size in ((0,0),(0,STAGING+1),(len(data),1),(0xffffffff,1)):
+            self.assertEqual(self.window(h,offset,size),9)
+        self.command(WINDOW,1,0,h.packedSize,h.headerCrc^1);self.lib.windowSize(20)
+        self.assertEqual(self.finish(),STALE)
+        changed=bytearray(archive);changed[96]^=1;self.add(1,bytes(changed))
+        self.assertEqual(self.window(h,0,20),BAD)
+        self.assertEqual(C.string_at(self.lib.staging(),20),b'\xA5'*20)
+
+    def test_window_read_failure_and_cancellation_do_not_publish_success(self):
+        archive,data,meta=self.export(data=b'a'*200000)
+        h=Header.from_buffer_copy(archive)
+        self.lib.clearIo();self.lib.readFailure(96+len(meta)+32768)
+        self.assertEqual(self.window(h,0,len(data)),IO)
+        self.lib.readFailure(0xffffffff)
+        self.command(WINDOW,1,0,h.packedSize,h.headerCrc);self.lib.windowSize(len(data))
+        self.assertEqual(self.lib.run(6),-1)
+        self.command(CANCEL)
+        self.assertEqual(self.finish(),CANCELLED)
+        self.assertEqual(self.window(h,100,1234),OK)
+
+    def test_changed_window_returns_new_checksum_for_the_restore_validator(self):
+        archive,data,meta=self.export()
+        h=Header.from_buffer_copy(archive)
+        self.assertEqual(self.window(h,0,2000),OK)
+        before=C.c_uint.from_address(self.lib.mailbox()+7976).value
+        changed=bytearray(archive);changed[96+len(meta)+10]^=1
+        self.add(1,bytes(changed))
+        self.assertEqual(self.window(h,0,2000),OK)
+        self.assertNotEqual(C.c_uint.from_address(self.lib.mailbox()+7976).value,before)
 
     def test_names_survive_reboot_without_rewriting_archive_or_changing_identity(self):
         archive,_,_=self.export()

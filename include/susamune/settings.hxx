@@ -97,6 +97,7 @@ public:
 
     // True when a value changed since the last save.
     bool dirty() const { return mDirty; }
+    void markDirty() { mDirty = true; }
 
     u8   get(SettingId id) const { return mValues[id]; }
     bool getBool(SettingId id) const { return mValues[id] != 0; }

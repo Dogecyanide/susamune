@@ -42,6 +42,9 @@ class ShadowAssetChecksumTests(unittest.TestCase):
         statuses = "\n".join(re.findall(
             r"^#define SUSAMUNE_GHOST_MODEL_STATUS_(?:RESOURCE_MISSING|BAD_CHECKSUM|BAD_YAZ0|BAD_RARC|READ_FAILED)\s+-\d+",
             constants, re.M))
+        raw_reader = production[production.index("static bool ReaderRawRead("):
+                                production.index("static bool ReaderLogicalRead(")]
+        raw_reader = raw_reader.replace("ShadowReader", "DiscReader")
         source = work / "test.c"
         source.write_text('''
 typedef unsigned char u8;
@@ -73,9 +76,12 @@ static unsigned int strlen(const char *s) {
     return size;
 }
 typedef struct ShadowReader { const u8 *data; u32 size; } ShadowReader;
+static u32 reads, largestRead, bytesRead;
 static bool ReaderRead(ShadowReader *reader, u64 offset, void *data, u32 size) {
     u8 *out = data;
     if (offset > reader->size || size > reader->size - offset) return false;
+    reads++; bytesRead += size;
+    if (size > largestRead) largestRead = size;
     while (size--) *out++ = reader->data[offset++];
     return true;
 }
@@ -88,6 +94,7 @@ __declspec(dllexport) int decode(const u8 *input, u32 size, u8 *payload,
     int failure = 0;
     reader.data = input;
     reader.size = size;
+    reads = largestRead = bytesRead = 0;
     asset.payload = payload;
     asset.nodeName = "node";
     asset.bmdName = "model.bmd";
@@ -97,6 +104,9 @@ __declspec(dllexport) int decode(const u8 *input, u32 size, u8 *payload,
     return DecodeArchive(&reader, 0, size, &asset, &decoderState, &failure)
         ? 0 : failure;
 }
+__declspec(dllexport) u32 read_count(void) { return reads; }
+__declspec(dllexport) u32 read_largest(void) { return largestRead; }
+__declspec(dllexport) u32 read_bytes(void) { return bytesRead; }
 __declspec(dllexport) void set_crc(uLong (*callback)(uLong,const Bytef *,u32)) {
     crc32 = callback;
 }
@@ -115,6 +125,48 @@ __declspec(dllexport) int validate(u8 *payload, u32 bmdSize, u32 btkSize,
 ''' + block + '''
 done:
     return status;
+}
+''' + '''
+typedef u32 UINT;
+typedef u64 FSIZE_t;
+#define FR_OK 0
+#define SHADOW_SOURCE_FILE 1
+typedef struct DiscReader { int kind; u32 file; u64 size; u32 discCommand; } DiscReader;
+static u8 sDiscReadScratch[SHADOW_INPUT_SIZE + 0x20];
+static u8 discOutput[SHADOW_INPUT_SIZE + 2];
+static u64 diskOffset;
+static u32 diskCalls, diskReadSize;
+static int f_lseek(u32 *file, FSIZE_t offset) { diskOffset = offset; return FR_OK; }
+static int f_read(u32 *file, void *output, UINT size, UINT *got) {
+    u8 *out = output;
+    for (u32 i = 0; i < size; ++i) out[i] = (u8)(diskOffset + i);
+    diskCalls++; diskReadSize = size; *got = size; return FR_OK;
+}
+static void ReadRealDisc(u8 *out, u64 offset, u32 size, u32 command) {
+    diskCalls++; diskOffset = offset; diskReadSize = size;
+    for (u32 i = 0; i < size; ++i) out[i] = (u8)(offset + i);
+}
+static void *memcpy(void *output, const void *input, unsigned int size) {
+    u8 *out = output; const u8 *in = input;
+    while (size--) *out++ = *in++;
+    return output;
+}
+''' + raw_reader + '''
+__declspec(dllexport) int input_alignment(int file, u32 offset, u32 size) {
+    DiscReader reader = {file ? SHADOW_SOURCE_FILE : 2, 0, 0x20000, 0xA8};
+    diskCalls = diskReadSize = 0;
+    memset(discOutput, 0xA5, sizeof(discOutput));
+    if (size > SHADOW_INPUT_SIZE) return 1;
+    bool result = ReaderRawRead(&reader, offset, discOutput + 1, size);
+    if (offset > reader.size || size > reader.size - offset)
+        return !result && !diskCalls && discOutput[1] == 0xA5 ? 0 : 2;
+    if (!result || diskCalls != 1) return 3;
+    if (discOutput[0] != 0xA5 || discOutput[size + 1] != 0xA5) return 4;
+    for (u32 i = 0; i < size; ++i)
+        if (discOutput[i + 1] != (u8)(offset + i)) return 5;
+    if (!file && ((diskOffset & 31) || (diskReadSize & 31) ||
+                  diskReadSize > SHADOW_INPUT_SIZE + 32)) return 6;
+    return 0;
 }
 ''', encoding="ascii")
         library = work / "asset.dll"
@@ -259,6 +311,25 @@ done:
                     result, decoded = self.decode(self.yaz0(archive, backrefs), btk_size=btk_size)
                     self.assertEqual(result, 0)
                     self.assertEqual(decoded, payload)
+
+    def test_streaming_reads_batch_full_archive_and_keep_final_short_read_bounded(self):
+        archive, payload = self.archive()
+        encoded = self.yaz0(archive)
+        result, decoded = self.decode(encoded)
+        self.assertEqual((result, decoded), (0, payload))
+        self.assertEqual(self.dll.read_bytes(), len(encoded))
+        self.assertEqual(self.dll.read_largest(), 0x8000)
+        self.assertEqual(self.dll.read_count(), 1 + (len(encoded) - 16 + 0x7FFF) // 0x8000)
+        self.assertLess(self.dll.read_count(), 1 + (len(encoded) - 16 + 0xFFF) // 0x1000)
+
+    def test_file_and_disc_input_reads_preserve_alignment_and_bounds(self):
+        for file in (0, 1):
+            for offset in (0, 1, 15, 31, 0x1234):
+                for size in (1, 31, 32, 0xFFF, 0x1000, 0x7FFF, 0x8000):
+                    with self.subTest(file=file, offset=offset, size=size):
+                        self.assertEqual(self.dll.input_alignment(file, offset, size), 0)
+            self.assertEqual(self.dll.input_alignment(file, 0x1FFFF, 2), 0)
+            self.assertEqual(self.dll.input_alignment(file, 0x20001, 1), 0)
 
     def test_production_decoder_rejects_truncation_invalid_backrefs_and_trailing_bytes(self):
         archive, _ = self.archive()

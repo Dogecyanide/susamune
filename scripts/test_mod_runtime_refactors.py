@@ -280,6 +280,6 @@ class SavestateDebugTextTests(unittest.TestCase):
             r"void SavestateManager::processPendingLoad\(\)",
         )
         self.assertLess(process.index("mLoadPending = false;"),
-                        process.index("loadSlot(sPendingSlot, sPendingGeneration);"))
+                        process.index("loadSlot(sPendingSlot, sPendingGeneration)"))
 if __name__ == "__main__":
     unittest.main()

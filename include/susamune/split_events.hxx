@@ -4,6 +4,7 @@
 #include <Dolphin/types.h>
 
 class TMarDirector;
+class TItemNozzle;
 
 namespace SplitEvents {
 
@@ -24,7 +25,7 @@ void armPinnaOneRetailExit();
 
 // Exact director events shared with the existing gameplay-polish wrappers.
 void onYoshiMounted();
-void onNozzleCollected();
+void onNozzleCollected(TItemNozzle *nozzle);
 
 // A restored actor graph must never inherit pre-load split identity.
 void onSavestateLoaded();

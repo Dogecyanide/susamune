@@ -21,6 +21,9 @@ void afterDraw();
 void onSavestateSaved(u32 slot, u32 generation);
 void onSavestateCleared(u32 slot, u32 generation);
 void onSavestateLoaded();
+void armLoadHold(u16 buttons);
+void cancelLoadHold();
+bool holdingLoad();
 void draw(Menu *menu);
 
 bool requestPauseToggle(bool fromMenu = false);
@@ -33,7 +36,9 @@ void requestStop();
 void releaseForDeparture();
 void recenterCamera();
 
+// Timer presentation includes Load holds; menu actions use the manual toggle.
 bool paused();
+bool manualPaused();
 // An armed hold survives loading and waits for Mario's controls to return.
 bool pausePending();
 bool freeCamera();

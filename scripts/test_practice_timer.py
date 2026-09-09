@@ -76,8 +76,9 @@ static s32 sSectionQf[16],sLastSectionQf;
 static u8 sSectionCount,sSectionNext;
 J2DPane *bigTimerPane(void *) {return nullptr;}
 QFTTimer gQFTTimer;
-static bool holding,pausedMode;
-namespace PracticeSession {bool freezeRequested(){return holding;}bool paused(){return pausedMode;}}
+static bool holding,sPaused,sLoadHoldActive;
+namespace PracticeSession {bool freezeRequested(){return holding;}
+''' + function_source(ROOT / "src/practice_session.cpp", "bool paused()") + r'''}
 void restoreBigTimerPosition(){}
 void ensureCoreHooks(){}
 void applyFreezeConfig(){}
@@ -106,7 +107,7 @@ extern "C" __declspec(dllexport) void reset(s32 qf,s32 offset) {
     gpMarDirector=sStageDirector=&director;director.unk5C=qf;director.mCurState=4;director._260=1;
     console={false,-1};director.mGCConsole=&console;sBigShown=sRetailTimerOwned=false;
     state={0,0,0,0,offset,0,0};sStageReady=true;sStagePending=sResetRequested=false;
-    sPracticeHolding=sPracticeAssisted=holding=pausedMode=false;
+    sPracticeHolding=sPracticeAssisted=holding=sPaused=sLoadHoldActive=false;
     sAttemptSerial=sGhostAttemptSerial=7;sHaveSavedState=false;
     death=plant=-1;transition=0;target=0xffff;
     sRecordClock={};sFrameAssisted=true;sFrameFrozen=false;sRecord.runFlags=0;
@@ -120,7 +121,8 @@ extern "C" __declspec(dllexport) void stage(unsigned fresh) {
     director.unk5C=0;gQFTTimer.beginFrame();
 }
 extern "C" __declspec(dllexport) void ghostAfter() {afterDirect(1);}
-extern "C" __declspec(dllexport) void begin() {pausedMode=true;gQFTTimer.beginPracticePause();}
+extern "C" __declspec(dllexport) void begin() {sPaused=true;gQFTTimer.beginPracticePause();}
+extern "C" __declspec(dllexport) void holdLoad(unsigned active) {sLoadHoldActive=active!=0;}
 extern "C" __declspec(dllexport) void advance(s32 qf) {director.unk5C+=qf;}
 extern "C" __declspec(dllexport) void end() {gQFTTimer.endPracticePause();}
 extern "C" __declspec(dllexport) s32 value(int which) {
@@ -150,7 +152,7 @@ extern "C" __declspec(dllexport) void saveSlot(unsigned slot,unsigned commit) {
     if(commit)slots[slot]=candidate;
 }
 extern "C" __declspec(dllexport) void renderFrame(unsigned paused,unsigned held,s32 ticks) {
-    pausedMode=paused!=0;holding=held!=0;gQFTTimer.beginFrame();
+    sPaused=paused!=0;holding=held!=0;gQFTTimer.beginFrame();
     if(holding)gQFTTimer.beginPracticePause();
     gQFTTimer.update();nativeDrawn=console.value;
     director.unk5C+=ticks;
@@ -249,6 +251,19 @@ extern "C" __declspec(dllexport) s32 ghost(unsigned held,unsigned watcher) {
         self.assertEqual(self.lib.display(3), 11845)
         self.assertEqual(self.lib.display(0), 1185)
         self.assertEqual(self.lib.display(2), 1185)
+
+    def test_load_hold_without_manual_pause_aligns_native_and_compact_until_release(self):
+        self.lib.reset(1428, -4)
+        self.lib.holdLoad(1)
+        for _ in range(120):
+            self.lib.renderFrame(0, 1, 4)
+            self.assertEqual(self.lib.display(3), 11845)
+            self.assertEqual(self.lib.display(0), 1185)
+            self.assertEqual(self.lib.display(2), 1185)
+        self.lib.holdLoad(0)
+        self.lib.renderFrame(0, 0, 4)
+        self.assertGreater(self.lib.display(3), 11845)
+        self.assertEqual(self.lib.display(0), self.lib.display(1))
 
     def test_native_and_compact_match_each_hold_step_and_resume_draw_phase(self):
         self.lib.renderFrame(0, 0, 4)

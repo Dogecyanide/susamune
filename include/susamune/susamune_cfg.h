@@ -4,6 +4,7 @@
 #include "susamune/mem2_map.h"
 #include "susamune/settings_list.h"
 #include "susamune/binds_list.h"
+#include "susamune/iling_episodes.h"
 
 // =====================================================================
 // susamune_cfg.h
@@ -505,6 +506,8 @@ struct SusamuneMetadataStyleCfg {
 #define SUSAMUNE_CFG_FLAG_STAGE_PLAYLISTS 0x800u
 // Kernel/backend exposes the regional IL split/statistics journal.
 #define SUSAMUNE_CFG_FLAG_SPLIT_STATS 0x1000u
+// Expanded checkpoint journal in the relocated shared mailbox.
+#define SUSAMUNE_CFG_FLAG_SPLIT_STATS_V9 0x200000u
 // Kernel/backend exposes per-region Stage Loader target times.
 #define SUSAMUNE_CFG_FLAG_STAGE_TARGETS 0x2000u
 // Kernel/backend understands Rollout and Dust Creation styles.
@@ -864,12 +867,16 @@ struct SusamuneStageTargetsFileV1 {
 #define SUSAMUNE_SPLIT_STATS_VERSION_V5     5u
 #define SUSAMUNE_SPLIT_STATS_VERSION_V6     6u
 #define SUSAMUNE_SPLIT_STATS_VERSION_V7     7u
-#define SUSAMUNE_SPLIT_STATS_VERSION        8u
+#define SUSAMUNE_SPLIT_STATS_VERSION_V8     8u
+#define SUSAMUNE_SPLIT_STATS_VERSION        9u
 #define SUSAMUNE_SPLIT_STATS_ROUTE_COUNT    132u
-#define SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT  285u
+#define SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT  495u
 #define SUSAMUNE_SPLIT_STATS_REGION_COUNT   3u
 #define SUSAMUNE_SPLIT_STATS_PROFILE_COUNT  4u
-#define SUSAMUNE_SPLIT_STATS_SCHEMA_HASH    0x1AF7E430u
+#define SUSAMUNE_SPLIT_STATS_SCHEMA_HASH    0x783A6D0Fu
+#define SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT 132u
+#define SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT 285u
+#define SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH 0x1AF7E430u
 #define SUSAMUNE_SPLIT_STATS_V8_PREVIOUS_SCHEMA_HASH 0xD0AAE2E5u
 #define SUSAMUNE_SPLIT_STATS_V7_ROUTE_COUNT   122u
 #define SUSAMUNE_SPLIT_STATS_V7_SEGMENT_COUNT 275u
@@ -1126,6 +1133,66 @@ struct SusamuneSplitStatsFileV7 {
     unsigned char tailPad[380];
 };
 
+struct SusamuneSplitStatsPayloadV8 {
+    struct SusamuneSplitRouteStats routeStats[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                                                [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    // Region-wide and PB-profile-independent. QF saturates after roughly
+    // 414 days per IL while retaining the timer's native precision.
+    unsigned int playedQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                         [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    unsigned int bestQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                       [SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT];
+    unsigned int pbIdentityQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                             [SUSAMUNE_SPLIT_STATS_PROFILE_COUNT]
+                             [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    unsigned int pbQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                     [SUSAMUNE_SPLIT_STATS_PROFILE_COUNT]
+                     [SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT];
+};
+
+struct SusamuneSplitStatsCfgV8 {
+    // --- cache line 0: written by the kernel at boot, by the mod on save ---
+    unsigned int   magic;
+    unsigned short version;
+    unsigned char  routeCount;
+    unsigned char  regionCount;
+    unsigned short segmentCount;
+    unsigned char  profileCount;
+    unsigned char  headerReserved;
+    unsigned int   payloadBytes;
+    unsigned int   schemaHash;
+    unsigned int   saveSeq;
+    unsigned int   flags;
+    unsigned char  pad0[4];
+
+    // --- cache line 1: written ONLY by the kernel ---
+    unsigned int   ackSeq;
+    unsigned int   status;
+    unsigned char  pad1[24];
+
+    struct SusamuneSplitStatsPayloadV8 payload;
+    unsigned char reserved[16];
+    unsigned char tailPad[100];
+};
+
+struct SusamuneSplitStatsFileV8 {
+    unsigned int   magic;
+    unsigned short version;
+    unsigned char  routeCount;
+    unsigned char  regionCount;
+    unsigned short segmentCount;
+    unsigned char  profileCount;
+    unsigned char  headerReserved;
+    unsigned int   payloadBytes;
+    unsigned int   schemaHash;
+    unsigned int   generation;
+    unsigned int   checksum;
+    unsigned char  reserved0[4];
+    struct SusamuneSplitStatsPayloadV8 payload;
+    unsigned char reserved1[16];
+    unsigned char tailPad[36];
+};
+
 struct SusamuneSplitStatsPayload {
     struct SusamuneSplitRouteStats routeStats[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
                                                 [SUSAMUNE_SPLIT_STATS_ROUTE_COUNT];
@@ -1165,7 +1232,7 @@ struct SusamuneSplitStatsCfg {
 
     struct SusamuneSplitStatsPayload payload;
     unsigned char reserved[16];
-    unsigned char tailPad[100];
+    unsigned char tailPad[12];
 };
 
 struct SusamuneSplitStatsFile {
@@ -1183,7 +1250,7 @@ struct SusamuneSplitStatsFile {
     unsigned char  reserved0[4];
     struct SusamuneSplitStatsPayload payload;
     unsigned char reserved1[16];
-    unsigned char tailPad[36];
+    unsigned char tailPad[12];
 };
 
 struct SusamuneCfg {
@@ -1277,6 +1344,7 @@ typedef char susamune_mario_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_
 #define SUSAMUNE_FLUDD_COLORS_LIVE_PTR SUSAMUNE_FLUDD_COLORS_PPC_PTR
 #endif
 typedef char susamune_fludd_colors_size_check[(sizeof(struct SusamuneFluddColorsCfg) == 64) ? 1 : -1];
+typedef char susamune_il_episodes_gap_check[(SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + sizeof(struct SusamuneFluddColorsCfg) == SUSAMUNE_IL_EPISODES_CFG_OFFSET && SUSAMUNE_IL_EPISODES_CFG_OFFSET + sizeof(struct SusamuneILEpisodesCfg) <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_fludd_colors_gap_check[(SUSAMUNE_MARIO_COLORS_CFG_OFFSET + sizeof(struct SusamuneMarioColorsCfg) == SUSAMUNE_FLUDD_COLORS_CFG_OFFSET && SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + 64 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 == SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE && SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE + 64 <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
 
@@ -1285,16 +1353,15 @@ typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_
 #define SUSAMUNE_STAGE_TARGETS_PHYS_PTR \
     ((struct SusamuneStageTargetsCfg *)SUSAMUNE_CONSOLE_STAGE_TARGETS_PHYS_BASE)
 
-// The mailbox ends immediately before the live PB mirror. SplitStats keeps its
-// mutable copy in mod BSS so the larger all-IL schema does not need two copies
-// in this 64 KiB handoff window.
+// V8's handoff range remains reserved for one-time journal migration.
 #define SUSAMUNE_SPLIT_STATS_CFG_OFFSET 0x8280u
+#define SUSAMUNE_SPLIT_STATS_V8_PHYS_PTR \
+    ((struct SusamuneSplitStatsCfgV8 *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
+                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
 #define SUSAMUNE_SPLIT_STATS_PPC_PTR \
-    ((struct SusamuneSplitStatsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + \
-                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
+    ((struct SusamuneSplitStatsCfg *)SUSAMUNE_CONSOLE_SPLIT_STATS_PPC_BASE)
 #define SUSAMUNE_SPLIT_STATS_PHYS_PTR \
-    ((struct SusamuneSplitStatsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
-                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
+    ((struct SusamuneSplitStatsCfg *)SUSAMUNE_CONSOLE_SPLIT_STATS_PHYS_BASE)
 
 // Path of the ini, at the root of whichever device holds it. That is the device
 // the launcher was run from, which the kernel may have had to mount as a second
@@ -1456,18 +1523,26 @@ typedef char susamune_split_v7_payload_size_check[
     (sizeof(struct SusamuneSplitStatsPayloadV7) == 0x6E34) ? 1 : -1];
 typedef char susamune_split_v7_file_size_check[
     (sizeof(struct SusamuneSplitStatsFileV7) == 0x6FE0) ? 1 : -1];
+typedef char susamune_split_v8_payload_size_check[
+    (sizeof(struct SusamuneSplitStatsPayloadV8) == 0x744C) ? 1 : -1];
+typedef char susamune_split_v8_cfg_size_check[
+    (sizeof(struct SusamuneSplitStatsCfgV8) == 0x7500) ? 1 : -1];
+typedef char susamune_split_v8_file_size_check[
+    (sizeof(struct SusamuneSplitStatsFileV8) == 0x74A0) ? 1 : -1];
+typedef char susamune_split_relocated_size_check[
+    (sizeof(struct SusamuneSplitStatsCfg) <= SUSAMUNE_SPLIT_STATS_MAILBOX_SIZE) ? 1 : -1];
 typedef char susamune_split_payload_size_check[
-    (sizeof(struct SusamuneSplitStatsPayload) == 0x744C) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsPayload) == 0xA584) ? 1 : -1];
 typedef char susamune_split_cfg_ack_check[
     (__builtin_offsetof(struct SusamuneSplitStatsCfg, ackSeq) == 0x20) ? 1 : -1];
 typedef char susamune_split_cfg_payload_check[
     (__builtin_offsetof(struct SusamuneSplitStatsCfg, payload) == 0x40) ? 1 : -1];
 typedef char susamune_split_cfg_size_check[
-    (sizeof(struct SusamuneSplitStatsCfg) == 0x7500) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsCfg) == 0xA5E0) ? 1 : -1];
 typedef char susamune_split_file_payload_check[
     (__builtin_offsetof(struct SusamuneSplitStatsFile, payload) == 0x20) ? 1 : -1];
 typedef char susamune_split_file_size_check[
-    (sizeof(struct SusamuneSplitStatsFile) == 0x74A0) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsFile) == 0xA5C0) ? 1 : -1];
 typedef char susamune_progress_alignment_check[(SUSAMUNE_PROGRESS_CFG_OFFSET % 32 == 0) ? 1 : -1];
 typedef char susamune_stage_playlist_alignment_check[(SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET % 32 == 0) ? 1 : -1];
 typedef char susamune_split_stats_alignment_check[(SUSAMUNE_SPLIT_STATS_CFG_OFFSET % 32 == 0) ? 1 : -1];
@@ -1478,10 +1553,10 @@ typedef char susamune_stage_playlist_cfg_gap_check[
              sizeof(struct SusamuneStagePlaylistsCfg) <=
          SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_split_stats_console_gap_check[
-    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfg) ==
+    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfgV8) ==
           SUSAMUNE_MEM2_PB_LIVE_PPC_BASE - SUSAMUNE_MEM2_CFG_PPC_BASE) ? 1 : -1];
 typedef char susamune_split_stats_dolphin_gap_check[
-    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfg) ==
+    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfgV8) ==
      SUSAMUNE_DOLPHIN_PB_LIVE_PPC_BASE - SUSAMUNE_DOLPHIN_RUNTIME_PPC_BASE) ? 1 : -1];
 typedef char susamune_split_stats_stage_target_gap_check[
     (SUSAMUNE_CONSOLE_STAGE_TARGETS_PPC_BASE +

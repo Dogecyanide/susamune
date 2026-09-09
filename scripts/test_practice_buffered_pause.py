@@ -59,6 +59,7 @@ void frameControl(bool hold,bool) { frozen=hold; }
 }
 bool normalStage() { return director.mCurState==4; }
 bool observerTransition() { return transition; }
+bool activatePendingLoadHold(bool) { return false; }
 void invalidate() { ++invalidations; }
 void message(const char *) {}
 s32 retailChange(TMarDirector *d) { ++retailCalls;d->mCurState=retailNext;return retailResult; }

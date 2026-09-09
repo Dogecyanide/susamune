@@ -169,12 +169,12 @@ static void Finish(u32 status)
     m->receipt.command = Request.command;
     m->receipt.id = Request.id;
     m->receipt.seq = Request.seq;
-    if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_IMPORT ||
+    if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW || Request.command == SUSAMUNE_STATE_CMD_IMPORT ||
         Request.command == SUSAMUNE_STATE_CMD_EXPORT || Request.command == SUSAMUNE_STATE_CMD_RENAME ||
         Request.command == SUSAMUNE_STATE_CMD_DELETE)) {
         m->header = Header;
         sync_after_write(&m->header, sizeof(m->header));
-        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_EXPORT)
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW || Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_EXPORT)
             sync_after_write(m->metadata, Header.metadataSize);
         if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE)
             memcpy(m->resultName, RequestName, sizeof(m->resultName));
@@ -184,6 +184,13 @@ static void Finish(u32 status)
         m->receipt.packedSize = Header.packedSize;
         m->receipt.headerCrc = Header.headerCrc;
         m->receipt.reserved = SusamuneStateCrc(m->resultName, sizeof(m->resultName));
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
+            memset(&m->window, 0, sizeof(m->window));
+            m->window.offset = Request.poolOffset;
+            m->window.size = Offset;
+            m->window.checksum = ~PayloadCrc;
+            sync_after_write(&m->window, sizeof(m->window));
+        }
     }
     sync_after_write(&m->receipt, sizeof(m->receipt));
     m->response.status = status;
@@ -279,7 +286,7 @@ void SusamuneStateStorageService(void)
         if (m->request.seq == Ack) return;
         Request = m->request;
         FileId = Offset = 0;
-        if (!Request.seq || !Request.session || Request.reserved) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+        if (!Request.seq || !Request.session || (Request.reserved && Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
         if (Request.command == SUSAMUNE_STATE_CMD_CANCEL) { Finish(SUSAMUNE_STATE_CANCELLED); return; }
         if (Request.command == SUSAMUNE_STATE_CMD_CATALOG) {
             if (Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
@@ -302,6 +309,13 @@ void SusamuneStateStorageService(void)
         if (Request.command == SUSAMUNE_STATE_CMD_IMPORT) {
             if (!Request.id || Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
                 !SusamuneStateImportRange(Request.poolOffset, Request.packedSize)) { Finish(SUSAMUNE_STATE_FULL); return; }
+            FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
+        }
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
+            if (!Request.id || Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+                !SusamuneStateWindowRange(Request.packedSize, Request.poolOffset, Request.reserved)) {
+                Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
+            }
             FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
         }
         if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE) {
@@ -341,7 +355,7 @@ void SusamuneStateStorageService(void)
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) result = f_write(&File, &Header, sizeof(Header), &done);
         else result = f_read(&File, &Header, sizeof(Header), &done);
         if (result != FR_OK || done != sizeof(Header)) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
-        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT) {
+        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
             if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File))) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
             if (Header.headerCrc != Request.expectedHeaderCrc || Header.packedSize != Request.packedSize) { Finish(SUSAMUNE_STATE_STALE); return; }
             if (Header.gameId != GAME_ID || Header.configId != ConfigId) { Finish(SUSAMUNE_STATE_WRONG_CONFIG); return; }
@@ -365,10 +379,15 @@ void SusamuneStateStorageService(void)
         else result = f_read(&File, m->metadata, Header.metadataSize, &done);
         if (result != FR_OK || done != Header.metadataSize) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (SusamuneStateCrc(m->metadata, Header.metadataSize) != Header.metadataCrc) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW &&
+            f_lseek(&File, sizeof(Header) + Header.metadataSize + Request.poolOffset) != FR_OK) {
+            Finish(SUSAMUNE_STATE_IO_ERROR); return;
+        }
         PayloadCrc = 0xFFFFFFFFu; Phase = PAYLOAD_IO; return;
     }
     if (Phase == PAYLOAD_IO) {
-        amount = Header.packedSize - Offset;
+        const u32 payloadSize = Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW ? Request.reserved : Header.packedSize;
+        amount = payloadSize - Offset;
         if (amount > SUSAMUNE_STATE_CHUNK_SIZE) amount = SUSAMUNE_STATE_CHUNK_SIZE;
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) {
             bytes = PoolPiece(Request.poolOffset + Offset, &amount);
@@ -388,13 +407,13 @@ void SusamuneStateStorageService(void)
         }
         if (result != FR_OK || done != amount) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         Offset += amount;
-        if (Offset != Header.packedSize) return;
+        if (Offset != payloadSize) return;
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) {
             Header.payloadCrc = ~PayloadCrc;
             Header.headerCrc = SusamuneStateHeaderCrc(&Header);
             Phase = COMMIT_HEADER;
         } else {
-            if (~PayloadCrc != Header.payloadCrc) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+            if (Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW && ~PayloadCrc != Header.payloadCrc) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
             Phase = CLOSE_FILE;
         }
         return;
@@ -412,7 +431,7 @@ void SusamuneStateStorageService(void)
     if (Phase == CLOSE_FILE) {
         result = f_close(&File); FileOpen = false;
         if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
-        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT) Finish(SUSAMUNE_STATE_OK);
+        if (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) Finish(SUSAMUNE_STATE_OK);
         else Phase = RENAME_FILE;
         return;
     }

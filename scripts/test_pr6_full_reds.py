@@ -4,6 +4,7 @@
 from pathlib import Path
 import re
 import unittest
+import split_checkpoint_schema as schema
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -171,15 +172,28 @@ class FullRedsContracts(unittest.TestCase):
         self.assertIn("entry >= 0 && entry < kEntryCount", selectable)
 
     def test_split_identities_are_appended_and_persisted(self) -> None:
+        kernel = (ROOT / "launcher/kernel/SusamuneCfg.c").read_text(encoding="utf-8")
+        old_first = [int(value) for value in re.search(
+            r"SplitV8RouteFirst\[[^\]]+\]\s*=\s*\{([^}]+)\}", kernel).group(1).split(",") if value.strip()]
+        self.assertEqual(len(old_first), 132)
+        first = 0
+        starts = []
+        for points in schema.CHECKPOINTS:
+            starts.append(first)
+            first += len(points) + 1
         for route, entry in enumerate(range(122, 132), start=122):
             self.assertRegex(SPLIT_API, rf"=\s*{route},")
-            self.assertIn(f"{{{275 + route - 122}, {entry}, 0}}", SPLITS)
+            self.assertEqual(schema.ROUTE_ENTRIES[route], entry)
+            self.assertEqual(old_first[route], 275 + route - 122)
+            self.assertIn(f"{{{starts[route]}, {entry}, {len(schema.CHECKPOINTS[route])}}}", SPLITS)
         self.assertIn("ROUTE_COUNT = 132", SPLIT_API)
-        self.assertRegex(HEADER, r"SUSAMUNE_SPLIT_STATS_VERSION\s+8u")
+        self.assertRegex(HEADER, r"SUSAMUNE_SPLIT_STATS_VERSION\s+9u")
+        self.assertRegex(HEADER, r"SUSAMUNE_SPLIT_STATS_VERSION_V8\s+8u")
         self.assertRegex(HEADER, r"SUSAMUNE_SPLIT_STATS_VERSION_V7\s+7u")
         self.assertIn("struct SusamuneSplitStatsFileV7", HEADER)
-        self.assertIn("ReadSplitStatsV7File", (ROOT / "launcher" / "kernel" /
-                      "SusamuneCfg.c").read_text(encoding="utf-8"))
+        self.assertIn("ReadSplitStatsV7File", kernel)
+        self.assertIn("ReadSplitStatsV8File", kernel)
+        self.assertIn("MigrateSplitStatsV8", kernel)
 
     def test_playlists_accept_the_appended_entry_ids(self) -> None:
         self.assertIn("SUSAMUNE_STAGE_PLAYLIST_ROUTE_COUNT 132u", HEADER)

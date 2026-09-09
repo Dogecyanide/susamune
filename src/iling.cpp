@@ -926,7 +926,7 @@ void servicePBSave() {
 
 bool validEntry(int entry) {
     // Internal entry ids are either table indexes or the -1 disarmed sentinel.
-    return entry >= 0;
+    return entry >= 0 && entry < kEntryCount;
 }
 
 bool isPlazaEntry(int entry) {
@@ -960,6 +960,21 @@ bool isBonusShine(const Entry &item) {
     return hidden || hundred;
 }
 
+u8 sEpisodeChoices[SUSAMUNE_IL_EPISODE_COUNT];
+
+int episodeChoiceIndex(int entry) {
+    if (!validEntry(entry)) return -1;
+#define EPISODE_SLOT(slot, key) slot,
+    static const u8 kSlots[] = { SUSAMUNE_IL_EPISODE_LIST(EPISODE_SLOT) };
+#undef EPISODE_SLOT
+    static_assert(sizeof(kSlots) == SUSAMUNE_IL_EPISODE_COUNT,
+                  "episode choices must match their persisted slots");
+    const int slot = pbSlot(entry);
+    for (u32 i = 0; i < sizeof(kSlots); ++i)
+        if (kSlots[i] == slot) return i;
+    return -1;
+}
+
 u8 parentOrSelf(u8 area) {
     const u8 parent = LevelWarp::parentArea(area);
     return parent == 0xFF ? area : parent;
@@ -972,6 +987,15 @@ bool sameCourse(const LevelWarp::Dest &a, const LevelWarp::Dest &b) {
 bool sameCourseEpisode(const LevelWarp::Dest &a,
                        const LevelWarp::Dest &b) {
     return sameCourse(a, b) && a.gameInt3 == b.gameInt3;
+}
+
+LevelWarp::Dest selectedStart(int entry) {
+    const LevelWarp::Dest original = kEntries[entry].start;
+    const int index = episodeChoiceIndex(entry);
+    if (index < 0 || !sEpisodeChoices[index] ||
+        sEpisodeChoices[index] == original.gameInt3 + 1) return original;
+    const u8 episode = sEpisodeChoices[index] - 1;
+    return {parentOrSelf(original.area), episode, episode};
 }
 
 bool acceptsSkipOrigin(const Entry &item) {
@@ -1337,7 +1361,7 @@ void captureGhostRace(int entry) {
         race.attemptSerial != gQFTTimer.attemptSerial() ||
         race.targetQf > 0x7fffffffu)
         return;
-    const LevelWarp::Dest &start = kEntries[entry].start;
+    const LevelWarp::Dest &start = sAttemptStart;
     const u8 parentArea = LevelWarp::parentArea(start.area);
     const u8 routeFlags = parentArea == 0xff
         ? 0 : SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE;
@@ -1356,14 +1380,15 @@ u8 liveGlobalAssistReasons() {
                : 0;
 }
 
-void armAttempt(const Entry &entry, int selected) {
+void armAttempt(const Entry &entry, int selected,
+                const LevelWarp::Dest *start = nullptr) {
     const int entryIndex = (int)(&entry - kEntries);
     sPinnaEygRestart = entryIndex == kEntryPinnaEyg;
     sRunning = true;
     sAttemptReady = false;
     sTransitionPending = false;
     sChildRetryContinuation = false;
-    sAttemptStart = entry.start;
+    sAttemptStart = start ? *start : entry.start;
     sFinishKind = entryFinish(entry);
     sSelectedEntry = selected;
     int identity = selected;
@@ -1529,6 +1554,38 @@ void onPersistenceReady() {
 
 int count() { return kEntryCount; }
 
+bool canChooseEpisode(int entry) { return episodeChoiceIndex(entry) >= 0; }
+
+int selectedEpisode(int entry) {
+    return validEntry(entry) ? selectedStart(entry).gameInt3 : -1;
+}
+
+void setEpisode(int entry, int episode) {
+    const int index = episodeChoiceIndex(entry);
+    if (index < 0 || episode < 0 || episode >= 8) return;
+    sEpisodeChoices[index] = episode + 1;
+    gSettings.markDirty();
+}
+
+void resetEpisodeChoices() { memset(sEpisodeChoices, 0, sizeof(sEpisodeChoices)); }
+
+void adoptEpisodes(const volatile SusamuneILEpisodesCfg *cfg) {
+    resetEpisodeChoices();
+    if (!cfg || cfg->magic != SUSAMUNE_IL_EPISODE_MAGIC ||
+        cfg->version != SUSAMUNE_IL_EPISODE_VERSION ||
+        cfg->count > SUSAMUNE_IL_EPISODE_COUNT) return;
+    for (u32 i = 0; i < cfg->count; ++i)
+        if (cfg->episodes[i] <= 8) sEpisodeChoices[i] = cfg->episodes[i];
+}
+
+void stageEpisodes(volatile SusamuneILEpisodesCfg *cfg) {
+    memset((void *)cfg, 0, sizeof(*cfg));
+    cfg->magic = SUSAMUNE_IL_EPISODE_MAGIC;
+    cfg->version = SUSAMUNE_IL_EPISODE_VERSION;
+    cfg->count = SUSAMUNE_IL_EPISODE_COUNT;
+    memcpy((void *)cfg->episodes, sEpisodeChoices, sizeof(sEpisodeChoices));
+}
+
 bool streakEntrySelectable(int entry) {
     return entry >= 0 && entry < kEntryCount;
 }
@@ -1544,11 +1601,14 @@ bool sameEpisodeShine(int selectedEntry, int completedEntry) {
         selectedEntry <= kEntryFullRedsLast) {
         return completedEntry == selectedEntry;
     }
+    const LevelWarp::Dest start = sRunning && sSelectedEntry == selectedEntry
+                                      ? sAttemptStart
+                                      : selectedStart(selectedEntry);
     return entryFinish(selected) == FINISH_SHINE &&
            entryFinish(completed) == FINISH_SHINE &&
-           sameCourse(selected.start, completed.start) &&
+           sameCourse(start, completed.start) &&
            (isBonusShine(completed) ||
-            sameCourseEpisode(selected.start, completed.start));
+            sameCourseEpisode(start, completed.start));
 }
 
 const char *label(int entry) {
@@ -1571,7 +1631,7 @@ const char *label(int entry) {
         const int group = hundred ? item.result - 100 : item.result / 10;
         const u8 flags = item.flags & ENTRY_FLAG_MASK;
         const int episode = regularDisplayEpisode(
-            item.start.gameInt3, item.result, group, flags);
+            selectedEpisode(entry), item.result, group, flags);
         int formatOffset = LABEL_FORMAT_NORMAL;
         const char *suffix = regularSuffix(flags);
         if (hundred) {
@@ -1853,6 +1913,7 @@ void restoreWarpStartSnapshot() {
 }
 
 bool start(int entry, u32 approvedDiscardToken) {
+    if (!validEntry(entry)) return false;
     restoreWarpStartSnapshot();
     clearAttempt();
     if (gSettings.getBool(SETTING_DISABLE_WARPS)) {
@@ -1874,7 +1935,8 @@ bool start(int entry, u32 approvedDiscardToken) {
     }
     sWarpRollbackAppliedFluddSecrets =
         gSettings.get(SETTING_FLUDD_SECRETS);
-    armAttempt(item, entry);
+    const LevelWarp::Dest destination = selectedStart(entry);
+    armAttempt(item, entry, &destination);
     if (isPlazaEntry(entry)) {
         if (!TFlagManager::smInstance) {
             cancelWarpStart();
@@ -1895,7 +1957,7 @@ bool start(int entry, u32 approvedDiscardToken) {
         return true;
     }
 
-    LevelWarp::warpToGuarded(item.start, approvedDiscardToken, true);
+    LevelWarp::warpToGuarded(destination, approvedDiscardToken, true);
     return true;
 }
 
@@ -1906,9 +1968,9 @@ bool start(int entry) {
 bool copyWarpDiscardName(int entry, char *out, u32 size, u32 *outToken) {
     if (!validEntry(entry) ||
         gSettings.getBool(SETTING_DISABLE_WARPS)) return false;
-    const Entry &item = kEntries[entry];
-    const s32 variant = isPlazaEntry(entry) ? 0 : item.start.gameInt3;
-    return Ghost::copyWarpDiscardName(item.start.area, item.start.episode,
+    const LevelWarp::Dest start = selectedStart(entry);
+    const s32 variant = isPlazaEntry(entry) ? 0 : start.gameInt3;
+    return Ghost::copyWarpDiscardName(start.area, start.episode,
                                       variant, true, out, size, outToken);
 }
 

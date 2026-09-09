@@ -37,6 +37,9 @@ static StoredState sSlots[3],sCandidate,returned;
 static u32 sDiskSlot,sDiskGeneration,sDiskPoolUsed,sDiskScene,sDurableSlots;
 static u32 sPackedChecksums[3],fullDecodes,verifiedDecodes,policyBytes;
 static OSTime sDiskStarted;static bool sDiskActive,sDiskRestore,sDiskLoadReady;
+static bool sDiskStream,sDiskRecovered,sStreamCommit;
+static SusamuneStateArchiveHeader sStreamHeader;
+static u32 sStreamOffset,sStreamSize,sStreamSeen,sStreamCrc,sStreamChecksums[5];
 static u32 sLoadSlot,sPendingSlot,sPendingGeneration;
 static SusamuneStateCatalogEntry sSelectedSD;
 static const char*sDiskStatus;
@@ -60,7 +63,7 @@ static void rebaseMissionStopwatch(OSTime){++rebased;}
 static void DCStoreRange(void*,u32){++stores;}
 static void*codecWorkspace(){return workspace;}
 struct Menu{void toast(const char*){++notified;}}menu;static Menu*gMenu=&menu;
-namespace PracticeSession{void onSavestateCleared(u32,u32){++cleared;}}
+namespace PracticeSession{void onSavestateCleared(u32,u32){++cleared;}void cancelLoadHold(){}}
 namespace Ghost{enum{kSavestateSpanCount=0};}
 namespace StateArchiveProfile{static void copyGameBytes(void*,void*d,const void*s,u32 n){policyBytes+=n;memcpy(d,s,n);}}
 static u32 sLiveArchiveProfile;
@@ -71,7 +74,7 @@ static StateCodec::Status verifiedDecode(void*w,u32 n,const StateCodec::ReadSpan
  const StateCodec::WriteSpan*d,u32 dn,u32 raw,u32 adler,StateCodec::CopyBytes copy,void*ctx){
  ++verifiedDecodes;return StateCodec::decompressVerified(w,n,s,count,d,dn,raw,adler,copy,ctx);}
 namespace StateStorage{
-struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];};
+struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;};
 static Result result;
 void update(){}
 bool takeResult(Result&out){if(!ready)return false;out=result;ready=false;transportBusy=false;return true;}
@@ -162,7 +165,9 @@ class SavestateArchiveTests(unittest.TestCase):
         spans=load[load.index('    StateCodec::ReadSpan compressed[3]'):
                    load.index('    StateCodec::WriteSpan destinations[')]
         dispatch=load[load.index('    StateCodec::Status restored;'):
-                      load.index('    if (restored == StateCodec::COMMIT_FAILED)')]
+                      load.rindex('    if (restored == StateCodec::COMMIT_FAILED)')]
+        # The separate streaming harness covers the recovery transaction.
+        dispatch=dispatch[:dispatch.index('    if (fromSD && sDiskStream)')] + '    if (fromSD) {' + dispatch.split('    } else if (fromSD) {',1)[1]
         dispatch=dispatch.replace('StateCodec::decompress(', 'fullDecode(').replace(
             'StateCodec::decompressVerified(', 'verifiedDecode(')
         restore=r'''
@@ -366,8 +371,8 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
         crc=load.index('packedChecksum(sPool.slots[slot].offset, saved.packedSize) != sPackedChecksums[slot]')
         self.assertLess(load.index('OSDisableInterrupts()'),crc)
-        self.assertLess(crc,load.index('StateCodec::decompressVerified('))
-        self.assertLess(load.index('StateCodec::decompressVerified('),load.index('OSRestoreInterrupts(ints)',crc))
+        self.assertLess(crc,load.index('StateCodec::decompressVerified(',crc))
+        self.assertLess(load.index('StateCodec::decompressVerified(',crc),load.index('OSRestoreInterrupts(ints)',crc))
         self.assertIn('if (restored == StateCodec::COMMIT_FAILED) __builtin_trap()',load)
         clear=function_source(SOURCE,'bool SavestateManager::clearSlot(')
         self.assertIn('sPackedChecksums[slot] = 0',clear)
@@ -380,8 +385,8 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
             ['if (!fromSD) rebaseMissionStopwatch(restoreStarted);']*2,
             'Profile and decode failures must leave direct SD timing to its queue owner')
         process=function_source(SOURCE,'void SavestateManager::processPendingLoad()')
-        self.assertIn('if (!restored) rebaseMissionStopwatch(sDiskStarted);',process)
-        self.assertEqual(process.count('if (!restored) rebaseMissionStopwatch(sDiskStarted);'),1)
+        self.assertIn('if (!restored) {\n            rebaseMissionStopwatch(sDiskStarted);',process)
+        self.assertEqual(process.count('if (!restored) {\n            rebaseMissionStopwatch(sDiskStarted);'),1)
 
     def test_rename_and_delete_touch_only_matching_selected_sd_identity_after_success(self):
         header=(ROOT/'include/susamune/state_storage.h').read_text()

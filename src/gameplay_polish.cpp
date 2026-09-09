@@ -80,7 +80,7 @@ extern "C" void susamuneFireRideYoshi(TMarDirector *director, TYoshi *yoshi) {
 extern "C" void susamuneFireGetNozzle(TMarDirector *director,
                                       TItemNozzle *nozzle) {
     director->fireGetNozzle(nozzle);
-    SplitEvents::onNozzleCollected();
+    SplitEvents::onNozzleCollected(nozzle);
     if (gSettings.getBool(SETTING_YOSHI_NOZZLE_SAVE_PROMPT))
         requestSavePrompt(director);
 }

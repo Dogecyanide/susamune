@@ -31,7 +31,7 @@ PROFILES = 4
 B2_ROUTE = 13
 V7_ROUTES = 122
 ROUTE_COUNTS = tuple(
-    len(checkpoints) + 1 for checkpoints in schema.CHECKPOINTS[:V7_ROUTES]
+    len(checkpoints) + 1 for checkpoints in schema.V8_CHECKPOINTS[:V7_ROUTES]
 )
 ROUTE_FIRST = (0,) + tuple(accumulate(ROUTE_COUNTS[:-1]))
 ROUTES = len(ROUTE_COUNTS)
@@ -113,10 +113,10 @@ def migrate_v8_previous(payload: dict[str, list]) -> dict[str, list]:
 class PreviousSchemaMigrationContracts(unittest.TestCase):
     def test_hashes_are_explicit(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
-        self.assertEqual(schema.EXPECTED_SCHEMA_HASH, CURRENT_SCHEMA)
+        self.assertEqual(schema.EXPECTED_V8_SCHEMA_HASH, CURRENT_SCHEMA)
         self.assertRegex(
             header,
-            rf"SUSAMUNE_SPLIT_STATS_SCHEMA_HASH\s+0x{CURRENT_SCHEMA:08X}u",
+            rf"SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH\s+0x{CURRENT_SCHEMA:08X}u",
         )
         self.assertRegex(
             header,
@@ -155,16 +155,16 @@ class PreviousSchemaMigrationContracts(unittest.TestCase):
         kernel = KERNEL.read_text(encoding="utf-8")
         supported = function_block(kernel, "static bool SplitStatsV8SchemaSupported(")
         reader = function_block(
-            kernel, "static enum PbReadResult ReadSplitStatsFile("
+            kernel, "static enum PbReadResult ReadSplitStatsV8File("
         )
-        self.assertIn("schemaHash == SUSAMUNE_SPLIT_STATS_SCHEMA_HASH", supported)
+        self.assertIn("schemaHash == SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH", supported)
         self.assertIn(
             "schemaHash == SUSAMUNE_SPLIT_STATS_V8_PREVIOUS_SCHEMA_HASH",
             supported,
         )
         self.assertEqual(supported.count("schemaHash =="), 2)
         self.assertGreaterEqual(reader.count("SplitStatsV8SchemaSupported"), 3)
-        self.assertIn("file->checksum != SplitStatsChecksum(file)", reader)
+        self.assertIn("file->checksum != SplitStatsV8Checksum(file)", reader)
 
     def test_only_incompatible_b2_timing_history_is_invalidated(self) -> None:
         old = populated_payload()
@@ -231,7 +231,7 @@ class PreviousSchemaMigrationContracts(unittest.TestCase):
         legacy = function_block(
             kernel, "static void MigrateSplitStatsPreviousSchema("
         )
-        init = function_block(kernel, "static bool InitSplitStatsFiles(")
+        init = function_block(kernel, "static bool InitSplitStatsV8Files(")
         self.assertIn("const u32 route = 13", migration)
         self.assertIn("routeStats[region][route].golds = 0", migration)
         for destination, source in ((5, 4), (4, 3), (3, 2)):
@@ -243,11 +243,11 @@ class PreviousSchemaMigrationContracts(unittest.TestCase):
         self.assertNotIn("pbIdentityQf", migration)
         self.assertNotIn("playedQf", migration)
         self.assertIn(
-            "selectedSchemaHash != SUSAMUNE_SPLIT_STATS_SCHEMA_HASH", init
+            "selectedSchemaHash != SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH", init
         )
         self.assertIn("ReadSplitStatsV7File", init)
         self.assertIn("MigrateSplitStatsV7", init)
-        self.assertIn("const u32 count = SplitRouteCount[route]", legacy)
+        self.assertIn("const u32 count = SplitV8RouteCount[route]", legacy)
         self.assertIn("pbIdentityQf[region][profile][route]", legacy)
         self.assertIn("MigrateSplitStatsV8PreviousSchema(&stats->payload)", init)
         self.assertIn("MigrateSplitStatsPreviousSchema(&stats->payload)", init)
@@ -262,7 +262,7 @@ class PreviousSchemaMigrationContracts(unittest.TestCase):
         v6 = function_block(kernel, "static void MigrateSplitStatsV6(")
         v5 = function_block(kernel, "static void MigrateSplitStatsV5(")
         v4 = function_block(kernel, "static void MigrateSplitStatsV4(")
-        init = function_block(kernel, "static bool InitSplitStatsFiles(")
+        init = function_block(kernel, "static bool InitSplitStatsV8Files(")
 
         self.assertIn("local < SplitV6RouteCount[route]", v6)
         self.assertIn("local < SplitV5RouteCount[route]", v5)
@@ -271,7 +271,7 @@ class PreviousSchemaMigrationContracts(unittest.TestCase):
         self.assertIn("(b2 ? 1u : 0u)", v6)
         self.assertIn("(b2 ? 1u : 0u)", v5)
         self.assertIn("if (b2)\n\t\t\t\tcontinue;", v4)
-        self.assertLess(v4.index("if (b2)"), v4.index("SplitRouteCount[route]"))
+        self.assertLess(v4.index("if (b2)"), v4.index("SplitV8RouteCount[route]"))
 
         self.assertIn("MigrateSplitStatsV3", init)
         self.assertIn("MigrateSplitStatsV2", init)

@@ -4,7 +4,7 @@
 #include "susamune/mem2_map.h"
 
 #define SUSAMUNE_STATE_STORAGE_MAGIC 0x4D535354u
-#define SUSAMUNE_STATE_STORAGE_VERSION 4u
+#define SUSAMUNE_STATE_STORAGE_VERSION 5u
 #define SUSAMUNE_STATE_ARCHIVE_MAGIC 0x4D535341u
 #define SUSAMUNE_STATE_ARCHIVE_VERSION 1u
 #define SUSAMUNE_STATE_METADATA_SIZE 7168u
@@ -17,7 +17,8 @@
 enum SusamuneStateCommand {
     SUSAMUNE_STATE_CMD_NONE, SUSAMUNE_STATE_CMD_EXPORT,
     SUSAMUNE_STATE_CMD_IMPORT, SUSAMUNE_STATE_CMD_CATALOG,
-    SUSAMUNE_STATE_CMD_CANCEL, SUSAMUNE_STATE_CMD_RENAME, SUSAMUNE_STATE_CMD_DELETE
+    SUSAMUNE_STATE_CMD_CANCEL, SUSAMUNE_STATE_CMD_RENAME, SUSAMUNE_STATE_CMD_DELETE,
+    SUSAMUNE_STATE_CMD_READ_WINDOW
 };
 enum SusamuneStateStatus {
     SUSAMUNE_STATE_OK, SUSAMUNE_STATE_UNAVAILABLE, SUSAMUNE_STATE_IO_ERROR,
@@ -60,6 +61,9 @@ struct SusamuneStateCatalog {
     unsigned int count, afterId, nextId, more, reserved[4];
     struct SusamuneStateCatalogEntry entries[SUSAMUNE_STATE_CATALOG_COUNT];
 };
+struct SusamuneStateWindowReceipt {
+    unsigned int offset, size, checksum, reserved[5];
+};
 struct SusamuneStateStorageMailbox {
     struct SusamuneStateRequest request;
     struct SusamuneStateResponse response;
@@ -69,11 +73,12 @@ struct SusamuneStateStorageMailbox {
     unsigned char metadata[SUSAMUNE_STATE_METADATA_SIZE];
     char requestName[SUSAMUNE_STATE_NAME_BYTES];
     char resultName[SUSAMUNE_STATE_NAME_BYTES];
+    struct SusamuneStateWindowReceipt window;
 };
 typedef char StateHeaderSize[sizeof(struct SusamuneStateArchiveHeader) == 96 ? 1 : -1];
 typedef char StateCatalogSize[sizeof(struct SusamuneStateCatalogEntry) == 64 ? 1 : -1];
 typedef char StateNameSize[sizeof(struct SusamuneStateNameRecord) == 64 ? 1 : -1];
-typedef char StateMailboxSize[sizeof(struct SusamuneStateStorageMailbox) == 7968 &&
+typedef char StateMailboxSize[sizeof(struct SusamuneStateStorageMailbox) == 8000 &&
     sizeof(struct SusamuneStateStorageMailbox) <= SUSAMUNE_STATE_STORAGE_SIZE ? 1 : -1];
 typedef char StateNameMailboxLines[__builtin_offsetof(struct SusamuneStateStorageMailbox, requestName) == 7904 &&
     __builtin_offsetof(struct SusamuneStateStorageMailbox, resultName) == 7936 ? 1 : -1];
@@ -172,6 +177,10 @@ static inline int SusamuneStateImportRange(unsigned int offset, unsigned int siz
         offset <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE &&
         (size <= SUSAMUNE_STATE_STAGING_SIZE ||
          size - SUSAMUNE_STATE_STAGING_SIZE <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE - offset);
+}
+static inline int SusamuneStateWindowRange(unsigned int packed, unsigned int offset, unsigned int size) {
+    return packed && packed <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE && size &&
+        size <= SUSAMUNE_STATE_STAGING_SIZE && offset <= packed && size <= packed - offset;
 }
 
 #endif

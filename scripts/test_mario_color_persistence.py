@@ -68,12 +68,14 @@ int mutexErrors,flushes;bool checkCommit,copyBeforeUnlock;u8*commitDestination;u
 void OSInitMutex(OSMutex*m){m->held=false;}
 void OSLockMutex(OSMutex*m){if(m->held)mutexErrors++;m->held=true;}
 void OSUnlockMutex(OSMutex*m){if(!m->held)mutexErrors++;if(checkCommit)copyBeforeUnlock=commitDestination[6]==expectedEnabled;m->held=false;}
-SusamuneMarioColorsCfg liveColors;SusamuneFluddColorsCfg liveFluddColors;
+SusamuneMarioColorsCfg liveColors;SusamuneFluddColorsCfg liveFluddColors;SusamuneILEpisodesCfg liveEpisodes;
 #undef SUSAMUNE_MARIO_COLORS_LIVE_PTR
 #define SUSAMUNE_MARIO_COLORS_LIVE_PTR (&liveColors)
 #undef SUSAMUNE_FLUDD_COLORS_LIVE_PTR
 #define SUSAMUNE_FLUDD_COLORS_LIVE_PTR (&liveFluddColors)
-void DCStoreRange(void*p,u32 n){if((p==&liveColors&&n==32)||(p==&liveFluddColors&&n==64))flushes++;else mutexErrors++;}
+#undef SUSAMUNE_IL_EPISODES_LIVE_PTR
+#define SUSAMUNE_IL_EPISODES_LIVE_PTR (&liveEpisodes)
+void DCStoreRange(void*p,u32 n){if((p==&liveColors&&n==32)||(p==&liveFluddColors&&n==64)||(p==&liveEpisodes&&n==64))flushes++;else mutexErrors++;}
 '''
         code += keys + records + state + offsets
         code += r'''
@@ -94,9 +96,9 @@ int CARDWrite(CARDFileInfo*,void*in,unsigned n,unsigned offset){if(writeFails)re
 int CARDClose(CARDFileInfo*){return 0;}
 '''
         for name in ("initBlank", "migrateLegacyPBs", "validPBValue", "migrateProfilesV1",
-                     "migrateRecordCfg", "initMarioColors", "publishMarioColors", "initFluddColors", "publishFluddColors", "checksum",
+                     "migrateRecordCfg", "initMarioColors", "publishMarioColors", "initFluddColors", "publishFluddColors", "initILEpisodes", "publishILEpisodes", "checksum",
                      "valid", "validV1", "validV2", "validV3", "validV4", "validV5", "validV6",
-                     "validV7", "validV8", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
+                     "validV7", "validV8", "validV9", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
                      "writeRecordLocked", "loadRecords", "lock", "commit"):
             code += function(emulator, name)
         for name in ("ParseU16", "ParseQftU8", "ParseQftRgb", "InitMarioColorsDefaults",
@@ -134,20 +136,21 @@ API int migrate(){
 }
 void makeRecord(Record*r,unsigned version,unsigned generation,unsigned enabled){
  memset(r,0,sizeof(*r));r->magic=kRecordMagic;r->version=version;
- r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
- initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);r->marioColors.enabled=enabled;
+ r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:version==9?kRecordPayloadSizeV9:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
+ initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);initILEpisodes(&r->ilEpisodes);r->marioColors.enabled=enabled;
+ if(version<10)r->cfg.flags&=~SUSAMUNE_CFG_FLAG_IL_EPISODES;
  r->marioColors.rgb[4][1]=91;r->cfg.values[12]=37;r->cfg.nativeTimerStyle.scale=123;
  r->checksum=checksum(r);
 }
 API int cardRead(int test){
  mutexErrors=flushes=0;checkCommit=false;cardManager.mMutex.held=false;fileExists=true;
- initState();makeRecord(&card[0],9,10,3);makeRecord(&card[1],7,11,0xA5);
+ initState();makeRecord(&card[0],10,10,3);makeRecord(&card[1],7,11,0xA5);
  if(test==1)makeRecord(&card[1],7,9,0xA5);
- if(test==2){makeRecord(&card[1],9,11,5);card[1].marioColors.rgb[6][1]^=1;}
- if(test==3){makeRecord(&card[1],9,11,5);card[1].gameVersion=2;card[1].checksum=checksum(&card[1]);}
+ if(test==2){makeRecord(&card[1],10,11,5);card[1].marioColors.rgb[6][1]^=1;}
+ if(test==3){makeRecord(&card[1],10,11,5);card[1].gameVersion=2;card[1].checksum=checksum(&card[1]);}
  if(test==4){makeRecord(&card[1],8,11,5);memset(&card[1].fluddColors,0xa5,64);card[1].checksum=checksum(&card[1]);}
  static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishMarioColors();publishFluddColors();
- if(mutexErrors||flushes!=4||state.cfg.values[12]!=37||state.cfg.nativeTimerStyle.scale!=123)return 2;
+ if(mutexErrors||flushes!=5||state.cfg.values[12]!=37||state.cfg.nativeTimerStyle.scale!=123)return 2;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_MARIO_COLORS))return 3;
  if(test==4){if(state.generation!=11||!state.initialSave||liveColors.enabled!=5||liveColors.rgb[4][1]!=91)return 6;
   if(liveFluddColors.enabled||liveFluddColors.rgb[9][2]!=255||liveFluddColors.magic!=SUSAMUNE_FLUDD_COLORS_MAGIC)return 7;
@@ -164,11 +167,39 @@ API int cardCommit(){
  if(ticket!=1||!copyBeforeUnlock||state.mutex.held||mutexErrors)return 2;
  if(state.fluddColors.enabled!=0x301||state.fluddColors.rgb[9][2]!=83)return 9;
  if(writeRecordLocked()!=0||!valid(&card[0])||card[0].marioColors.enabled!=0x65||card[0].marioColors.rgb[6][2]!=17)return 3;
- if(card[0].version!=9||card[0].payloadSize!=sizeof(SusamuneCfg)+96||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
+ if(card[0].version!=10||card[0].payloadSize!=sizeof(SusamuneCfg)+160||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
  if(!lock())return 5;liveColors.enabled=2;commit();writeFails=true;
  if(writeRecordLocked()!=CARD_ERROR_IOERROR||state.activeRecord!=0||state.generation!=1||!valid(&card[0]))return 6;
  writeFails=false;if(writeRecordLocked()!=0||state.activeRecord!=1||!valid(&card[1])||card[1].marioColors.enabled!=2)return 7;
  return mutexErrors?8:0;
+}
+API int cardEpisodes(int legacy){
+ mutexErrors=flushes=0;checkCommit=false;writeFails=false;fileExists=true;initState();
+ makeRecord(&card[0],10,20,0x45);makeRecord(&card[1],legacy?9:10,21,0x65);
+ card[1].fluddColors.enabled=0x301;card[1].fluddColors.rgb[9][2]=17;
+ for(unsigned i=0;i<20;i++)card[1].ilEpisodes.episodes[i]=(i%8)+1;
+ if(legacy)memset(&card[1].ilEpisodes,0xa5,64);
+ card[1].checksum=checksum(&card[1]);
+ const SusamuneMarioColorsCfg expectedMario=card[1].marioColors;
+ const SusamuneFluddColorsCfg expectedFludd=card[1].fluddColors;
+ static SusamuneCfg expectedCfg;expectedCfg=card[1].cfg;
+ static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;
+ if(state.generation!=21||state.initialSave!=(bool)legacy)return 2;
+ if(state.cfg.values[12]!=37||state.cfg.nativeTimerStyle.scale!=123)return 3;
+ for(unsigned i=0;i<sizeof(SusamuneCfg);i++)
+  if(i<__builtin_offsetof(SusamuneCfg,flags)||i>=__builtin_offsetof(SusamuneCfg,flags)+4)
+   if(((u8*)&state.cfg)[i]!=((const u8*)&expectedCfg)[i])return 14;
+ for(unsigned i=0;i<32;i++)if(((u8*)&state.marioColors)[i]!=((const u8*)&expectedMario)[i])return 4;
+ for(unsigned i=0;i<64;i++)if(((u8*)&state.fluddColors)[i]!=((const u8*)&expectedFludd)[i])return 5;
+ publishILEpisodes();
+ if(liveEpisodes.magic!=SUSAMUNE_IL_EPISODE_MAGIC||liveEpisodes.count!=20)return 6;
+ for(unsigned i=0;i<20;i++)if(liveEpisodes.episodes[i]!=(legacy?0:(i%8)+1))return 7;
+ if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_IL_EPISODES))return 8;
+ if(!lock())return 9;for(unsigned i=0;i<20;i++)liveEpisodes.episodes[i]=8-(i%8);commit();
+ if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=10)return 10;
+ for(unsigned i=0;i<20;i++)if(card[0].ilEpisodes.episodes[i]!=8-(i%8))return 11;
+ card[0].ilEpisodes.episodes[19]^=1;if(valid(&card[0]))return 12;
+ return mutexErrors?13:0;
 }
 '''
         source = work / "persistence.cpp"
@@ -265,6 +296,11 @@ API int cardCommit(){
 
     def test_commit_copies_live_colours_under_lock_and_failed_write_keeps_old_record(self):
         self.assertEqual(self.lib.cardCommit(), 0)
+
+    def test_card_v9_migration_and_v10_keep_colours_and_episode_choices(self):
+        for legacy in (0, 1):
+            with self.subTest(legacy=legacy):
+                self.assertEqual(self.lib.cardEpisodes(legacy), 0)
 
 
 if __name__ == "__main__":

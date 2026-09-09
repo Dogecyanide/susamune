@@ -34,7 +34,12 @@ static u32 sActiveSlot, sLoadSlot, sPendingSlot, sPendingGeneration;
 static bool sAwaitingLoadApproval, sBusy;
 struct Selection {u32 id,headerCrc,packedSize;char name[32];};
 static Selection sSelectedSD,sPendingSD;
-static bool diskOwned,sDiskLoadReady,restoreSucceeds,importSucceeds;
+static bool diskOwned,sDiskLoadReady,sDiskRecovered,restoreSucceeds,importSucceeds;
+namespace PracticeSession {
+static u32 heldMask,cancelled;
+void armLoadHold(u32 mask){heldMask=mask;}
+void cancelLoadHold(){heldMask=0;++cancelled;}
+}
 static OSTime sDiskStarted;
 static const char*sDiskStatus;
 static u32 imports,importId,importCrc,importSize,rebased,savedSlot;
@@ -103,7 +108,8 @@ API void reset() {
     sActiveSlot = sLoadSlot = sPendingSlot = sPendingGeneration = 0;
     sAwaitingLoadApproval = sBusy = manager.mLoadPending = false;
     sSelectedSD={};sPendingSD={};sDiskStatus="";
-    diskOwned = sDiskLoadReady = false;restoreSucceeds=importSucceeds=true;
+    diskOwned = sDiskLoadReady = sDiskRecovered = false;restoreSucceeds=importSucceeds=true;
+    PracticeSession::heldMask=PracticeSession::cancelled=0;
     imports=importId=importCrc=importSize=rebased=savedSlot=0;sDiskStarted=123;
     manager.mLoadWaitFrames = 0;
     saveCalls = loadCalls = cycleCalls = feedbackCalls = 0;
@@ -160,6 +166,8 @@ API u32 get(u32 key) {
     case 19: return sPendingSD.id;
     case 20: return savedSlot;
     case 21: return SavestateManager::diskBusy();
+    case 22: return PracticeSession::heldMask;
+    case 23: return PracticeSession::cancelled;
     }
     return 0;
 }
@@ -210,6 +218,32 @@ API u32 get(u32 key) {
         self.lib.noCard()
         self.lib.process()
         self.assert_loaded(1, 102)
+
+    def test_load_hold_pins_original_mask_across_prompt_and_sd_wait(self):
+        self.lib.binding(1,0x123)
+        self.lib.selectSD(73)
+        self.lib.promptMode(1)
+        self.lib.press(2);self.lib.update()
+        self.assertEqual(self.lib.get(22),0x123)
+        self.lib.binding(1,0x456)
+        self.lib.approve();self.lib.update();self.lib.process()
+        self.assertEqual(self.lib.get(22),0x123)
+        self.lib.transferReady(18);self.lib.process()
+        self.assertEqual(self.lib.get(22),0x123)
+        self.assertEqual(self.lib.get(23),0)
+
+    def test_load_hold_is_cancelled_when_prompt_import_or_restore_fails(self):
+        for failure in ('prompt','import','restore'):
+            with self.subTest(failure=failure):
+                self.lib.reset()
+                if failure=='prompt':self.lib.promptMode(1)
+                if failure=='import':self.lib.selectSD(73);self.lib.importResult(0)
+                if failure=='restore':self.lib.restoreResult(0)
+                self.lib.press(2);self.lib.update()
+                if failure=='prompt':self.lib.cancel();self.lib.update()
+                self.lib.process()
+                self.assertEqual(self.lib.get(22),0)
+                self.assertEqual(self.lib.get(23),1)
 
     def test_prompt_and_card_wait_keep_original_request(self):
         self.lib.select(2)
@@ -265,6 +299,8 @@ API u32 get(u32 key) {
         self.assertEqual(self.lib.get(7), 0)
         self.lib.process()
         self.assertEqual([self.lib.get(i) for i in (1, 3, 5, 7)], [0, 0, 0, 1])
+        self.assertEqual(self.lib.get(22),0)
+        self.assertEqual(self.lib.get(23),1)
         self.lib.busy(0)
         self.lib.process()
         self.assertEqual(self.lib.get(5), 0)

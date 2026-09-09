@@ -83,6 +83,13 @@ class Span(C.Structure):
     _fields_ = [("data", C.c_void_p), ("size", C.c_uint)]
 
 
+ReadWindow = C.CFUNCTYPE(C.c_bool, C.c_void_p, C.c_uint, C.POINTER(Span))
+
+
+class StreamSource(C.Structure):
+    _fields_ = [('buffer', Span), ('packed', C.c_uint), ('read', ReadWindow), ('context', C.c_void_p)]
+
+
 class Result(C.Structure):
     _fields_ = [("status", C.c_int), ("compressed", C.c_uint),
                 ("raw", C.c_uint), ("adler", C.c_uint)]
@@ -162,6 +169,11 @@ __declspec(dllexport) int unpackVerified(void *w,unsigned int ws,const StateCode
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
  return StateCodec::decompressVerified(w,ws,s,n,d,dn,raw,adler);
 }
+__declspec(dllexport) int checkStream(void*w,unsigned int ws,const StateCodec::StreamSource*s,
+ unsigned int raw,unsigned int adler){return StateCodec::validateStream(w,ws,*s,raw,adler);}
+__declspec(dllexport) int unpackStream(void*w,unsigned int ws,const StateCodec::StreamSource*s,
+ const StateCodec::WriteSpan*d,unsigned int n,unsigned int raw,unsigned int adler){
+ return StateCodec::decompressStreamVerified(w,ws,*s,d,n,raw,adler);}
 struct CopyPolicy {unsigned int calls,bytes;};
 void retainPolicy(void *p,void *,const void *,unsigned int n) {
  CopyPolicy *policy=(CopyPolicy*)p;++policy->calls;policy->bytes+=n;
@@ -224,10 +236,94 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
         cls.lib.unpackVerifiedPolicy.argtypes = cls.lib.unpackPolicy.argtypes
         cls.lib.unpackRetained.argtypes = cls.lib.unpackPolicy.argtypes
         cls.lib.counterBoundary.argtypes = [C.c_uint, C.c_int, C.c_uint, C.POINTER(C.c_uint)]
+        cls.lib.checkStream.argtypes = [C.c_void_p, C.c_uint, C.POINTER(StreamSource), C.c_uint, C.c_uint]
+        cls.lib.unpackStream.argtypes = [C.c_void_p, C.c_uint, C.POINTER(StreamSource), C.POINTER(Span), C.c_uint, C.c_uint, C.c_uint]
 
     def setUp(self):
         self.work = Guarded(self.lib.workspace())
         self.assertLessEqual(self.work.size, 0x50000)
+
+    def streamed(self, encoded, window, fail_at=None, invalid=None):
+        buffer = Guarded(window)
+        calls = []
+
+        @ReadWindow
+        def reader(context, offset, out):
+            calls.append(offset)
+            if fail_at is not None and offset >= fail_at:
+                return False
+            start = (offset // window) * window
+            data = encoded[start:start + window]
+            if not data:
+                return False
+            C.memmove(buffer.ptr, data, len(data))
+            out[0] = Span(buffer.ptr + offset - start, len(data) - (offset - start))
+            if invalid == 'outside':out[0].data = buffer.ptr + window
+            elif invalid == 'oversize':out[0].size = window + 1
+            elif invalid == 'zero':out[0].size = 0
+            elif invalid == 'wrapped':out[0] = Span(C.c_void_p(-2).value, 8)
+            return True
+
+        source = StreamSource(Span(buffer.ptr, buffer.size), len(encoded), reader, None)
+        return source, buffer, reader, calls
+
+    def test_streamed_zlib_and_quick_cross_header_block_and_dictionary_boundaries(self):
+        raw = random.Random(331).randbytes(QUICK_BLOCK * 2 + 91)
+        quick = b'MSL4' + struct.pack('>I', QUICK_BLOCK)
+        for at in range(0, len(raw), QUICK_BLOCK):
+            block = raw[at:at + QUICK_BLOCK]
+            quick += struct.pack('>II', len(block), len(block) | 0x80000000) + block
+        for encoded in (zlib.compress(raw), quick):
+            for window in (1, 7, 32767, 131073, 4 * 1024 * 1024):
+                with self.subTest(format=encoded[:4], window=window):
+                    source, buffer, reader, calls = self.streamed(encoded, window)
+                    out = Guarded(len(raw))
+                    pieces = (Span * 3)(Span(out.ptr, 31), Span(out.ptr + 31, 131000),
+                                        Span(out.ptr + 131031, len(raw) - 131031))
+                    self.assertEqual(self.lib.checkStream(self.work.ptr, self.work.size, C.byref(source),
+                        len(raw), zlib.adler32(raw)), SUCCESS)
+                    self.assertEqual(out.data(), b'\xa7' * len(raw))
+                    self.assertEqual(self.lib.unpackStream(self.work.ptr, self.work.size, C.byref(source),
+                        pieces, 3, len(raw), zlib.adler32(raw)), SUCCESS)
+                    self.assertEqual(out.data(), raw)
+                    self.assertTrue(out.guards() and buffer.guards() and self.work.guards())
+                    self.assertGreater(len(calls), 1)
+
+    def test_stream_reader_faults_and_malformed_input_do_not_write_during_validation(self):
+        raw = random.Random(199).randbytes(90000)
+        packed = zlib.compress(raw)
+        for invalid in ('outside', 'oversize', 'zero', 'wrapped'):
+            source, buffer, reader, calls = self.streamed(packed, 1024, invalid=invalid)
+            self.assertEqual(self.lib.checkStream(self.work.ptr, self.work.size, C.byref(source),
+                len(raw), zlib.adler32(raw)), CORRUPT)
+            self.assertTrue(buffer.guards() and self.work.guards())
+        quick = b'MSL4' + struct.pack('>III', QUICK_BLOCK, len(raw), len(raw) | 0x80000000) + raw
+        for encoded in (packed, quick):
+            for data, adler, failure in ((encoded[:-1], zlib.adler32(raw), None),
+                    (encoded + b'\0', zlib.adler32(raw), None),
+                    (encoded, zlib.adler32(raw) ^ 1, None),
+                    (encoded, zlib.adler32(raw), 30000)):
+                source, buffer, reader, calls = self.streamed(data, 1024, fail_at=failure)
+                self.assertEqual(self.lib.checkStream(self.work.ptr, self.work.size, C.byref(source), len(raw), adler), CORRUPT)
+
+    def test_stream_writing_failure_reports_commit_and_descriptor_bounds_are_checked(self):
+        raw = random.Random(200).randbytes(150000)
+        packed = zlib.compress(raw)
+        source, buffer, reader, calls = self.streamed(packed, 4096, fail_at=80000)
+        out = Guarded(len(raw))
+        dest = (Span * 1)(Span(out.ptr, out.size))
+        self.assertEqual(self.lib.unpackStream(self.work.ptr, self.work.size, C.byref(source),
+            dest, 1, len(raw), zlib.adler32(raw)), COMMIT)
+        self.assertNotEqual(out.data(), b'\xa7' * len(raw))
+        self.assertTrue(out.guards() and buffer.guards() and self.work.guards())
+        source, buffer, reader, calls = self.streamed(packed, 4096)
+        for span, count, expected in ((Span(buffer.ptr, 4096), 1, 4096),
+                (Span(self.work.ptr, len(raw)), 1, len(raw)),
+                (Span(out.ptr, len(raw)), 1, len(raw) - 1)):
+            dest = (Span * 1)(span)
+            self.assertEqual(self.lib.unpackStream(self.work.ptr, self.work.size, C.byref(source),
+                dest, count, expected, zlib.adler32(raw)), INVALID)
+        self.assertEqual(calls, [])
 
     def test_copy_policy_runs_only_after_complete_validation(self):
         data = bytes(range(256)) * 300

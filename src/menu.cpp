@@ -362,6 +362,7 @@ public:
     ILingTab()
         : mSel(0), mConfirmDelete(false), mEditingName(false),
           mNameCursor(0), mNamePage(0), mNameLength(0), mNameUpper(false),
+          mChoosingEpisode(false), mEpisodeChoice(0),
           mShowingStats(false), mShowingSegments(false),
           mConfirmGoldDelete(false), mStatsEntry(-1), mStatsSegment(0) {
         mNameBuffer[0] = '\0';
@@ -369,7 +370,7 @@ public:
 
     const char *title() const override { return "ILs"; }
     bool grabsInput() const override {
-        return mConfirmDelete || mEditingName || mShowingStats ||
+        return mChoosingEpisode || mConfirmDelete || mEditingName || mShowingStats ||
                gCreationExtras.editing();
     }
     bool suppressesBinds() const override {
@@ -379,6 +380,7 @@ public:
             if (mSel >= 2 && mSel <= 6) consumed |= JUTGamePad::X;
         } else {
             consumed |= JUTGamePad::Y;
+            if (ILing::canChooseEpisode(selectedEntry())) consumed |= JUTGamePad::Z;
             if (ILing::pbQf(selectedEntry()) >= 0) consumed |= JUTGamePad::X;
         }
         const u16 held = JUTGamePad::mPadStatus[0].mButton;
@@ -395,6 +397,23 @@ public:
         }
         if (mEditingName) {
             updateNameEditor(pad);
+            return;
+        }
+        if (mChoosingEpisode) {
+            const u16 pressed = mPromptInput.update();
+            const u32 navigation = menu->navigationInput(pad);
+            if (navigation & TMarioGamePad::CSTICK_UP)
+                mEpisodeChoice = (u8)wrap(mEpisodeChoice - 1, 8);
+            else if (navigation & TMarioGamePad::CSTICK_DOWN)
+                mEpisodeChoice = (u8)wrap(mEpisodeChoice + 1, 8);
+            if (pressed & JUTGamePad::A) {
+                ILing::setEpisode(selectedEntry(), mEpisodeChoice);
+                mChoosingEpisode = false;
+                mPromptInput.clear();
+            } else if (pressed & (JUTGamePad::B | JUTGamePad::Z)) {
+                mChoosingEpisode = false;
+                mPromptInput.clear();
+            }
             return;
         }
         if (mShowingStats) {
@@ -525,6 +544,11 @@ public:
                    ILing::pbQf(selectedEntry()) >= 0) {
             mConfirmDelete = true;
             mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
+        } else if (!isOption() && (rapid & TMarioGamePad::Z) &&
+                   ILing::canChooseEpisode(selectedEntry())) {
+            mEpisodeChoice = (u8)ILing::selectedEpisode(selectedEntry());
+            mChoosingEpisode = true;
+            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Z);
         } else if (!isOption() && (rapid & TMarioGamePad::Y)) {
             if (SplitStats::supportsEntry(selectedEntry())) {
                 mStatsEntry = selectedEntry();
@@ -658,12 +682,20 @@ public:
             const int entry = ILing::menuEntryAt(position);
             const bool selected = !isOption() &&
                                   position == selectedPosition();
-            char pb[24];
+            char pb[40];
             const char *value = "(PB: --)";
             const s32 qf = ILing::pbQf(entry);
             if (qf >= 0) {
                     ILing::formatTime(qf, pb, sizeof(pb),
                                   "(PB: %d:%02d.%03d)");
+                value = pb;
+            }
+            if (ILing::canChooseEpisode(entry)) {
+                char time[24];
+                if (qf >= 0) ILing::formatTime(qf, time, sizeof(time));
+                else snprintf(time, sizeof(time), "--");
+                snprintf(pb, sizeof(pb), "E%d  (PB: %s)",
+                         ILing::selectedEpisode(entry) + 1, time);
                 value = pb;
             }
             drawValueRow(menu, x, ry, w, ILing::label(entry), value, selected,
@@ -673,15 +705,34 @@ public:
         }
 
         drawScrollHints(menu, x, y, w, listH, start, end, rows);
-        const char *hint = isOption()
+        const char *hint = mChoosingEpisode
+            ? SUSAMUNE_GLYPH_A " Keep  " SUSAMUNE_GLYPH_B " Back  " SUSAMUNE_GLYPH_C " Select episode"
+            : isOption()
             ? SUSAMUNE_GLYPH_A " Toggle" SUSAMUNE_GLYPH_SLASH "Edit  "
               SUSAMUNE_GLYPH_X " Shine  " SUSAMUNE_GLYPH_C
               " U" SUSAMUNE_GLYPH_SLASH "D Select L"
               SUSAMUNE_GLYPH_SLASH "R Section"
+            : ILing::canChooseEpisode(selectedEntry())
+            ? SUSAMUNE_GLYPH_A " Start  " SUSAMUNE_GLYPH_Z " Episode  "
+              SUSAMUNE_GLYPH_Y " Stats  " SUSAMUNE_GLYPH_X " Delete"
             : SUSAMUNE_GLYPH_A " Start  " SUSAMUNE_GLYPH_X " Delete  "
               SUSAMUNE_GLYPH_Y " Stats  " SUSAMUNE_GLYPH_C " Move";
         menu->drawText(hint, x + 4, y + h - FOOT_SZ,
                        FOOT_SZ, FOOT_SZ, cFooter());
+        if (mChoosingEpisode) {
+            const int dx = x + w - 176;
+            const int dy = y + 8;
+            menu->fillBox(dx, dy, 172, 10 * ROW_H, cPanel());
+            menu->fillBox(dx, dy, 172, 3, cAccent());
+            menu->drawText("START EPISODE", dx + 12, dy + 9,
+                           FOOT_SZ, FOOT_SZ, cTitle());
+            for (int i = 0; i < 8; ++i) {
+                char name[16];
+                snprintf(name, sizeof(name), "Episode %d", i + 1);
+                drawValueRow(menu, dx + 4, dy + (i + 1) * ROW_H,
+                             164, name, "", mEpisodeChoice == i, false, true);
+            }
+        }
     }
 
 private:
@@ -991,6 +1042,8 @@ private:
     u8 mNameLength;
     bool mNameUpper;
     char mNameBuffer[SUSAMUNE_ILING_PROFILE_NAME_SIZE];
+    bool mChoosingEpisode;
+    u8 mEpisodeChoice;
     bool mShowingStats;
     bool mShowingSegments;
     bool mConfirmGoldDelete;
@@ -5831,11 +5884,11 @@ public:
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
-            PracticeSession::paused() ? "Resume gameplay" : "Pause gameplay";
+            PracticeSession::manualPaused() ? "Resume gameplay" : "Pause gameplay";
         const char *frameLabels[] = {pause, "Advance one frame"};
         const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways", "Recenter camera"};
         const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs", "Stop recording or replay"};
-        const char *frameValues[] = {"", PracticeSession::paused() ? "Step" : "Pause"};
+        const char *frameValues[] = {"", PracticeSession::manualPaused() ? "Step" : "Pause"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE), "Reset view"};
@@ -5850,7 +5903,8 @@ public:
                 PracticeSession::recordedFrames());
         else
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
-                PracticeSession::pausePending() ? "Armed" : PracticeSession::paused() ? "Paused" : "Live",
+                PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
+                PracticeSession::manualPaused() ? "Paused" : "Live",
                 PracticeSession::freeCamera() ? "On" : "Off");
         menu->drawText(status, x + 4, y, 14, 14, cValue());
         const int listY = y + ROW_H;

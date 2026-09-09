@@ -26,7 +26,7 @@ supplied file bytes/ARM receipts, so it does not measure actual SD speed or prov
 cold-reboot behavior for this new build. See `build/foxtrot-speed-sd-proof` and the
 codec document for the exact evidence.
 
-## Archive version 1, transport protocol 4
+## Archive version 1, transport protocol 5
 
 `include/susamune/state_storage.h` keeps archive version 1: a 96-byte big-endian
 header, bounded opaque metadata, then the exact compressed stream (bounded MSL4
@@ -38,13 +38,16 @@ compressed stream. Separate CRCs cover header, metadata and compressed payload.
 The header contains no restore pointers or pool offsets. Its printable name is
 at most 31 characters and never becomes a path.
 
-The mailbox transport is now protocol 4. This rejects older workers whose primary
-pool boundary predates workspace relocation (now 0xFF0000). Its 7,968-byte structure
+The mailbox transport is now protocol 5. This requires the bounded window reader
+and rejects older workers, including those whose primary pool boundary predates
+workspace relocation (now 0xFF0000). Its 8,000-byte structure
 remains inside
 the same 8 KiB allocation; the appended request/result name buffers occupy their
 own 32-byte lines at offsets 7,904 and 7,936. Request, response and receipt also
 have separate cache lines. A receipt must match request sequence, process session,
 command and archive ID. The effective returned name has its own receipt CRC.
+The appended 32-byte window receipt at offset 7,968 identifies the returned
+payload offset, length and CRC; its five reserved words must remain zero.
 An incompatible transport is rejected rather than interpreted using an older pool map.
 
 Transport changes do not rewrite existing archives. The original `.mss` file and
@@ -78,7 +81,7 @@ is not cancellable once accepted; the menu waits for its matching receipt.
 
 ## Read paths and ownership
 
-Both import and direct Load read only into the fixed 4 MiB transient area plus
+Import and the fully staged direct Load read only into the fixed 4 MiB transient area plus
 currently unused pool tail. The request carries the tail boundary, expected file
 length/CRC identity and session. The ARM checks exact file size, region/configuration
 and all file CRCs. The PPC checks metadata tag, build/snapshot/scenario, compiled
@@ -99,11 +102,22 @@ stream before its writing pass. A file with correct CRCs but malformed compresse
 data is still refused before game writes. The direct path does not create or
 replace any RAM slot, generation, sidecar or trusted CRC cache entry.
 
-Direct-read capacity is `4 MiB + poolCapacity - pool.used`; it may refuse a large
-file when the three RAM states are exceptionally full. Import has its own slot
-commit-capacity check. Neither path evicts existing states to create temporary
-space. A refuses without changing the chosen slot if it cannot validate/commit;
-a direct refusal preserves all RAM states and live game state.
+When `4 MiB + poolCapacity - pool.used` cannot hold the complete direct-load file,
+the streaming fallback uses the same fixed 4 MiB window. It requires an intact
+RAM recovery state from the current scene with a matching owner profile. Before
+any SD writes reach the game, that recovery state's descriptors and complete
+compressed stream are validated, then the whole SD stream is checked without
+writes. Each window gets a checksum; the second pass requires the same immutable
+file identity and identical window bytes before consuming them.
+
+Preflight failure preserves the current game frame. A late SD error, such as
+removing the card during the second pass, restores the prevalidated RAM state
+and explicitly reports "SD read failed; restored state N". Its precompiled spans
+are used without consulting the partially restored world. All three retained
+slots, generations and prefixes remain unchanged. Missing compatible recovery
+is refused safely with a prompt to save a RAM state in the current scene. Import
+retains its own commit-capacity check and never uses streaming to evict a slot.
+See [the streaming design and tests](foxtrot-sd-streaming-design.md).
 
 The RAM-only optimization is separate: `sPackedChecksums[3]` is mod-owned storage,
 not an archive field. Only this codec's successful local producer or a fully
@@ -123,10 +137,12 @@ its file receipt until restore/rejection cleanup finishes.
 
 ## Memory banks and cache handling
 
-- The primary pool is `0x91F00000..0x92EA0000`, with the codec workspace immediately
-  above it. The optional 2 MiB bank is `0x9193F000..0x91B3F000`. Only a launcher
+- The current primary pool is `0x91F00000..0x92EF0000`, with codec scratch relocated
+  to `0x91891000..0x918DF000`. The optional 2 MiB bank is `0x9193F000..0x91B3F000`. Only a launcher
   advertising `SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION` enables that bank; combined
-  capacity is 17.625 MiB. Dolphin bases are `0x70000000` and `0x71910000`.
+  capacity is 17.9375 MiB. Dolphin bases are `0x70000000` and `0x71910000`.
+  Full primary and relocated scratch require the paired relocation capability;
+  incompatible launchers retain the smaller legacy layout with SD service disabled.
 - Logical packed offsets cross those noncontiguous banks. File I/O and cache
   maintenance stop at each physical boundary. The stream never includes the
   workspace or intervening physical gap.

@@ -58,11 +58,12 @@ void captureSplit(u16,u8,s32){}
         body += '\nu8 exportSplits(const Track *track) {\n' + export_body + 'return splitCount; }\n'
         overlay = r'''
 }
+''' + splits[splits.index('struct RegionPayload {'):splits.index('struct Runtime {')] + r'''
 enum {FLAG_ATTEMPT_ACTIVE=1,FLAG_ATTEMPT_ELIGIBLE=2};
 enum OverlayColor {OVERLAY_RED,OVERLAY_WHITE,OVERLAY_GREEN,OVERLAY_GOLD};
 struct RouteDesc {u16 firstSegment;u8 entry,checkpointCount;} kRoutes[132];
 struct State {u8 flags,activeRoute,expectedEvent,activeProfile,candidateGoldMask;
- s32 lastSplitQf;u32 attemptQf[6];SusamuneSplitStatsPayload payload;
+ s32 lastSplitQf;u32 attemptQf[6];RegionPayload payload;
 } state,*sState=&state;
 u8 kRegion=1;
 u8 segmentCount(const RouteDesc&r){return r.checkpointCount+1;}
@@ -113,8 +114,8 @@ __declspec(dllexport) void change(int option,int value){using namespace Ghost;
 }
 __declspec(dllexport) int exportCount(){return Ghost::exportSplits(&Ghost::sPlayback);}
 __declspec(dllexport) void pb(int first,int second){
- state.payload.pbQf[1][0][0]=first;state.payload.pbQf[1][0][1]=second;
- state.payload.bestQf[1][0]=first;state.payload.bestQf[1][1]=second;
+ state.payload.pbQf[0][0]=first;state.payload.pbQf[0][1]=second;
+ state.payload.bestQf[0]=first;state.payload.bestQf[1]=second;
 }
 }
 '''

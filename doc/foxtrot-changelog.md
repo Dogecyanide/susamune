@@ -1,8 +1,17 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 00B63258
+V2.3.0 pre-release · Build 08BDB4CD
 
 Latest update:
+
+- **Z — Episode** in Runs > ILs selects the start for 20 supported ILs: the seven main-course 100-coin routes, Gelato/Noki/Pianta Hidden and ten Full Reds. Choices persist separately by game region.
+- Holding the Load shortcut keeps gameplay still after restoration. Release it to move; an existing practice pause remains paused.
+- Added the newly handmade checkpoints for remaining routes and Full Reds. Routes support up to eight segments including the finish. Existing attempts, finishes, play time and PB identities carry forward; segment times remain only where both endpoints still match. Older journal files are preserved.
+- Large SD states can load while all three memory slots are full, using a compatible saved state as a recovery point. The slots remain intact. A read failure during restoration returns to that recovery state and identifies its slot; missing recovery/temporary capacity produces a safe refusal.
+- The launcher reads the two required character assets in larger batches: about 1,314 decoder reads become 167, with identical validated output across JP/US/PAL. This is a read-count improvement, not a measured Wii startup-time claim.
+- The tester sheet starts with four focused checks and a grouped reference for new checkpoints. Successful earlier tests remain complete. Make fresh SD states for this build.
+
+Previous release — 00B63258:
 
 - **Guide** is selectable from the launcher's home screen. It contains 13 topics with scrolling and page controls, readable directly on your TV without a separate guide file.
 - Improved input replay startup and restored starting inputs. Opening the menu now freezes movement immediately when ending a recording. **Starting** identifies a pending start; refusal messages distinguish changed settings, damaged input recordings, a mismatched starting state and a later playback mismatch. Replay remains experimental, with its checks retained.

@@ -5,6 +5,13 @@ namespace StateCodec {
 
 struct ReadSpan { const void *data; unsigned int size; };
 struct WriteSpan { void *data; unsigned int size; };
+typedef bool (*ReadWindow)(void *context, unsigned int offset, ReadSpan *out);
+struct StreamSource {
+    ReadSpan buffer;
+    unsigned int packedBytes;
+    ReadWindow read;
+    void *context;
+};
 typedef void (*CopyBytes)(void *context, void *destination,
                           const void *source, unsigned int size);
 enum Status {
@@ -40,6 +47,12 @@ Status validate(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
                 unsigned int expectedRaw, unsigned int expectedAdler);
 
+// Checks destination descriptors as well as the whole stream without writing.
+Status validateRestore(void *workspace, unsigned int workspaceBytes,
+                  const ReadSpan *source, unsigned int sourceCount,
+                  const WriteSpan *output, unsigned int outputCount,
+                  unsigned int expectedRaw, unsigned int expectedAdler);
+
 // Validates the whole stream before writing. Source and span descriptors must
 // remain immutable, with exclusive workspace ownership, through both passes.
 // COMMIT_FAILED means writes may have begun: the caller must not resume gameplay.
@@ -58,6 +71,18 @@ Status decompressVerified(void *workspace, unsigned int workspaceBytes,
                   const WriteSpan *output, unsigned int outputCount,
                   unsigned int expectedRaw, unsigned int expectedAdler,
                   CopyBytes copy = 0, void *copyContext = 0);
+
+// The reader lends bytes inside its declared buffer until its next call.
+// Validation does not write destinations. A writing-pass failure requires a
+// separately prevalidated local recovery state; it must never resume partial state.
+Status validateStream(void *workspace, unsigned int workspaceBytes,
+                  const StreamSource &source, unsigned int expectedRaw,
+                  unsigned int expectedAdler);
+Status decompressStreamVerified(void *workspace, unsigned int workspaceBytes,
+                  const StreamSource &source, const WriteSpan *output,
+                  unsigned int outputCount, unsigned int expectedRaw,
+                  unsigned int expectedAdler, CopyBytes copy = 0,
+                  void *copyContext = 0);
 
 } // namespace StateCodec
 #endif
