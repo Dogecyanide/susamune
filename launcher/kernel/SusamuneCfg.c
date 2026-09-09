@@ -6438,7 +6438,8 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE |
 	                 SUSAMUNE_CFG_FLAG_MARIO_COLORS |
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
-	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION;
+	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
+	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED;
 	if (InitPbFiles(cfg, region))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_ILING_PBS |
 		              SUSAMUNE_CFG_FLAG_ILING_PROFILES;

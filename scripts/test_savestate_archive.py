@@ -2,12 +2,14 @@
 import ctypes as C
 from pathlib import Path
 import random
+import struct
 import subprocess
 import tempfile
 import unittest
 import zlib
 
 from test_practice_tape import function_source
+from test_state_codec import QUICK_BLOCK, reference_quick_frame
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT/'src/savestate.cpp'
@@ -16,9 +18,12 @@ FIXTURE = r'''
 #include "susamune/state_storage.h"
 #include "susamune/state_pool_memory.h"
 #include "susamune/state_codec.hxx"
+#include "susamune/state_crc.hxx"
 typedef unsigned int u32;typedef unsigned char u8;typedef long long OSTime;
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++=(u8)c;return d;}
+extern "C" void *memmove(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;
+ if(a<b){for(__SIZE_TYPE__ i=0;i<n;++i)a[i]=b[i];}else{while(n){--n;a[n]=b[n];}}return d;}
 extern "C" int memcmp(const void*a,const void*b,__SIZE_TYPE__ n){const u8*x=(const u8*)a,*y=(const u8*)b;while(n--){if(*x!=*y)return *x-*y;++x;++y;}return 0;}
 static int snprintf(char*d,__SIZE_TYPE__ n,const char*,...){if(n)*d=0;return 0;}
 static u8 banks[2][50000], staging[4096];alignas(32)static u8 workspace[0x50000];
@@ -149,7 +154,7 @@ class SavestateArchiveTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory(prefix='moonshine-sd-commit-')
         cls.addClassCleanup(cls.temp.cleanup)
         source=FIXTURE
-        for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(', 'void storePool(',
+        for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(',
                      'bool archiveStageReady()', 'bool admitArchiveStage()',
                      'bool SavestateManager::diskBusy()', 'void SavestateManager::updateDisk()'):
             source+=function_source(SOURCE,name)
@@ -170,7 +175,8 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         path=Path(cls.temp.name)/'test.cpp';path.write_text(source+EXPORTS+restore)
         proc=subprocess.run([str(compiler),'--target=x86_64-pc-windows-msvc','-shared','-O2',
             '-fno-builtin','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
-            '-I',str(ROOT/'include'),str(path),str(ROOT/'src/state_codec.cpp'),'-o',str(path.with_suffix('.dll'))],
+            '-I',str(ROOT/'include'),str(path),str(ROOT/'src/state_codec.cpp'),
+            str(ROOT/'src/state_crc.cpp'),'-o',str(path.with_suffix('.dll'))],
             capture_output=True,text=True)
         if proc.returncode:raise RuntimeError(proc.stdout+proc.stderr)
         cls.lib=C.CDLL(str(path.with_suffix('.dll')))
@@ -182,11 +188,31 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         cls.lib.restorePayload.argtypes=[C.c_uint,C.c_uint,C.c_void_p]
         cls.lib.trustedChecksum.restype=C.c_uint
 
-    def setupCandidate(self,slot=1,size=20000):
+    def setupCandidate(self,slot=1,size=20000,quick=False,fault=None):
         self.raw=random.Random(99).randbytes(size)
-        self.packed=zlib.compress(self.raw)
+        if quick:
+            length=QUICK_BLOCK-25
+            block=(b'\x1fA\x01\x00'+bytes([255])*(length//255)+bytes([length%255])+b'\x50AAAAA')
+            self.packed=(struct.pack('>IIII',0x4D534C34,QUICK_BLOCK,QUICK_BLOCK,len(block))+block+
+                         struct.pack('>II',size,size|0x80000000)+self.raw)
+            self.raw=b'A'*QUICK_BLOCK+self.raw
+            self.assertEqual(reference_quick_frame(self.packed,len(self.raw)),self.raw)
+        else:self.packed=zlib.compress(self.raw)
+        adler=zlib.adler32(self.raw)
+        if fault:
+            changed=bytearray(self.packed)
+            if fault=='magic':changed[0]^=1
+            elif fault=='block_size':changed[4]^=1
+            elif fault=='raw_length':changed[11]^=1
+            elif fault=='packed_length':changed[12]|=0x80
+            elif fault=='lz4_distance':changed[18:20]=b'\0\0'
+            elif fault=='truncated':changed.pop()
+            elif fault=='appended':changed.append(0)
+            elif fault=='adler':adler^=1
+            else:raise ValueError(fault)
+            self.packed=bytes(changed)
         self.owner=C.create_string_buffer(self.packed)
-        self.lib.reset(self.owner,len(self.packed),len(self.raw),zlib.adler32(self.raw),slot)
+        self.lib.reset(self.owner,len(self.packed),len(self.raw),adler,slot)
 
     def slot(self,index):
         b=C.create_string_buffer(self.lib.slotSize(index));self.lib.slotBytes(index,b);return b.raw
@@ -275,6 +301,43 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
                 self.assertEqual(output.raw,self.raw)
                 self.assertEqual([self.lib.get(i)for i in (16,17,18)],[0,1,len(self.raw)])
                 self.assertEqual(self.slot(slot),self.packed)
+
+    def test_independent_quick_frame_import_and_direct_restore_use_existing_archive_paths(self):
+        for direct in (False,True):
+            for slot in range(3):
+                with self.subTest(direct=direct,slot=slot):
+                    self.setupCandidate(slot,size=30000,quick=True)
+                    if direct:self.lib.directRestore()
+                    self.lib.tick()
+                    output=C.create_string_buffer(len(self.raw))
+                    self.assertEqual(self.lib.restorePayload(3 if direct else slot,direct,output),0)
+                    self.assertEqual(output.raw,self.raw)
+                    self.assertEqual([self.lib.get(i)for i in (16,17,18)],
+                                     [int(direct),int(not direct),len(self.raw)])
+                    for other in range(3):
+                        expected=self.packed if not direct and other==slot else bytes([20+other])*13000
+                        self.assertEqual(self.slot(other),expected)
+                    self.assertEqual(self.lib.get(6),0,'PPC-only commits need no eager whole-pool store')
+
+    def test_malformed_quick_archive_or_adler_never_writes_game_bytes_or_replaces_old_slots(self):
+        for direct in (False,True):
+            for fault in ('magic','block_size','raw_length','packed_length','lz4_distance',
+                          'truncated','appended','adler'):
+                with self.subTest(direct=direct,fault=fault):
+                    self.setupCandidate(size=30000,quick=True,fault=fault)
+                    if direct:self.lib.directRestore()
+                    self.lib.tick()
+                    if direct:
+                        output=C.create_string_buffer(bytes([0xa7])*len(self.raw),len(self.raw))
+                        self.assertEqual(self.lib.restorePayload(3,1,output),4)
+                        self.assertEqual(output.raw,bytes([0xa7])*len(self.raw))
+                    else:self.assertEqual([self.lib.get(i)for i in (0,1,2,4)],[39000,0,0,0])
+                    self.assertEqual(self.lib.get(18),0)
+                    self.assertEqual(self.lib.get(6),0)
+                    for slot in range(3):
+                        expected=bytes([20+slot])*13000
+                        self.assertEqual(self.slot(slot),expected)
+                        self.assertEqual(self.lib.trustedChecksum(slot),zlib.crc32(expected))
 
     def test_corrupt_ram_crc_refuses_before_any_decode_or_destination_write_across_banks(self):
         for at in (0,1,23999,24000,30005):

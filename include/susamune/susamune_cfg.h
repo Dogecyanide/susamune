@@ -513,6 +513,8 @@ struct SusamuneMetadataStyleCfg {
 #define SUSAMUNE_CFG_FLAG_MARIO_COLORS 0x20000u
 #define SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION 0x40000u
 #define SUSAMUNE_CFG_FLAG_FLUDD_COLORS 0x80000u
+// Kernel reserves the former ghost-transfer gap for PPC codec scratch.
+#define SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED 0x100000u
 // The ini existed (or storage recovery was attempted), but it could not be
 // read completely and safely. The mod must keep this boot's defaults
 // read-only rather than regenerating a possibly valid file from them.

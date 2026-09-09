@@ -9,30 +9,42 @@ covered in [SD savestates](foxtrot-sd-states.md).
 `include/susamune/state_codec.hxx` accepts up to 64 input/output spans. The caller
 owns the aligned workspace and all buffers. The freestanding miniz configuration
 uses no heap, file APIs, or unaligned native word loads. Its workspace remains
-319,360 bytes on the host and 319,296 bytes on PowerPC, within the fixed 0x50000
-allocation, including the inflater's 32 KiB dictionary. CMake builds this source
-with `-O2` in the upper mod code span; other sources retain their own flags.
+319,360 bytes on the host and 319,296 bytes on PowerPC, within the 0x4E000
+(312 KiB) allocation, including the inflater's 32 KiB dictionary. The workspace now lives in the unused ghost-transfer gap on a compatible launcher,
+returning the full original 320 KiB reservation to the primary state pool.
+An older launcher retains a 312 KiB workspace above the smaller primary pool.
+The memory layout and workspace are selected together and latched at startup. CMake builds the codec and packed CRC with `-O2`; other sources retain their
+own flags. The shared workspace has one owner throughout each transaction.
 
-The default producer uses one-probe greedy parsing and miniz's fast match loop.
-`MINIZ_PORTABLE_FAST_DEFLATE` makes that loop available on big-endian PowerPC by
-using byte-safe little-endian reads. Its hash uses all 15 bits of the existing
-32,768-entry array, rather than restricting the fast loop to 4,096 entries. That
-array was already part of the workspace: this change adds no memory reservation.
-Dictionary handling, match bounds and the zlib stream contract remain shared
-with the checked codec.
+Saving first uses independent 128 KiB LZ4 blocks with a 32 KiB hash table. The
+producer borrows contiguous source blocks and only gathers blocks that cross a
+source span. It uses raw blocks when compression would grow them. The decoder
+accepts either this bounded frame or the existing zlib stream.
 
-The `compact` producer retains eight-probe lazy parsing. Save first tries the
-fast producer. If the complete result cannot fit even after reclaiming the
-selected slot, it retries with the compact producer before refusing the save.
-The compact retry may take longer, but can retain a state the faster producer
-would not fit. The selected mode is reused for any subsequent recompression.
+The quick frame starts with big-endian words `0x4D534C34` (MSL4) and `0x20000`
+(block size). Each block contains big-endian raw length and packed length; the
+high bit of packed length selects raw copy. Raw length must be exactly the next
+128 KiB of the caller's expected snapshot, or its shorter final block. Compressed
+length must be smaller than raw length; a raw block must match its raw length.
+Every block is independent, decoded into the bounded workspace with
+`LZ4_decompress_safe`, and then delivered through the existing filtered scatter
+sink. Unfiltered contiguous destination blocks decode directly to their final
+address; filtered restores always use workspace so protected owner bytes are
+never temporarily overwritten. Whole-snapshot length, exact packed consumption and Adler-32 remain checked.
+No external dictionary or file-provided destination is accepted.
 
-Compression concatenates the actual static/root/stage and used ghost-prefix
-spans into one zlib stream without first copying the full raw snapshot. Output
-spans are capacities: the save path supplies the 4 MiB transient area and up to
-two free pool-bank spans. Once capacity is exhausted, the sink keeps counting
-while discarding overflow. `OUTPUT_FULL` therefore includes the complete required
-size; the partial candidate is never a retained state.
+Quick compression trades some density for speed. If its complete candidate cannot
+fit after reclaiming the selected slot, Save retries one-probe greedy miniz
+Deflate, then eight-probe lazy Deflate before refusing. All modes concatenate the
+same static/root/stage and used ghost-prefix spans without a full raw copy.
+`MINIZ_PORTABLE_FAST_DEFLATE` uses byte-safe little-endian reads on PowerPC and all
+15 hash bits of its existing table. The selected mode is reused for recompression.
+A nearly full pool can therefore make Save slower; there is no automatic eviction.
+
+Output spans are capacities: the save path supplies the 4 MiB transient area and
+up to two free pool-bank spans. On exhaustion the sink counts while discarding
+overflow. `OUTPUT_FULL` includes the complete required size, with checked counter
+arithmetic; a partial candidate is never retained.
 
 The replacement planner distinguishes a fully staged commit from a replacement
 that fits only after reclaiming its old slot. For the latter, the complete first
@@ -50,16 +62,20 @@ ownership differs:
 
 | Path | Admission before game writes | Restore pass |
 |---|---|---|
-| Local RAM state | Produced by this codec; compiled metadata/ranges and current packed CRC rechecked | One writing inflate through `decompressVerified` |
-| SD file imported into RAM | ARM verifies file CRCs; PPC fully validates the stream before committing the slot; subsequent RAM loads recheck its cached CRC and live owner profile | One writing inflate on later RAM loads |
-| SD file selected directly for Load | File checks and metadata/owner admission, then full stream validation while staged bytes remain owned | `decompress`: validation inflate followed by writing inflate |
+| Local RAM state | Produced by this codec; compiled metadata/ranges and current packed CRC rechecked | One writing decode through `decompressVerified` |
+| SD file imported into RAM | ARM verifies file CRCs; PPC fully validates the stream before committing the slot; subsequent RAM loads recheck its cached CRC and live owner profile | One writing decode on later RAM loads |
+| SD file selected directly for Load | File checks and metadata/owner admission, then full stream validation while staged bytes remain owned | `decompress`: validation decode followed by writing decode |
 
 `sPackedChecksums[3]` lives only in mod-owned RAM, outside `StoredState`, the game
 snapshot and every archive. A successful local save records a CRC over the exact
 committed packed bytes. A successful import records the receipt-verified payload
-CRC only after complete zlib validation and slot commit. Initialization/clear
+CRC only after complete stream validation and slot commit. Initialization/clear
 invalidate the corresponding local entries. A file cannot supply a trusted-cache
 flag or use its own checksum to opt into the fast restore path.
+
+Packed CRC uses slicing-by-four tables rebuilt in the first 4 KiB of the idle
+codec workspace. Codec use invalidates those scratch tables; each checksum
+reinitializes them. No additional persistent table or heap allocation is needed.
 
 Immediately before a RAM restore, under the save/load mutation guard, with GX
 finished, interrupts disabled and audio DMA muted, `packedChecksum` rereads the
@@ -70,8 +86,9 @@ local integrity check, not cryptographic authentication of arbitrary files.
 Metadata tags, slot identity/generation, compiled destination spans, scenario
 checks and durable-owner checks remain independent requirements.
 
-`validate` inflates into a wrapping dictionary, verifies the zlib checksum and
-expected Adler-32, and requires exact compressed consumption and decoded length.
+`validate` decodes into bounded workspace, checks stream structure and expected
+Adler-32 (plus the embedded checksum for zlib), and requires exact compressed
+consumption and decoded length.
 `decompress` runs that pass before its scatter-writing pass. `decompressVerified`
 omits only the redundant first inflate; its writing pass still verifies the
 stream's end, length and checksum. Any failure after writing may have begun is
@@ -85,21 +102,72 @@ change source/workspace/descriptors. Imported and direct SD states use this
 filter so old runtime-owner bytes are never written temporarily and repaired
 later.
 
+Pool movement uses overlap-aware aligned word copies across logical bank
+boundaries. Retained compressed bytes are PPC-only until export, so saving and
+compaction do not eagerly flush the pool. Export flushes each exact source span
+before publishing the ARM request; import receipt ownership is unchanged.
+
 After a successful restore, game spans use `DCStoreRange` for GPU/DMA visibility.
 The PPC retains its populated data cache rather than invalidating the whole
 restored heap and immediately refetching it. No executable text is restored.
 
 ## Validation and measured scope
 
-`scripts/test_state_codec.py` exercises production fast and compact paths with
+`scripts/test_state_codec.py` exercises production quick, fast and compact paths with
 short inputs, dictionary wrapping, scattered boundaries, exact-full and overflow
 capacities, malformed/truncated/appended streams, checksum/length failures,
 copy filtering and overlap rejection. The private retail capture is checked
-against an independent Python zlib decode and byte-exact roundtrip. The slot,
+against independent Python zlib/LZ4 decoders and byte-exact roundtrips. Quick
+frames include malformed block lengths, offsets, extensions, truncation, trailing
+bytes and checksum failures, all rejected before the first restore write. The slot,
 queue, archive and recompression tests cover the RAM trust cache, capacity
 fallback, pinned selections and preservation of other states.
 
-The bounded US Bianco fixture in Dolphin 2606a JIT measured:
+Build **00B63258** (US Dolphin **782E8578**) includes the relocated workspace and
+contiguous RAM decode. The final fixture measured quick Save **0.625 s** and RAM
+Load **0.391 s**, with exact position/QFT/native restoration and working Step and
+Resume. Filling three slots then measured **0.500 / 0.531 / 2.140 s** to save. The
+third state fit fast Deflate with the larger pool, avoiding the intermediate
+build's compact fallback. Quick-state loads were **0.281–0.328 s**; that third
+Deflate state loaded in **0.797–0.813 s**. These are single-scene emulator wall
+times with input/sample overhead, not console SD timings or an all-scene bound.
+
+Overwriting the middle slot took **1.016 s** and preserved the other slots' full
+metadata/payloads. All three restored their exact position/timer after compaction,
+and their PPC CRCs matched independent Python CRCs. Second-bank corruption was
+refused before game writes; restoring the original byte recovered the state.
+The four final proofs are under `build/foxtrot-speed-final` (`results.json`,
+`replay-results.json`, `slots-results.json`, `overwrite-results.json`).
+
+The separate private **BE0BF918** image exercises current production PPC SD
+validation/restore through a host-supplied ARM receipt. A real 6,533,821-byte MSL4
+state restored exact position/QFT and left all three RAM entries unchanged. A
+malformed first block with corrected archive checksums was refused without world
+or slot changes; Step worked after the valid restore. The adapter verifies the
+compiled and selected pool/workspace/protocol before writing. This is not an
+actual SD-transfer benchmark or a new reboot test. Evidence lives in
+`build/foxtrot-speed-sd-proof/direct-sd-results.json`.
+
+Intermediate build **8118304C** (US Dolphin **BDDD0EC6**) passed the same bounded fixture
+in `build/foxtrot-speed-8118304C/results.json`: quick Save **0.641 s**, RAM Load
+**0.484 s**, exact position/QFT/native display restore, six Steps and Resume.
+Separate three-slot checks measured quick saves at **0.516–0.546 s**, quick loads
+at **0.406–0.468 s**, and the crowded third slot's compact fallback at **6.015 s**
+to save / **0.765–0.797 s** to load. This is a real capacity trade-off: the quick
+states use more bytes, leaving the third slot to use stronger compression.
+
+Overwriting the middle occupied slot took **1.000 s**, kept the other two states'
+metadata/payloads byte-identical, and restored all three exact positions/timers
+after compaction. Each PPC packed CRC matched an independent Python CRC. Corruption
+in the second physical bank refused before game writes; restoring the correct
+byte allowed the original state to load again. Evidence is in `slots-results.json`
+and `overwrite-results.json` beside that intermediate smoke result.
+
+These measurements include controller and display-sampling overhead and describe
+one development-emulator scene, not Wii timing or an all-scene guarantee. The
+prior comparable fixture is recorded below for context.
+
+Historical US Bianco fixture measurements in Dolphin 2606a JIT:
 
 | Version | Save | RAM Load |
 |---|---:|---:|

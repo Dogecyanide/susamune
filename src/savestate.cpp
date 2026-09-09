@@ -1,4 +1,5 @@
 #include "susamune/practice_session.hxx"
+#include "susamune/state_crc.hxx"
 #include "susamune/crash_report.hxx"
 // =====================================================================
 // savestate.cpp
@@ -103,13 +104,11 @@
 
 #if IS_EMULATOR
 // Dolphin: a region in the emulator's "free" space.
-static const u32 kSnapshotBase = SUSAMUNE_DOLPHIN_SNAPSHOT_PPC_BASE;
 static const u32 kStagingBase = SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE;
 #else
 // Wii: a dedicated 16 MiB window. The custom Nintendont memory map relocates
 // all of its former users below this address; the ARM kernel begins exactly at
 // the window's exclusive end.
-static const u32 kSnapshotBase = SUSAMUNE_MEM2_SNAPSHOT_PPC_BASE;
 static const u32 kStagingBase = SUSAMUNE_STATE_STAGING_PPC_BASE;
 #endif
 
@@ -335,27 +334,24 @@ void poolReadSpans(u32 offset, u32 size, StateCodec::ReadSpan *out) {
     for (u32 i = 0; i < 2; ++i) out[i] = {pieces[i].data, pieces[i].size};
 }
 
+void *codecWorkspace() {
+    return stateCodecWorkspace(sPoolMemory);
+}
+
 u32 packedChecksum(u32 offset, u32 size) {
     StateCodec::ReadSpan spans[2];
     poolReadSpans(offset, size, spans);
+    void *workspace = codecWorkspace();
+    if (!StateCrc::init(workspace, SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE)) __builtin_trap();
     u32 crc = 0xFFFFFFFFu;
     for (u32 i = 0; i < 2; ++i)
-        crc = SusamuneStateCrcUpdate(crc, spans[i].data, spans[i].size);
+        crc = StateCrc::update(workspace, crc, spans[i].data, spans[i].size);
     return ~crc;
 }
 
-void storePool() {
-    StateCodec::WriteSpan spans[2];
-    poolWriteSpans(0, sPool.used, spans);
-    for (u32 i = 0; i < 2; ++i)
-        if (spans[i].size) DCStoreRange(spans[i].data, spans[i].size);
-}
-void *codecWorkspace() {
-    return reinterpret_cast<void *>(kSnapshotBase + SUSAMUNE_STATE_POOL_SIZE);
-}
-
 bool commitPackedState(const StateCodec::ReadSpan *source, u32 sourceCount,
-                       u32 rawSize, u32 slot, const StateCodec::Result &first, bool compact = false) {
+                       u32 rawSize, u32 slot, const StateCodec::Result &first,
+                       bool compact = false, bool quick = false) {
     if ((first.status != StateCodec::SUCCESS && first.status != StateCodec::OUTPUT_FULL) ||
         first.rawBytes != rawSize) return false;
     const int plan = StateSlotPoolPlanReplace(&sPool, poolCapacity(),
@@ -373,7 +369,7 @@ bool commitPackedState(const StateCodec::ReadSpan *source, u32 sourceCount,
     StateCodec::WriteSpan output[2];
     poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output);
     const StateCodec::Result second = StateCodec::compress(codecWorkspace(),
-        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source, sourceCount, output, 2, compact);
+        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source, sourceCount, output, 2, compact, quick);
     if (second.status != StateCodec::SUCCESS || second.rawBytes != first.rawBytes ||
         second.compressedBytes != first.compressedBytes || second.adler32 != first.adler32)
         __builtin_trap();
@@ -885,7 +881,6 @@ void SavestateManager::updateDisk() {
                 sSlots[sDiskSlot] = sCandidate;
                 sDurableSlots |= 1u << sDiskSlot;
                 sPackedChecksums[sDiskSlot] = result.header.payloadCrc;
-                storePool();
                 imported = true;
             }
         }
@@ -1098,8 +1093,16 @@ bool SavestateManager::saveState() {
     poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output + 1);
     StateCodec::Result result = StateCodec::compress(codecWorkspace(),
         SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source,
-        h->region_count + Ghost::kSavestateSpanCount, output, 3);
+        h->region_count + Ghost::kSavestateSpanCount, output, 3, false, true);
+    bool quick = true;
     bool compact = false;
+    if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
+        StateSlotPoolPlanReplace(&sPool, poolCapacity(), sActiveSlot, result.compressedBytes,
+                                 SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
+        quick = false;
+        result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+            source, h->region_count + Ghost::kSavestateSpanCount, output, 3);
+    }
     if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
         StateSlotPoolPlanReplace(&sPool, poolCapacity(), sActiveSlot, result.compressedBytes,
                                  SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
@@ -1108,7 +1111,7 @@ bool SavestateManager::saveState() {
             source, h->region_count + Ghost::kSavestateSpanCount, output, 3, compact);
     }
     const bool fits = commitPackedState(source, h->region_count + Ghost::kSavestateSpanCount,
-                                         rawSize, sActiveSlot, result, compact);
+                                         rawSize, sActiveSlot, result, compact, quick);
     if (!fits) {
         rebaseMissionStopwatch(h->save_time);
         unmuteAudioDma(dma);
@@ -1128,7 +1131,7 @@ bool SavestateManager::saveState() {
     sSlots[sActiveSlot] = sCandidate;
     sDurableSlots &= ~(1u << sActiveSlot);
     sPackedChecksums[sActiveSlot] = packedChecksum(sPool.slots[sActiveSlot].offset, sCandidate.packedSize);
-    storePool();
+    // The pool stays PPC-owned; SD export flushes its exact spans before handoff.
 
     // The mission countdown must not charge time spent compressing a state.
     rebaseMissionStopwatch(h->save_time);

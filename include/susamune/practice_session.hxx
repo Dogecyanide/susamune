@@ -39,6 +39,7 @@ bool pausePending();
 bool freeCamera();
 bool recording();
 bool replaying();
+bool starting();
 bool assisted();
 bool available();
 u32 stepCount();

@@ -51,14 +51,107 @@ static inline int StateSlotPoolValid(const StateSlotPool *pool,
     return cursor == pool->used;
 }
 
+typedef unsigned int StateSlotPoolWord __attribute__((__may_alias__));
+typedef __UINTPTR_TYPE__ StateSlotPoolAddress;
+typedef char StateSlotPoolWordMustBeFourBytes[sizeof(StateSlotPoolWord) == 4 ? 1 : -1];
+
+static inline StateSlotPoolWord StateSlotPoolMergeWords(StateSlotPoolWord first,
+                                                       StateSlotPoolWord second,
+                                                       unsigned int shift) {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return (first << shift) | (second >> (32 - shift));
+#else
+    return (first >> shift) | (second << (32 - shift));
+#endif
+}
+
+/* Aligned loads/stores only. Byte edges keep every read inside its span,
+ * including when adjacent logical banks are physically far apart. */
+static inline void StateSlotPoolCopyForward(unsigned char *dst,
+                                            const unsigned char *src,
+                                            unsigned int size) {
+    while (size && ((StateSlotPoolAddress)dst & 3u)) {
+        *dst++ = *src++;
+        --size;
+    }
+    const unsigned int misalignment = (StateSlotPoolAddress)src & 3u;
+    if (!misalignment) {
+        StateSlotPoolWord *out = (StateSlotPoolWord *)dst;
+        const StateSlotPoolWord *in = (const StateSlotPoolWord *)src;
+        while (size >= 16) {
+            out[0] = in[0]; out[1] = in[1]; out[2] = in[2]; out[3] = in[3];
+            out += 4; in += 4; size -= 16;
+        }
+        while (size >= 4) { *out++ = *in++; size -= 4; }
+        dst = (unsigned char *)out;
+        src = (const unsigned char *)in;
+    } else if (size >= 4) {
+        /* Consume a word before rounding the source pointer backwards. */
+        for (unsigned int i = 0; i < 4; ++i) dst[i] = src[i];
+        dst += 4; src += 4; size -= 4;
+        if (size >= 8 - misalignment) {
+            const StateSlotPoolWord *in = (const StateSlotPoolWord *)(src - misalignment);
+            StateSlotPoolWord *out = (StateSlotPoolWord *)dst;
+            StateSlotPoolWord first = *in++;
+            do {
+                const StateSlotPoolWord second = *in++;
+                *out++ = StateSlotPoolMergeWords(first, second, misalignment * 8);
+                first = second;
+                src += 4; size -= 4;
+            } while (size >= 8 - misalignment);
+            dst = (unsigned char *)out;
+        }
+    }
+    while (size) { *dst++ = *src++; --size; }
+}
+
+static inline void StateSlotPoolCopyBackward(unsigned char *dst,
+                                             const unsigned char *src,
+                                             unsigned int size) {
+    dst += size;
+    src += size;
+    while (size && ((StateSlotPoolAddress)dst & 3u)) {
+        *--dst = *--src;
+        --size;
+    }
+    const unsigned int misalignment = (StateSlotPoolAddress)src & 3u;
+    if (!misalignment) {
+        StateSlotPoolWord *out = (StateSlotPoolWord *)dst;
+        const StateSlotPoolWord *in = (const StateSlotPoolWord *)src;
+        while (size >= 16) {
+            out[-1] = in[-1]; out[-2] = in[-2]; out[-3] = in[-3]; out[-4] = in[-4];
+            out -= 4; in -= 4; size -= 16;
+        }
+        while (size >= 4) { *--out = *--in; size -= 4; }
+        dst = (unsigned char *)out;
+        src = (const unsigned char *)in;
+    } else if (size >= 4) {
+        for (unsigned int i = 0; i < 4; ++i) *--dst = *--src;
+        size -= 4;
+        if (size >= 4 + misalignment) {
+            const StateSlotPoolWord *in = (const StateSlotPoolWord *)(src - misalignment);
+            StateSlotPoolWord *out = (StateSlotPoolWord *)dst;
+            StateSlotPoolWord second = *in;
+            do {
+                const StateSlotPoolWord first = *--in;
+                *--out = StateSlotPoolMergeWords(first, second, misalignment * 8);
+                second = first;
+                src -= 4; size -= 4;
+            } while (size >= 4 + misalignment);
+            dst = (unsigned char *)out;
+        }
+    }
+    while (size) { *--dst = *--src; --size; }
+}
+
 static inline void StateSlotPoolMove(unsigned char *dst,
                                       const unsigned char *src,
                                       unsigned int size) {
-    if (dst <= src) {
-        for (unsigned int i = 0; i < size; ++i) dst[i] = src[i];
-    } else {
-        while (size) { --size; dst[size] = src[size]; }
-    }
+    if (dst == src || !size) return;
+    if ((StateSlotPoolAddress)dst < (StateSlotPoolAddress)src)
+        StateSlotPoolCopyForward(dst, src, size);
+    else
+        StateSlotPoolCopyBackward(dst, src, size);
 }
 
 static inline int StateSlotPoolPlanReplace(const StateSlotPool *pool,
@@ -145,7 +238,7 @@ static inline int StateSlotPoolCommit(StateSlotPool *pool, unsigned char *bytes,
     /* Move the tail first: a larger replacement may overwrite its old source. */
     StateSlotPoolMove(bytes + pool->used + first, bytes + oldUsed,
                       packedSize - first);
-    for (unsigned int i = 0; i < first; ++i) bytes[pool->used + i] = staging[i];
+    StateSlotPoolCopyForward(bytes + pool->used, staging, first);
     pool->slots[slot].offset = pool->used;
     pool->slots[slot].size = packedSize;
     pool->used += packedSize;

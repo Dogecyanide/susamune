@@ -408,7 +408,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     // did produce would be a state change we never asked for, so drop it.
     const bool freeze = gpMarDirector &&
                         gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
-                        ((gMenu && gMenu->shown()) || WarpWheel::shown() ||
+                        (menuOwnsRetailPad || WarpWheel::shown() ||
                          sessionModalBeforeDirect || PracticeSession::freezeRequested() || stateDiskBusy);
     const bool marioActive = gpMarDirector &&
                              gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&

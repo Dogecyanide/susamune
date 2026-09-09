@@ -12,16 +12,25 @@ any of the three RAM slots. Start renames and X requests deletion with confirmat
 Selecting a source alone does not restore gameplay. Pending actions pin identities
 before waiting or approval rather than rereading whichever selection is current.
 
-The previous build received user confirmation for restoration after a real Wii
-reboot, full ghost continuation with frame advance, timer alignment and colour
+Build C4AF447B received user confirmation for SD file loading, with loading
+reported as good and saving still slow. Earlier build 5B0EC1B1 received confirmation
+for restoration after a real Wii reboot, full ghost continuation with frame advance, timer alignment and colour
 persistence. The new direct-load and file-management paths have separate host and
 Dolphin evidence below; this is not a claim that every scene, Wii U configuration
 or hardware file-operation failure has been tested.
 
-## Archive version 1, transport protocol 2
+The current quick-format decoder has also passed a separate private Dolphin
+proof: valid MSL4 direct restore, malformed-block refusal despite corrected
+archive CRCs, exact position/QFT, and all RAM entries unchanged. Its host adapter
+supplied file bytes/ARM receipts, so it does not measure actual SD speed or prove
+cold-reboot behavior for this new build. See `build/foxtrot-speed-sd-proof` and the
+codec document for the exact evidence.
+
+## Archive version 1, transport protocol 4
 
 `include/susamune/state_storage.h` keeps archive version 1: a 96-byte big-endian
-header, bounded opaque metadata, then the exact zlib stream. Current PowerPC
+header, bounded opaque metadata, then the exact compressed stream (bounded MSL4
+or zlib). Current PowerPC
 `StoredState` sizes are 6,896 bytes for JP and 6,872 bytes for US/PAL, below the
 7,168-byte metadata limit. This includes QFT, IL and ghost sidecars plus the
 5,920-byte owner profile; the used ghost pose/input/segment prefix is part of the
@@ -29,12 +38,14 @@ compressed stream. Separate CRCs cover header, metadata and compressed payload.
 The header contains no restore pointers or pool offsets. Its printable name is
 at most 31 characters and never becomes a path.
 
-The mailbox transport is now protocol 2. Its 7,968-byte structure remains inside
+The mailbox transport is now protocol 4. This rejects older workers whose primary
+pool boundary predates workspace relocation (now 0xFF0000). Its 7,968-byte structure
+remains inside
 the same 8 KiB allocation; the appended request/result name buffers occupy their
 own 32-byte lines at offsets 7,904 and 7,936. Request, response and receipt also
 have separate cache lines. A receipt must match request sequence, process session,
 command and archive ID. The effective returned name has its own receipt CRC.
-An incompatible transport is rejected rather than interpreted as version 1.
+An incompatible transport is rejected rather than interpreted using an older pool map.
 
 Transport changes do not rewrite existing archives. The original `.mss` file and
 its header CRC remain immutable after successful export, including across renames.
@@ -83,7 +94,7 @@ For Y/Load, the file identity is retained as the Load source. Each Load reads th
 file again; no permanent fourth slot or retained SD-state cache is created. After
 the receipt and metadata admission, `sDiskLoadReady` retains exclusive ownership
 of the staged bytes until the post-draw restore. At that barrier, the live owner
-profile is captured again and `StateCodec::decompress` fully validates the zlib
+profile is captured again and `StateCodec::decompress` fully validates the compressed
 stream before its writing pass. A file with correct CRCs but malformed compressed
 data is still refused before game writes. The direct path does not create or
 replace any RAM slot, generation, sidecar or trusted CRC cache entry.

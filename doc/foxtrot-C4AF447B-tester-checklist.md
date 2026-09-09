@@ -1,10 +1,10 @@
 # Moonshine Launcher FOXTROT — final test checklist
 
-**V2.3.0 pre-release · Build 00B63258**
+**V2.3.0 pre-release · Build C4AF447B**
 
-**Only the four checks below are requested for this update.** Keep successful earlier results. The later sections are a reference for anything still marked Not tested; they are not a request to repeat the whole checklist. Use the complete package so the launcher and game files match.
+This is the complete reference checklist. **There are six checks for this update. Keep earlier results; successful older checks do not need repeating.** The later sections are a reference for anything still marked Not tested. Use the full package so the launcher and game files match.
 
-SD states work and the earlier load times received positive Wii feedback. This pass focuses on the launcher guide, input replay and further reductions in save/load waits.
+Already confirmed on the previous build: SD restoration after a real Wii reboot, full ghosts with frame advance, aligned timer displays and colours surviving reboot. The new SD controls below are the main focus now.
 
 **Tester:**  
 **Platform:** Wii / Wii U / Dolphin — version:  
@@ -13,18 +13,16 @@ SD states work and the earlier load times received positive Wii feedback. This p
 
 ## Start here — latest changes
 
-- [ ] **Guide on the TV:** Choose **Guide** on the launcher home screen. Open a topic with A, scroll with Up/Down, turn a page with Left/Right and return with B. The text should fit and remain readable with your theme.
-- [ ] **Input replay:** Turn **Save RNG state** On and make a fresh gameplay state. Under **Practice > Input replay**, choose **Record from savestate**, then release the confirming A button. Walk and jump briefly, open the menu to stop recording, and replay it a few times. Mario should stop immediately when the menu opens, and replay should start consistently. If it stops or refuses, send the exact message and what you recorded.
-- [ ] **Save/load waits:** In your usual practice level, save and load a few times. With three states saved, move elsewhere and overwrite one slot, then load each slot. The other states should still restore correctly. Tell us whether saving and loading feel faster; if a save cannot fit, the old states must remain usable.
-- [ ] **One fresh SD round trip:** Save a state from this build to SD. Reboot into the same setup and level/episode, select that file with **Y**, then use your Load shortcut. It should restore correctly. This checks the new saved format; previously successful SD file-management tests do not need repeating.
+- [ ] **Startup message:** Start the launcher with your usual theme. During the wait before its menu, **Checking storage devices...** should stay visible instead of leaving a blank message area.
+- [ ] **Magenta without red marks:** In **Display > Appearance > Mario appearance > Mario colours**, set the cap and shirt to Custom **255, 0, 255**. Look for the small red marks reported before; they should be gone. Skin and the cap emblem should keep their usual details.
+- [ ] **Separate Save and Load:** In **Practice > Savestates**, choose **Save to State 1** and **Load from State 2**. Save somewhere new, then Load: it should still restore State 2. Note whether the Save/Load wait feels shorter. If you assign the new cycle-save/cycle-load shortcuts, each should change only its own selection.
+- [ ] **SD names:** Under **SD states**, choose **Save memory state to SD**, name it and finish with Start. Rename that file with Start. On a disposable file, cancel X/Delete once, then confirm it. Only that file should disappear; memory states stay saved.
+- [ ] **Load an SD file directly:** Highlight a compatible file and press **Y**. Close the menu and use the normal Load shortcut. It should restore that file while keeping all three memory states. Save another memory state and Load again: the SD file should still be the source. If temporary space is insufficient, report the message; existing states must remain usable.
+- [ ] **Import keeps the Load choice:** Set Save to State 3 while Load from uses another slot or SD file. Press **A** on an SD file, cancel once, then confirm import. Only State 3 should be replaced; Load from should stay unchanged. Select State 3 to use it. If practical, try the new Y/Load route after rebooting into the same build, setup and scene; note the scene and result.
 
 SD files are in `/moonshine_states` on the launcher's device. Use a state made with the same build, region, launcher setup, level and episode; secret areas also need the same parent episode. Loaded resources must match too. Keep the device connected until a transfer or cancellation finishes. There is no need to deliberately damage files or interrupt writes.
 
 Standalone Dolphin BPS builds do not provide SD states; mark those items **Not available** and test the memory slots normally.
-
-## Earlier features — reference only
-
-The checks below are retained for unfinished testing and future bug reports. Successful checks stay complete.
 
 ## 1. Launcher and startup
 
@@ -61,7 +59,7 @@ Audio and some effects may continue while paused. Pause/step-assisted attempts m
 
 ## 5. Local input recording and replay
 
-- [ ] Turn **Save RNG state** On and save a fresh state during normal gameplay. Choose **Practice > Input replay (experimental) > Record from savestate**, then release the confirming A button. Run, jump and spray briefly, then open the menu to stop and keep the take.
+- [ ] Save a savestate during normal gameplay. Choose **Practice > Input replay (experimental) > Record from savestate**, close the menu and release buttons. Run, jump and spray briefly, then open the menu to stop and keep the take.
 - [ ] Choose **Replay recorded inputs**. It should start from the saved state and repeat the take. Check B/Start cancels. Report any different movement or mismatch message, with the scene and actions recorded.
 - [ ] Select or save another state, then replay the take: it should still use its original starting state. Replace or clear that original state, or change scenes, and check the old take refuses to play. Incompatible settings should also produce a clear refusal.
 

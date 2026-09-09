@@ -4,7 +4,7 @@
 #include "susamune/mem2_map.h"
 
 #define SUSAMUNE_STATE_STORAGE_MAGIC 0x4D535354u
-#define SUSAMUNE_STATE_STORAGE_VERSION 2u
+#define SUSAMUNE_STATE_STORAGE_VERSION 4u
 #define SUSAMUNE_STATE_ARCHIVE_MAGIC 0x4D535341u
 #define SUSAMUNE_STATE_ARCHIVE_VERSION 1u
 #define SUSAMUNE_STATE_METADATA_SIZE 7168u
@@ -78,7 +78,13 @@ typedef char StateMailboxSize[sizeof(struct SusamuneStateStorageMailbox) == 7968
 typedef char StateNameMailboxLines[__builtin_offsetof(struct SusamuneStateStorageMailbox, requestName) == 7904 &&
     __builtin_offsetof(struct SusamuneStateStorageMailbox, resultName) == 7936 ? 1 : -1];
 
-static inline unsigned int SusamuneStateCrcUpdate(unsigned int crc,
+// C++ callers share the table; the ARM C worker keeps its local definition.
+#ifdef __cplusplus
+inline
+#else
+static inline
+#endif
+unsigned int SusamuneStateCrcUpdate(unsigned int crc,
         const void *data, unsigned int size) {
     static const unsigned int table[256] = {
         0x00000000u, 0x77073096u, 0xEE0E612Cu, 0x990951BAu, 0x076DC419u, 0x706AF48Fu, 0xE963A535u, 0x9E6495A3u,

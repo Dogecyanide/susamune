@@ -3,6 +3,7 @@
 import ctypes as C
 import itertools
 from pathlib import Path
+import random
 import subprocess
 import tempfile
 import unittest
@@ -42,11 +43,19 @@ API int clear(StateSlotPool*p,StatePoolMemory*m,unsigned s){return StateSlotPool
 API int commit(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n,const unsigned char*t,unsigned z){return StateSlotPoolCommitBanked(p,m,s,n,t,z);}
 API int reclaim(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n){return StateSlotPoolReclaimForReplaceBanked(p,m,s,n);}
 API int prepared(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n){return StateSlotPoolCommitPreparedBanked(p,m,s,n);}
+API unsigned mergeLittle(unsigned a,unsigned b,unsigned shift){return StateSlotPoolMergeWords(a,b,shift);}
+''', encoding="ascii")
+        big_endian = source.with_name("big-endian.c")
+        big_endian.write_text(r'''
+#undef __BYTE_ORDER__
+#define __BYTE_ORDER__ __ORDER_BIG_ENDIAN__
+#include "susamune/state_slot_pool.h"
+__declspec(dllexport) unsigned mergeBig(unsigned a,unsigned b,unsigned shift){return StateSlotPoolMergeWords(a,b,shift);}
 ''', encoding="ascii")
         dll = source.with_suffix(".dll")
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
                         "-nostdlib", "-fno-builtin", "-fuse-ld=lld", "-Wl,/noentry",
-                        "-O2", "-I", str(ROOT / "include"), str(source), "-o", str(dll)], check=True)
+                        "-O2", "-I", str(ROOT / "include"), str(source), str(big_endian), "-o", str(dll)], check=True)
         cls.lib = C.CDLL(str(dll))
         from _ctypes import FreeLibrary
         cls.addClassCleanup(FreeLibrary, cls.lib._handle)
@@ -59,6 +68,9 @@ API int prepared(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n){return
         cls.lib.commit.argtypes = [C.POINTER(Pool), C.POINTER(Memory), C.c_uint,
                                    C.c_uint, C.c_void_p, C.c_uint]
         cls.lib.reclaim.argtypes = cls.lib.prepared.argtypes = [C.POINTER(Pool), C.POINTER(Memory), C.c_uint, C.c_uint]
+        for name in ("mergeLittle", "mergeBig"):
+            getattr(cls.lib, name).argtypes = [C.c_uint, C.c_uint, C.c_uint]
+            getattr(cls.lib, name).restype = C.c_uint
 
     def fixture(self, primary=13, secondary=11):
         storage = (C.c_ubyte * 128)(*([0xA7] * 128))
@@ -104,6 +116,16 @@ API int prepared(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n){return
         self.assertEqual((span.data, span.size), (None, 0))
         self.guards(memory, storage)
 
+    def test_misaligned_word_merge_matches_both_host_and_console_byte_order(self):
+        rng = random.Random(0x574F5244)
+        for _ in range(100):
+            data = bytes(rng.randrange(256) for _ in range(8))
+            for order, name in (("little", "mergeLittle"), ("big", "mergeBig")):
+                for offset in (1, 2, 3):
+                    self.assertEqual(getattr(self.lib, name)(int.from_bytes(data[:4], order),
+                        int.from_bytes(data[4:], order), offset * 8),
+                        int.from_bytes(data[offset:offset + 4], order))
+
     def test_all_bounded_overlap_directions_and_boundary_positions_match_memmove(self):
         data = bytes(range(24))
         for primary in (1, 13, 23):
@@ -117,6 +139,47 @@ API int prepared(StateSlotPool*p,StatePoolMemory*m,unsigned s,unsigned n){return
                         self.assertTrue(self.lib.move(C.byref(memory), destination, source, size))
                         self.assertEqual(self.get(memory), expected)
             self.guards(memory, storage)
+
+    def test_large_word_moves_cover_every_alignment_and_both_physical_bank_orders(self):
+        primary, secondary = 4099, 2083
+        capacity = primary + secondary
+        original = bytes((i * 71 + i // 5) & 255 for i in range(capacity))
+        rng = random.Random(0x504F4F4C)
+        operations = [(1, 0, 4096), (0, 1, 4096), (4, 0, 4096), (0, 4, 4096),
+                      (primary - 33, primary - 32, 65), (primary - 32, primary - 33, 65),
+                      (0, primary, secondary), (primary, 0, secondary)]
+        for _ in range(100):
+            size = rng.randrange(capacity + 1)
+            operations.append((rng.randrange(capacity - size + 1),
+                               rng.randrange(capacity - size + 1), size))
+        for align_first, align_second, reversed_banks in itertools.product(range(4), range(4), (False, True)):
+            storage = (C.c_ubyte * (capacity + 256))(*([0xA7] * (capacity + 256)))
+            start_first = 64 + align_first
+            start_second = 64 + primary + 64 + align_second
+            if reversed_banks:
+                start_second = 64 + align_second
+                start_first = 64 + secondary + 64 + align_first
+            address = C.addressof(storage)
+            memory = Memory((C.c_void_p * 2)(address + start_first, address + start_second),
+                            (C.c_uint * 2)(primary, secondary))
+            with self.subTest(first=align_first, second=align_second, reversed=reversed_banks):
+                for destination, source, size in operations:
+                    self.put(memory, original)
+                    expected = bytearray(original)
+                    expected[destination:destination + size] = original[source:source + size]
+                    self.assertTrue(self.lib.move(C.byref(memory), destination, source, size))
+                    self.assertEqual(self.get(memory), expected)
+                for source_alignment, destination_alignment in itertools.product(range(4), repeat=2):
+                    source = C.create_string_buffer(capacity + 8)
+                    destination = C.create_string_buffer(capacity + 8)
+                    C.memmove(C.addressof(source) + source_alignment, original, capacity)
+                    self.assertTrue(self.lib.copyIn(C.byref(memory), 0,
+                        C.addressof(source) + source_alignment, capacity))
+                    self.assertTrue(self.lib.copyOut(C.byref(memory), 0,
+                        C.addressof(destination) + destination_alignment, capacity))
+                    self.assertEqual(C.string_at(C.addressof(destination) + destination_alignment, capacity), original)
+                covered = set(range(start_first, start_first + primary)) | set(range(start_second, start_second + secondary))
+                self.assertTrue(all(storage[i] == 0xA7 for i in range(len(storage)) if i not in covered))
 
     def test_staged_replacements_preserve_other_slots_across_boundary(self):
         for sizes, order, slot, packed, staging_size in itertools.product(

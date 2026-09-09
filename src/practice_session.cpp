@@ -82,6 +82,7 @@ struct PracticeSeed {
     u32 stage;
     u32 heap;
     bool valid;
+    bool rngSaved;
 };
 PracticeSeed sSeeds[SavestateManager::kSlotCount];
 TMarioGamePad *sReadPad;
@@ -123,8 +124,11 @@ u32 sSteps;
 u32 sSettingsHash;
 u32 sTapeHash;
 u32 sTapeStage;
+u32 sTapeStart;
 u16 sPriorButtons;
 u16 sStripButtons;
+u16 sStartRelease;
+char sReplayFailure[64];
 const char *sStatus = "Save a state before recording";
 
 bool seedMatches(u32 slot, u32 generation) {
@@ -229,10 +233,30 @@ u32 hashBytes(u32 hash, const void *data, u32 count) {
     return hash;
 }
 
+bool replayPresentationSetting(SettingId id) {
+    if (id >= SETTING_FAVORITES_0 && id <= SETTING_FAVORITES_10) return true;
+    switch (id) {
+    case SETTING_RNG_FAVORITES:
+    case SETTING_NATIVE_TIMER_X:
+    case SETTING_NATIVE_TIMER_Y:
+    case SETTING_NATIVE_TIMER_SCALE:
+    case SETTING_FREE_CAMERA_SPEED:
+    case SETTING_FREE_CAMERA_STRAFE_REVERSE:
+    case SETTING_METADATA_HORIZONTAL:
+    case SETTING_GHOST_INPUTS:
+        return true;
+    default:
+        return false;
+    }
+}
+
 u32 settingsHash() {
     u32 hash = 2166136261u;
     for (int i = 0; i < SETTING_COUNT; ++i) {
-        const u8 value = gSettings.get(static_cast<SettingId>(i));
+        const SettingId id = static_cast<SettingId>(i);
+        // Keep new settings guarded until their consumers are audited.
+        if (replayPresentationSetting(id)) continue;
+        const u8 value = gSettings.get(id);
         hash = (hash ^ value) * 16777619u;
     }
     const f32 cadence = SMSGetVSyncTimesPerSec();
@@ -466,8 +490,25 @@ void stopTape(const char *reason) {
     sReplay = false;
     sLoadKind = 0;
     sLoadWait = 0;
+    sStartRelease = 0;
     sFrameInjected = false;
     if (reason) message(reason);
+}
+
+void queueTapeLoad(u8 kind, u32 slot, u32 generation) {
+    stopTape(nullptr);
+    sLoadSlot = slot;
+    sLoadGeneration = generation;
+    sLoadKind = kind;
+    sPausePending = false;
+    sStepQueued = false;
+    sMenuAction = 0;
+    const bool menu = gMenu && gMenu->shown();
+    sStartRelease = menu ? static_cast<u16>(JUTGamePad::A) :
+        gBinds.get(kind == 1 ? BIND_PRACTICE_RECORD : BIND_PRACTICE_REPLAY);
+    sStartRelease &= sPhysical.buttons;
+    message(menu ? (kind == 1 ? "Release A to reload and record" : "Release A to replay") :
+                   "Release the shortcut buttons to begin");
 }
 
 } // namespace
@@ -645,7 +686,7 @@ void beforeDirect(bool modalOwnsInput) {
         }
         sMenuAction = 0;
     }
-    if (sPaused && normalStage() && !sModal && !sMenuAction && sStepQueued &&
+    if (!sLoadKind && sPaused && normalStage() && !sModal && !sMenuAction && sStepQueued &&
         !actionsFastForwardActive()) {
         sStepping = true;
         sStepQueued = false;
@@ -657,7 +698,7 @@ void beforeDirect(bool modalOwnsInput) {
         inject(sConsumed, sReadPad);
         sReadPad->updateMeaning();
     }
-    sFreeze = sPaused && !sStepping && normalStage();
+    sFreeze = (sPaused || sLoadKind) && !sStepping && normalStage();
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         retainPausedReleases(sReadPad);
     }
@@ -720,7 +761,9 @@ void afterDirect(s32 appState, bool gameplayActive) {
         const u32 expected = sFrames[sCursor].fingerprint;
         ++sCursor;
         if (fingerprint() != expected) {
-            stopTape("Replay diverged - see frame counter");
+            snprintf(sReplayFailure, sizeof(sReplayFailure),
+                     "Replay stopped at frame %lu: game state differed", sCursor);
+            stopTape(sReplayFailure);
             CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, 3, sCursor);
             sPaused = true;
         } else if (sCursor == sCount) {
@@ -732,13 +775,24 @@ void afterDirect(s32 appState, bool gameplayActive) {
 
 void afterDraw() {
     restoreCamera();
-    if (!sLoadKind || (gMenu && gMenu->shown()) || WarpWheel::shown() ||
-        StageLoader::resultOwnsInput()) return;
-    if (sPhysical.buttons) return;
+    if (!sLoadKind) return;
+    // Only the command press must release; gameplay buttons may remain held.
+    sStartRelease &= sPhysical.buttons;
+    if ((gMenu && gMenu->shown()) || WarpWheel::shown() || WarpWheel::promptPending() ||
+        StageLoader::resultOwnsInput() || SavestateManager::diskBusy()) return;
+    if (sPhysical.error != 0) {
+        stopTape("Controller disconnected - input canceled");
+        return;
+    }
+    if (sStartRelease) return;
     const u32 slot = sLoadSlot;
     const u32 generation = sLoadGeneration;
     if (!normalStage() || !seedMatches(slot, generation)) {
         stopTape("Save a new gameplay state first");
+        return;
+    }
+    if (sLoadKind == 2 && settingsHash() != sSettingsHash) {
+        stopTape("Settings changed since recording - record again");
         return;
     }
     if (gpCardManager && gpCardManager->getLastStatus() == CARD_ERROR_BUSY) {
@@ -758,6 +812,12 @@ void afterDraw() {
     restorePad(sSeeds[slot].pad, gpApplication.mGamePads[0]);
     sHaveRead = false;
     sPaused = false;
+    sPausePending = false;
+    sStepQueued = false;
+    sMenuAction = 0;
+    sStripButtons = 0;
+    sStartRelease = 0;
+    sPriorButtons = sPhysical.buttons;
     sFreeCamera = false;
     sCursor = 0;
     if (kind == 1) {
@@ -766,10 +826,16 @@ void afterDraw() {
         sTapeSeed = generation;
         sTapeSlot = slot;
         sTapeStage = sStageGeneration;
+        sTapeStart = fingerprint();
         sSettingsHash = settingsHash();
         sRecord = true;
         message("Recording inputs - Stop keeps this take");
     } else {
+        if (fingerprint() != sTapeStart) {
+            stopTape("Replay start differs - save a new state and record");
+            sPaused = true;
+            return;
+        }
         sReplay = true;
         message("Input playback - B or Start stops");
     }
@@ -787,6 +853,7 @@ void onSavestateSaved(u32 slot, u32 generation) {
     PracticeSeed &seed = sSeeds[slot];
     seed.generation = generation;
     seed.valid = normalStage();
+    seed.rngSaved = gSettings.getBool(SETTING_SAVE_RNG_STATE);
     seed.stage = sStageGeneration;
     seed.heap = reinterpret_cast<u32>(gpApplication.mCurrentHeap);
     if (seed.valid) capturePad(seed.pad, gpApplication.mGamePads[0]);
@@ -954,14 +1021,14 @@ bool requestRecord() {
         gSavestateMgr->slotInfo(slot).generation : 0;
     if (!available() || !normalStage() || !seedMatches(slot, generation) ||
         Ghost::observerStatsSuppressed()) {
-        message("Save gameplay in the selected slot first");
+        message("Save a new gameplay state in Save to first");
         return false;
     }
-    stopTape(nullptr);
-    sLoadSlot = slot;
-    sLoadGeneration = generation;
-    sLoadKind = 1;
-    message("Close menu: reload savestate and record");
+    if (!sSeeds[slot].rngSaved || !gSettings.getBool(SETTING_SAVE_RNG_STATE)) {
+        message("Turn on Save RNG state, then save a new state");
+        return false;
+    }
+    queueTapeLoad(1, slot, generation);
     return true;
 }
 
@@ -977,16 +1044,15 @@ bool requestPlayback() {
         return false;
     }
     if (sRecord) stopTape(nullptr);
-    if (settingsHash() != sSettingsHash ||
-        hashBytes(2166136261u, sFrames, sCount * sizeof(Frame)) != sTapeHash) {
-        message("Recording changed or damaged - record again");
+    if (settingsHash() != sSettingsHash) {
+        message("Settings changed since recording - record again");
         return false;
     }
-    stopTape(nullptr);
-    sLoadSlot = sTapeSlot;
-    sLoadGeneration = sTapeSeed;
-    sLoadKind = 2;
-    message("Close menu: replay from saved state");
+    if (hashBytes(2166136261u, sFrames, sCount * sizeof(Frame)) != sTapeHash) {
+        message("Input recording is damaged - record again");
+        return false;
+    }
+    queueTapeLoad(2, sTapeSlot, sTapeSeed);
     return true;
 }
 
@@ -1024,6 +1090,7 @@ bool pausePending() { return sPausePending; }
 bool freeCamera() { return sFreeCamera; }
 bool recording() { return sRecord; }
 bool replaying() { return sReplay; }
+bool starting() { return sLoadKind != 0; }
 bool assisted() { return sAssisted; }
 bool available() { return sPadHookReady; }
 u32 stepCount() { return sSteps; }
@@ -1047,11 +1114,14 @@ void draw(Menu *menu) {
     else if (sReplay) snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu", sCursor, sCount);
     else if (sFreeCamera) snprintf(text, sizeof(text), "CAMERA ON  %.2fx  X boost  Mario input OFF",
                                   cameraSpeedScale());
-    else snprintf(text, sizeof(text), "INPUT SESSION - release buttons to begin");
+    else snprintf(text, sizeof(text), sStartRelease ?
+        "INPUT SESSION - release the command buttons" : "INPUT SESSION - waiting to load state");
     menu->fillBox(42, 388, 556, 40, JUtility::TColor(8, 17, 31, 225));
     menu->drawText(text, 50, 394, 16, 16, JUtility::TColor(130, 225, 255, 255));
     menu->drawText(sFreeCamera ? "Turn camera Off to step with A or other Mario inputs" :
-                   "Hold your inputs, then press Step. Release A before another jump.", 50, 413, 12, 12,
+                   sRecord ? "Open the Moonshine menu to stop and keep this recording." :
+                   sReplay ? "B or Start stops playback." :
+                   "Other gameplay buttons can stay held. Stop cancels this request.", 50, 413, 12, 12,
                    JUtility::TColor(235, 235, 235, 255));
 }
 

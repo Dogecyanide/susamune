@@ -24,7 +24,7 @@ struct Result {
 };
 
 const unsigned int kMaxSpans = 64;
-const unsigned int kWorkspaceLimit = 0x50000;
+const unsigned int kWorkspaceLimit = 0x4E000;
 const unsigned int kWorkspaceAlignment = 32;
 unsigned int workspaceSize();
 
@@ -32,7 +32,8 @@ unsigned int workspaceSize();
 // OUTPUT_FULL still reports the complete required size; partial output is invalid.
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan *output, unsigned int outputCount = 2, bool compact = false);
+                const WriteSpan *output, unsigned int outputCount = 2,
+                bool compact = false, bool quick = false);
 
 // Input spans contain exactly the stream's bytes, excluding allocation padding.
 Status validate(void *workspace, unsigned int workspaceBytes,

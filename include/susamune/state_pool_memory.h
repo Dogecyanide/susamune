@@ -84,7 +84,7 @@ static inline int StatePoolMemoryCopyIn(const StatePoolMemory *memory,
     while (size) {
         StatePoolMemorySpan span;
         if (!StatePoolMemorySpanAt(memory, offset, size, &span)) return 0;
-        for (unsigned int i = 0; i < span.size; ++i) span.data[i] = bytes[i];
+        StateSlotPoolCopyForward(span.data, bytes, span.size);
         bytes += span.size;
         offset += span.size;
         size -= span.size;
@@ -101,7 +101,7 @@ static inline int StatePoolMemoryCopyOut(const StatePoolMemory *memory,
     while (size) {
         StatePoolMemorySpan span;
         if (!StatePoolMemorySpanAt(memory, offset, size, &span)) return 0;
-        for (unsigned int i = 0; i < span.size; ++i) bytes[i] = span.data[i];
+        StateSlotPoolCopyForward(bytes, span.data, span.size);
         bytes += span.size;
         offset += span.size;
         size -= span.size;
@@ -123,7 +123,7 @@ static inline int StatePoolMemoryMove(const StatePoolMemory *memory,
             if (!StatePoolMemorySpanAt(memory, source, size, &from) ||
                 !StatePoolMemorySpanAt(memory, destination, size, &to)) return 0;
             count = from.size < to.size ? from.size : to.size;
-            for (unsigned int i = 0; i < count; ++i) to.data[i] = from.data[i];
+            StateSlotPoolCopyForward(to.data, from.data, count);
             destination += count;
             source += count;
         } else {
@@ -138,8 +138,7 @@ static inline int StatePoolMemoryMove(const StatePoolMemory *memory,
             if (count > size) count = size;
             unsigned char *dst = to.data - (count - 1);
             const unsigned char *src = from.data - (count - 1);
-            unsigned int left = count;
-            while (left) { --left; dst[left] = src[left]; }
+            StateSlotPoolCopyBackward(dst, src, count);
         }
         size -= count;
     }

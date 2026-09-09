@@ -2,13 +2,14 @@
 
 The susamune launcher GUI.
 
-Three screens, all driven from SusamuneMenuRun():
+Screens driven from SusamuneMenuRun():
 
-  main      Launch Game / Version / Path / Settings, centre justified.
+  main      Launch Game / Version / Path / Settings / Guide.
   browse    A file browser rooted at the list of devices, plus a pseudo-entry
             for the disc drive. Reached with A on Path.
   settings  The Nintendont options that moved into susamune.ini, one
             column, with help text under a rule at the bottom.
+  guide     Embedded written guide, with topics and scrolling pages.
 
 Everything the user changes here is persisted to [nintendont] in susamune.ini
 on the device the launcher was run from -- see SusamuneIni.c. NIN_CFG is
@@ -34,6 +35,7 @@ anyway, and at 60 Hz over a handful of text rows the cost is invisible.
 #include "menu.h"
 #include "SusamuneIni.h"
 #include "SusamuneMenu.h"
+#include "SusamuneGuide.h"
 #include "ff_utf8.h"
 #include "diskio.h"
 
@@ -51,6 +53,7 @@ enum
 	ROW_VERSION,
 	ROW_PATH,
 	ROW_SETTINGS,
+	ROW_GUIDE,
 
 	ROW_COUNT
 };
@@ -60,7 +63,8 @@ enum
 #define MAIN_Y_VERSION  (MENU_POS_Y + 20*8)
 #define MAIN_Y_PATH     (MENU_POS_Y + 20*9)
 #define MAIN_Y_SETTINGS (MENU_POS_Y + 20*10)
-#define MAIN_Y_ERROR    (MENU_POS_Y + 20*12)
+#define MAIN_Y_GUIDE    (MENU_POS_Y + 20*11)
+#define MAIN_Y_ERROR    (MENU_POS_Y + 20*13)
 
 // Blink the sentinel for about a second and a half: 8 frames lit, 8 dark.
 #define BLINK_HALF_PERIOD 8
@@ -171,6 +175,8 @@ static int Repeat##Key(HeldCounters *h) \
 }
 FPAD_REPEAT(Up)
 FPAD_REPEAT(Down)
+FPAD_REPEAT(Left)
+FPAD_REPEAT(Right)
 
 /** Devices **/
 
@@ -899,6 +905,100 @@ static void CycleSetting(int setting)
 	IniDirty = true;
 }
 
+static void GuideScreen(void)
+{
+	HeldCounters held;
+	int pos = 0;
+	int firstTopic = 0;
+	int firstLine = 0;
+	bool reading = false;
+	const int count = SusamuneGuideTopicCount();
+
+	memset(&held, 0, sizeof(held));
+	while (1)
+	{
+		int i;
+		int lines;
+
+		FPAD_Update();
+		if (Shutdown)
+			LoaderShutdown();
+		if (FPAD_Start(0))
+		{
+			SaveIfDirty();
+			ExitToLoader(0);
+		}
+		if (FPAD_Cancel(0))
+		{
+			if (!reading)
+				return;
+			reading = false;
+			memset(&held, 0, sizeof(held));
+		}
+		else if (reading)
+		{
+			int delta = 0;
+			if (RepeatUp(&held)) delta--;
+			if (RepeatDown(&held)) delta++;
+			if (RepeatLeft(&held)) delta -= SUSAMUNE_GUIDE_ROWS;
+			if (RepeatRight(&held)) delta += SUSAMUNE_GUIDE_ROWS;
+			firstLine = SusamuneGuideScroll(firstLine,
+				SusamuneGuideLineCount(pos), delta);
+		}
+		else
+		{
+			if (RepeatUp(&held)) pos = (pos + count - 1) % count;
+			if (RepeatDown(&held)) pos = (pos + 1) % count;
+			if (pos < firstTopic) firstTopic = pos;
+			if (pos >= firstTopic + SUSAMUNE_GUIDE_ROWS)
+				firstTopic = pos - SUSAMUNE_GUIDE_ROWS + 1;
+			if (FPAD_OK(0))
+			{
+				reading = true;
+				firstLine = 0;
+				memset(&held, 0, sizeof(held));
+			}
+		}
+
+		ClearScreen();
+		PrintCenter(BLACK, MENU_POS_Y, "Moonshine guide");
+		PrintCenter(BLACK, MENU_POS_Y + 20, "FOXTROT - V2.3.0 pre-release");
+		GRRLIB_Rectangle(MENU_POS_X, MENU_POS_Y + 92,
+			640 - MENU_POS_X*2, 286, 0xFFFFFFD8, true);
+		if (reading)
+		{
+			lines = SusamuneGuideLineCount(pos);
+			PrintCenter(BLACK, MENU_POS_Y + 60, "%s", SusamuneGuideTitle(pos));
+			for (i = 0; i < SUSAMUNE_GUIDE_ROWS && firstLine + i < lines; i++)
+				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 20,
+					MENU_POS_Y + 100 + i*20, "%s",
+					SusamuneGuideLine(pos, firstLine + i));
+			PrintCenter(BLACK, MENU_POS_Y + 380, "%d-%d of %d lines",
+				firstLine + 1, firstLine + SUSAMUNE_GUIDE_ROWS < lines
+					? firstLine + SUSAMUNE_GUIDE_ROWS : lines, lines);
+			PrintCenter(BLACK, MENU_POS_Y + 404,
+				"Up/Down: scroll  Left/Right: page  B: topics");
+		}
+		else
+		{
+			PrintCenter(BLACK, MENU_POS_Y + 60, "Choose a topic");
+			for (i = 0; i < SUSAMUNE_GUIDE_ROWS && firstTopic + i < count; i++)
+			{
+				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 20,
+					MENU_POS_Y + 100 + i*20, "%s",
+					SusamuneGuideTitle(firstTopic + i));
+				if (firstTopic + i == pos)
+					PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X,
+						MENU_POS_Y + 100 + i*20, ARROW_RIGHT);
+			}
+			PrintCenter(BLACK, MENU_POS_Y + 380, "Topic %d of %d", pos + 1, count);
+			PrintCenter(BLACK, MENU_POS_Y + 404,
+				"Up/Down: choose  A: read  B: launcher");
+		}
+		GRRLIB_Render();
+	}
+}
+
 static void SettingsScreen(void)
 {
 	HeldCounters held;
@@ -1228,6 +1328,8 @@ static void DrawMainMenu(int pos)
 
 	PrintCenter(BLACK, MAIN_Y_SETTINGS, "Settings%s",
 		    pos == ROW_SETTINGS ? " " ARROW_LEFT : "");
+	PrintCenter(BLACK, MAIN_Y_GUIDE, "Guide%s",
+		    pos == ROW_GUIDE ? " " ARROW_LEFT : "");
 
 	if (ErrorLine[0] != '\0')
 	{
@@ -1314,6 +1416,11 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 
 				case ROW_SETTINGS:
 					SettingsScreen();
+					memset(&held, 0, sizeof(held));
+					break;
+
+				case ROW_GUIDE:
+					GuideScreen();
 					memset(&held, 0, sizeof(held));
 					break;
 

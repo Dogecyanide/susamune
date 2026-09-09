@@ -27,7 +27,7 @@ class ReleaseBrandingTests(unittest.TestCase):
             self.assertIn(name, packer)
             self.assertTrue((ROOT / "doc" / name).is_file())
         self.assertIn("decode_crash.py", packer)
-    def test_launcher_zip_contains_complete_miniz_license(self):
+    def test_launcher_zip_contains_complete_codec_licenses(self):
         with tempfile.TemporaryDirectory(prefix="moonshine-package-") as temporary:
             work = Path(temporary)
             boot = work / "boot.dol"
@@ -44,6 +44,8 @@ class ReleaseBrandingTests(unittest.TestCase):
                 prefix = package_launcher.APP_NAME + "/"
                 self.assertEqual(packaged.read(prefix + "licenses/miniz-LICENSE.txt"),
                                  (ROOT / "vendor/miniz/LICENSE").read_bytes())
+                self.assertEqual(packaged.read(prefix + "licenses/lz4-LICENSE.txt"),
+                                 (ROOT / "vendor/lz4/LICENSE").read_bytes())
                 self.assertEqual(packaged.read(prefix + "boot.dol"), boot.read_bytes())
                 self.assertEqual(packaged.read(prefix + "mod_us.bin"), mod.read_bytes())
                 for name in ("foxtrot-guide-en.md", "foxtrot-guide-ja.md"):

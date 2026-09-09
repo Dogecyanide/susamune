@@ -25,6 +25,7 @@ META_TEMPLATE = LAUNCHER_DIR / "meta.xml.j2"
 APP_NAME = "moonshine_launcher"
 APP_ICON = LAUNCHER_DIR / "icon.png"
 MINIZ_LICENSE = LAUNCHER_DIR.parent / "vendor" / "miniz" / "LICENSE"
+LZ4_LICENSE = LAUNCHER_DIR.parent / "vendor" / "lz4" / "LICENSE"
 
 
 def git_version():
@@ -74,6 +75,7 @@ def main(argv):
         z.write(args.boot_dol, f"{APP_NAME}/boot.dol")
         z.write(APP_ICON, f"{APP_NAME}/icon.png")
         z.write(MINIZ_LICENSE, f"{APP_NAME}/licenses/miniz-LICENSE.txt")
+        z.write(LZ4_LICENSE, f"{APP_NAME}/licenses/lz4-LICENSE.txt")
         z.writestr(f"{APP_NAME}/meta.xml",
                    render_meta(args.source, regions, args.version))
         if args.test_log:

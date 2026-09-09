@@ -15,6 +15,7 @@ MEM2
 0x91780000-0x91900000=PPC loader-only real-disc DMA buffer; three 512 KiB Susamune ghost slots after boot
 0x91880000-0x91880100=ghost storage request/response header (protocol 5)
 0x91880100-0x91890100=PPC-only 64 KiB local practice input take
+0x91891000-0x918DF000=Moonshine codec/CRC scratch (312 KiB; relocation capability required)
 0x918EA000-0x91900000=secondary ghost model heap
 0x91900000-0x9193F000=patch.bin / patch.txt immutable loader-to-kernel handoff
 0x9193F000-0x91B3F000=Moonshine extra packed-state bank (2 MiB; capability gated)
@@ -25,8 +26,8 @@ MEM2
 0x91E3F000-0x91EDE000=Susamune mod_<region>.bin immutable staging (reused by PatchGame after reset)
 0x91EDE000-0x91F00000=Susamune ghost model asset vault (published after the mod copy)
 0x91F00000-0x92300000=launcher theme MP3 staging (boot only, overlays snapshot)
-0x91F00000-0x92EA0000=Moonshine primary packed-state bank (three slots share 17.625 MiB with extra bank)
-0x92EA0000-0x92EF0000=Moonshine state codec workspace (320 KiB, dedicated during gameplay)
+0x91F00000-0x92EF0000=Moonshine full primary packed-state bank (three slots share 17.9375 MiB with extra bank)
+0x92EA2000-0x92EF0000=legacy codec scratch when relocation is not advertised; legacy primary ends at 0x92EA2000
 0x92EF0000-0x92EFF800=Susamune settings block (susamune.ini/PB handoff + save doorbells)
 0x92EF18E0-0x92EF1900=Mario clothing colours
 0x92EF1900-0x92EF1940=FLUDD model and sprayed-water colours

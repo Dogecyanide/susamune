@@ -2,6 +2,7 @@
 import ctypes as C
 from pathlib import Path
 import random
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -40,6 +41,34 @@ __declspec(dllexport) unsigned int name(const void*p){return SusamuneStateNameCr
         for func in ('archive','name'):
             getattr(cls.lib,func).argtypes=[C.c_void_p]
             getattr(cls.lib,func).restype=C.c_uint
+        for name in ('a', 'b'):
+            (path/f'{name}.cpp').write_text(
+                '#include "susamune/state_storage.h"\n'
+                f'extern "C" unsigned int {name}(unsigned int crc,const void*p,unsigned int n)'
+                '{return SusamuneStateCrcUpdate(crc,p,n);}\n', encoding='ascii')
+        cls.path=path
+
+    def test_powerpc_callers_share_one_crc_table(self):
+        objects=[]
+        for name in ('a', 'b'):
+            obj=self.path/f'{name}.o'
+            subprocess.run([str(ROOT/'toolchain/clang++.exe'),
+                '--target=powerpc-gecko-ibm-kuribo-eabi', '-Oz', '-fdata-sections',
+                '-nostdinc++', '-I', str(ROOT/'include'), '-c',
+                str(self.path/f'{name}.cpp'), '-o', str(obj)],
+                check=True, capture_output=True, text=True)
+            objects.append(str(obj))
+        combined=self.path/'combined.o'
+        subprocess.run([str(ROOT/'toolchain/powerpc-eabi-ld.exe'), '-r',
+            *objects, '-o', str(combined)], check=True, capture_output=True, text=True)
+        values=[]
+        for byte in range(256):
+            value=byte
+            for _ in range(8):
+                value=(value >> 1) ^ (0xEDB88320 if value & 1 else 0)
+            values.append(value)
+        table=struct.pack('>256I', *values)
+        self.assertEqual(combined.read_bytes().count(table), 1)
 
     def test_standard_vectors_and_legacy_seed_compatibility(self):
         rng=random.Random(9327)

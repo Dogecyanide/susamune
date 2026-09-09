@@ -10,6 +10,8 @@ Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace 
 
 Open Moonshine Launcher FOXTROT from the Homebrew Channel. Choose the matching **Version**, then **Path** to select your ISO/CISO on SD or USB, or **Disc Drive** for a real disc. Choose **Launch Game**. If Auto Boot is enabled, hold B during startup to return to the launcher menu.
 
+Choose **Guide** on the launcher's home screen to read the written guide on your TV. Select a topic with Up/Down and A; use Up/Down to scroll or Left/Right to move a page. B returns to the topics, then to the launcher. The guide is built into the launcher and works without a separate file.
+
 The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes. **Checking storage devices...** stays visible during the later SD/USB scan, which previously showed only the background while waiting.
 
 Configuration and saved mod data belong to the device the launcher was opened from. For example, a launcher on SD still saves its configuration on SD when the game is on USB. Settings and binds are separate for JP, US and PAL. Keep the existing `susamune_*` names when updating.
@@ -64,7 +66,7 @@ Open **Practice > Savestates**. **Save to** chooses which memory slot your Save 
 
 Each of the three states shows Saved or Empty. **System > Button binds** has optional **Savestate: cycle save slot** and **Savestate: cycle load slot** shortcuts, both unassigned by default. The older **Savestate: cycle both slots** shortcut remains available for existing binds.
 
-The three states share **17.625 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
+The three states share **17.938 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
 
 The three memory slots start empty after closing the game or rebooting. To keep a state, save a separate SD copy before closing the game.
 
@@ -90,15 +92,17 @@ Keep the storage device connected until the transfer or its cancellation finishe
 
 ## Record and replay an input take
 
-1. Save a savestate during normal gameplay.
+1. Turn **Save RNG state** On, then save a new savestate during normal gameplay. Recording uses the slot under **Save to**.
 2. Choose **Practice > Input replay (experimental) > Record from savestate**.
-3. Close the menu and release the buttons. The saved state reloads and recording begins.
+3. The menu closes. Release the A button used to confirm; other held gameplay buttons may stay held. The saved state reloads and recording begins.
 4. Play the sequence, then open the mod menu to stop recording and keep the take. Stop recording or replay is on the same page; you can assign it a shortcut with X.
-5. Select Replay recorded inputs. It reloads the same seed state and replays the take.
+5. Select Replay recorded inputs. It reloads the same starting state and replays the take, even if you have since changed Save to or Load from.
 
-A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. It exists only in memory for this session and stays attached to its starting state, even if you select or save another slot. Replacing or clearing that starting state, or changing scenes, invalidates the take. Changed settings are rejected. B or Start aborts playback.
+A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. It exists only in memory for this session and stays attached to its starting state, even if you select or save another slot. Replacing or clearing that starting state, or changing scenes, invalidates the take. Settings that affect the recorded setup must still match. Menu favourites, timer position/size, free-camera speed/sideways controls, metadata layout and the ghost input display can still be adjusted. B or Start aborts playback.
 
 Playback is experimental. It compares a small fingerprint of Mario, RNG and counters after each consumed frame, and pauses on the first mismatch. A matched fingerprint is not proof that every enemy, particle or timed event stayed identical. Keep important ghost tracks separately; this local take is not a shareable replay file.
+
+**Starting** means the take is waiting to begin. **Settings changed** means you need to restore the settings used for the take or make a new one. **Replay start differs** means the restored starting state did not match; a later **game state differed** message identifies where playback stopped. After importing an SD state, load it and make a new local memory save before recording inputs.
 
 ## Ghost inputs and splits
 

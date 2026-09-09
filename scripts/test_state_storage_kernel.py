@@ -8,8 +8,7 @@ import unittest
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
-POOL, STAGING = 0xFA0000, 0x400000
-EXPANDED = POOL + 0x200000
+POOL = STAGING = EXPANDED = None  # Filled from the compiled worker's shared map.
 EXPORT, IMPORT, CATALOG, CANCEL, RENAME, DELETE = 1, 2, 3, 4, 5, 6
 OK, IO, BAD, FULL, CANCELLED, STALE, CONFIG = 0, 2, 3, 4, 6, 7, 8
 
@@ -99,6 +98,9 @@ __declspec(dllexport) const void *mailbox(void) {return &stateMailbox;}
 __declspec(dllexport) const void *pool(void) {return STATE_POOL;}
 __declspec(dllexport) const void *staging(void) {return STATE_STAGING;}
 __declspec(dllexport) const void *extra(void) {return STATE_POOL_EXTRA;}
+__declspec(dllexport) u32 poolSize(void) {return SUSAMUNE_STATE_POOL_SIZE;}
+__declspec(dllexport) u32 stagingSize(void) {return SUSAMUNE_STATE_STAGING_SIZE;}
+__declspec(dllexport) u32 expandedSize(void) {return SUSAMUNE_STATE_POOL_EXPANDED_SIZE;}
 __declspec(dllexport) void reboot(void) {SusamuneStateStorageInit();}
 __declspec(dllexport) void requestName(const char *name) {memset(stateMailbox.requestName,0,32);for(u32 i=0;i<32&&name[i];++i)stateMailbox.requestName[i]=name[i];}
 __declspec(dllexport) void unlinkFailure(u32 value) {failUnlink=value;}
@@ -154,6 +156,8 @@ class StateStorageKernelTests(unittest.TestCase):
         cls.lib.openFailure.argtypes = [C.c_char_p]
         for name in ('mailbox', 'pool', 'staging', 'extra', 'file'):
             getattr(cls.lib, name).restype = C.c_void_p
+        global POOL, STAGING, EXPANDED
+        POOL,STAGING,EXPANDED=cls.lib.poolSize(),cls.lib.stagingSize(),cls.lib.expandedSize()
 
     def setUp(self):
         self.lib.reset()

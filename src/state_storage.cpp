@@ -19,9 +19,10 @@ u32 sSession, sSequence, sConfig, sImportSize, sImportOffset;
 SusamuneStateRequest sPending;
 bool sAvailable, sResultReady, sCatalogReady;
 Result sResult;
+StatePoolMemory sMemory;
 
 void syncPool(u32 offset, u32 size, bool finished) {
-    const StatePoolMemory memory = statePoolMemory();
+    const StatePoolMemory &memory = sMemory;
     while (size) {
         StatePoolMemorySpan span;
         if (!StatePoolMemorySpanAt(&memory, offset, size, &span)) __builtin_trap();
@@ -71,11 +72,12 @@ void init() {
     sAvailable = sResultReady = sCatalogReady = false;
     memset(&sPending, 0, sizeof(sPending));
     sConfig = sImportSize = sImportOffset = 0;
+    sMemory = statePoolMemory();
 #if !IS_EMULATOR
     DCInvalidateRange(&sMailbox->response, sizeof(sMailbox->response));
     const SusamuneStateResponse &r = sMailbox->response;
     if (r.magic != SUSAMUNE_STATE_STORAGE_MAGIC || r.version != SUSAMUNE_STATE_STORAGE_VERSION ||
-        !r.available || !r.configId) return;
+        !r.available || !r.configId || sMemory.sizes[0] != SUSAMUNE_STATE_POOL_SIZE) return;
     sAvailable = true;
     sConfig = r.configId;
     const u64 now = OSGetTime();
@@ -154,7 +156,7 @@ bool busy() { return sPending.command != 0; }
 u32 configId() { return sConfig; }
 
 bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset) {
-    const StatePoolMemory memory = statePoolMemory();
+    const StatePoolMemory &memory = sMemory;
     if (!sAvailable || busy() || sResultReady || !metadata || !SusamuneStatePoolRange(offset, source.packedSize) ||
         !StatePoolMemoryRangeValid(&memory, offset, source.packedSize) ||
         !source.metadataSize || source.metadataSize > SUSAMUNE_STATE_METADATA_SIZE) return false;
@@ -175,7 +177,7 @@ bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata,
     return submit(SUSAMUNE_STATE_CMD_EXPORT, 0, offset, h.packedSize, 0);
 }
 bool startImport(u32 id, u32 crc, u32 size, u32 offset) {
-    const StatePoolMemory memory = statePoolMemory();
+    const StatePoolMemory &memory = sMemory;
     const u32 tail = size > SUSAMUNE_STATE_STAGING_SIZE ? size - SUSAMUNE_STATE_STAGING_SIZE : 0;
     if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !SusamuneStateImportRange(offset, size)) return false;
     if (size > StatePoolMemoryCapacity(&memory) || !StatePoolMemoryRangeValid(&memory, offset, tail)) return false;

@@ -1,8 +1,16 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build C4AF447B
+V2.3.0 pre-release · Build 00B63258
 
 Latest update:
+
+- **Guide** is selectable from the launcher's home screen. It contains 13 topics with scrolling and page controls, readable directly on your TV without a separate guide file.
+- Improved input replay startup and restored starting inputs. Opening the menu now freezes movement immediately when ending a recording. **Starting** identifies a pending start; refusal messages distinguish changed settings, damaged input recordings, a mismatched starting state and a later playback mismatch. Replay remains experimental, with its checks retained.
+- Faster state saves and loads. A quick save format is used where it fits; regular and tighter compression remain automatic fallbacks when memory is crowded. State copying and checking also take less work. Failed replacements preserve all previous states.
+- Reclaimed **320 KiB** of existing reserved memory for the state pool. The three slots remain, with no additional reservation from Sunshine's game heap.
+- SD states and the previous load-time changes received positive Wii feedback. The latest TESTING.md section has four focused checks; earlier successful results do not need repeating. Make new SD states for this build because archives are build-specific.
+
+Previous release — C4AF447B:
 
 - **Records** is a top-level tab again, between Runs and Ghosts. Its shortcut inside Runs remains available.
 - Faster memory-state saves and loads, with less work spent checking SD files. Waits still depend on the scene, saved ghost length and available space; the measured improvements are from Dolphin and need Wii feedback.

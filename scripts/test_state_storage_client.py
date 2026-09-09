@@ -18,12 +18,24 @@ extern "C" void *memcpy(void *d,const void *s,size_t n) {u8 *a=(u8*)d;const u8*b
 extern "C" void *memset(void *d,int c,size_t n) {u8*a=(u8*)d;while(n--)*a++=(u8)c;return d;}
 static SusamuneStateStorageMailbox testMailbox;
 static u8 testPool[SUSAMUNE_STATE_POOL_SIZE], testStaging[SUSAMUNE_STATE_STAGING_SIZE];
-static u8 testExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE];static bool expanded;
-static StatePoolMemory statePoolMemory() {StatePoolMemory m={{testPool,testExtra},{SUSAMUNE_STATE_POOL_SIZE,
+static u8 testExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE];static bool expanded,relocated;
+static StatePoolMemory statePoolMemory() {StatePoolMemory m={{testPool,testExtra},{relocated?SUSAMUNE_STATE_POOL_SIZE:SUSAMUNE_STATE_POOL_LEGACY_SIZE,
  expanded?SUSAMUNE_STATE_POOL_EXTRA_SIZE:0}};return m;}
 struct CacheCall {const void *address;u32 size;};
 static CacheCall flushed[32],invalidated[32]; static u32 flushCount,invalidateCount;
-static void DCFlushRange(void *p,u32 n) {if(flushCount<32)flushed[flushCount++]={p,n};}
+static u8 physical[192],expected[128];static bool watch,requestSawFlushed;
+static void DCFlushRange(void *p,u32 n) {
+ if(flushCount<32)flushed[flushCount++]={p,n};
+ if(!watch)return;
+ StatePoolMemory memory=statePoolMemory();
+ for(u32 i=0;i<sizeof(physical);++i){StatePoolMemorySpan span;
+  StatePoolMemorySpanAt(&memory,SUSAMUNE_STATE_POOL_SIZE-96+i,1,&span);
+  __UINTPTR_TYPE__ a=(__UINTPTR_TYPE__)span.data,b=(__UINTPTR_TYPE__)p;
+  if(a>=b && a-b<n)physical[i]=*span.data;}
+ if(p==&testMailbox.request){requestSawFlushed=true;
+  for(u32 i=0;i<sizeof(physical);++i)
+   if(physical[i]!=(i>=32 && i<160?expected[i-32]:0xA5))requestSawFlushed=false;}
+}
 static void DCInvalidateRange(void *p,u32 n) {if(invalidateCount<32)invalidated[invalidateCount++]={p,n};}
 static u64 OSGetTime() {return 0x123456789ABCULL;}
 namespace StateStorage {
@@ -34,14 +46,23 @@ bool busy();
 EXPORTS = r'''
 extern "C" {
 __declspec(dllexport) void reset(u32 pending) {
+ watch=requestSawFlushed=false;
  memset(&testMailbox,0,sizeof(testMailbox));
  testMailbox.response.magic=SUSAMUNE_STATE_STORAGE_MAGIC;
  testMailbox.response.version=SUSAMUNE_STATE_STORAGE_VERSION;
  testMailbox.response.available=1;testMailbox.response.configId=123;
- testMailbox.request.seq=pending;flushCount=invalidateCount=0;expanded=false;
+ testMailbox.request.seq=pending;flushCount=invalidateCount=0;expanded=false;relocated=true;
  StateStorage::init();
 }
 __declspec(dllexport) u32 beginImport(u32 size,u32 offset) {return StateStorage::startImport(7,999,size,offset);}
+__declspec(dllexport) u32 poolSize(void) {return SUSAMUNE_STATE_POOL_SIZE;}
+__declspec(dllexport) u32 stagingSize(void) {return SUSAMUNE_STATE_STAGING_SIZE;}
+__declspec(dllexport) u32 version(void) {return SUSAMUNE_STATE_STORAGE_VERSION;}
+__declspec(dllexport) u32 setVersion(u32 version) {
+ testMailbox.response.version=version;StateStorage::init();return StateStorage::available();}
+__declspec(dllexport) u32 legacyLayout(void) {
+ relocated=false;StateStorage::init();return StateStorage::available();}
+__declspec(dllexport) void revokeCapabilities(void) {relocated=expanded=false;}
 __declspec(dllexport) u32 beginRename(u32 id,u32 crc,const char *name) {return StateStorage::rename(id,crc,name);}
 __declspec(dllexport) u32 beginDelete(u32 id,u32 crc) {return StateStorage::remove(id,crc);}
 __declspec(dllexport) const void *mailbox(void) {return &testMailbox;}
@@ -73,7 +94,25 @@ __declspec(dllexport) u32 poolTailInvalidated(u32 offset,u32 size) {
  return 0;
 }
 __declspec(dllexport) u32 headerValid(void) {return SusamuneStateHeaderValid(&testMailbox.header);}
-__declspec(dllexport) void expand(void) {expanded=true;}
+__declspec(dllexport) void expand(void) {expanded=true;StateStorage::init();}
+__declspec(dllexport) u32 prepareCompaction(void) {
+ expanded=true;StateStorage::init();StatePoolMemory memory=statePoolMemory();
+ StateSlotPool pool={};pool.slots[0]={0,SUSAMUNE_STATE_POOL_SIZE-64};
+ pool.slots[1]={SUSAMUNE_STATE_POOL_SIZE-64,96};
+ pool.slots[2]={SUSAMUNE_STATE_POOL_SIZE+32,128};pool.used=SUSAMUNE_STATE_POOL_SIZE+160;
+ for(u32 i=0;i<128;++i)expected[i]=(u8)(i*17+3);
+ StatePoolMemoryCopyIn(&memory,pool.slots[2].offset,expected,128);
+ memset(physical,0xA5,sizeof(physical));watch=true;
+ if(!StateSlotPoolClearBanked(&pool,&memory,1))return 0;
+ return pool.slots[2].offset==SUSAMUNE_STATE_POOL_SIZE-64;
+}
+__declspec(dllexport) u32 exportFlushedCompaction(void) {return requestSawFlushed;}
+__declspec(dllexport) u32 exactPoolFlushes(void) {
+ u32 count=0;for(u32 i=0;i<flushCount;++i){const CacheCall&f=flushed[i];
+  if((f.address==testPool+SUSAMUNE_STATE_POOL_SIZE-64 && f.size==64) ||
+     (f.address==testExtra && f.size==64))++count;}
+ return count;
+}
 __declspec(dllexport) u32 extraInvalidated(u32 size) {
  for(u32 i=0;i<invalidateCount;++i)if(invalidated[i].address==testExtra && invalidated[i].size==size)return 1;return 0;}
 __declspec(dllexport) u32 prepareMutation(void) {
@@ -121,6 +160,7 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
         cls.lib = C.CDLL(str(path/'test.dll'))
         cls.lib.beginRename.argtypes = [C.c_uint, C.c_uint, C.c_char_p]
         cls.lib.mailbox.restype = C.c_void_p
+        cls.pool_size,cls.staging_size=cls.lib.poolSize(),cls.lib.stagingSize()
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
 
     def setUp(self): self.lib.reset(0)
@@ -169,18 +209,54 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
         self.assertEqual(self.lib.beginImport(100,0),1)
 
     def test_export_fills_valid_crc_header_but_refuses_bad_ranges(self):
-        for size,offset in ((0,0),(0xFA0001,0),(100,0xFA0000)):
+        for size,offset in ((0,0),(self.pool_size+1,0),(100,self.pool_size)):
             self.assertEqual(self.lib.beginExport(size,offset),0)
         self.assertEqual(self.lib.beginExport(100,32),1)
         self.assertEqual(self.lib.headerValid(),1)
 
     def test_old_launcher_refuses_extra_bank_and_new_launcher_splits_cache_ranges(self):
-        self.assertEqual(self.lib.beginImport(0x400100,0xFA0000-16),0)
+        self.assertEqual(self.lib.beginImport(self.staging_size+256,self.pool_size-16),0)
         self.lib.expand()
-        self.assertEqual(self.lib.beginImport(0x400100,0xFA0000-16),1)
+        self.assertEqual(self.lib.beginImport(self.staging_size+256,self.pool_size-16),1)
         self.lib.clearCacheLog();self.lib.acknowledge(3,0,0);self.lib.tick()
-        self.assertEqual(self.lib.poolTailInvalidated(0xFA0000-16,16),1)
+        self.assertEqual(self.lib.poolTailInvalidated(self.pool_size-16,16),1)
         self.assertEqual(self.lib.extraInvalidated(240),1)
+
+    def test_previous_protocol_with_old_bank_boundary_exposes_no_service(self):
+        self.assertGreater(self.lib.version(),3)
+        for version in (2,3):
+            with self.subTest(version=version):
+                self.lib.reset(0)
+                self.assertEqual(self.lib.setVersion(version),0)
+                self.assertEqual(self.lib.beginImport(100,0),0)
+                self.assertEqual(self.lib.beginExport(100,0),0)
+                self.assertEqual(self.lib.beginRename(7,999,b'Name'),0)
+                self.assertEqual(self.lib.beginDelete(7,999),0)
+                self.assertEqual(self.lib.seq(),0)
+
+    def test_current_protocol_requires_matching_full_primary_capability(self):
+        self.assertEqual(self.lib.legacyLayout(),0)
+        self.assertEqual(self.lib.beginImport(100,0),0)
+        self.assertEqual(self.lib.beginExport(100,0),0)
+        self.assertEqual(self.lib.seq(),0)
+
+    def test_pending_import_keeps_its_latched_bank_map_if_capability_bytes_change(self):
+        self.lib.expand()
+        self.assertEqual(self.lib.beginImport(self.staging_size+256,self.pool_size-16),1)
+        self.lib.revokeCapabilities()
+        self.lib.clearCacheLog();self.lib.acknowledge(3,0,0);self.lib.tick()
+        self.assertEqual(self.lib.poolTailInvalidated(self.pool_size-16,16),1)
+        self.assertEqual(self.lib.extraInvalidated(240),1)
+        self.assertEqual(self.lib.busy(),0)
+
+    def test_export_flushes_dirty_compacted_slot_before_publishing_request(self):
+        self.assertEqual(self.lib.prepareCompaction(),1)
+        self.lib.clearCacheLog()
+        self.assertEqual(self.lib.exportFlushedCompaction(),0)
+        self.assertEqual(self.lib.beginExport(128,self.pool_size-64),1)
+        self.assertEqual(self.lib.exactPoolFlushes(),2)
+        self.assertEqual(self.lib.exportFlushedCompaction(),1,
+                         'ARM must see both compacted pieces before the export request')
 
     def test_name_bounds_and_mutations_hold_ownership_through_receipt(self):
         for name in (None, b'', b'a'*32, b'a\nb', b'\xFF'):

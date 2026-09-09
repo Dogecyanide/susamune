@@ -5845,7 +5845,8 @@ public:
         char status[80];
         if (mPage == INPUT_REPLAY)
             snprintf(status, sizeof(status), "%s   Recorded: %lu frames",
-                PracticeSession::recording() ? "Recording" : PracticeSession::replaying() ? "Replaying" : "Stopped",
+                PracticeSession::recording() ? "Recording" : PracticeSession::replaying() ? "Replaying" :
+                PracticeSession::starting() ? "Starting" : "Stopped",
                 PracticeSession::recordedFrames());
         else
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",

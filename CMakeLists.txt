@@ -128,7 +128,7 @@ set(MAP_FILE "${CMAKE_SOURCE_DIR}/maps/${VERS_PRIMARY}.map")
 
 file(GLOB MOD_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 # Compression holds gameplay; keep its hot loops fast in the upper code span.
-set_source_files_properties(src/state_codec.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties(src/state_codec.cpp src/state_crc.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 if(NOT ENABLE_MEM_DIAGNOSTICS)
     list(REMOVE_ITEM MOD_SOURCES "${CMAKE_SOURCE_DIR}/src/mem_diagnostics.cpp")
 endif()

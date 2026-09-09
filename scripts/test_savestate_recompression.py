@@ -9,7 +9,7 @@ import unittest
 import zlib
 
 from test_native_timer_creation import function
-from test_state_codec import Guarded, Span, Result
+from test_state_codec import Guarded, Span, Result, reference_quick_frame
 from test_state_slot_pool import Pool, Entry, metadata
 from test_state_pool_memory import Memory
 
@@ -41,6 +41,7 @@ class SavestateRecompressionTests(unittest.TestCase):
 typedef unsigned int u32;typedef unsigned char u8;
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++=(u8)c;return d;}
+extern "C" void *memmove(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;if(a<b){for(__SIZE_TYPE__ i=0;i<n;++i)a[i]=b[i];}else{while(n){--n;a[n]=b[n];}}return d;}
 extern "C" int memcmp(const void*a,const void*b,__SIZE_TYPE__ n){const u8*x=(const u8*)a,*y=(const u8*)b;while(n--){if(*x!=*y)return *x-*y;++x;++y;}return 0;}
 u32 capacity,stagingSize;
 #define SUSAMUNE_STATE_POOL_SIZE capacity
@@ -49,10 +50,10 @@ u32 capacity,stagingSize;
 StateSlotPool sPool;StatePoolMemory sPoolMemory;u8 *staging;void *work;
 #define kStagingBase staging
 void *codecWorkspace(){return work;}
-int fault,trapCount,secondCalls,lastCompact;
+int fault,trapCount,secondCalls,lastCompact,lastQuick;
 bool trapped(){++trapCount;return false;}
-StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,const StateCodec::WriteSpan*d,u32 dn,bool compact){
- ++secondCalls;lastCompact=compact;StateCodec::Result r=StateCodec::compress(w,n,s,count,d,dn,compact);
+StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,const StateCodec::WriteSpan*d,u32 dn,bool compact,bool quick){
+ ++secondCalls;lastCompact=compact;lastQuick=quick;StateCodec::Result r=StateCodec::compress(w,n,s,count,d,dn,compact,quick);
  if(fault==1)r.status=StateCodec::CODEC_ERROR;
  if(fault==2)++r.rawBytes;
  if(fault==3)++r.compressedBytes;
@@ -61,21 +62,22 @@ StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 co
 }
 ''' + function(production, "poolCapacity") + function(production, "poolWriteSpans") + helper + r'''
 extern "C" __declspec(dllexport) int run(StateSlotPool*p,StatePoolMemory*m,u32 cap,u8*t,u32 ts,
- void*w,const StateCodec::ReadSpan*s,u32 count,u32 raw,u32 slot,int bad,u32 compact,StateCodec::Result*out,int*calls){
- sPool=*p;sPoolMemory=*m;capacity=cap;staging=t;stagingSize=ts;work=w;fault=bad;trapCount=secondCalls=0;lastCompact=-1;
+ void*w,const StateCodec::ReadSpan*s,u32 count,u32 raw,u32 slot,int bad,u32 compact,u32 quick,StateCodec::Result*out,int*calls){
+ sPool=*p;sPoolMemory=*m;capacity=cap;staging=t;stagingSize=ts;work=w;fault=bad;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
  StateCodec::WriteSpan destination[3]={{t,ts},{0,0},{0,0}};
  poolWriteSpans(p->used,cap-p->used,destination+1);
- *out=StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,destination,3,compact!=0);
- bool ok=commitPackedState(s,count,raw,slot,*out,compact!=0);
+ *out=StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,destination,3,compact!=0,quick!=0);
+ bool ok=commitPackedState(s,count,raw,slot,*out,compact!=0,quick!=0);
  *p=sPool;*calls=secondCalls;return trapCount?-1:ok;
 }
 extern "C" __declspec(dllexport) u32 compactMode(){return lastCompact;}
-extern "C" __declspec(dllexport) u32 measure(void*w,const StateCodec::ReadSpan*s,u32 count,u32 compact){
- return StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,0,2,compact!=0).compressedBytes;
+extern "C" __declspec(dllexport) u32 quickMode(){return lastQuick;}
+extern "C" __declspec(dllexport) u32 measure(void*w,const StateCodec::ReadSpan*s,u32 count,u32 compact,u32 quick){
+ return StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,0,2,compact!=0,quick!=0).compressedBytes;
 }
 extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory*m,u8*t,u32 ts,
  void*w,const StateCodec::ReadSpan*source,u32 count,u32 rawSize,u32 slot,StateCodec::Result*out){
- sPool=*p;sPoolMemory=*m;capacity=StatePoolMemoryCapacity(m);staging=t;stagingSize=ts;work=w;fault=0;trapCount=secondCalls=0;lastCompact=-1;
+ sPool=*p;sPoolMemory=*m;capacity=StatePoolMemoryCapacity(m);staging=t;stagingSize=ts;work=w;fault=0;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
  StateCodec::WriteSpan output[3]={{t,ts},{0,0},{0,0}};poolWriteSpans(p->used,capacity-p->used,output+1);
 ''' + adaptive + r'''
  *p=sPool;*out=result;return trapCount?-1:fits;
@@ -91,13 +93,13 @@ extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory
         cls.addClassCleanup(FreeLibrary, cls.lib._handle)
         cls.lib.run.argtypes = [C.POINTER(Pool), C.POINTER(Memory), C.c_uint, C.c_void_p,
             C.c_uint, C.c_void_p, C.POINTER(Span), C.c_uint, C.c_uint, C.c_uint,
-            C.c_int, C.c_uint, C.POINTER(Result), C.POINTER(C.c_int)]
-        cls.lib.measure.argtypes=[C.c_void_p,C.POINTER(Span),C.c_uint,C.c_uint]
+            C.c_int, C.c_uint, C.c_uint, C.POINTER(Result), C.POINTER(C.c_int)]
+        cls.lib.measure.argtypes=[C.c_void_p,C.POINTER(Span),C.c_uint,C.c_uint,C.c_uint]
         cls.lib.measure.restype=C.c_uint
         cls.lib.runAdaptive.argtypes=[C.POINTER(Pool),C.POINTER(Memory),C.c_void_p,C.c_uint,
             C.c_void_p,C.POINTER(Span),C.c_uint,C.c_uint,C.c_uint,C.POINTER(Result)]
 
-    def execute(self, size, slot=1, fault=0, raw_offset=0, compact=False):
+    def execute(self, size, slot=1, fault=0, raw_offset=0, compact=False, quick=False):
         capacity = 220000
         pool = Pool((Entry * 3)(Entry(0, 70000), Entry(70000, 70000), Entry(140000, 70000)), 210000)
         buffers = [Guarded(150000), Guarded(70000)]
@@ -116,16 +118,20 @@ extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory
                             Span(C.addressof(owner) + size // 2, size - size // 2))
         result, calls = Result(), C.c_int()
         status = self.lib.run(C.byref(pool), C.byref(memory), capacity, staging.ptr, staging.size,
-                             work.ptr, source, 2, len(data) + raw_offset, slot, fault, compact,
+                             work.ptr, source, 2, len(data) + raw_offset, slot, fault, compact, quick,
                              C.byref(result), C.byref(calls))
         self.assertTrue(all(b.guards() for b in buffers) and staging.guards() and work.guards())
         self.assertEqual(result.raw, len(data))
         self.assertEqual(result.adler, zlib.adler32(data))
-        if calls.value:self.assertEqual(self.lib.compactMode(),int(compact))
+        if calls.value:
+            self.assertEqual(self.lib.compactMode(),int(compact))
+            self.assertEqual(self.lib.quickMode(),int(quick))
         if status == 1:
             selected = pool.slots[slot]
             self.assertEqual(selected.size, result.compressed)
-            self.assertEqual(zlib.decompress(read(selected.offset, selected.size)), data)
+            encoded = read(selected.offset, selected.size)
+            self.assertEqual(reference_quick_frame(encoded, len(data)) if quick else
+                             zlib.decompress(encoded), data)
         else:
             if status == 0:
                 self.assertEqual((metadata(pool), read(0, pool.used)), old)
@@ -156,12 +162,61 @@ extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory
             self.assertEqual(self.execute(65000,slot,compact=True),(1,1,3))
         self.assertEqual(self.execute(1000,compact=True),(1,0,0))
 
+    def test_quick_recompression_keeps_mode_and_other_slots_in_both_banks(self):
+        for slot in range(3):
+            self.assertEqual(self.execute(65000, slot, quick=True), (1, 1, 3))
+        self.assertEqual(self.execute(1000, quick=True), (1, 0, 0))
+        self.assertEqual(self.execute(90000, quick=True), (0, 0, 3))
+        self.assertEqual(self.execute(65000, raw_offset=1, quick=True), (0, 0, 3))
+        for fault in range(1, 5):
+            self.assertEqual(self.execute(65000, fault=fault, quick=True), (-1, 1, 3))
+
+    def test_adaptive_save_chooses_quick_then_deflate_then_compact_by_actual_capacity(self):
+        data = (random.Random(508).randbytes(8192) + b'A' * 2048) * 60
+        work, staging = Guarded(0x50000), Guarded(32)
+        owner = C.create_string_buffer(data)
+        source = (Span * 3)(Span(C.addressof(owner), 19),
+                           Span(C.addressof(owner) + 19, 0x20000 - 13),
+                           Span(C.addressof(owner) + 0x20000 + 6, len(data) - 0x20000 - 6))
+        quick = self.lib.measure(work.ptr, source, 3, False, True)
+        fast = self.lib.measure(work.ptr, source, 3, False, False)
+        compact = self.lib.measure(work.ptr, source, 3, True, False)
+        self.assertGreater(quick, fast + 2)
+        self.assertGreater(fast, compact + 2)
+        for space, expected, quick_mode, compact_mode in (
+                (quick, quick, 1, 0),
+                ((quick + fast) // 2, fast, 0, 0),
+                ((fast + compact) // 2, compact, 0, 1)):
+            with self.subTest(space=space, expected=expected):
+                capacity = space + 128
+                pool = Pool((Entry * 3)(Entry(0, 64), Entry(64, space), Entry(64 + space, 64)), capacity)
+                buffers = [Guarded(capacity // 2), Guarded(capacity - capacity // 2)]
+                memory = Memory((C.c_void_p * 2)(*[b.ptr for b in buffers]),
+                                (C.c_uint * 2)(*[b.size for b in buffers]))
+                initial = b'a' * 64 + b'b' * space + b'c' * 64
+                C.memmove(buffers[0].ptr, initial[:buffers[0].size], buffers[0].size)
+                C.memmove(buffers[1].ptr, initial[buffers[0].size:], buffers[1].size)
+                result = Result()
+                self.assertEqual(self.lib.runAdaptive(C.byref(pool), C.byref(memory), staging.ptr,
+                    staging.size, work.ptr, source, len(source), len(data), 1, C.byref(result)), 1)
+                self.assertEqual((self.lib.quickMode(), self.lib.compactMode(), result.compressed),
+                                 (quick_mode, compact_mode, expected))
+                copied = b''.join(b.data() for b in buffers)
+                for index, value in ((0, b'a' * 64), (2, b'c' * 64)):
+                    entry = pool.slots[index]
+                    self.assertEqual(copied[entry.offset:entry.offset + entry.size], value)
+                entry = pool.slots[1]
+                encoded = copied[entry.offset:entry.offset + entry.size]
+                self.assertEqual(reference_quick_frame(encoded, len(data)) if quick_mode else
+                                 zlib.decompress(encoded), data)
+                self.assertTrue(all(b.guards() for b in buffers) and work.guards() and staging.guards())
+
     def test_actual_save_falls_back_to_compact_when_only_compact_fits(self):
         data=(random.Random(508).randbytes(8192)+b'A'*2048)*60
         work,staging=Guarded(0x50000),Guarded(32)
         owner=C.create_string_buffer(data);source=(Span*1)(Span(C.addressof(owner),len(data)))
-        fast=self.lib.measure(work.ptr,source,1,False)
-        compact=self.lib.measure(work.ptr,source,1,True)
+        fast=self.lib.measure(work.ptr,source,1,False,False)
+        compact=self.lib.measure(work.ptr,source,1,True,False)
         self.assertGreater(fast,compact+2)
         selected=(fast+compact)//2;capacity=selected+128
         pool=Pool((Entry*3)(Entry(0,64),Entry(64,selected),Entry(64+selected,64)),capacity)

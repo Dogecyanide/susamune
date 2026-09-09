@@ -1,21 +1,17 @@
 # Moonshine Launcher FOXTROT — latest changes
 
-**V2.3.0 pre-release · Build C4AF447B**
+**V2.3.0 pre-release · Build 00B63258**
 
-- **Records is back on the top row**, between Runs and Ghosts. The shortcut inside Runs remains too.
+- **Read the guide in the launcher.** Choose **Guide** before launching Sunshine. Pick a topic with Up/Down and A, scroll with Up/Down, or move a page with Left/Right. B goes back. It works without opening a separate file.
 
-- **Faster memory saves and loads**, plus less time spent checking SD files. Waits still depend on the scene and state size; please report how they feel on Wii.
+- **Input replay starts more reliably.** Fixed problems restoring its starting inputs and stopping a recording from the menu. Opening the menu now stops Mario immediately. The page shows **Starting** while it waits, and messages distinguish changed settings, damaged recordings and a replay that no longer matches the game. Replay remains experimental.
 
-- **Save and Load have separate choices.** Under **Practice > Savestates**, Save to chooses the memory slot you write, while Load from chooses what you restore. You can save into State 1 and keep loading State 2. Optional cycle-save and cycle-load shortcuts start unassigned; the older cycle-both shortcut still works.
+- **Less waiting for savestates.** Saving uses a faster format when it fits, with tighter compression available automatically when space is crowded. Loading and moving saved states also do less work. A save that cannot fit still keeps every previous state.
 
-- **Use an SD file with your normal Load button.** In **SD states**, highlight a file and press **Y**, close the menu, then Load. All three memory slots stay saved. **A** instead imports into the Save to slot, after confirmation, and leaves your Load from choice alone.
+- **A little more state space:** reclaimed **320 KiB** for the three memory slots without taking more memory from Sunshine's game heap.
 
-- **Name and manage SD states.** Save memory state to SD asks for a name before saving. On an existing file, **Start** renames and **X** asks to delete it. In the name editor, Start finishes and X + Start cancels.
+For input replay, turn **Save RNG state** On and make a new memory state during gameplay. Choose **Record from savestate**, then release the A button used to confirm. Open the menu to stop and keep the take, then choose **Replay recorded inputs**. Keep that starting state; after importing an SD state, load it and make a new memory save before recording inputs.
 
-- **Startup text stays visible during the device scan.** Fixed the later storage check clearing its message and showing only the theme while waiting for USB.
+SD states and the earlier load-time improvements have already received positive Wii feedback. **TESTING.md starts with only four checks for this update.** Keep successful earlier results; no full retest is needed.
 
-- **Magenta Mario colours no longer have red specks.** Fixed a texture-colour rounding problem affecting the cap and shirt. Skin and emblem details keep their existing treatment.
-
-The previous build already received real Wii confirmation for SD restore after reboot, ghost continuation with frame advance, timer alignment and colours surviving reboot. There is no need to repeat the whole old checklist; TESTING.md starts with six checks for this update.
-
-SD states remain specific to the same build, region, launcher setup, level/episode and compatible loaded resources. Loading directly from SD needs temporary space; if your memory states leave too little room, it refuses without deleting them. The files live in `/moonshine_states` on the launcher's device. Standalone Dolphin patches do not provide the SD service.
+**Make fresh SD states for this build.** They remain specific to their build, game region, setup and level/episode. Direct SD loads still preserve the three memory slots and may refuse if temporary space is too full. Standalone Dolphin patches do not provide the SD service.
