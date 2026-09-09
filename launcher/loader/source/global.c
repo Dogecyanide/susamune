@@ -40,6 +40,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "dip.h"
 #include "SusamuneMusic.h"
 #include "SusamuneTheme.h"
+#include "SusamuneText.h"
 #include "unzip/unzip.h"
 
 GRRLIB_ttfFont *myFont;
@@ -252,6 +253,7 @@ static unsigned int font_ttf_size = 0;
 
 void FreeLauncherFont(void)
 {
+	SusamuneTextShutdown();
 	// FT_Face borrows the archive buffer until the face is destroyed.
 	GRRLIB_FreeTTF(myFont);
 	myFont = NULL;

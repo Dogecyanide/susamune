@@ -38,6 +38,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <di/di.h>
 
 #include "menu.h"
+#include "SusamuneText.h"
 #include "../../common/include/CommonConfigStrings.h"
 #include "ff_utf8.h"
 #include "ShowGameInfo.h"
@@ -224,16 +225,16 @@ void PrintSusamuneBuild(void)
 void PrintButtonActions(const char *btn_home, const char *btn_a, const char *btn_b, const char *btn_x1)
 {
 	if (btn_home) {
-		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*0, "Home: %s", btn_home);
+		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*0, "Home: %s", SusamuneText(btn_home));
 	}
 	if (btn_a) {
-		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*1, "A   : %s", btn_a);
+		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*1, "A   : %s", SusamuneText(btn_a));
 	}
 	if (btn_b) {
-		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*2, "B   : %s", btn_b);
+		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*2, "B   : %s", SusamuneText(btn_b));
 	}
 	if (btn_x1) {
-		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*3, "X/1 : %s", btn_x1);
+		PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 430, MENU_POS_Y + 20*3, "X/1 : %s", SusamuneText(btn_x1));
 	}
 }
 

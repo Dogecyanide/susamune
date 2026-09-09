@@ -266,7 +266,14 @@ class SavestateDebugTextTests(unittest.TestCase):
         self.assertIn("mText.mGradientTop    = color;", baseline)
         self.assertIn("mText.mGradientBottom = color;", baseline)
         self.assertIn("mText.draw(x, y);", baseline)
-        self.assertNotIn("mFontAscent", baseline)
+        japanese = re.search(
+            r"#if defined\(SUSAMUNE_VERSION_JP\)(.*?)#endif", baseline, re.S
+        ).group(1)
+        self.assertRegex(japanese, r"JapaneseUi::draw\(s, x, y - mFontAscent \* sizeY / mFontHeight,")
+        self.assertIn("sizeX, sizeY, color, mOrtho)", japanese)
+        retail = re.sub(r"#if defined\(SUSAMUNE_VERSION_JP\).*?#endif", "", baseline, flags=re.S)
+        self.assertNotIn("mFontAscent", retail)
+        self.assertIn("mText.draw(x, y);", retail)
         self.assertRegex(
             self.menu,
             r"#if ENABLE_SAVESTATE_DBG\s+"

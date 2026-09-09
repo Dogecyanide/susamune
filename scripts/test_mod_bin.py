@@ -74,10 +74,21 @@ class ModBinTests(unittest.TestCase):
 
     def test_full_capacity_and_ceiling(self):
         value = manifest(0x58000, 0x40000, 0x58000, 0x40000)
+        value.update(game_id=0x474D5345, base_addr=0x80429800)
         packed = packer.build_mod_bin(value)
         self.assertTrue(self.valid(self.native(packed)))
         value["writes"] *= 10000
         with self.assertRaisesRegex(ValueError, "ceiling"):
+            packer.build_mod_bin(value)
+
+    def test_jp_file_cannot_overlap_immutable_translation(self):
+        low = 0x58000
+        upper = packer.JP_STAGED_FILE_MAX_SIZE - low - 64 - 8
+        value = manifest(low, upper, low, upper)
+        self.assertEqual(len(packer.build_mod_bin(value)), packer.JP_STAGED_FILE_MAX_SIZE)
+        value['segments'][1]['code'] += '00000000'
+        value['segments'][1]['memory_size'] += 4
+        with self.assertRaisesRegex(ValueError, 'Japanese UI'):
             packer.build_mod_bin(value)
 
     def test_host_rejects_holes_overflow_wrong_revision(self):

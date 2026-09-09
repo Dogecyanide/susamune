@@ -29,24 +29,26 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "font.h"
 #include "global.h"
+#include "SusamuneText.h"
 
 void PrintFormat(u8 size, const u32 color, int x, int y, const char *str, ... )
 {
 	char astr[2048];
+	GRRLIB_ttfFont *font = SusamuneTextFont();
 	static const s8 dx[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
 	static const s8 dy[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
 
 	va_list ap;
 	va_start( ap, str );
 
-	vsnprintf(astr, sizeof(astr), str, ap);
+	vsnprintf(astr, sizeof(astr), SusamuneText(str), ap);
 
 	va_end( ap );
 	if (color == BLACK || color == MAROON)
 	{
 		u8 i;
 		for (i = 0; i < 8; ++i)
-			GRRLIB_PrintfTTF(x + dx[i], y + dy[i], myFont, astr, size, WHITE);
+			GRRLIB_PrintfTTF(x + dx[i], y + dy[i], font, astr, size, WHITE);
 	}
-	GRRLIB_PrintfTTF(x, y, myFont, astr, size, color);	
+	GRRLIB_PrintfTTF(x, y, font, astr, size, color);
 }

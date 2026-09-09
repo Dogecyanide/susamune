@@ -64,7 +64,7 @@ struct THitActor {};
 struct TSpineEnemy { u8 mHealth; };
 struct TMapObjBase { u16 mState; };
 struct TShine { u32 vtable,mMapObjID; };
-u16 sActiveRoute,sArmedCarryRoute;
+u16 sActiveRoute,sArmedCarryRoute,statsRoute;
 u8 expected,sGatekeeperHits,sGenericTalkCount,sMirrorsCleared,sHanachanHits,sTinKoopaHits;
 s32 sLastRedCoinCount,sPreGoldCoins,sPreBalloons;
 void *sClearedMirrors[3];
@@ -72,9 +72,9 @@ bool sRetailDirectOpen,valid;
 u32 emitted[16],emittedCount;
 const u32 kEmarioVtable=1,kEnemyMarioVtable=2,kShineVtable=3;
 u32 objectVtable(const void *p) { return p?*(const u32*)p:0; }
-bool stageIdentityValid() { return valid; }
+bool stageIdentityValid() { return valid&&!sAttemptInvalid; }
 bool routeScene(u16 r,u8 a,u8 e) {
- return valid&&r==sActiveRoute&&stage.mAreaID==a&&stage.mEpisodeID==routeParentEpisode(r,a,e);
+ return stageIdentityValid()&&r==sActiveRoute&&stage.mAreaID==a&&stage.mEpisodeID==routeParentEpisode(r,a,e);
 }
 bool hookScene(u16 r,u8 a,u8 e) { return sRetailDirectOpen&&routeScene(r,a,e); }
 bool publishEvent(u16 r,u8 e) {
@@ -86,13 +86,26 @@ bool accept; s32 nextValue;
 void retailItem(void*) {}
 void retailCastle(void *p) { if(accept)((TMapObjBase*)p)->mState=(u16)nextValue; }
 bool retailMirror(void *p,THitActor*,u32) { if(accept)*(s32*)((u8*)p+0x19c)=nextValue;return accept; }
+bool retailRedSwitch(void *p,THitActor*,u32) { if(accept)((TMapObjBase*)p)->mState=(u16)nextValue;return accept; }
 void retailHanachan(void *p) { if(accept)((TSpineEnemy*)p)->mHealth=(u8)nextValue; }
 void retailMecha(void *p) { if(accept)*(s32*)((u8*)p+0x1c8)=nextValue; }
 void retailMovie(TMarDirector *p,u8 movie) {
- if(accept&&!(p->mGameState&0x100)&&movie==2){p->mGameState|=0x100;gpApplication.mNextScene={0,1};}
+ if(!accept||(p->mGameState&0x100))return;
+ if(movie==2)gpApplication.mNextScene={0,1};
+ else if(movie==7)gpApplication.mNextScene={13,6};
+ else if(movie==8)gpApplication.mNextScene={13,7};
+ else if(movie==10)gpApplication.mNextScene={0x3b,0xff};
+ else return;
+ p->mGameState|=0x100;
 }
+void clearAttemptState() {
+ sActiveRoute=0xffff;sGenericTalkCount=sTinKoopaHits=0;
+}
+u16 findActiveRoute() { return statsRoute; }
+void samplePreDirect() {}
 typedef bool (*ReceiveMessageFn)(void*,THitActor*,u32);
-auto sItemAppearTrampoline=&retailItem;
+auto sMapObjAppearTrampoline=&retailItem;
+auto sRedSwitchMessageTrampoline=&retailRedSwitch;
 auto sSandCastleTrampoline=&retailCastle;
 auto sMirrorMessageTrampoline=&retailMirror;
 auto sHanachanDamageTrampoline=&retailHanachan;
@@ -104,9 +117,12 @@ auto sStreamingMovieTrampoline=&retailMovie;
         bodies = ''.join(function(sig) for sig in (
             'u8 routeParentEpisode(',
             'bool isShadowRoute(', 'u8 shadowEvent(', 'bool hundredCourseTransition(',
+            'bool pinnaOneParkScene()',
             'void armCarryTransition()', 'void beforeStageSetup()',
+            'void onStageSetup(', 'void beginFrame()', 'void armPinnaOneRetailExit()',
             'void noteGatekeeper(', 'void noteTalk(', 'void updateCountEvents()',
-            'extern "C" void susamuneSplitItemAppear(',
+            'extern "C" void susamuneSplitMapObjAppear(',
+            'extern "C" bool susamuneSplitRedSwitchMessage(',
             'extern "C" void susamuneSplitSandCastle(',
             'extern "C" bool susamuneSplitMirrorMessage(',
             'extern "C" void susamuneSplitHanachanDamage(',
@@ -115,7 +131,8 @@ auto sStreamingMovieTrampoline=&retailMovie;
         exports = r'''
 extern "C" {
 __declspec(dllexport) void reset(int r,int a,int e,int first) {
- sActiveRoute=(u16)r;stage={(u8)a,(u8)e,0};expected=(u8)first;
+ sActiveRoute=statsRoute=(u16)r;stage={(u8)a,(u8)e,0};expected=(u8)first;
+ sAttemptSerial=1;capturedTarget=0xffff;
  selectedEpisode=-1;sAttemptInvalid=sCarryAttempt=sBlockNextAttempt=false;
  sArmedCarryRoute=0xffff;sRetailDirectOpen=valid=true;
  sGatekeeperHits=sGenericTalkCount=sMirrorsCleared=sHanachanHits=sTinKoopaHits=0;
@@ -128,7 +145,11 @@ __declspec(dllexport) int size() { return emittedCount; }
 __declspec(dllexport) int eventAt(int i) { return emitted[i]; }
 __declspec(dllexport) void enabled(int live,int identity) { sRetailDirectOpen=live;valid=identity; }
 __declspec(dllexport) void redCoin(int n) { flags.Type6Flag.mRedCoinCount=n;noteRedCoin(); }
-__declspec(dllexport) void redSwitch(int pressed) { flags.Type5Flag.mRedCoinSwitchPressed=pressed;noteRedSwitch(); }
+__declspec(dllexport) int redSwitchEdge(int before,int after,int message,int accepted) {
+ TMapObjBase object={(u16)before};accept=accepted;nextValue=after;
+ return susamuneSplitRedSwitchMessage(&object,0,message);
+}
+__declspec(dllexport) void redSwitch(int pressed) { redSwitchEdge(1,2,1,pressed); }
 __declspec(dllexport) void counts(int goldBefore,int goldAfter,int ballBefore,int ballAfter) {
  sPreGoldCoins=goldBefore;flags.Type4Flag.mGoldCoinCount=goldAfter;
  sPreBalloons=ballBefore;flags.Type6Flag.mBJRBalloonCount=ballAfter;updateCountEvents();
@@ -155,6 +176,14 @@ __declspec(dllexport) void movie(int id,int queuedBefore,int accepted) {
  stage.mGameState=queuedBefore?0x100:0;accept=accepted;susamuneSplitStreamingMovie(&stage,(u8)id);
 }
 __declspec(dllexport) int armed() { return sArmedCarryRoute; }
+__declspec(dllexport) void retailExit() { armPinnaOneRetailExit(); }
+__declspec(dllexport) int completeTransition(int area,int episode,int movieDirector) {
+ gpApplication.mNextScene={(u8)area,(u8)episode};armCarryTransition();
+ gpApplication.mPrevScene=movieDirector?Scene{0xff,0}:Scene{stage.mAreaID,stage.mEpisodeID};
+ gpApplication.mCurrentScene=gpApplication.mNextScene;beforeStageSetup();
+ stage={(u8)area,(u8)episode,0};onStageSetup(&stage);beginFrame();
+ return !sAttemptInvalid;
+}
 __declspec(dllexport) void selected(int episode) { selectedEpisode=episode; }
 __declspec(dllexport) int transition(int target,int episode) {
  capturedTarget=(u16)target;gpApplication.mNextScene={(u8)target,(u8)episode};
@@ -164,7 +193,7 @@ __declspec(dllexport) int transition(int target,int episode) {
 }
 __declspec(dllexport) int carry(int r,int a,int b) { return hundredCourseTransition((u16)r,(u8)a,(u8)b); }
 __declspec(dllexport) void shine(int id,int actualShine) {
- TShine object={actualShine?kShineVtable:4,(u32)id};susamuneSplitItemAppear(&object);
+ TShine object={actualShine?kShineVtable:4,(u32)id};susamuneSplitMapObjAppear(&object);
 }
 }
 '''
@@ -215,6 +244,13 @@ __declspec(dllexport) void shine(int id,int actualShine) {
             self.reset(name,area,first=first);self.lib.redSwitch(1)
             self.lib.redCoin(8);self.lib.redSwitch(1)
             self.assertEqual(self.events(),list(range(first,first+5)))
+
+    def test_button_requires_accepted_initial_press_not_delayed_flag(self):
+        for route,area in (('SIRENA_2_REDS',0x33),('NOKI_6_REDS',0x1f)):
+            self.reset(route,area)
+            for args in ((1,2,1,0),(1,2,0,1),(2,2,1,1),(1,1,1,1),(3,2,1,1)):
+                self.lib.redSwitchEdge(*args);self.assertEqual(self.events(),[])
+            self.lib.redSwitchEdge(1,2,1,1);self.assertEqual(self.events(),[0])
 
     def test_hundreds_use_five_thresholds_and_exclude_delfino(self):
         for route,area in (('BIANCO_100',2),('RICCO_100',3),('GELATO_100',4),('PINNA_100',13),
@@ -271,14 +307,65 @@ __declspec(dllexport) void shine(int id,int actualShine) {
             self.lib.talk(1,b'dummy');self.lib.talk(1,b'dummy')
             self.assertEqual(self.events(),[first])
 
-    def test_new_talk_checkpoints_reject_unrelated_npcs(self):
+    def test_pinna_eight_retains_exact_ride_attendant(self):
         for route,area,episode,name,actor in (
-            ('GELATO_5',4,4,b'dummy',2),
-            ('PINNA_1',13,6,'\u30de\u30fc\u30ec\uff22'.encode('cp932'),0),
-            ('PINNA_8',13,5,'\u4fc2\u54e1\u30de\u30fc\u30ec'.encode('cp932'),0)):
+            ('PINNA_8',13,5,'\u4fc2\u54e1\u30de\u30fc\u30ec'.encode('cp932'),0),):
             self.reset(route,area,episode);self.lib.talk(0,b'other')
             self.assertEqual(self.events(),[]);self.lib.talk(actor,name)
             self.assertEqual(self.events(),[0])
+
+    def test_gelato_five_accepts_generic_talk_as_requested(self):
+        self.reset('GELATO_5',4,4);self.lib.talk(0,b'dummy')
+        self.assertEqual(self.events(),[0])
+
+    def test_pinna_one_all_three_retail_park_scenarios_and_boss_carry(self):
+        for episode in (0,6,7):
+            self.reset('PINNA_1',13,episode);self.lib.talk(0,b'director')
+            self.assertEqual(self.events(),[0],episode)
+            self.assertEqual(self.lib.transition(0x3a,1),1,episode)
+            self.lib.enabled(1,1)
+            for health in (4,3,2,1):self.lib.mecha(health,health-1,1)
+            self.assertEqual(self.events(),[0,1,2,3,4],episode)
+
+    def test_pinna_one_natural_movies_preserve_complete_checkpoint_chain(self):
+        self.reset('PINNA_1',13,0)
+        self.lib.movie(7,0,1)
+        self.assertEqual(self.lib.armed(),ROUTES['ROUTE_PINNA_1'])
+        self.assertEqual(self.lib.completeTransition(13,6,1),1)
+        self.lib.talk(0,b'director')
+        self.assertEqual(self.lib.completeTransition(0x3a,1,0),1)
+        for health in (4,3,2,1):self.lib.mecha(health,health-1,1)
+        self.lib.movie(8,0,1)
+        self.assertEqual(self.lib.completeTransition(13,7,1),1)
+        self.assertEqual(self.events(),[0,1,2,3,4])
+
+    def test_pinna_one_both_retail_exit_skips_preserve_complete_chain(self):
+        self.reset('PINNA_1',13,0)
+        self.lib.retailExit()
+        self.assertEqual(self.lib.completeTransition(13,6,1),1)
+        self.lib.talk(0,b'director')
+        self.assertEqual(self.lib.completeTransition(0x3a,1,0),1)
+        for health in (4,3,2,1):self.lib.mecha(health,health-1,1)
+        self.lib.retailExit()
+        self.assertEqual(self.lib.completeTransition(13,7,1),1)
+        self.assertEqual(self.events(),[0,1,2,3,4])
+
+    def test_pinna_movie_carry_rejects_wrong_scene_movie_and_stale_acceptance(self):
+        for route,area,episode,movie,queued,accepted,live,identity in (
+            ('PINNA_1',13,0,7,1,1,1,1),('PINNA_1',13,0,7,0,0,1,1),
+            ('PINNA_1',13,0,7,0,1,0,1),('PINNA_1',13,0,7,0,1,1,0),
+            ('PINNA_1',13,6,7,0,1,1,1),('PINNA_1',13,0,8,0,1,1,1),
+            ('PINNA_1',13,6,10,0,1,1,1),
+            ('PINNA_1',0x3a,0,8,0,1,1,1),('PINNA_8',13,0,7,0,1,1,1)):
+            self.reset(route,area,episode);self.lib.enabled(live,identity)
+            self.lib.movie(movie,queued,accepted)
+            self.assertEqual(self.lib.armed(),0xffff,(route,area,episode,movie))
+
+    def test_missing_first_movie_carry_invalidates_later_talk(self):
+        self.reset('PINNA_1',13,0)
+        self.assertEqual(self.lib.completeTransition(13,6,1),0)
+        self.lib.talk(0,b'director')
+        self.assertEqual(self.events(),[])
 
     def test_mirror_only_last_enemy_and_each_actor_once(self):
         self.reset('GELATO_2',4,1)

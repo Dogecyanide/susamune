@@ -65,7 +65,9 @@ class IniCopyThroughSafetyTests(unittest.TestCase):
         )
 
     def assert_copy_through_read_is_lossless(self, body: str) -> None:
-        read_only = body.index("if (f.obj.attr & AM_RDO)")
+        read_only = body.index("if (ret != FR_OK || (info.fattrib & AM_RDO))")
+        self.assertLess(body.index("ret = f_stat_char(path, &info);"), read_only)
+        self.assertNotIn("if (f.obj.attr", body)
         read = body.index("ret = f_read(&f, buf")
         validation = body.index(
             "if (ret != FR_OK || read != fileSize || closeRet != FR_OK)"

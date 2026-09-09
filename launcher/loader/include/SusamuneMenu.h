@@ -17,13 +17,6 @@
 void SusamuneMenuRun(const char *launcherDev, bool canSave);
 
 /**
- * Which device the configured path for the selected version lives on, so the
- * caller can mount just that one. -1 when nothing needs mounting: the disc
- * drive, or no path configured.
- */
-int SusamuneAutoBootDevice(void);
-
-/**
  * Validate the configured path and fill in ncfg without showing the menu.
  * @return True if the game can be booted. On false the reason is remembered
  *         and shown by the next SusamuneMenuRun(), so a failed auto boot lands

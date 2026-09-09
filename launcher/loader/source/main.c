@@ -55,6 +55,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneMusic.h"
 #include "SusamuneShadowAsset.h"
 #include "SusamuneTheme.h"
+#include "SusamuneText.h"
 #include "susamune/mem2_map.h"
 
 #include "ff_utf8.h"
@@ -1114,7 +1115,7 @@ static bool PreloadLauncherTheme(void)
 		return false;
 	// A cold USB device may need patched IOS; retry later without a boot delay.
 	if (MountDeviceWithTimeout(dev, 0) != NULL)
-		loaded = SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+		loaded = SusamuneThemeLoad(GetRootDevice(), &background);
 	// Keep the decoded texture, but never carry storage handles across IOS.
 	UnmountDevice(dev);
 	return loaded;
@@ -1752,10 +1753,8 @@ int main(int argc, char **argv)
 	ShowMessageScreen("Checking storage devices...");
 
 	// Mount the launcher's own device first and nothing else: susamune.ini is
-	// there, and until it has been read we do not know whether the user wants
-	// the menu (which needs both devices listed) or an auto boot (which needs
-	// only the one the game is on). Bringing USB up costs seconds -- it has a
-	// 10 second init timeout -- so an all-SD auto boot must not pay for it.
+	// there. The selected game's device is mounted on demand after reading it;
+	// an unused USB device must not delay an all-SD launch.
 	UseSD = (strncmp(launch_dir, "usb:", 4) != 0);
 	if (MountLauncherDevice() == false)
 	{
@@ -1772,7 +1771,7 @@ int main(int argc, char **argv)
 		ExitToLoader(1);
 	}
 	if (!themeLoaded)
-		SusamuneThemeLoad(GetRootDevice(), launch_dir, &background);
+		SusamuneThemeLoad(GetRootDevice(), &background);
 	ShowMessageScreen("Loading settings...");
 
 	// Initialize controllers.
@@ -1795,6 +1794,7 @@ int main(int argc, char **argv)
 	// but loader-side persistence, and keeping it would have left a second
 	// place the migrated options could disagree from.
 	SusamuneIniLoad(GetRootDevice());
+	SusamuneTextSetJapanese(gIni.version == SUSA_VER_JP);
 	ReconfigVideo(rmode);
 
 	// Can the ini be written back? Probe once so the menu can say so up front
@@ -1842,13 +1842,6 @@ int main(int argc, char **argv)
 
 		if (!cancel)
 		{
-			// Mount the game's device too if it is the other one; leave it
-			// alone otherwise. This is the whole point of auto boot being
-			// fast -- no scan of a device nothing is going to be read from.
-			int gameDev = SusamuneAutoBootDevice();
-			if (gameDev >= 0)
-				MountDeviceOnce(gameDev);
-
 			if (SusamuneAutoBoot(GetRootDevice()))
 				ncfg->Config |= NIN_CFG_AUTO_BOOT;
 			// Otherwise fall through to the menu, which shows why.
@@ -1858,7 +1851,7 @@ int main(int argc, char **argv)
 	if(!(ncfg->Config & NIN_CFG_AUTO_BOOT))
 	{
 		SusamuneMusicInit();
-		SusamuneMusicLoad(GetRootDevice(), launch_dir);
+		SusamuneMusicLoad(GetRootDevice());
 		SusamuneMusicStart();
 		if (SusamuneThemeWarning()[0] != '\0')
 		{
@@ -1870,11 +1863,6 @@ int main(int argc, char **argv)
 			ShowMessageScreen(SusamuneMusicWarning());
 			usleep(2500000);
 		}
-		// The menu lists both devices, so the one auto boot skipped has to
-		// come up now. Keep the status visible during the USB timeout.
-		ShowMessageScreen("Checking storage devices...");
-		MountDeviceOnce(DEV_SD);
-		MountDeviceOnce(DEV_USB);
 		SusamuneMenuRun(GetRootDevice(), LauncherCanSave);
 	}
 	else

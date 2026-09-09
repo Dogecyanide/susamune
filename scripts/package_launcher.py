@@ -26,6 +26,8 @@ APP_NAME = "moonshine_launcher"
 APP_ICON = LAUNCHER_DIR / "icon.png"
 MINIZ_LICENSE = LAUNCHER_DIR.parent / "vendor" / "miniz" / "LICENSE"
 LZ4_LICENSE = LAUNCHER_DIR.parent / "vendor" / "lz4" / "LICENSE"
+DROID_LICENSE = LAUNCHER_DIR.parent / "data" / "fonts" / "Droid-LICENSE.txt"
+NOTO_LICENSE = LAUNCHER_DIR / "loader" / "data" / "OFL-NotoSansCJK.txt"
 
 
 def git_version():
@@ -63,6 +65,7 @@ def main(argv):
     ap.add_argument("--pattern-test-log",
                     help="extra pattern tester log to include")
     ap.add_argument("--changelog", help="release notes to include as CHANGELOG.md")
+    ap.add_argument("--japanese-ui", help="validated Japanese game catalogue/font asset")
     ap.add_argument("--mod-bins", nargs="*", default=[],
                     help="mod_<region>.bin files to drop into the app dir")
     args = ap.parse_args(argv)
@@ -76,6 +79,15 @@ def main(argv):
         z.write(APP_ICON, f"{APP_NAME}/icon.png")
         z.write(MINIZ_LICENSE, f"{APP_NAME}/licenses/miniz-LICENSE.txt")
         z.write(LZ4_LICENSE, f"{APP_NAME}/licenses/lz4-LICENSE.txt")
+        z.write(NOTO_LICENSE, f"{APP_NAME}/licenses/OFL-NotoSansCJK.txt")
+        if args.japanese_ui:
+            from gen_japanese_ui import build
+            asset = Path(args.japanese_ui).read_bytes()
+            if asset != build()[0]:
+                raise ValueError("Japanese UI asset is stale; regenerate it before packaging")
+            z.writestr(f"{APP_NAME}/ja_ui.bin", asset)
+            z.write(DROID_LICENSE, f"{APP_NAME}/licenses/Droid-LICENSE.txt")
+            z.write(DROID_LICENSE.parent / "README.md", f"{APP_NAME}/licenses/fonts-README.md")
         z.writestr(f"{APP_NAME}/meta.xml",
                    render_meta(args.source, regions, args.version))
         if args.test_log:

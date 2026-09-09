@@ -10,6 +10,7 @@
 #include "susamune/mem2_map.h"
 #include "SusamuneMp3Validate.h"
 #include "SusamuneMusic.h"
+#include "SusamuneThemeFiles.h"
 
 #define MUSIC_PATH_MAX    512u
 #define MUSIC_WARNING_MAX 160u
@@ -29,36 +30,6 @@ static void ReleaseMusicBuffer(u32 span)
 	if (span != 0)
 		DCInvalidateRange(MUSIC_BUFFER, span);
 	sBufferSize = 0;
-}
-
-static bool BuildMusicPath(char *out, size_t outSize, const char *device,
-	const char *launchDir)
-{
-	const char *dir = launchDir;
-	const char *colon;
-	size_t dirLen;
-	int written;
-
-	if (out == NULL || outSize == 0 || device == NULL)
-		return false;
-	if (strcmp(device, "sd") != 0 && strcmp(device, "usb") != 0)
-		return false;
-	if (dir == NULL || dir[0] == '\0')
-		dir = "/apps/moonshine_launcher/";
-	colon = strchr(dir, ':');
-	if (colon != NULL)
-		dir = colon + 1;
-	if (dir[0] == '\0')
-		dir = "/";
-	if (dir[0] != '/' || strchr(dir, ':') != NULL ||
-	    strchr(dir, '\\') != NULL || strstr(dir, "../") != NULL ||
-	    strstr(dir, "/..") != NULL)
-		return false;
-
-	dirLen = strlen(dir);
-	written = snprintf(out, outSize, "%s:%s%stheme/bgm.mp3", device, dir,
-		(dirLen > 0 && dir[dirLen - 1] == '/') ? "" : "/");
-	return written > 0 && (size_t)written < outSize;
 }
 
 static void LogHeap(const char *where)
@@ -81,7 +52,7 @@ void SusamuneMusicInit(void)
 	gprintf("Susamune music: ASND/MP3 ready; playback deferred\n");
 }
 
-bool SusamuneMusicLoad(const char *launcherDevice, const char *launchDir)
+bool SusamuneMusicLoad(const char *launcherDevice)
 {
 	char path[MUSIC_PATH_MAX];
 	FILINFO info;
@@ -93,13 +64,8 @@ bool SusamuneMusicLoad(const char *launcherDevice, const char *launchDir)
 	sWarning[0] = '\0';
 	if (sBufferSize > 0)
 		return true;
-	if (!BuildMusicPath(path, sizeof(path), launcherDevice, launchDir))
-	{
-		snprintf(sWarning, sizeof(sWarning),
-			"Theme music path is invalid.\nContinuing without music.");
-		return false;
-	}
-	result = f_stat_char(path, &info);
+	result = SusamuneThemeFindFile(path, sizeof(path), launcherDevice,
+		"bgm.mp3", &info);
 	if (result == FR_NO_FILE || result == FR_NO_PATH)
 		return false;
 	if (result != FR_OK)

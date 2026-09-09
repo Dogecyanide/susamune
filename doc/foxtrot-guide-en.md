@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 08BDB4CD
+V2.3.0 pre-release · Build 1CF3F641
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
@@ -12,7 +12,9 @@ Open Moonshine Launcher FOXTROT from the Homebrew Channel. Choose the matching *
 
 Choose **Guide** on the launcher's home screen to read the written guide on your TV. Select a topic with Up/Down and A; use Up/Down to scroll or Left/Right to move a page. B returns to the topics, then to the launcher. The guide is built into the launcher and works without a separate file.
 
-The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes. **Checking storage devices...** stays visible during the later SD/USB scan, which previously showed only the background while waiting.
+Put **background.png** (1024×480 PNG, up to 2 MiB) and **bgm.mp3** (up to 4 MiB) in **/Moonshine_Theme** at the SD root. A launcher opened from USB uses that folder on USB. The old theme folder beside boot.dol is no longer used.
+
+The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes. Startup checks your remembered Sunshine path. It mounts another device only when your selected version or Path needs it; storage messages remain visible during those waits.
 
 Configuration and saved mod data belong to the device the launcher was opened from. For example, a launcher on SD still saves its configuration on SD when the game is on USB. Settings and binds are separate for JP, US and PAL. Keep the existing `susamune_*` names when updating.
 
@@ -30,7 +32,7 @@ Open the mod menu with your configured menu combo (default Y + Start). Use L/R f
 
 In **Runs > ILs**, press **Z** on a supported row to choose its starting episode. Use C-stick Up/Down, A to keep or B to cancel. The choice is shown beside its PB and saved separately for JP, US and PAL. This is available for the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden, and all ten Full Reds ILs.
 
-**Runs > Timer and splits > Level splits** enables the checkpoint display. New routes include the handmade checkpoints for the remaining levels and Full Reds. A route can have up to eight segments, including its finish. Old attempt counts and records remain; individual segment times are carried forward only when their start and end checkpoints still match. See the split reference in TESTING.md when checking a particular route.
+**Runs > Timer and splits > Level splits** enables the checkpoint display. New routes include the handmade checkpoints for the remaining levels and Full Reds. A route can have up to eight segments, including its finish. Old attempt counts and records remain; individual segment times are carried forward only when their start and end checkpoints still match.
 
 ## Pause and advance
 
@@ -53,6 +55,8 @@ The Sunshine timer and compact QFT now show the same frame during a practice hol
 With free camera **Off**, hold A and press Step to jump on that frame. You can also start Pause while holding A, and other gameplay buttons work alongside Pause and Step. To press A again on a later step, release it and press it again before stepping. Holding A continuously counts as keeping it held. The Pause or Step shortcut itself does not reach Mario, including any assigned L/R trigger until you release it. When choosing Step or Resume from the menu, release A to continue.
 
 For spins, use the main stick yourself: choose the next direction before each Step. Free camera must be Off so the stick controls Mario.
+
+An exact longer shortcut takes priority over Pause or Step. For example, if Pause is D-Up and Reset is B+D-Up, hold B then press D-Up to reset without activating practice pause. Ordinary held gameplay buttons still work with Pause and Step.
 
 ## Free camera
 
@@ -122,7 +126,7 @@ Available storage limits the library. The existing per-ghost recording limit rem
 
 New ghost files can include the inputs actually consumed during the attempt, plus timestamps for existing supported split endpoints. Earlier pose-only ghost files remain readable and show unavailable input data honestly.
 
-In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same control is available in Display > Layout editor > Controller inputs and Display > HUD and displays > Other HUD. Both ghosts shows both ghost controllers in Watch2, or the live and ghost controller while racing. Ghost input is a teaching overlay; imported tracks do not control Mario.
+In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same control is available in Display > Layout editor > Controller inputs and Display > HUD and displays > Other HUD. Both ghosts shows both ghost controllers in Watch2, or the live and ghost controller while racing. Turning Ghost display Off also hides ghost inputs. Turning it back On restores your chosen input display; your separate controller overlay stays independent. Ghost input is a teaching overlay; imported tracks do not control Mario.
 
 Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
 

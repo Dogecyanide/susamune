@@ -12,6 +12,7 @@
 // =====================================================================
 
 #include "susamune/menu.hxx"
+#include "susamune/japanese_ui.hxx"
 #include <Dolphin/mem.h>
 #include "susamune/practice_session.hxx"
 #include "susamune/mem2_map.h"
@@ -57,6 +58,10 @@
 #include "SMS/System/Application.hxx"
 #include "SMS/System/MarDirector.hxx"
 #include "JKernel/JKRHeap.hxx"  // placement new (operator new(size_t, void*))
+
+#if defined(SUSAMUNE_VERSION_JP)
+#define snprintf JapaneseUi::format
+#endif
 
 // Presentation occupies the added arena span; fixed timer scratch stays below it.
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
@@ -6292,6 +6297,11 @@ bool Menu::openGhostPBSave(u32 token) {
 }
 
 int Menu::textWidth(const char *s, int sizeX) {
+#if defined(SUSAMUNE_VERSION_JP)
+    s = JapaneseUi::text(s);
+    const int japaneseWidth = JapaneseUi::width(s, sizeX);
+    if (japaneseWidth >= 0) return japaneseWidth;
+#endif
     if (!sFont) {
         return 0;
     }
@@ -6337,6 +6347,10 @@ int Menu::textWidth(const char *s, int sizeX) {
 
 void Menu::drawText(const char *s, int x, int y, int sizeX, int sizeY, Color color) {
     color = warningText(color, mShown);
+#if defined(SUSAMUNE_VERSION_JP)
+    s = JapaneseUi::text(s);
+    if (JapaneseUi::draw(s, x, y, sizeX, sizeY, color, mOrtho)) return;
+#endif
     mText.mCharSizeX      = sizeX;
     mText.mCharSizeY      = sizeY;
     mText.mGradientTop    = color;
@@ -6354,6 +6368,11 @@ void Menu::drawText(const char *s, int x, int y, int sizeX, int sizeY, Color col
 void Menu::drawTextBaseline(const char *s, int x, int y, int sizeX, int sizeY,
                             Color color) {
     color = warningText(color, mShown);
+#if defined(SUSAMUNE_VERSION_JP)
+    s = JapaneseUi::text(s);
+    if (JapaneseUi::draw(s, x, y - mFontAscent * sizeY / mFontHeight,
+                         sizeX, sizeY, color, mOrtho)) return;
+#endif
     mText.mCharSizeX      = sizeX;
     mText.mCharSizeY      = sizeY;
     mText.mGradientTop    = color;
@@ -6496,9 +6515,15 @@ __attribute__((noinline)) static void drawValueRowColored(
     if (starred)
         menu->drawText(SUSAMUNE_GLYPH_SHINED, x + (arrow ? 8 : 4), y,
                        ROW_SZ, ROW_SZ, cAccent());
-    menu->drawText(name, x + (arrow ? 12 : 4) +
-                         (starred ? (arrow ? 12 : 16) : 0), y,
-                   ROW_SZ, ROW_SZ, selected ? cRowSel() : cRow());
+    const int nameX = x + (arrow ? 12 : 4) + (starred ? (arrow ? 12 : 16) : 0);
+    int nameSize = ROW_SZ;
+#if defined(SUSAMUNE_VERSION_JP)
+    const int available = x + w - nameX - 16 -
+        (value ? Menu::textWidth(value, ROW_SZ) + 12 : 0);
+    while (nameSize > 10 && Menu::textWidth(name, nameSize) > available) --nameSize;
+#endif
+    menu->drawText(name, nameX, y, nameSize, nameSize,
+                   selected ? cRowSel() : cRow());
     if (value)
         menu->drawText(value, x + w - Menu::textWidth(value, ROW_SZ) - 8,
                        y, ROW_SZ, ROW_SZ, valueColor);
@@ -6509,7 +6534,11 @@ __attribute__((noinline)) static void drawHelpLine(
     if (!text || !text[0]) return;
     const int top = y + h - HELP_H;
     menu->fillBox(x + 4, top, w - 8, 1, cRowDim());
-    menu->drawText(text, x + 6, top + 10, FOOT_SZ, FOOT_SZ, cFooter());
+    int size = FOOT_SZ;
+#if defined(SUSAMUNE_VERSION_JP)
+    while (size > 10 && Menu::textWidth(text, size) > w - 12) --size;
+#endif
+    menu->drawText(text, x + 6, top + 10, size, size, cFooter());
 }
 
 void Menu::factoryReset() {

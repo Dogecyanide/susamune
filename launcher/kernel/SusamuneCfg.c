@@ -6360,6 +6360,7 @@ static const char kIniBanner[] =
 static int WriteIniFile(const struct SusamuneCfg *cfg)
 {
 	FIL   f;
+	FILINFO info;
 	const char *path = SusamuneCfgIniPath();
 	char  tempPath[SUSAMUNE_INI_TRANSACTION_PATH_MAX];
 	char  backupPath[SUSAMUNE_INI_TRANSACTION_PATH_MAX];
@@ -6401,10 +6402,14 @@ static int WriteIniFile(const struct SusamuneCfg *cfg)
 	if (ret == FR_OK)
 	{
 		hadOriginal = true;
-		if (f.obj.attr & AM_RDO)
+		// FatFs f_open does not initialize FIL.obj.attr.
+		ret = f_stat_char(path, &info);
+		if (ret != FR_OK || (info.fattrib & AM_RDO))
 		{
 			closeRet = f_close(&f);
 			free(buf);
+			if (ret != FR_OK)
+				return ret;
 			return closeRet == FR_OK ? FR_DENIED : closeRet;
 		}
 		fileSize = f_size(&f);

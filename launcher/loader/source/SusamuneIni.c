@@ -631,6 +631,7 @@ int SusamuneIniSave(const char *device)
 	char  tempPath[SUSA_INI_TRANSACTION_PATH_MAX];
 	char  backupPath[SUSA_INI_TRANSACTION_PATH_MAX];
 	FIL   f;
+	FILINFO info;
 	char *buf;
 	char *line;
 	UINT  read = 0;
@@ -668,10 +669,14 @@ int SusamuneIniSave(const char *device)
 	if (ret == FR_OK)
 	{
 		hadOriginal = true;
-		if (f.obj.attr & AM_RDO)
+		// FatFs f_open does not initialize FIL.obj.attr.
+		ret = f_stat_char(path, &info);
+		if (ret != FR_OK || (info.fattrib & AM_RDO))
 		{
 			closeRet = f_close(&f);
 			free(buf);
+			if (ret != FR_OK)
+				return ret;
 			return closeRet == FR_OK ? FR_DENIED : closeRet;
 		}
 		fileSize = f_size(&f);

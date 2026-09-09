@@ -46,7 +46,9 @@ extern "C" bool susamuneSplitRevolvingFenceMessage(void *fence,
                                                      u32 message);
 
 extern "C" void susamuneSplitStreamingMovie(TMarDirector *director, u8 movie);
-extern "C" void susamuneSplitItemAppear(void *actor);
+extern "C" void susamuneSplitMapObjAppear(void *actor);
+extern "C" bool susamuneSplitRedSwitchMessage(void *actor, THitActor *sender,
+                                              u32 message);
 
 extern "C" void susamuneSplitSandCastle(void *actor);
 
@@ -265,7 +267,8 @@ u32 sEelToothMessageTrampoline[2] = {0, 0};
 u32 sFenceMessageTrampoline[2] = {0, 0};
 u32 sRevolvingFenceMessageTrampoline[2] = {0, 0};
 u32 sStreamingMovieTrampoline[2] = {0x7C0802A6u, 0};
-u32 sItemAppearTrampoline[2] = {0x7C0802A6u, 0};
+u32 sMapObjAppearTrampoline[2] = {0x7C0802A6u, 0};
+u32 sRedSwitchMessageTrampoline[2] = {0x7C0802A6u, 0};
 u32 sSandCastleTrampoline[2] = {0x7C0802A6u, 0};
 u32 sMirrorMessageTrampoline[2] = {0x7C0802A6u, 0};
 u32 sHanachanDamageTrampoline[2] = {0x7C0802A6u, 0};
@@ -304,8 +307,10 @@ const u32 kRevolvingFenceMessage =
     SUSAMUNE_MEM1_ADDR(0x801C5AB0u, 0x801EE188u, 0x801E6060u);
 const u32 kStreamingMovie =
     SUSAMUNE_MEM1_ADDR(0x800ED5C8u, 0x8029A044u, 0x80291EDCu);
-const u32 kItemAppear =
-    SUSAMUNE_MEM1_ADDR(0x80196E08u, 0x801BEF68u, 0x801B6E20u);
+const u32 kMapObjAppear =
+    SUSAMUNE_MEM1_ADDR(0x8018C434u, 0x801B401Cu, 0x801ABED4u);
+const u32 kRedSwitchMessage =
+    SUSAMUNE_MEM1_ADDR(0x80198910u, 0x801C0A9Cu, 0x801B8954u);
 const u32 kSandCastle =
     SUSAMUNE_MEM1_ADDR(0x801A9DECu, 0x801D2294u, 0x801CA14Cu);
 const u32 kMirrorMessage =
@@ -495,8 +500,7 @@ const RedDesc kRedRoutes[] = {
 };
 
 void noteRedSwitch() {
-    if (!TFlagManager::smInstance ||
-        !TFlagManager::smInstance->Type5Flag.mRedCoinSwitchPressed) return;
+    if (!sRetailDirectOpen || !stageIdentityValid()) return;
     if (routeScene(SplitStats::ROUTE_SIRENA_2_REDS, 0x33, 0) ||
         routeScene(SplitStats::ROUTE_NOKI_6_REDS, 0x1F, 0))
         publishEvent(sActiveRoute, 0);
@@ -508,7 +512,6 @@ void noteRedSwitch() {
 void noteRedCoin() {
     if (!sRetailDirectOpen || !stageIdentityValid() ||
         !TFlagManager::smInstance) return;
-    noteRedSwitch();
     const s32 count = TFlagManager::smInstance->Type6Flag.mRedCoinCount;
     const s32 before = sLastRedCoinCount;
     if (count <= before) return;
@@ -611,6 +614,12 @@ bool hundredCourseTransition(u16 route, u8 before, u8 after) {
     return false;
 }
 
+bool pinnaOneParkScene() {
+    return routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 0) ||
+           routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 6) ||
+           routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 7);
+}
+
 void armCarryTransition() {
     if (sActiveRoute == SplitStats::ROUTE_RICCO_1 &&
         routeScene(sActiveRoute, 3, 0) &&
@@ -619,8 +628,7 @@ void armCarryTransition() {
         sArmedCarryRoute = sActiveRoute;
         return;
     }
-    if (sActiveRoute == SplitStats::ROUTE_PINNA_1 &&
-        routeScene(sActiveRoute, 0x0D, 6) &&
+    if (pinnaOneParkScene() &&
         gpApplication.mNextScene.mAreaID == 0x3A &&
         gpApplication.mNextScene.mEpisodeID == 1) {
         sArmedCarryRoute = sActiveRoute;
@@ -1050,7 +1058,7 @@ void noteTalk(TBaseNPC *npc) {
     }
     switch (sActiveRoute) {
     case SplitStats::ROUTE_GELATO_5:
-        if (routeScene(sActiveRoute, 4, 4) && talkActor == kEnemyMarioVtable)
+        if (routeScene(sActiveRoute, 4, 4))
             publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_PINNA_8:
@@ -1078,8 +1086,7 @@ void noteTalk(TBaseNPC *npc) {
         break;
     }
     case SplitStats::ROUTE_PINNA_1:
-        if (routeScene(sActiveRoute, 0x0D, 6) && npc->mKeyName &&
-            strcmp(npc->mKeyName, "\x83\x7d\x81\x5b\x83\x8c\x82\x61") == 0)
+        if (pinnaOneParkScene())
             publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_SIRENA_1:
@@ -1379,7 +1386,6 @@ void updateBowser() {
 
 void updateCountEvents() {
     if (!TFlagManager::smInstance) return;
-    noteRedSwitch();
     const u8 area = sStageDirector->mAreaID;
     const bool hundred =
         (sActiveRoute == SplitStats::ROUTE_BIANCO_100 && area == 2) ||
@@ -1456,9 +1462,12 @@ void init() {
     installEntryHook(kStreamingMovie,
         reinterpret_cast<const void *>(&susamuneSplitStreamingMovie),
         sStreamingMovieTrampoline);
-    installEntryHook(kItemAppear,
-        reinterpret_cast<const void *>(&susamuneSplitItemAppear),
-        sItemAppearTrampoline);
+    installEntryHook(kMapObjAppear,
+        reinterpret_cast<const void *>(&susamuneSplitMapObjAppear),
+        sMapObjAppearTrampoline);
+    installEntryHook(kRedSwitchMessage,
+        reinterpret_cast<const void *>(&susamuneSplitRedSwitchMessage),
+        sRedSwitchMessageTrampoline);
     installEntryHook(kSandCastle,
         reinterpret_cast<const void *>(&susamuneSplitSandCastle),
         sSandCastleTrampoline);
@@ -1866,8 +1875,20 @@ extern "C" void susamuneSplitBathtubQuake(void *bathtub,
                                                                position);
 }
 
-extern "C" void susamuneSplitItemAppear(void *actor) {
-    reinterpret_cast<void (*)(void *)>(sItemAppearTrampoline)(actor);
+extern "C" bool susamuneSplitRedSwitchMessage(void *actor,
+                                              THitActor *sender, u32 message) {
+    const u16 before = static_cast<TMapObjBase *>(actor)->mState;
+    const bool accepted = reinterpret_cast<ReceiveMessageFn>(
+        sRedSwitchMessageTrampoline)(actor, sender, message);
+    if (accepted && message == 1 && before == 1 &&
+        static_cast<TMapObjBase *>(actor)->mState == 2)
+        noteRedSwitch();
+    return accepted;
+}
+
+extern "C" void susamuneSplitMapObjAppear(void *actor) {
+    // Retail inlines TItem::appear into both Shine spawn methods.
+    reinterpret_cast<void (*)(void *)>(sMapObjAppearTrampoline)(actor);
     if (!sRetailDirectOpen || !stageIdentityValid() ||
         objectVtable(actor) != kShineVtable) return;
     const TShine *shine = static_cast<const TShine *>(actor);
@@ -1944,5 +1965,15 @@ extern "C" void susamuneSplitStreamingMovie(TMarDirector *director, u8 movie) {
         director == sStageDirector && hookScene(SplitStats::ROUTE_AIRSTRIP_1, 0, 0) &&
         gpApplication.mNextScene.mAreaID == 0 && gpApplication.mNextScene.mEpisodeID == 1) {
         if (publishEvent(sActiveRoute, 0)) sArmedCarryRoute = sActiveRoute;
+    }
+    if (!queuedBefore && (director->mGameState & 0x100) &&
+        director == sStageDirector &&
+        gpApplication.mNextScene.mAreaID == 0x0D &&
+        ((movie == 7 && hookScene(SplitStats::ROUTE_PINNA_1, 0x0D, 0) &&
+          gpApplication.mNextScene.mEpisodeID == 6) ||
+         (movie == 8 && hookScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1) &&
+          gpApplication.mNextScene.mEpisodeID == 7))) {
+        // Watching either movie must preserve the same attempt as Exit Area.
+        sArmedCarryRoute = sActiveRoute;
     }
 }

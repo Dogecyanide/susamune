@@ -26,6 +26,7 @@ class PracticeInputGateTests(unittest.TestCase):
             "void stripControlInput(", "void consumeControlInput()",
             "bool requestPauseToggle(", "bool requestStep("))
         functions += function_source(ROOT / "src/binds.cpp", "bool Binds::wasPressed(")
+        functions += function_source(ROOT / "src/binds.cpp", "bool Binds::wasPressedPracticeRaw(")
         dispatch = (ROOT / "src/main.cpp").read_text(encoding="utf-8").split(
             "if (!practiceModal) {", 1)[1].split(
             "if (gBinds.wasPressed(BIND_FREE_CAMERA))", 1)[0]
@@ -71,6 +72,7 @@ extern "C" __declspec(dllexport) void reset(unsigned flags,unsigned bind) {
     sRecord=flags&32;sReplay=false;sFreeCamera=false;
     sStepQueued=false;sStripButtons=0;sMenuAction=0;sSpinRemaining=0;
     sSteps=invalidations=stops=0;
+    for (unsigned i=0;i<BIND_COUNT;++i) localBinds.mMask[i]=0;
     localBinds.mMask[BIND_PRACTICE_STEP]=(u16)bind;
     localBinds.mMask[BIND_PRACTICE_PAUSE]=4;
     localBinds.mHeld=localBinds.mPrevHeld=0;
@@ -80,8 +82,11 @@ extern "C" __declspec(dllexport) unsigned edge(unsigned previous,unsigned curren
                                                unsigned silent,unsigned recorder) {
     localBinds.mPrevHeld=(u16)previous;localBinds.mHeld=(u16)current;
     localBinds.mRecSilent=silent!=0;localBinds.mRecState=(u8)recorder;
-    const bool active=!gBinds.recording() && gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
+    const bool active=!gBinds.recording() && gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP);
     return active;
+}
+extern "C" __declspec(dllexport) void shortcut(unsigned mask,unsigned inert) {
+    localBinds.mMask[inert ? BIND_PRACTICE_SPIN_CW : BIND_FULL_RESTART]=(u16)mask;
 }
 extern "C" __declspec(dllexport) unsigned request(unsigned kind,unsigned menu) {
     const bool result=kind ? requestPauseToggle(menu!=0) : requestStep(menu!=0);
@@ -133,6 +138,29 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
         self.assertEqual((out.buttons, out.analogA), (0x100, 255))
         self.assertEqual(self.lib.dispatch(4, 0x104, 0x104), 1)
         self.assertEqual(self.lib.dispatch(4, 0x100, 0x104), 0)
+
+    def test_restart_combo_does_not_pause_or_mark_assistance(self):
+        for before in (0, 0x200):
+            self.lib.reset(4, 4)
+            self.lib.shortcut(0x208, 0)
+            self.assertEqual(self.lib.dispatch(8, before, 0x208), 0)
+            out, _ = self.filtered(buttons=0x208)
+            self.assertEqual(out.buttons, 0x208)
+            self.assertEqual(self.lib.dispatch(8, 0x208, 8), 0)
+            self.assertEqual(self.lib.dispatch(8, 0, 8), 1)
+
+    def test_larger_shortcut_does_not_queue_step(self):
+        self.lib.shortcut(0x208, 0)
+        self.assertEqual(self.lib.edge(0x200, 0x208, 0, 0), 0)
+        self.assertEqual(self.lib.dispatch(4, 0x200, 0x208), 1)
+
+    def test_identical_shortcut_keeps_existing_shared_behavior(self):
+        self.lib.shortcut(8, 0)
+        self.assertEqual(self.lib.edge(0, 8, 0, 0), 1)
+
+    def test_removed_spin_shortcut_cannot_block_practice(self):
+        self.lib.shortcut(0x108, 1)
+        self.assertEqual(self.lib.edge(0x100, 0x108, 0, 0), 1)
 
     def test_L_step_and_resume_do_not_leak_until_analog_trigger_releases(self):
         self.lib.reset(5, 0x42)

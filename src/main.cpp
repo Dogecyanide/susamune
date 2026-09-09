@@ -371,10 +371,10 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         menuOwnsRetailPad || wheelOwnsInputBeforeDirect || stateDiskBusy;
     if (!practiceModal) {
         const bool pausePressed = !gBinds.recording() &&
-            gBinds.wasPressedSubsetRaw(BIND_PRACTICE_PAUSE);
+            gBinds.wasPressedPracticeRaw(BIND_PRACTICE_PAUSE);
         if (pausePressed) PracticeSession::requestPauseToggle();
         const bool stepPressed = !gBinds.recording() &&
-            gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
+            gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP);
         if (!pausePressed && stepPressed) PracticeSession::requestStep();
         if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();

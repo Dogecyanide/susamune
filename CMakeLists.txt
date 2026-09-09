@@ -266,6 +266,18 @@ foreach(_v IN LISTS VERS)
 endforeach()
 add_custom_target(mod_bins ALL DEPENDS ${MOD_BINS})
 
+set(JAPANESE_UI_ASSET "${CMAKE_BINARY_DIR}/ja_ui.bin")
+set(JAPANESE_UI_INPUTS
+    "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py"
+    "${CMAKE_SOURCE_DIR}/data/japanese_ui.tsv"
+    "${CMAKE_SOURCE_DIR}/data/fonts/droid-japanese.yay"
+    "${CMAKE_SOURCE_DIR}/data/fonts/droid-japanese-codepoints.json")
+add_custom_command(OUTPUT "${JAPANESE_UI_ASSET}"
+    COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py" "${JAPANESE_UI_ASSET}"
+    DEPENDS ${JAPANESE_UI_INPUTS}
+    COMMENT "Building Japanese UI catalogue and font subset" VERBATIM)
+add_custom_target(japanese_ui ALL DEPENDS "${JAPANESE_UI_ASSET}")
+
 # Release builds can emit standard BPS patches without possessing retail ISOs.
 # The checked-in layouts contain only offsets and CRCs; each mod manifest
 # supplies the newly linked code and concrete hook words.
@@ -287,6 +299,7 @@ elseif(IS_EMULATOR)
                         "${_layout}"
                         "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py"
                         "${CMAKE_SOURCE_DIR}/scripts/patches.py"
+                        ${JAPANESE_UI_INPUTS}
                 COMMENT "Building source-free ${_v} emulator BPS"
                 VERBATIM)
             list(APPEND EMULATOR_BPS_FILES "${_bps}")
@@ -390,6 +403,7 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_PYTHON=${VENV_PYTHON}"
         "-DLAUNCHER_SCRIPTS_DIR=${CMAKE_SOURCE_DIR}/scripts"
         "-DSUSAMUNE_MOD_BINS=${_mod_bins_arg}"
+        "-DSUSAMUNE_JAPANESE_UI=${JAPANESE_UI_ASSET}"
         "-DLAUNCHER_OUTPUT_ZIP=${LAUNCHER_ZIP}"
         "-DLAUNCHER_DEFAULT_SOURCE=${LAUNCHER_DEFAULT_SOURCE}"
         "-DLAUNCHER_VERSION=${LAUNCHER_VERSION}"
@@ -398,7 +412,7 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-changelog.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
         "-DSUSAMUNE_LOADER_OPTIMIZATION:STRING=${SUSAMUNE_LOADER_OPTIMIZATION}"
-    DEPENDS mod_bins launcher_build_id
+    DEPENDS mod_bins launcher_build_id japanese_ui
     BUILD_ALWAYS ON
     INSTALL_COMMAND ""
     USES_TERMINAL_CONFIGURE ON

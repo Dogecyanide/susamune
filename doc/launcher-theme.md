@@ -1,16 +1,15 @@
 # Launcher background themes
 
-The Moonshine launcher creates a `theme` directory beside its `boot.dol`. Put an
-optional background there using this exact name:
+The Moonshine launcher uses `Moonshine_Theme` at the root of its storage device:
 
-- `theme/background.png` — PNG, exactly 1024x480 pixels, at most 2 MiB.
-- `theme/bgm.mp3` — MP3, at most 4 MiB. It loops while the launcher is open.
+- `Moonshine_Theme/background.png` — PNG, exactly 1024x480 pixels, at most 2 MiB.
+- `Moonshine_Theme/bgm.mp3` — MP3, at most 4 MiB. It loops while the launcher is open.
 
-The path follows the launcher itself. For example, a launcher at
-`sd:/apps/moonshine_launcher/boot.dol` reads
-`sd:/apps/moonshine_launcher/theme/background.png`
-even if the game is on USB or is a real disc. A launcher started from USB reads
-its theme from USB. Failure to create the directory is nonfatal.
+A launcher opened from SD reads `sd:/Moonshine_Theme/background.png`, even if
+the game is on USB or is a real disc. A launcher opened from USB uses
+`usb:/Moonshine_Theme`. The old `theme` folder beside `boot.dol` is no longer
+used. Move any existing background and music into the root folder. Failure to
+create the directory is nonfatal.
 
 The image is validated before decoding. A missing, oversized, corrupt, or
 wrong-sized image leaves the procedural stock background in use. Theme failures

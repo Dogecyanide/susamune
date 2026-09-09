@@ -224,7 +224,7 @@ Keep the edits to save the colours for your next boot. Mario's skin stays unchan
 
 Keep your settings, theme, records and ghosts when updating. Replace the packaged launcher files together; do not mix a new launcher with old mod files.
 
-The launcher theme folder sits beside boot.dol. Your background.png and bgm.mp3 belong there.
+Put background.png and bgm.mp3 in Moonshine_Theme at the root of the SD card. A launcher opened from USB uses Moonshine_Theme on USB. The old theme folder beside boot.dol is no longer used.
 
 Keep existing susamune.ini and susamune_ghosts names. The launcher still uses them.
 

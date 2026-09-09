@@ -3104,7 +3104,8 @@ static bool playbackInput(const Track &track, u16 segmentIndex,
 }
 
 void drawInputs(Menu *menu, u8 mode) {
-    if (!menu || menu->shown() || !mode || !sGhostVisible) return;
+    if (!menu || menu->shown() || !mode || !sGhostVisible ||
+        !gSettings.getBool(SETTING_GHOST_DISPLAY)) return;
     const int panelY = 218;
     SusamunePracticeInput input;
     if (playbackInput(sPlayback, sPlaybackSegment, &input)) {

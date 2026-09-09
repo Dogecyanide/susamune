@@ -40,6 +40,7 @@ HEADER_SIZE = shared_int_define("SUSAMUNE_MOD_HEADER_SIZE", "mod_bin.h")
 # that cannot be staged. Read the shared C header rather than duplicating it.
 STAGING_WINDOW_SIZE = shared_int_define("SUSAMUNE_MEM2_MODBIN_SIZE")
 STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE")
+JP_STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_JP_UI_OFFSET", "japanese_ui.h")
 BLOB_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_BLOB_MAX_SIZE", "mod_bin.h")
 
 
@@ -92,6 +93,8 @@ def build_mod_bin(manifest):
             "reset-safe ceiling (see SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE)")
     if total > STAGING_WINDOW_SIZE:
         raise ValueError("mod bin exceeds its MEM2 staging window")
+    if manifest["game_id"] == 0x474D534A and total > JP_STAGED_FILE_MAX_SIZE:
+        raise ValueError("JP mod bin overlaps the immutable Japanese UI asset")
     return header + body
 
 

@@ -53,8 +53,10 @@ STATIC_HOOKS = {
 DYNAMIC_HOOKS = {
     "kStreamingMovie": ("sStreamingMovieTrampoline", "susamuneSplitStreamingMovie",
                         (0x800ED5C8, 0x8029A044, 0x80291EDC), 0x7C0802A6),
-    "kItemAppear": ("sItemAppearTrampoline", "susamuneSplitItemAppear",
-                    (0x80196E08, 0x801BEF68, 0x801B6E20), 0x7C0802A6),
+    "kMapObjAppear": ("sMapObjAppearTrampoline", "susamuneSplitMapObjAppear",
+                    (0x8018C434, 0x801B401C, 0x801ABED4), 0x7C0802A6),
+    "kRedSwitchMessage": ("sRedSwitchMessageTrampoline", "susamuneSplitRedSwitchMessage",
+                           (0x80198910, 0x801C0A9C, 0x801B8954), 0x7C0802A6),
     "kSandCastle": ("sSandCastleTrampoline", "susamuneSplitSandCastle",
                     (0x801A9DEC, 0x801D2294, 0x801CA14C), 0x7C0802A6),
     "kMirrorMessage": ("sMirrorMessageTrampoline", "susamuneSplitMirrorMessage",
@@ -425,7 +427,7 @@ class SplitEventContractTests(unittest.TestCase):
         )
         self.assertIn("sceneMatches(current, 0x37, 0)", text)
         self.assertIn(
-            "routeScene(sActiveRoute, 0x0D, 6)", text
+            "pinnaOneParkScene()", text
         )
         self.assertIn(
             "hookScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1)", text
@@ -464,10 +466,10 @@ class SplitEventContractTests(unittest.TestCase):
         middle = text.split("void armCarryTransition()", 1)[1].split(
             "bool isSpinStatus", 1
         )[0]
-        self.assertIn("routeScene(sActiveRoute, 0x0D, 6)", middle)
+        self.assertIn("pinnaOneParkScene()", middle)
         self.assertIn("mNextScene.mAreaID == 0x3A", middle)
         self.assertLess(
-            middle.index("routeScene(sActiveRoute, 0x0D, 6)"),
+            middle.index("pinnaOneParkScene()"),
             middle.index("SUSAMUNE_ADDR_QFT_TRANSITION_TARGET"),
         )
 
@@ -532,7 +534,7 @@ class SplitEventContractTests(unittest.TestCase):
             self.assertIn(f"sCleanedPiantaCount == {threshold}", text)
         self.assertIn("{1, 5, 8, 0}", text)
         self.assertIn("before < desc.coins[i] && count >= desc.coins[i]", text)
-        self.assertIn("routeScene(sActiveRoute, 0x0D, 6)", text)
+        self.assertIn("pinnaOneParkScene()", text)
 
     def test_actor_and_polling_primitives_cover_bosses_and_eel_edges(self) -> None:
         text = source_text()

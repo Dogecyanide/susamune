@@ -180,6 +180,18 @@ def build_operations(layout, mod_manifest):
     add_operation(operations, expanded_dol, "literal", code)
     add_operation(operations, expanded_dol + len(code), "zero", None, region_size - len(code))
 
+    japanese = layout.get("japanese_ui")
+    if japanese:
+        from gen_japanese_ui import build, MAX_SIZE
+        if (layout["region"] != "jp" or japanese["offset"] != 0x004AA8C0 or
+                japanese["offset"] != expanded_dol + region_size or
+                japanese["size"] != MAX_SIZE):
+            raise ValueError("JP disc asset must follow the verified DOL storage extent")
+        asset, _ = build()
+        add_operation(operations, japanese["offset"], "literal", asset)
+        add_operation(operations, japanese["offset"] + len(asset), "zero", None,
+                      japanese["size"] - len(asset))
+
     fst = layout["fst"]
     source_cursor = fst["source_offset"]
     target_cursor = fst["target_offset"]
@@ -366,6 +378,11 @@ def create_layout(iso_path, mod_manifest, region):
     nodes = list(disc.rfiles(includedOnly=True))
     dol_end = disc.bootheader.dolOffset + disc.dol.size
     expanded_dol_end = dol_end + MOD_REGION_SIZE
+    if region == "jp":
+        from gen_japanese_ui import MAX_SIZE
+        if expanded_dol_end != 0x004AA8C0:
+            raise ValueError("JP raw UI asset offset disagrees with the supported retail DOL")
+        expanded_dol_end += MAX_SIZE
 
     overlapped = [
         node for node in nodes
@@ -432,6 +449,8 @@ def create_layout(iso_path, mod_manifest, region):
     }
     if game_id != mod_manifest["game_id"]:
         raise ValueError("clean ISO and mod manifest have different game IDs")
+    if region == "jp":
+        layout["japanese_ui"] = {"offset": dol_end + MOD_REGION_SIZE, "size": MAX_SIZE}
 
     with iso_path.open("rb") as source:
         for address in hook_addresses(mod_manifest):

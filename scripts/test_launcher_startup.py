@@ -43,7 +43,7 @@ const WCHAR *MountDeviceWithTimeout(int dev,int seconds){
  return mountOK?mountedName:NULL;
 }
 const char *GetRootDevice(void){return UseSD?"sd":"usb";}
-bool SusamuneThemeLoad(const char*device,const char*dir,void**out){
+bool SusamuneThemeLoad(const char*device,void**out){
  loadCount++;sequence=sequence*10+2;*out=(void*)0x1234;return themeOK;
 }
 void UnmountDevice(int dev){closeCount++;sequence=sequence*10+3;}
@@ -82,7 +82,7 @@ void GRRLIB_Render(void){GRRLIB_RenderMode(true);}
 static int warningMask,menuOpened,mountChecks,blankChecks,elapsedTicks;
 static bool LauncherCanSave;
 void SusamuneMusicInit(void){}
-void SusamuneMusicLoad(const char*root,const char*dir){}
+void SusamuneMusicLoad(const char*root){}
 void SusamuneMusicStart(void){}
 const char *SusamuneThemeWarning(void){return warningMask&1?"Theme warning":"";}
 const char *SusamuneMusicWarning(void){return warningMask&2?"Music warning":"";}
@@ -97,8 +97,7 @@ bool MountDeviceOnce(int dev){
 }
 void SusamuneMenuRun(const char*root,bool canSave){menuOpened++;}
 '''
-        # Exercise the real pre-menu sequence: the delayed second device probe
-        # used to run after presenting a frame containing only the background.
+        # The menu must not probe unused storage after loading theme/music.
         start = cls.main.index("\n\tif(!(ncfg->Config & NIN_CFG_AUTO_BOOT))")
         start = cls.main.index("{", start)
         depth, end = 1, start + 1
@@ -111,7 +110,7 @@ __declspec(dllexport) int menu_storage_wait(int warnings){
  warningMask=warnings;menuOpened=mountChecks=blankChecks=elapsedTicks=0;
  drawnMessage=displayedMessage="Loading settings...";
  prepareMenu();
- if(menuOpened!=1||mountChecks!=603)return 1;
+ if(menuOpened!=1||mountChecks!=0)return 1;
  return blankChecks?2:0;
 }
 '''
@@ -187,10 +186,17 @@ __declspec(dllexport) int first_frame(int preserve){
         self.assertLess(main.index("KernelLoaded = 1"), main.index("SusamuneMusicInit()"))
         self.assertNotIn("RevealBackground(false)", main)
 
-    def test_storage_status_remains_visible_through_slow_menu_device_scan(self):
+    def test_menu_does_not_wait_for_unused_storage_with_or_without_asset_warnings(self):
         for warnings in range(4):
             with self.subTest(warnings=warnings):
                 self.assertEqual(self.dll.menu_storage_wait(warnings), 0)
+
+    def test_first_launcher_device_probe_keeps_visible_storage_message(self):
+        start = self.main.index("KernelLoaded = 1")
+        end = self.main.index('ShowMessageScreen("Loading settings...")', start)
+        probe = self.main[start:end]
+        self.assertLess(probe.index('ShowMessageScreen("Checking storage devices...")'),
+                        probe.index("MountLauncherDevice()"))
 
 
 if __name__ == "__main__":

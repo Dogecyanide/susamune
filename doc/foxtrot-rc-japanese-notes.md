@@ -1,7 +1,48 @@
 # Japanese translation reference for FOXTROT RC
 
-Inspected September 9, 2026. Research only; no Japanese runtime or launcher
-translation has been enabled in FOXTROT.
+Inspected September 9, 2026. The user subsequently approved implementation;
+the current implementation is described below. The source research remains
+useful for attribution and future translation review.
+
+## Current implementation
+
+`data/japanese_ui.tsv` retains the 1,022-entry Task Edition catalogue and adds
+FOXTROT navigation and practice/SD workflows. The supplied Language Amendment
+Proposal's 26 wording changes are applied to presentation strings only. Stable
+setting/bind IDs, INI keys, PB identities and achievement conditions are unchanged.
+The first asset contains 1,340 entries and 763 glyphs in 86,176 bytes; the generator
+reports current measurements when the catalogue changes.
+
+The JP game renderer uses a four-shade, 16-pixel subset of the Apache-licensed
+Droid Japanese font shipped with Dolphin. An 8 KiB MEM1 texture cache expands
+glyphs for GX; a completed-GX barrier protects each cache wrap. The original
+1.18 MiB IPL-font retention code is not reused. US/PAL compile out the renderer.
+Missing translations use the English string. Some new diagnostic and dynamically
+composed text remains English and needs later language review.
+
+On Wii, `ja_ui.bin` occupies immutable staging offsets `[0x84000,0x9F000)`
+(`0x91EC3000..0x91EDE000`). The JP file packer and loader enforce the lower
+`0x84000` mod-file ceiling before loading it. The loader invalidates the asset
+header on every boot, then validates the complete header, CRC, tables and bounds.
+The kernel only reads the staged mod prefix and writes the model vault at
+`+0x9F000` onward. Warm reset preserves both prefixes. No state slot, codec
+workspace, attachment heap or timer scratch is borrowed.
+
+On Dolphin, the JP BPS stores an additional raw 108 KiB disc extent at `0x004AA8C0`,
+immediately following the existing 640 KiB DOL extent. This lies inside a retail
+file already relocated in full. No new DOL section or FST entry is needed. The
+renderer reads bounded chunks through retail `DVDReadPrio` into its existing
+8 KiB cache before using that cache for glyphs, then scalar-copies into
+`0x71C00000..0x71C1B000`. Validation failures retain English rendering. This
+immutable fake-memory range is outside the three-state pool and other assigned
+windows. The supported translated emulator package is the JP BPS/ISO; an extracted
+DOL alone lacks the raw disc asset.
+
+The independent private DVD proof read a 32-byte marker at this exact disc offset
+after `initialize()`, copied it through MEM1 into fake memory, and verified PPC
+readback. Native tests exercise all catalogue lookups, corrupt and malformed
+assets, English fallback, glyph expansion and cache barriers. Final game and
+launcher screenshots and Wii testing are separate release checks.
 
 ## Located source
 
@@ -34,7 +75,7 @@ The public [upstream releases](https://github.com/panther03/susamune/releases)
 list ordinary V2.0.3 “Ghosts of Delfino.” A public Task Edition release or branch
 was not verified; the local worktree above is the concrete translation source.
 
-## Reuse at RC
+## Original reuse assessment
 
 Use the catalog and font checks as a starting point after the English UI,
 splits and achievements settle. Compare current English strings against the
@@ -47,8 +88,8 @@ font preservation reserves `0x120F00` bytes (1,183,488 bytes) immediately below
 the configuration block. That placement overlaps FOXTROT's current state pool
 and codec workspace. Decide the supported disc regions and give any persistent
 font an explicitly audited location before porting the renderer. A glyph subset
-is worth investigating to reduce this cost; it has not been implemented or
-measured here. The launcher font and the game font are separate systems.
+was selected to reduce this cost, as described above. The launcher font and the
+game font remain separate systems.
 
 The source worktree includes the project's GPLv3 license. Its launcher subset
 is identified as Noto Sans Mono CJK JP under SIL Open Font License 1.1; retain

@@ -160,6 +160,17 @@ bool Binds::wasPressed(BindId id) const {
     return m != 0 && live() && mHeld == m && mPrevHeld != m;
 }
 
+bool Binds::wasPressedPracticeRaw(BindId id) const {
+    if (!wasPressedSubsetRaw(id)) return false;
+    if (mHeld == mMask[id]) return true;
+    for (int i = 0; i < BIND_COUNT; ++i) {
+        if (i == BIND_PRACTICE_SPIN_CW || i == BIND_PRACTICE_SPIN_CCW)
+            continue;
+        if (mMask[i] == mHeld) return false;
+    }
+    return true;
+}
+
 void Binds::update() {
     mPrevHeld = mHeld;
     mHeld = (u16)(JUTGamePad::mPadStatus[0].mButton & SUSAMUNE_BIND_BUTTON_MASK);

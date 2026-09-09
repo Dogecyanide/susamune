@@ -51,6 +51,7 @@ target_include_directories(loader PRIVATE
 # ppc/arm groups' shared data dir. The stock background is drawn procedurally;
 # only a user-supplied theme needs a full-size texture.
 susamune_embed_binary(loader "${CMAKE_CURRENT_SOURCE_DIR}/data/font.zip"       font_zip)
+susamune_embed_binary(loader "${CMAKE_CURRENT_SOURCE_DIR}/data/font_ja.zip"    font_ja_zip)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/PADReadGC.bin"    PADReadGC_bin)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/kernel.zip"       kernel_zip)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/kernelboot.bin"   kernelboot_bin)

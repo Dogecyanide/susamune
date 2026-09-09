@@ -11,7 +11,8 @@ from audit_practice_hooks import Dol
 ROOT = Path(__file__).resolve().parents[1]
 METHODS = {
     'kStreamingMovie': 'fireStreamingMovie__12TMarDirectorFUc',
-    'kItemAppear': 'appear__5TItemFv',
+    'kMapObjAppear': 'appear__14TMapObjGeneralFv',
+    'kRedSwitchMessage': 'receiveMessage__14TRedCoinSwitchFP9THitActorUl',
     'kSandCastle': 'explode__11TSandCastleFv',
     'kMirrorMessage': 'receiveMessage__11TLeanMirrorFP9THitActorUl',
     'kHanachanDamage': 'execDamage__13TBossHanachanFv',
@@ -37,6 +38,16 @@ def verify(region, path):
         body = words(name)
         assert any(body[i:i+len(pattern)] == pattern for i in range(len(body))), description
         checks.append(description)
+
+    def calls(name,target):
+        address,_=rows[name]
+        destination=rows[target][0]
+        for i,word in enumerate(words(name)):
+            if word & 0xFC000003 != 0x48000001:continue
+            delta=word&0x03FFFFFC
+            if delta&0x02000000:delta-=0x04000000
+            if address+4*i+delta==destination:return True
+        return False
 
     region_index = ('jp', 'us', 'pal').index(region)
     for constant, symbol in METHODS.items():
@@ -67,6 +78,29 @@ def verify(region, path):
              'Forced launch strength reads the signed floor value at offset 2')
     sequence('fireStreamingMovie__12TMarDirectorFUc', (0x60000100,0xB003004C),
              'Accepted movie queue sets director flag 0x100 at 0x4C')
+    sequence('setNextStage__12TMarDirectorFUsPQ26JDrama6TActor',
+             (0x7C834670,0x3803FFFF,0x98010038,0x98810039),
+             'Encoded stage word decodes area as high byte minus one and episode as low byte')
+    movie_body = words('fireStreamingMovie__12TMarDirectorFUc')
+    tables = [((hi & 0xffff) << 16) + ((lo & 0xffff) ^ 0x8000) - 0x8000
+              for hi, lo in zip(movie_body, movie_body[1:])
+              if hi & 0xffff0000 == 0x3c800000 and lo & 0xffff0000 == 0x38840000]
+    assert len(tables) == 1, (region, 'movie dispatch table')
+    for movie, target in ((7, 0x0e06), (8, 0x0e07)):
+        case = dol.words(tables[0] + movie * 4, 1)[0]
+        body = dol.words(case, 10)
+        assert (0x38800000 | target) in body, (region, movie, 'wrong destination')
+        assert any(body[i:i+2] == (0x60000100, 0xb003004c)
+                   for i in range(len(body))), (region, movie, 'missing accepted flag')
+        checks.append(f'Pinna movie {movie} accepts flag 0x100 and selects stage word {target:04X}')
+    for method in ('appearSimple__6TShineFi','appearWithTime__6TShineFiiii'):
+        assert calls(method,'appear__14TMapObjGeneralFv'),(region,method,'missing live spawn call')
+        assert not calls(method,'appear__5TItemFv'),(region,method,'unexpected out-of-line TItem call')
+        checks.append(f'{method} calls hooked TMapObjGeneral::appear with TItem::appear inlined')
+    sequence('receiveMessage__14TRedCoinSwitchFP9THitActorUl', (0x28050001,),
+             'Red switch receives accepted ground-pound message 1')
+    sequence('receiveMessage__14TRedCoinSwitchFP9THitActorUl', (0xB01F00FC,),
+             'Accepted red switch press writes the state at 0xFC')
     return {'region':region, 'dol_sha256':hashlib.sha256(dol.data).hexdigest(),
             'checks':checks,'passed':len(checks)}
 
