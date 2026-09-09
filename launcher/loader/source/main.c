@@ -55,6 +55,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneMusic.h"
 #include "SusamuneShadowAsset.h"
 #include "SusamuneTheme.h"
+#include "SusamuneThemeFiles.h"
 #include "SusamuneText.h"
 #include "susamune/mem2_map.h"
 
@@ -1770,6 +1771,11 @@ int main(int argc, char **argv)
 		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, 232, "No FAT device found!");
 		ExitToLoader(1);
 	}
+	{
+		FRESULT themeDirectory = SusamuneThemeEnsureDirectory(GetRootDevice());
+		if (themeDirectory != FR_OK)
+			gprintf("Moonshine: optional theme folder unavailable (%u)\n", (unsigned int)themeDirectory);
+	}
 	if (!themeLoaded)
 		SusamuneThemeLoad(GetRootDevice(), &background);
 	ShowMessageScreen("Loading settings...");
@@ -1794,7 +1800,7 @@ int main(int argc, char **argv)
 	// but loader-side persistence, and keeping it would have left a second
 	// place the migrated options could disagree from.
 	SusamuneIniLoad(GetRootDevice());
-	SusamuneTextSetJapanese(gIni.version == SUSA_VER_JP);
+	SusamuneTextLoadLanguage(launch_dir);
 	ReconfigVideo(rmode);
 
 	// Can the ini be written back? Probe once so the menu can say so up front

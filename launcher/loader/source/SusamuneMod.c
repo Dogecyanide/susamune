@@ -26,6 +26,7 @@ previous boot would otherwise be injected into an unrelated game.
 #include "exi.h"
 #include "ff_utf8.h"
 #include "SusamuneMod.h"
+#include "SusamuneText.h"
 
 #include "susamune/mod_bin.h"
 #include "susamune/japanese_ui.h"
@@ -125,7 +126,8 @@ void SusamuneLoadMod(u32 gameID)
 	f_close(&fd);
 
 	DCFlushRange(dst, read);
-	if (gameID == 0x474D534Au && ValidModFile(dst, gameID, size)) LoadJapaneseUi();
+	if (gameID == 0x474D534Au && SusamuneTextJapaneseRequested() &&
+		ValidModFile(dst, gameID, size)) LoadJapaneseUi();
 	gprintf("Susamune: staged " SUSAMUNE_MOD_FILE_FMT " (%u bytes)\r\n",
 		region, read);
 }

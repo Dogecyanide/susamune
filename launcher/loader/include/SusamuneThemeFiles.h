@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include "ff.h"
 
+FRESULT SusamuneThemeEnsureDirectory(const char *device);
+
 FRESULT SusamuneThemeFindFile(char *out, size_t outSize, const char *device,
 	const char *leaf, FILINFO *info);
 

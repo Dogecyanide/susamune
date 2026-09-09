@@ -3,7 +3,8 @@
 
 #include "grrlib.h"
 
-void SusamuneTextSetJapanese(bool enabled);
+void SusamuneTextLoadLanguage(const char *launchDirectory);
+bool SusamuneTextJapaneseRequested(void);
 void SusamuneTextShutdown(void);
 const char *SusamuneText(const char *english);
 GRRLIB_ttfFont *SusamuneTextFont(void);

@@ -8,11 +8,15 @@ FOXTROT adds tools for studying movement and comparing attempts. This update inc
 
 Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace the package files, and keep your existing themes, music, `susamune.ini`, records and ghosts. The launcher supports the existing JP, US and PAL disc revisions. Use your own disc or game image. Do not mix FOXTROT's launcher with older mod binaries: its memory format changed.
 
+The **standard download keeps every Moonshine menu in English**, including when you play JP. It does not change Sunshine's own language. The **Japanese download** uses Japanese launcher menus regardless of the selected game region, and translates Moonshine's in-game menus on JP; US/PAL in-game menus stay English. Some Japanese status messages and the built-in Guide body remain English.
+
+Keep the supplied **language.txt** beside **boot.dol** when updating: the standard download contains `en`, the Japanese download `ja`. A missing or invalid file selects English. The Japanese download also needs its supplied **ja_ui.bin** for JP game text.
+
 Open Moonshine Launcher FOXTROT from the Homebrew Channel. Choose the matching **Version**, then **Path** to select your ISO/CISO on SD or USB, or **Disc Drive** for a real disc. Choose **Launch Game**. If Auto Boot is enabled, hold B during startup to return to the launcher menu.
 
 Choose **Guide** on the launcher's home screen to read the written guide on your TV. Select a topic with Up/Down and A; use Up/Down to scroll or Left/Right to move a page. B returns to the topics, then to the launcher. The guide is built into the launcher and works without a separate file.
 
-Put **background.png** (1024×480 PNG, up to 2 MiB) and **bgm.mp3** (up to 4 MiB) in **/Moonshine_Theme** at the SD root. A launcher opened from USB uses that folder on USB. The old theme folder beside boot.dol is no longer used.
+Put **background.png** (1024×480 PNG, up to 2 MiB) and **bgm.mp3** (up to 4 MiB) in **/Moonshine_Theme** at the SD root. A launcher opened from USB uses that folder on USB. The launcher creates a missing folder once its storage device is ready; add your own background and music there. Existing files are preserved, and a folder-creation failure does not stop startup. The old theme folder beside boot.dol is no longer used.
 
 The launcher loads your theme before the kernel startup screens when its device is available. A USB device that cannot be opened that early is retried after normal storage initialization. Music starts after kernel setup. Startup and error text have explicit drawing state and outlines for dark themes. Startup checks your remembered Sunshine path. It mounts another device only when your selected version or Path needs it; storage messages remain visible during those waits.
 
@@ -161,7 +165,7 @@ Mario's skin stays unchanged. Magenta on the cap and shirt no longer produces re
 
 ## Dolphin
 
-Use the matching regional BPS patch with a clean ISO; the Wii launcher ZIP is for the Homebrew Channel. For mod settings persistence, enable a memory card in slot B. Set Texture Cache Accuracy to Safe so savestate loads restore goop correctly. Keep ordinary Sunshine saves and Moonshine's slot-B settings file when updating.
+Use the matching regional BPS patch with a clean ISO; the Wii launcher ZIP is for the Homebrew Channel. All standard Dolphin patches keep Moonshine menus English, including JP. Choose the separate Japanese JP patch for translated JP menus; its font and text are included in the patch. Sunshine's own language is unchanged. For mod settings persistence, enable a memory card in slot B. Set Texture Cache Accuracy to Safe so savestate loads restore goop correctly. Keep ordinary Sunshine saves and Moonshine's slot-B settings file when updating.
 
 Use a current Dolphin release for frame tools. The same FOXTROT image accepts paused-menu input in Dolphin 2606a JIT and 5.0 Interpreter, but Dolphin 5.0 JIT can leave that input stuck.
 

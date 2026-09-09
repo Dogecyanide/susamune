@@ -35,22 +35,25 @@ class JapaneseUiTests(unittest.TestCase):
         harness = '''
 #include "susamune/japanese_ui.h"
 typedef unsigned char u8; typedef unsigned short u16; typedef unsigned int u32;
-static const u8 *sAsset; static u16 sCacheIds[64]; static u8 sCache[64][128];
+static const u8 *sAsset, *sProbeAsset; static bool sChecked;
+static u16 sCacheIds[64]; static u8 sCache[64][128];
 static unsigned int sNext, barriers, flushes, invalidations;
-static bool ready() {return sAsset != nullptr;}
+#define IS_EMULATOR 0
+#undef SUSAMUNE_JP_UI_PPC_BASE
+#define SUSAMUNE_JP_UI_PPC_BASE sProbeAsset
 static void GXDrawDone() {++barriers;}
 static void DCFlushRange(void *, unsigned int n) {if(n==128)++flushes;}
 static void GXInvalidateTexAll() {++invalidations;}
 extern "C" void *memset(void *p,int v,__SIZE_TYPE__ n) {volatile u8 *b=(volatile u8*)p;while(n--)*b++=v;return p;}
 '''
-        for signature in ('unsigned int word(', 'unsigned int nextCode(', 'int glyph(',
+        for signature in ('bool ready()', 'unsigned int word(', 'unsigned int nextCode(', 'int glyph(',
                           'int units(', 'u8 *image(', 'const char *text('):
             harness += function(source, signature)+'\n'
         harness += '''
 extern "C" {
 __declspec(dllexport) int valid(const u8 *p,unsigned int n) {return SusamuneJpUiValid(p,n);}
 __declspec(dllexport) void reset(const u8 *p,unsigned int n) {
- sAsset=SusamuneJpUiValid(p,n)?p:nullptr;sNext=barriers=flushes=invalidations=0;
+ sAsset=nullptr;sProbeAsset=p;sChecked=false;ready();sNext=barriers=flushes=invalidations=0;
  for(unsigned int i=0;i<64;++i)sCacheIds[i]=0;
 }
 __declspec(dllexport) const char *lookup(const char *p) {return text(p);}
@@ -100,6 +103,22 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         self.lib.reset(broken,64)
         self.assertEqual(self.lib.lookup(b'Practice'),b'Practice')
         self.assertEqual(self.lib.measure('日本語'.encode('cp932')),-1)
+
+    def test_zeroed_ready_header_keeps_entire_catalogue_english_after_previous_japanese_boot(self):
+        self.assertNotEqual(self.lib.lookup(b'Practice'),b'Practice')
+        # The previous payload can remain in the staging tail; only its header is cleared.
+        stale=C.create_string_buffer(bytes(64)+bytes(self.asset[64:]))
+        self.lib.reset(stale,len(self.asset))
+        for line in (ROOT/'data/japanese_ui.tsv').read_text(encoding='utf-8').splitlines():
+            if not line.strip() or line.startswith('#'):continue
+            english=expand(line.split('\t')[0],TOKENS)
+            self.assertEqual(self.lib.lookup(english),english)
+            self.assertEqual(self.lib.measure(english),-1)
+        # An asset appearing later cannot silently change language during the same boot.
+        C.memmove(stale,bytes(self.asset),len(self.asset))
+        self.assertEqual(self.lib.lookup(b'Practice'),b'Practice')
+        self.lib.reset(stale,len(self.asset))
+        self.assertNotEqual(self.lib.lookup(b'Practice'),b'Practice')
 
     def test_all_asset_sections_are_covered_by_crc(self):
         for offset in (0,4,8,12,16,63,64,19000,45000,len(self.asset)-1):
@@ -164,7 +183,7 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         manifest={'base_addr':layout['base_addr'],'writes':[],
                   'segments':[{'offset':0,'memory_size':0x57000,'code':'00'*32},
                               {'offset':0x80000,'memory_size':0x3F000,'code':'00'*32}]}
-        operations=build_operations(layout,manifest)
+        operations=build_operations(layout,manifest,ui_language='ja')
         literals=[o for o in operations if o['kind']=='literal' and o['target_offset']==0x004AA8C0]
         self.assertEqual(len(literals),1)
         self.assertEqual(literals[0]['value'],self.asset)

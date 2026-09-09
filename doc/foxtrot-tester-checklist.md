@@ -14,7 +14,7 @@ This sheet covers the fixes since your last test. Pick the parts that apply to y
 
 ## Launcher and settings
 
-- [ ] **Startup:** With your usual Sunshine version selected, close and reopen the launcher. Put your theme in **/Moonshine_Theme** at the SD root. The theme and storage message should appear, and it should reach the menu without waiting for an unused USB drive. Change to another version once and check it still launches. If you use both SD and USB, try switching between them.
+- [ ] **Startup:** With your usual Sunshine version selected, close and reopen the launcher. Put your theme in **/Moonshine_Theme** at the SD root; the launcher creates this folder on a fresh setup. The theme and storage message should appear, and it should reach the menu without waiting for an unused USB drive. Change to another version once and check it still launches. If you use both SD and USB, try switching between them.
 - [ ] **Settings save:** Change one harmless setting, close the game menu, and reopen it. There should be no “storage access denied” message. Reboot once and check the setting was kept.
 
 ## Buttons and ghost display
@@ -32,8 +32,8 @@ Enable **Runs > Timer and splits > Level splits**. Pick the routes you know; tel
 - [ ] **Noki Hidden:** Use the launch pad below the bird, then kill the bird. Expect the second split when its Shine appears.
 - [ ] **Other “Spawn Shine” routes:** Try Gold Bird or another route that missed this split: Lighthouse, either Bell, Shine Gate or Beach Shine. Expect a split when the Shine appears, then the finish when you collect it. Say which route you tried.
 
-## Japanese version
+## Download language
 
-- [ ] **Japanese menus:** On JP, browse the main tabs, settings, binds and Records. Check that Japanese text is readable, fits on screen and uses the runner’s corrected wording. The separate Japanese download includes the flag background; it should fit without stretching the circle. Send a photo and the menu name for missing characters, awkward wording or text that runs off the edge.
+- [ ] **Menu language:** During the menu checks, the standard download must stay English even with JP selected. The Japanese download keeps its launcher Japanese regardless of game region, with Japanese in-game menus on JP and English on US/PAL. Check translated text fits and the flag's circle stays round. The built-in Guide body and some status messages remain English. For Dolphin, use the separate Japanese JP patch for translations; the standard JP patch stays English. Send a photo and menu name for display problems.
 
 **For a problem:** send the build checksum, route/menu, what you pressed, and what happened. A photo or short clip is useful. No long report needed.

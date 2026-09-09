@@ -6,6 +6,14 @@ useful for attribution and future translation review.
 
 ## Current implementation
 
+Language is selected by the download, not the game region. The standard launcher
+and all standard Dolphin patches keep Moonshine menus English, including JP.
+The Japanese download enables Japanese launcher text independently of region and
+Japanese game text on JP; US/PAL game text remains English. Retail Sunshine text
+is unaffected. The app-local `language.txt` marker is explicitly packaged as `en`
+or `ja`; missing or invalid markers select English. The embedded Guide body
+remains English.
+
 `data/japanese_ui.tsv` retains the 1,022-entry Task Edition catalogue and adds
 FOXTROT navigation and practice/SD workflows. The supplied Language Amendment
 Proposal's 26 wording changes are applied to presentation strings only. Stable
@@ -20,7 +28,8 @@ glyphs for GX; a completed-GX barrier protects each cache wrap. The original
 Missing translations use the English string. Some new diagnostic and dynamically
 composed text remains English and needs later language review.
 
-On Wii, `ja_ui.bin` occupies immutable staging offsets `[0x84000,0x9F000)`
+On Wii, the Japanese download loads `ja_ui.bin` only when its language marker
+selects Japanese. The asset occupies immutable staging offsets `[0x84000,0x9F000)`
 (`0x91EC3000..0x91EDE000`). The JP file packer and loader enforce the lower
 `0x84000` mod-file ceiling before loading it. The loader invalidates the asset
 header on every boot, then validates the complete header, CRC, tables and bounds.
@@ -28,7 +37,7 @@ The kernel only reads the staged mod prefix and writes the model vault at
 `+0x9F000` onward. Warm reset preserves both prefixes. No state slot, codec
 workspace, attachment heap or timer scratch is borrowed.
 
-On Dolphin, the JP BPS stores an additional raw 108 KiB disc extent at `0x004AA8C0`,
+On Dolphin, the separate Japanese JP BPS stores an additional raw 108 KiB disc extent at `0x004AA8C0`,
 immediately following the existing 640 KiB DOL extent. This lies inside a retail
 file already relocated in full. No new DOL section or FST entry is needed. The
 renderer reads bounded chunks through retail `DVDReadPrio` into its existing
@@ -36,7 +45,14 @@ renderer reads bounded chunks through retail `DVDReadPrio` into its existing
 `0x71C00000..0x71C1B000`. Validation failures retain English rendering. This
 immutable fake-memory range is outside the three-state pool and other assigned
 windows. The supported translated emulator package is the JP BPS/ISO; an extracted
-DOL alone lacks the raw disc asset.
+DOL alone lacks the raw disc asset. The standard JP patch keeps Moonshine
+menus English; it does not activate the translation asset.
+
+Theme PNG/MP3 files use only the launch-device root `/Moonshine_Theme`. Early
+preloading before IOS remains read-only. After the own-device mount succeeds,
+a missing directory is created once. Creation failure is optional and logged;
+it neither replaces an existing file nor interrupts boot. The Japanese download
+supplies a flag background, independently of the selected game region.
 
 The independent private DVD proof read a 32-byte marker at this exact disc offset
 after `initialize()`, copied it through MEM1 into fake memory, and verified PPC

@@ -18,20 +18,22 @@ Dolphin testers: enable a memory card in slot B for mod settings, and set Textur
 
 **Game region:** JP / US / PAL
 
+**Download language:** English / Japanese
+
 **Game source:** Disc / ISO / CISO — SD / USB
 
 **Sections and courses claimed:**
 
 ## 1. Launcher, menus and settings
 
-- [ ] **1A — Startup.** Open the updated launcher with your usual theme and music. Text must be readable before loading finishes, including any storage wait. The theme should appear early. An SD-only setup should not wait for an unused USB drive.
+- [ ] **1A — Startup.** Open the updated launcher with your usual theme and music. Text must be readable before loading finishes, including any storage wait. The theme should appear early. An SD-only setup should not wait for an unused USB drive. On a fresh setup, **/Moonshine_Theme** should be created automatically.
 - [ ] **1B — Remembered game.** Launch your usual version. If you own another supported version or use another storage device, select it and launch it once. Returning to the first selection should keep its path. An incorrect game/version selection should give a readable error.
 - [ ] **1C — Auto Boot and Guide.** If you use Auto Boot, check normal boot and holding B to reach the menu. Open the launcher's **Guide**, read a topic, turn a page and back out successfully.
 - [ ] **1D — Menu navigation.** Browse Quick, Practice, Runs, Records, Ghosts, Display and System. Records should also open from Runs. Enter/back out of submenus; the A used to open a page must not also trigger an action inside it. Add and remove a Quick favourite. Check one duplicated setting shows the same value in both locations.
 - [ ] **1E — Binds and saving.** Assign one shortcut from a Practice page with X, and check it under System > Button binds. Try cancelling a bind edit too. Existing shortcuts should remain. Close the menu after changing a setting: no false “storage access denied” error. Leave a harmless change saved for the reboot check.
-- [ ] **1F — Japanese version.** JP testers: check launcher and game menus, corrected wording, long setting/bind names and button labels for missing characters or overlapping text. Check the Japanese download's flag fits with a round circle. Some changing status messages and diagnostics, plus the launcher's built-in guide, still use English; report other missing translations.
+- [ ] **1F — Download language.** During the menu checks above, the standard download should keep Moonshine menus English even with JP selected. In the Japanese download, the launcher stays Japanese when changing game region; JP game menus are translated, while US/PAL game menus stay English. Check long setting/bind names and button labels for missing or overlapping text, and the Japanese flag for a round circle. Some status messages and the built-in Guide body remain English. Standard Dolphin JP uses English menus; the separate Japanese JP patch enables translations.
 
-Themes now use **/Moonshine_Theme** at the root of the launcher's device. The Japanese download includes its flag there; the standard download keeps your own theme. Selecting JP does not switch backgrounds.
+Themes use **/Moonshine_Theme** at the root of the launcher's device. A missing folder is created once storage is ready. The Japanese download includes its flag there; the standard download keeps your own theme. Selecting JP changes neither the download language nor the background.
 
 ## 2. Normal runs, records and PB protection
 

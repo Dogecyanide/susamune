@@ -51,6 +51,7 @@ class ReleaseBrandingTests(unittest.TestCase):
             self.assertEqual(result, 0)
             with zipfile.ZipFile(archive) as packaged:
                 prefix = package_launcher.APP_NAME + "/"
+                self.assertEqual(packaged.read(prefix + "language.txt"), b"en\n")
                 self.assertEqual(packaged.read(prefix + "TESTING.md"), quick.read_bytes())
                 self.assertEqual(packaged.read(prefix + "RC1_TESTING.md"),
                                  rc1.read_bytes())
@@ -64,4 +65,20 @@ class ReleaseBrandingTests(unittest.TestCase):
                 self.assertEqual(packaged.read(prefix + "mod_us.bin"), mod.read_bytes())
                 for name in ("foxtrot-guide-en.md", "foxtrot-guide-ja.md"):
                     self.assertEqual(packaged.read(prefix + name), (ROOT / "doc" / name).read_bytes())
+    def test_japanese_package_explicitly_selects_language(self):
+        with tempfile.TemporaryDirectory(prefix="moonshine-language-") as temporary:
+            work = Path(temporary)
+            boot, asset, archive = (work / name for name in ("boot.dol", "ja_ui.bin", "app.zip"))
+            boot.write_bytes(b"test loader")
+            asset.write_bytes(b"validated Japanese asset")
+            with patch.object(package_launcher, "render_meta", return_value="<app/>"), \
+                 patch("gen_japanese_ui.build", return_value=(asset.read_bytes(), {})):
+                package_launcher.main(["--boot-dol", str(boot), "--out-zip", str(archive),
+                                       "--japanese-ui", str(asset), "--language", "ja"])
+            with zipfile.ZipFile(archive) as packaged:
+                self.assertEqual(packaged.read("moonshine_launcher/language.txt"), b"ja\n")
+                self.assertEqual(packaged.read("moonshine_launcher/ja_ui.bin"), asset.read_bytes())
+    def test_japanese_package_requires_its_game_asset(self):
+        with self.assertRaises(SystemExit), patch("sys.stderr"):
+            package_launcher.main(["--boot-dol", "unused", "--out-zip", "unused", "--language", "ja"])
 if __name__ == "__main__": unittest.main()

@@ -137,7 +137,12 @@ def add_operation(operations, target_offset, kind, value, size=None):
     })
 
 
-def build_operations(layout, mod_manifest):
+def build_operations(layout, mod_manifest, ui_language="en"):
+    if ui_language not in ("en", "ja"):
+        raise ValueError("UI language must be en or ja")
+    if ui_language == "ja" and (
+            layout["region"] != "jp" or not layout.get("japanese_ui")):
+        raise ValueError("Japanese UI requires the verified JP disc asset extent")
     region_size = layout["mod_region_size"]
     segments = mod_manifest.get("segments")
     if not segments or len(segments) != 2:
@@ -182,13 +187,17 @@ def build_operations(layout, mod_manifest):
 
     japanese = layout.get("japanese_ui")
     if japanese:
-        from gen_japanese_ui import build, MAX_SIZE
+        from gen_japanese_ui import MAX_SIZE
         if (layout["region"] != "jp" or japanese["offset"] != 0x004AA8C0 or
                 japanese["offset"] != expanded_dol + region_size or
                 japanese["size"] != MAX_SIZE):
             raise ValueError("JP disc asset must follow the verified DOL storage extent")
-        asset, _ = build()
-        add_operation(operations, japanese["offset"], "literal", asset)
+        # Both languages overwrite the same extent, preserving source-range CRCs.
+        asset = b""
+        if ui_language == "ja":
+            from gen_japanese_ui import build
+            asset, _ = build()
+            add_operation(operations, japanese["offset"], "literal", asset)
         add_operation(operations, japanese["offset"] + len(asset), "zero", None,
                       japanese["size"] - len(asset))
 
@@ -226,9 +235,9 @@ def build_operations(layout, mod_manifest):
     return operations
 
 
-def expected_source_ranges(layout, mod_manifest):
+def expected_source_ranges(layout, mod_manifest, ui_language="en"):
     cursor = 0
-    for operation in build_operations(layout, mod_manifest):
+    for operation in build_operations(layout, mod_manifest, ui_language):
         target = operation["target_offset"]
         if target > cursor:
             yield cursor, target - cursor
@@ -343,7 +352,7 @@ def validate_layout(layout, mod_manifest):
         raise ValueError("mod hook addresses changed; regenerate the ISO layout with the clean ISO")
 
 
-def build_patch(layout, mod_manifest):
+def build_patch(layout, mod_manifest, ui_language="en"):
     validate_layout(layout, mod_manifest)
     source_crcs = {
         (entry["offset"], entry["size"]): int(entry["crc32"], 16)
@@ -351,7 +360,7 @@ def build_patch(layout, mod_manifest):
     }
     builder = BpsBuilder(source_crcs)
     cursor = 0
-    for operation in build_operations(layout, mod_manifest):
+    for operation in build_operations(layout, mod_manifest, ui_language):
         target = operation["target_offset"]
         builder.source_read(cursor, target - cursor)
         if operation["kind"] == "literal":
@@ -484,6 +493,8 @@ def main():
     build.add_argument("--layout", required=True)
     build.add_argument("--mod-manifest", required=True)
     build.add_argument("--output", required=True)
+    build.add_argument("--ui-language", choices=("en", "ja"), default="en",
+                       help="menu language; Japanese is a separate JP-only patch")
 
     layout = subparsers.add_parser("layout", help="regenerate retail layout metadata")
     layout.add_argument("--iso", required=True)
@@ -505,7 +516,7 @@ def main():
         return
 
     retail_layout = load_json(args.layout)
-    patch, builder = build_patch(retail_layout, mod_manifest)
+    patch, builder = build_patch(retail_layout, mod_manifest, args.ui_language)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(patch)

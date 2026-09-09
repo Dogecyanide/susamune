@@ -68,9 +68,13 @@ def main(argv):
                     help="extra pattern tester log to include")
     ap.add_argument("--changelog", help="release notes to include as CHANGELOG.md")
     ap.add_argument("--japanese-ui", help="validated Japanese game catalogue/font asset")
+    ap.add_argument("--language", choices=["en", "ja"], default="en",
+                    help="Moonshine interface language, independent of game region")
     ap.add_argument("--mod-bins", nargs="*", default=[],
                     help="mod_<region>.bin files to drop into the app dir")
     args = ap.parse_args(argv)
+    if args.language == "ja" and not args.japanese_ui:
+        ap.error("--language ja requires --japanese-ui")
 
     mod_bins = [Path(p) for p in args.mod_bins]
     # "mod_jp.bin" -> "jp", for the meta.xml blurb.
@@ -78,6 +82,7 @@ def main(argv):
 
     with zipfile.ZipFile(args.out_zip, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(args.boot_dol, f"{APP_NAME}/boot.dol")
+        z.writestr(f"{APP_NAME}/language.txt", args.language + "\n")
         z.write(APP_ICON, f"{APP_NAME}/icon.png")
         z.write(MINIZ_LICENSE, f"{APP_NAME}/licenses/miniz-LICENSE.txt")
         z.write(LZ4_LICENSE, f"{APP_NAME}/licenses/lz4-LICENSE.txt")

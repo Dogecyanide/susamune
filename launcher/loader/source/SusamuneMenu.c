@@ -1416,7 +1416,6 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 
 				case ROW_VERSION:
 					gIni.version = (u8)((gIni.version + 1) % SUSA_VER_COUNT);
-					SusamuneTextSetJapanese(gIni.version == SUSA_VER_JP);
 					IniDirty = true;
 					ErrorLine[0] = '\0';
 					BlinkFrames = 0;

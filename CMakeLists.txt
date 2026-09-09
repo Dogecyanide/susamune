@@ -295,14 +295,33 @@ elseif(IS_EMULATOR)
                     --layout "${_layout}"
                     --mod-manifest "${CMAKE_BINARY_DIR}/susamune_manifest_${_v}.json"
                     --output "${_bps}"
+                    --ui-language en
                 DEPENDS "${CMAKE_BINARY_DIR}/susamune_manifest_${_v}.json"
                         "${_layout}"
                         "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py"
                         "${CMAKE_SOURCE_DIR}/scripts/patches.py"
-                        ${JAPANESE_UI_INPUTS}
+                        "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py"
                 COMMENT "Building source-free ${_v} emulator BPS"
                 VERBATIM)
             list(APPEND EMULATOR_BPS_FILES "${_bps}")
+            if(_v STREQUAL "jp")
+                set(_ja_bps "${CMAKE_BINARY_DIR}/moonshine_jp_ja.bps")
+                add_custom_command(
+                    OUTPUT "${_ja_bps}"
+                    COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py" build
+                        --layout "${_layout}"
+                        --mod-manifest "${CMAKE_BINARY_DIR}/susamune_manifest_jp.json"
+                        --output "${_ja_bps}"
+                        --ui-language ja
+                    DEPENDS "${CMAKE_BINARY_DIR}/susamune_manifest_jp.json"
+                            "${_layout}"
+                            "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py"
+                            "${CMAKE_SOURCE_DIR}/scripts/patches.py"
+                            ${JAPANESE_UI_INPUTS}
+                    COMMENT "Building separate Japanese-menu JP emulator BPS"
+                    VERBATIM)
+                add_custom_target(emulator_patches_japanese DEPENDS "${_ja_bps}")
+            endif()
         else()
             message(STATUS "No source-free BPS layout for ${_v}; skipping its emulator patch")
         endif()

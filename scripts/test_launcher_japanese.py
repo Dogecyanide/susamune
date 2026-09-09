@@ -91,12 +91,15 @@ class LauncherJapaneseContentTests(unittest.TestCase):
             if value:
                 self.assertIn(value, translated)
 
-    def test_locale_changes_after_settings_load_and_version_selection(self):
+    def test_locale_is_app_local_and_independent_of_version_selection(self):
         main = (ROOT / "launcher/loader/source/main.c").read_text()
         menu = (ROOT / "launcher/loader/source/SusamuneMenu.c").read_text()
-        self.assertLess(main.index("SusamuneIniLoad(GetRootDevice())"), main.index("SusamuneTextSetJapanese("))
+        self.assertLess(main.index("SusamuneIniLoad(GetRootDevice())"), main.index("SusamuneTextLoadLanguage(launch_dir)"))
+        self.assertEqual(main.count("SusamuneTextLoadLanguage("), 1)
         version = menu[menu.index("case ROW_VERSION:"):menu.index("case ROW_PATH:")]
-        self.assertIn("SusamuneTextSetJapanese(gIni.version == SUSA_VER_JP)", version)
+        self.assertNotIn("SusamuneText", version)
+        mod = (ROOT / "launcher/loader/source/SusamuneMod.c").read_text()
+        self.assertIn("SusamuneTextJapaneseRequested()", function(mod, "SusamuneLoadMod"))
         self.assertIn("ガイド（英語）", dict(translations())["Guide%s"])
 
 
@@ -117,22 +120,41 @@ typedef __SIZE_TYPE__ size_t;typedef int bool;
 typedef struct {int face;}GRRLIB_ttfFont;
 typedef struct {const char*english;const char*japanese;}LauncherText;
 static unsigned unzipCalls,loads,frees,faceFrees,sequence;static int failUnzip,failFace;
-static char bytes[16];static GRRLIB_ttfFont english,ja,*myFont=&english,*sFont;static void*sFontData;static bool sJapanese;
+static char bytes[16];static GRRLIB_ttfFont english,ja,*myFont=&english,*sFont;static void*sFontData;static bool sJapanese,sJapaneseRequested;
 static char font_ja_zip[1];static unsigned font_ja_zip_size=1;
 int strcmp(const char*a,const char*b){while(*a&&*a==*b){a++;b++;}return (unsigned char)*a-(unsigned char)*b;}
 bool unzip_data(const void*in,unsigned n,void**out,unsigned*size){unzipCalls++;*out=failUnzip?NULL:bytes;*size=16;return !failUnzip;}
 GRRLIB_ttfFont*GRRLIB_LoadTTF(const void*data,unsigned n){loads++;return failFace?NULL:&ja;}
 void GRRLIB_FreeTTF(GRRLIB_ttfFont*font){if(font){faceFrees++;sequence=sequence*10+1;}}
 void free(void*p){if(p){frees++;sequence=sequence*10+2;}}
+#define MAXPATHLEN 1024
+#define FR_OK 0
+#define FA_READ 1
+#define FA_OPEN_EXISTING 0
+typedef unsigned int UINT;
+typedef struct {struct{unsigned long long objsize;}obj;}FIL;
+static const char *fileBytes;static unsigned fileSize,fileReads,fileOpens,fileCloses,fileMode;
+static int fileOpenError,fileReadError,fileCloseError;static unsigned shortRead;
+static char openedPath[MAXPATHLEN];
+void *memcpy(void *dst,const void *src,size_t n){char*d=dst;const char*s=src;while(n--)*d++=*s++;return dst;}
+int f_open_char(FIL*f,const char*path,unsigned mode){fileOpens++;fileMode=mode;unsigned i=0;do{openedPath[i]=path[i];}while(path[i++]&&i<MAXPATHLEN);f->obj.objsize=fileSize;return fileOpenError;}
+int f_read(FIL*f,void*dst,unsigned n,UINT*out){fileReads++;*out=shortRead?n-1:n;if(*out>fileSize)*out=fileSize;memcpy(dst,fileBytes,*out);return fileReadError;}
+int f_close(FIL*f){fileCloses++;return fileCloseError;}
 '''
         code += DATA.read_text(encoding="utf-8")
-        for name in ("SusamuneTextSetJapanese", "SusamuneTextShutdown", "SusamuneText", "SusamuneTextFont"):
+        for name in ("SusamuneTextSetJapanese", "SusamuneTextLoadLanguage", "SusamuneTextJapaneseRequested", "SusamuneTextShutdown", "SusamuneText", "SusamuneTextFont"):
             code += function(production, name)
         code += r'''
 __declspec(dllexport) void reset(int zip,int face){SusamuneTextShutdown();unzipCalls=loads=frees=faceFrees=sequence=0;failUnzip=zip;failFace=face;}
 __declspec(dllexport) const char*translate(unsigned enabled,const char*text){SusamuneTextSetJapanese(enabled);return SusamuneText(text);}
 __declspec(dllexport) unsigned stats(unsigned which){switch(which){case 0:return unzipCalls;case 1:return loads;case 2:return frees;case 3:return faceFrees;case 4:return sequence;case 5:return SusamuneTextFont()==&ja;}return 0;}
 __declspec(dllexport) void finish(void){SusamuneTextShutdown();}
+__declspec(dllexport) const char *loadLanguage(const char*directory,const char*data,unsigned size,unsigned errors){
+ fileBytes=data;fileSize=size;fileOpens=fileReads=fileCloses=0;openedPath[0]=0;
+ fileOpenError=errors&1;fileReadError=errors&2;fileCloseError=errors&4;shortRead=errors&8;
+ SusamuneTextLoadLanguage(directory);return SusamuneText("Select");}
+__declspec(dllexport) unsigned fileStats(unsigned which){switch(which){case 0:return fileOpens;case 1:return fileReads;case 2:return fileCloses;case 3:return fileMode;case 4:return SusamuneTextJapaneseRequested();}return 0;}
+__declspec(dllexport) const char *filePath(void){return openedPath;}
 '''
         source = Path(cls.temp.name) / "text.c"
         source.write_text(code, encoding="utf-8")
@@ -146,8 +168,11 @@ __declspec(dllexport) void finish(void){SusamuneTextShutdown();}
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         cls.lib.translate.argtypes = [C.c_uint, C.c_char_p]
         cls.lib.translate.restype = C.c_char_p
+        cls.lib.loadLanguage.argtypes = [C.c_char_p, C.c_char_p, C.c_uint, C.c_uint]
+        cls.lib.loadLanguage.restype = C.c_char_p
+        cls.lib.filePath.restype = C.c_char_p
 
-    def test_all_catalog_entries_switch_with_region_and_unknown_paths_stay_verbatim(self):
+    def test_all_catalog_entries_switch_with_requested_language_and_unknown_paths_stay_verbatim(self):
         self.lib.reset(0, 0)
         for english, japanese in translations():
             self.assertEqual(self.lib.translate(0, english.encode()), english.encode())
@@ -166,6 +191,47 @@ __declspec(dllexport) void finish(void){SusamuneTextShutdown();}
             self.assertEqual(self.lib.translate(1, b"Select"), b"Select")
             self.assertEqual(self.lib.stats(5), 0)
             self.assertEqual(self.lib.stats(2), expected_frees)
+
+    def test_language_marker_uses_only_the_launching_app_directory(self):
+        self.lib.reset(0, 0)
+        for directory in (b"sd:/apps/moonshine_launcher/", b"usb:/apps/my-copy/", b"/apps/local/"):
+            for marker, japanese in ((b"ja\n", True), (b"en\n", False)):
+                self.assertEqual(self.lib.loadLanguage(directory, marker, len(marker), 0),
+                                 dict(translations())["Select"].encode() if japanese else b"Select")
+                self.assertEqual(self.lib.filePath(), directory+b"language.txt")
+                self.assertEqual([self.lib.fileStats(i) for i in range(4)], [1, 1, 1, 1])
+                self.assertEqual(self.lib.fileStats(4), japanese)
+
+    def test_invalid_or_missing_language_clears_previous_japanese_without_fallback(self):
+        self.lib.reset(0, 0)
+        for data in (b"", b"ja", b"JA\n", b"ja\r\n", b"ja\0", b"\xef\xbb\xbfja\n", b"ja\nextra"):
+            self.lib.translate(1,b"Select")
+            self.assertEqual(self.lib.loadLanguage(b"sd:/apps/test/", data, len(data), 0), b"Select")
+            self.assertEqual(self.lib.fileStats(4), 0)
+            self.assertEqual([self.lib.fileStats(i) for i in (0,2)],[1,1])
+            self.assertEqual(self.lib.fileStats(1),int(len(data)==3))
+        for error in (1,2,4,8):
+            self.lib.translate(1,b"Select")
+            self.assertEqual(self.lib.loadLanguage(b"sd:/apps/test/",b"ja\n",3,error),b"Select")
+            self.assertEqual(self.lib.fileStats(4),0)
+            self.assertEqual(self.lib.fileStats(0),1)
+            self.assertEqual(self.lib.fileStats(2),0 if error==1 else 1)
+        for directory in (None,b"",b"sd:/apps/test",b"/"*1012,b"/"*1024):
+            self.lib.translate(1,b"Select")
+            self.assertEqual(self.lib.loadLanguage(directory,b"ja\n",3,0),b"Select")
+            self.assertEqual(self.lib.fileStats(0),0)
+            self.assertEqual(self.lib.fileStats(4),0)
+        self.assertNotEqual(self.lib.loadLanguage(b"/"*1011,b"ja\n",3,0),b"Select")
+        self.assertEqual(len(self.lib.filePath()),1023)
+
+    def test_failed_launcher_font_keeps_requested_game_language(self):
+        for zip_error,face_error in ((1,0),(0,1)):
+            self.lib.reset(zip_error,face_error)
+            self.assertEqual(self.lib.loadLanguage(b"sd:/apps/japanese/",b"ja\n",3,0),b"Select")
+            self.assertEqual(self.lib.stats(5),0)
+            self.assertEqual(self.lib.fileStats(4),1)
+            self.assertEqual(self.lib.loadLanguage(b"sd:/apps/english/",b"en\n",3,0),b"Select")
+            self.assertEqual(self.lib.fileStats(4),0)
 
 
 if __name__ == "__main__":

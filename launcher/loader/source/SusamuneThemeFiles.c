@@ -19,3 +19,27 @@ FRESULT SusamuneThemeFindFile(char *out, size_t outSize, const char *device,
 		return FR_INVALID_NAME;
 	return f_stat_char(out, info);
 }
+
+FRESULT SusamuneThemeEnsureDirectory(const char *device)
+{
+	char path[24];
+	FILINFO info;
+	FRESULT result;
+
+	if (device == NULL || (strcmp(device, "sd") != 0 && strcmp(device, "usb") != 0))
+		return FR_INVALID_NAME;
+	snprintf(path, sizeof(path), "%s:/Moonshine_Theme", device);
+	result = f_stat_char(path, &info);
+	if (result == FR_OK)
+		return (info.fattrib & AM_DIR) ? FR_OK : FR_EXIST;
+	if (result != FR_NO_FILE && result != FR_NO_PATH)
+		return result;
+	result = f_mkdir_char(path);
+	if (result == FR_EXIST)
+	{
+		result = f_stat_char(path, &info);
+		if (result == FR_OK && !(info.fattrib & AM_DIR))
+			return FR_EXIST;
+	}
+	return result;
+}
