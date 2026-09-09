@@ -28,6 +28,8 @@ MINIZ_LICENSE = LAUNCHER_DIR.parent / "vendor" / "miniz" / "LICENSE"
 LZ4_LICENSE = LAUNCHER_DIR.parent / "vendor" / "lz4" / "LICENSE"
 DROID_LICENSE = LAUNCHER_DIR.parent / "data" / "fonts" / "Droid-LICENSE.txt"
 NOTO_LICENSE = LAUNCHER_DIR / "loader" / "data" / "OFL-NotoSansCJK.txt"
+RC1_TEST_LOG = LAUNCHER_DIR.parent / "doc" / "foxtrot-rc1-test-log.md"
+RC1_ROUTES = LAUNCHER_DIR.parent / "doc" / "foxtrot-rc1-routes.md"
 
 
 def git_version():
@@ -92,6 +94,8 @@ def main(argv):
                    render_meta(args.source, regions, args.version))
         if args.test_log:
             z.write(args.test_log, f"{APP_NAME}/TESTING.md")
+        z.write(RC1_TEST_LOG, f"{APP_NAME}/RC1_TESTING.md")
+        z.write(RC1_ROUTES, f"{APP_NAME}/RC1_ROUTES.md")
         if args.pattern_test_log:
             z.write(args.pattern_test_log, f"{APP_NAME}/PATTERN_TESTING.md")
         if args.changelog:

@@ -11,6 +11,6 @@ Latest feedback update:
 - Pause and Step yield to an exact longer shortcut, so **B+D-Up Reset** does not also activate **D-Up Pause**. Held gameplay inputs still work during frame advance.
 - Turning **Ghost display Off** also hides its input panels. Turning it back On restores the selected input display.
 - Repaired the missing **Gelato 5 Talk**, **Pinna 1 Talk/hits**, **Sirena 2 Reds / Noki 6 Reds button**, and **Spawn Shine** checkpoints, including Noki Hidden's bird and Gold Bird.
-- Replaced the old testing material with a short sheet covering this update. Routes and features already confirmed by testers remain passed.
+- Included a short feedback sheet, a full **RC1 test log** covering new and existing features, and a course checklist to divide the route tests among runners.
 
-Use the matching launcher and game files from this package. TESTING.md lists only the checks requested for this update.
+Use the matching launcher and game files from this package. **RC1_TESTING.md** is the full release check; **RC1_ROUTES.md** lists each route's checkpoints. **TESTING.md** is the short latest-fixes sheet.

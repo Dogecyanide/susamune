@@ -35,13 +35,27 @@ class ReleaseBrandingTests(unittest.TestCase):
             mod = work / "mod_us.bin"
             mod.write_bytes(b"test mod")
             archive = work / "launcher.zip"
-            with patch.object(package_launcher, "render_meta", return_value="<app/>"):
+            quick = work / "feedback.md"
+            quick.write_text("Short feedback checklist")
+            rc1 = work / "rc1.md"
+            rc1.write_text("Complete RC1 test log")
+            routes = work / "routes.md"
+            routes.write_text("Course and checkpoint reference")
+            with patch.object(package_launcher, "render_meta", return_value="<app/>"), \
+                 patch.object(package_launcher, "RC1_TEST_LOG", rc1), \
+                 patch.object(package_launcher, "RC1_ROUTES", routes):
                 result = package_launcher.main([
                     "--boot-dol", str(boot), "--out-zip", str(archive),
+                    "--test-log", str(quick),
                     "--mod-bins", str(mod)])
             self.assertEqual(result, 0)
             with zipfile.ZipFile(archive) as packaged:
                 prefix = package_launcher.APP_NAME + "/"
+                self.assertEqual(packaged.read(prefix + "TESTING.md"), quick.read_bytes())
+                self.assertEqual(packaged.read(prefix + "RC1_TESTING.md"),
+                                 rc1.read_bytes())
+                self.assertEqual(packaged.read(prefix + "RC1_ROUTES.md"),
+                                 routes.read_bytes())
                 self.assertEqual(packaged.read(prefix + "licenses/miniz-LICENSE.txt"),
                                  (ROOT / "vendor/miniz/LICENSE").read_bytes())
                 self.assertEqual(packaged.read(prefix + "licenses/lz4-LICENSE.txt"),
