@@ -1486,3 +1486,47 @@ Use this TAS's game version, episode and settings.	このTASと同じゲーム�
 TAS files need the matching Moonshine launcher.	対応するMoonshineランチャーが必要です。
 Release A to begin. Gameplay will stay paused.	Aを離すと準備が完了します。ゲームは停止したままです。
 Please wait...	しばらくお待ちください。
+
+# TAS actions and checkpoint shortcuts.
+TAS PROJECTS	TAS管理
+Beginning was replaced; this TAS cannot be saved.	開始地点が置き換わったため、このTASは保存できません。
+Rename TAS project	TASの名前を変更
+%lu / %lu frames	%lu / %luコマ
+Replace %s?	%sを置き換えますか？
+This replaces the checkpoint with your current position.	現在の地点で中間地点を上書きします。
+A: replace checkpoint   B: keep it	A：中間地点を置き換える　B：残す
+Refresh	一覧を更新
+Shortcut: %s   X: change   Z: clear	割当：%s　X：変更　Z：解除
+Hold new buttons, then release to save. C-stick cancels.	ボタンを押し、離すと割当を保存します。Cスティックで中止。
+TAS changed on SD; open it again.	SD上のTASが変更されました。開き直してください。
+TAS could not be opened or saved. Existing SD projects are safe.	TASの読込・保存に失敗しました。SDの既存TASは残っています。
+Choose a memory state to replace, or B to cancel.	置き換えるメモリステートを選んでください。Bで中止。
+TAS save version limit reached; use a new project.	保存回数の上限です。新しいTASを作ってください。
+Finishing TAS save...	TASの保存を完了しています…
+Saving TAS and checkpoints. Keep SD connected.	TASと中間地点を保存中です。SDを抜かないでください。
+Opening the current TAS checkpoint...	TASの現在の中間地点を読み込み中…
+Opening TAS and checkpoints. Keep SD connected.	TASと中間地点を読込中です。SDを抜かないでください。
+Previous TAS changed; open the project again.	以前のTASが変更されました。開き直してください。
+Checkpoint	中間地点
+Continue or open this TAS before saving a checkpoint.	このTASの編集を再開してから中間地点を保存してください。
+Replace this TAS checkpoint?	このTASの中間地点を置き換えますか？
+Checkpoint kept. Your TAS is paused.	中間地点を残しました。TASは停止しています。
+Checkpoint changed; choose Save Checkpoint again.	中間地点が変更されました。保存を選び直してください。
+Load one of this TAS's checkpoints first.	先にこのTASの中間地点を読み込んでください。
+Open this TAS or load one of its checkpoints first.	先にこのTASを開くか、中間地点を読み込んでください。
+Enter a name and use the matching Moonshine launcher.	名前を入力し、対応するMoonshineランチャーを使用してください。
+Reading TAS project...	TASを読み込み中…
+Finding saved TAS projects...	保存済みのTASを検索中…
+Renaming TAS project...	TASの名前を変更中…
+Deleting the SD project. Memory checkpoints stay.	SDのTASを削除中です。メモリの中間地点は残ります。
+Checkpoint could not be saved. Existing memory states are safe.	中間地点を保存できません。既存のメモリステートは残っています。
+Checkpoint saved. Your TAS is paused here.	中間地点を保存しました。TASはこの地点で停止しています。
+Checkpoint could not be loaded. Check the episode and settings.	中間地点を読めません。エピソードと設定を確認してください。
+TAS checkpoint could not resume. Check its gameplay settings.	TASを再開できません。ゲームプレイの設定を確認してください。
+TAS: go to Beginning	TAS：開始地点に戻る
+TAS: save Checkpoint 1	TAS：中間地点1を保存
+TAS: go to Checkpoint 1	TAS：中間地点1に戻る
+TAS: save Checkpoint 2	TAS：中間地点2を保存
+TAS: go to Checkpoint 2	TAS：中間地点2に戻る
+TAS: continue	TAS：編集を続ける
+TAS: replay	TAS：再生

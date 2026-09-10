@@ -168,7 +168,8 @@ bool Binds::wasPressedPracticeRaw(BindId id) const {
             continue;
         const u16 other = mMask[i];
         if (other != mMask[id] && (other & mMask[id]) == mMask[id] &&
-            (mHeld & other) == other) return false;
+            (id == BIND_PRACTICE_STEP ? mHeld == other :
+             (mHeld & other) == other)) return false;
     }
     return true;
 }

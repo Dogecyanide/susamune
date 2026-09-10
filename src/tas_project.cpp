@@ -16,7 +16,7 @@ Ref sRefs[3], sPlan[3];
 u32 sPublishedKeys[3][2], sSavedRevision;
 SusamuneTasManifest sSaved, sPending;
 u32 sPhase, sRole, sCurrent, sPreviousCrc;
-bool sActive, sDirty, sReplace, sNew, sSaving, sOpening, sCatalogReady;
+bool sActive, sDirty, sReplace, sNew, sSaving, sOpening, sCatalogReady, sOverwrite;
 const char *sStatus = "New TAS captures your beginning automatically.";
 
 bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
@@ -29,7 +29,7 @@ bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
     return true;
 }
 void finish(const char *text) {
-    sPhase = IDLE; sReplace = sNew = sSaving = sOpening = false; sStatus = text;
+    sPhase = IDLE; sReplace = sNew = sSaving = sOpening = sOverwrite = false; sStatus = text;
 }
 void failed(u32 result) {
     finish(result == SUSAMUNE_STATE_FULL ? "Not enough room; existing saved TAS files are safe." :
@@ -186,14 +186,47 @@ bool newProject() {
     else chooseEmpty();
     return true;
 }
-bool saveCheckpoint(u32 role) {
+static bool captureCheckpoint(u32 role, bool confirm) {
     if (!ready() || !active() || role == 0 || role >= 3 || !PracticeSession::attachedTo(sRefs[0].key) ||
         !PracticeSession::checkpointReady()) {
         sStatus = "Continue or open this TAS before saving a checkpoint."; return false;
     }
     PracticeSession::pauseForCheckpoint();
     sRole = role; sPhase = CAPTURE; sNew = sSaving = false;
-    if (valid(sRefs[role])) sPlan[role] = sRefs[role]; else chooseEmpty();
+    if (valid(sRefs[role])) {
+        sPlan[role] = sRefs[role];
+        sOverwrite = confirm;
+        if (confirm) sStatus = "Replace this TAS checkpoint?";
+    } else chooseEmpty();
+    return true;
+}
+bool saveCheckpoint(u32 role) { return captureCheckpoint(role, true); }
+bool checkpointOverwritePending() { return sOverwrite; }
+bool promptPending() { return sReplace || sOverwrite; }
+u32 pendingCheckpointRole() { return sRole; }
+bool confirmCheckpointOverwrite(bool accept) {
+    if (!sOverwrite) return false;
+    if (!accept) { finish("Checkpoint kept. Your TAS is paused."); return true; }
+    if (sRole == 0 || sRole >= 3 || !valid(sPlan[sRole]) ||
+        !active() || !PracticeSession::attachedTo(sRefs[0].key) ||
+        !PracticeSession::checkpointReady()) {
+        finish("Checkpoint changed; choose Save Checkpoint again."); return false;
+    }
+    sOverwrite = false; return true;
+}
+bool dispatchShortcut(BindId id) {
+    if (id < BIND_TAS_BEGINNING || id > BIND_TAS_REPLAY) return false;
+    if (!ready()) return true;
+    switch (id) {
+    case BIND_TAS_BEGINNING: loadCheckpoint(0); break;
+    case BIND_TAS_SAVE_CHECKPOINT1: saveCheckpoint(1); break;
+    case BIND_TAS_LOAD_CHECKPOINT1: loadCheckpoint(1); break;
+    case BIND_TAS_SAVE_CHECKPOINT2: saveCheckpoint(2); break;
+    case BIND_TAS_LOAD_CHECKPOINT2: loadCheckpoint(2); break;
+    case BIND_TAS_CONTINUE: continueEditing(); break;
+    case BIND_TAS_REPLAY: replay(); break;
+    default: break;
+    }
     return true;
 }
 bool loadCheckpoint(u32 role) {
@@ -224,7 +257,7 @@ bool save(const char *text) {
     if (!text || !text[0] || !SusamuneStateNameValid(text) || !StateStorage::available()) {
         sStatus = "Enter a name and use the matching Moonshine launcher."; return false;
     }
-    if (!saveCheckpoint(sCurrent ? sCurrent : 1)) return false;
+    if (!captureCheckpoint(sCurrent ? sCurrent : 1, false)) return false;
     sSaving = true; sPending = sSaved;
     sPending.magic = SUSAMUNE_TAS_MAGIC; sPending.version = SUSAMUNE_TAS_VERSION;
     memset(sPending.name, 0, sizeof(sPending.name));
@@ -255,7 +288,7 @@ bool remove(u32 id, u32 checksum) {
 bool catalogReady() { return sCatalogReady && StateStorage::catalogReady(); }
 const SusamuneStateCatalog &catalog() { return StateStorage::catalog(); }
 void update() {
-    if (sPhase == IDLE || sReplace) return;
+    if (sPhase == IDLE || promptPending()) return;
     if (sPhase == CAPTURE) {
         const Ref target = sPlan[sRole];
         if (gSavestateMgr->slotInfo(target.slot).generation != target.generation ||

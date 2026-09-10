@@ -54,7 +54,14 @@
     X(BIND_PRACTICE_SPIN_CCW,    "practice_spin_counterclockwise")             \
     X(BIND_SAVESTATE_CYCLE,     "savestate_cycle")                            \
     X(BIND_SAVESTATE_CYCLE_SAVE, "savestate_cycle_save")                       \
-    X(BIND_SAVESTATE_CYCLE_LOAD, "savestate_cycle_load")
+    X(BIND_SAVESTATE_CYCLE_LOAD, "savestate_cycle_load")                       \
+    X(BIND_TAS_BEGINNING,        "tas_beginning")                              \
+    X(BIND_TAS_SAVE_CHECKPOINT1, "tas_save_checkpoint1")                       \
+    X(BIND_TAS_LOAD_CHECKPOINT1, "tas_load_checkpoint1")                       \
+    X(BIND_TAS_SAVE_CHECKPOINT2, "tas_save_checkpoint2")                       \
+    X(BIND_TAS_LOAD_CHECKPOINT2, "tas_load_checkpoint2")                       \
+    X(BIND_TAS_CONTINUE,         "tas_continue")                               \
+    X(BIND_TAS_REPLAY,           "tas_replay")
 
 // The bindable buttons, as (GameCube button bit, ini token, menu glyph). The
 // mod defines the regional glyph macros in glyphs.hxx; the launcher ignores

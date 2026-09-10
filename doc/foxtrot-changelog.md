@@ -1,6 +1,13 @@
 # Moonshine Launcher FOXTROT — RC1 feedback update
 
-**V2.3.0 pre-release · Build AE95E374**
+**V2.3.0 pre-release · Build C66EEB34**
+
+- **Advance accepts jump-dives.** While practice is paused, A+B and other held gameplay buttons cannot block Advance or turn it into a reset. Each fresh press advances once. Normal reset shortcuts keep working outside practice pause.
+- **TAS controls stay together.** Pause / Resume and Advance now let you change their binds directly with X, or clear them with Z. The separate two-row Frame advance page is removed.
+- **Optional TAS shortcuts.** Beginning, Save/Go to Checkpoint 1 and 2, Continue and Replay can all have their own binds. All seven start unassigned and can be edited beside the action.
+- **Confirm checkpoint replacement.** Saving over a checkpoint asks first, including when using a shortcut. Cancel keeps it. Save TAS still updates the named SD project directly.
+- **A visible recording limit.** The project name now shows recorded frames out of 4096.
+- **Sound effects after a paused load.** Loading a gameplay state from Sunshine's normal pause screen now releases its retained sound-effect mute. Loading a paused state keeps the appropriate pause audio. Music is not restarted by this fix.
 
 - **A new TAS screen.** Practice > TAS projects has New TAS, Continue, Replay, Save TAS, Open TAS and Checkpoints. New TAS captures its Beginning automatically. Two named checkpoints let you go back and replace a continuation without keeping track of slot numbers.
 - **Save the whole TAS together.** Save TAS keeps the current point, Beginning and checkpoints under one name on SD. Open TAS brings them back together, including after rebooting into the matching setup. No separate start/checkpoint imports. Inputs remain experimental and limited to 4096 frames; build, region, scene and settings still need to match.
@@ -13,6 +20,6 @@
 - **Pinna 1 opening Talk split.** Keeps the automatic conversation when it starts immediately after the movie, so the route does not lose its first checkpoint before timing resumes.
 - **Fresh streak attempts start clean.** A practice pause in the previous stage no longer makes the next clean IL/streak attempt ineligible. A rejected streak attempt briefly shows the reason beside its counter.
 
-Pinna 1, streaks, camera settings and other sampled splits passed the user's latest console checks. Keep those results; this update's main checks are state capacity and the new TAS workflow.
+Pinna 1, streaks, camera settings, the third memory state and text readability passed the latest tester checks. Keep those results; this update focuses on TAS controls, checkpoint replacement and sound effects.
 
 Use the complete package and make fresh states. **TESTING.md** is the short update check; keep your earlier successful RC1 results. **RC1_TESTING.md** covers gaps in the team's wider coverage, and **RC1_ROUTES.md** divides the course checks. One useful pass is enough.

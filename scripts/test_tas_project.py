@@ -130,12 +130,12 @@ extern "C" __declspec(dllexport) u32 action(u32 code,u32 arg){switch(code){case 
  case 8:return TasProject::rename(published.projectId,published.checksum,"Renamed TAS");
  case 9:return TasProject::remove(published.projectId,published.checksum);
  case 10:return TasProject::rename(published.projectId,published.checksum^1,"Stale");
- case 11:return TasProject::remove(published.projectId,published.checksum^1);case 12:return TasProject::replay();
+ case 11:return TasProject::remove(published.projectId,published.checksum^1);case 12:return TasProject::replay();case 13:return TasProject::confirmCheckpointOverwrite(arg);case 14:return TasProject::dispatchShortcut((BindId)arg);
  default:return 0;}}
 extern "C" __declspec(dllexport) void tick(){TasProject::update();TasProject::afterDraw();}
 extern "C" __declspec(dllexport) void append(){++liveFrames;++liveRevision;tapeRecord=true;}
 extern "C" __declspec(dllexport) void option(u32 code,u32 value){switch(code){case 0:saveFails=value;break;case 1:failExport=value;break;case 2:compatible=value;break;case 3:canStart=value;break;case 4:readyCheckpoint=value;break;case 5:fileData[published.components[1].componentId].data.originKey[1]=value;break;case 6:memory[TasProject::sRefs[0].slot].packedBytes=value;break;case 7:liveKey[1]=value;break;case 8:runtimeStatus="Playback finished - fingerprints matched";break;}}
-extern "C" __declspec(dllexport) u32 value(u32 code){switch(code){case 0:return TasProject::active();case 1:return TasProject::busy();case 2:return TasProject::replacementNeeded();case 3:return exportCount;case 4:return commitCount;case 5:return importCount;case 6:return loadCount;case 7:return clearCount;case 8:return published.generation;case 9:return published.componentCount;case 10:return published.currentRole;case 11:return TasProject::dirty();case 12:return liveFrames;case 13:return ordinarySave;case 14:return ordinaryLoad;case 15:return lastLoaded;case 16:return TasProject::named();default:return 0;}}
+extern "C" __declspec(dllexport) u32 value(u32 code){switch(code){case 0:return TasProject::active();case 1:return TasProject::busy();case 2:return TasProject::replacementNeeded();case 3:return exportCount;case 4:return commitCount;case 5:return importCount;case 6:return loadCount;case 7:return clearCount;case 8:return published.generation;case 9:return published.componentCount;case 10:return published.currentRole;case 11:return TasProject::dirty();case 12:return liveFrames;case 13:return ordinarySave;case 14:return ordinaryLoad;case 15:return lastLoaded;case 16:return TasProject::named();case 17:return TasProject::checkpointOverwritePending();default:return 0;}}
 extern "C" __declspec(dllexport) u32 generation(u32 slot){return memory[slot].generation;}
 extern "C" __declspec(dllexport) u32 role(u32 role){return TasProject::sRefs[role].slot;}
 extern "C" __declspec(dllexport) u32 allowed(u32 slot){return TasProject::replacementAllowed(slot);}
@@ -188,7 +188,7 @@ extern "C" __declspec(dllexport) const char*status(){return TasProject::status()
         self.assertTrue(self.lib.value(2));self.assertFalse(self.lib.allowed(0))
     def test_failed_capture_keeps_previous_project_and_memory(self):
         self.new();self.lib.append();self.save();before=[self.lib.generation(i) for i in range(3)]
-        self.lib.option(0,1);self.lib.action(1,1);self.finish()
+        self.lib.option(0,1);self.lib.action(1,1);self.lib.action(13,1);self.finish()
         self.assertEqual([self.lib.generation(i) for i in range(3)],before)
         self.assertTrue(self.lib.value(0));self.assertEqual(self.lib.value(8),1)
     def test_save_publishes_only_after_start_and_checkpoint_exports(self):
@@ -255,6 +255,53 @@ extern "C" __declspec(dllexport) const char*status(){return TasProject::status()
             self.lib.action(code,0);self.finish();self.assertEqual(self.lib.value(8),1)
             self.assertTrue(self.lib.value(16))
         self.save();self.assertEqual(self.lib.value(8),2)
+
+    def test_checkpoint_overwrite_cancel_preserves_every_slot(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        before=[self.lib.generation(i) for i in range(3)]
+        self.assertTrue(self.lib.action(1,1));self.assertTrue(self.lib.value(17))
+        for _ in range(5):self.lib.tick()
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+        self.assertTrue(self.lib.action(13,0));self.finish()
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+
+    def test_checkpoint_confirmation_pins_target_and_stale_target_is_kept(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        slot=self.lib.role(1);self.lib.action(1,1);self.lib.ordinary(slot)
+        changed=self.lib.generation(slot)
+        self.assertFalse(self.lib.action(13,1));self.finish()
+        self.assertEqual(self.lib.generation(slot),changed)
+
+    def test_checkpoint_confirmation_cannot_capture_after_losing_its_take(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        before=[self.lib.generation(i) for i in range(3)]
+        self.lib.action(1,1);self.lib.option(7,999)
+        self.assertFalse(self.lib.action(13,1));self.finish()
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+
+    def test_checkpoint_confirmation_stays_pinned_after_acceptance(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        slot=self.lib.role(1);self.lib.action(1,1);self.assertTrue(self.lib.action(13,1))
+        self.lib.ordinary(slot);changed=self.lib.generation(slot);self.finish()
+        self.assertEqual(self.lib.generation(slot),changed)
+
+    def test_shortcuts_use_the_same_prompt_and_do_not_repeat_while_waiting(self):
+        self.new();self.lib.append()
+        for save_id,role in ((35,1),(37,2)):
+            self.assertTrue(self.lib.action(14,save_id));self.finish()
+            before=[self.lib.generation(i) for i in range(3)]
+            self.assertTrue(self.lib.action(14,save_id));self.assertTrue(self.lib.value(17))
+            self.assertTrue(self.lib.action(14,save_id));self.lib.tick()
+            self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+            self.assertTrue(self.lib.action(13,1));self.finish()
+            self.assertNotEqual(self.lib.generation(self.lib.role(role)),before[self.lib.role(role)])
+        self.assertFalse(self.lib.action(14,33))
+        self.assertTrue(self.lib.action(14,34))
+        self.assertTrue(self.lib.action(14,36));self.finish()
+        self.assertEqual(self.lib.value(15),self.lib.role(1))
+        self.assertTrue(self.lib.action(14,38));self.finish()
+        self.assertEqual(self.lib.value(15),self.lib.role(2))
+        self.assertTrue(self.lib.action(14,39));self.assertTrue(self.lib.action(14,40))
 
     def test_not_ready_scene_or_changed_settings_cannot_create_checkpoint(self):
         self.lib.option(3,0);self.assertFalse(self.lib.action(0,0));self.lib.option(3,1);self.new()

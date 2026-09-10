@@ -45,7 +45,9 @@ static bool sPaused,sPausePending,sCollisionHooksReady,sStateHookReady,sRecord,s
 static bool sStepQueued,sAvailable,sActionable;
 static u8 sMenuAction,sSpinRemaining;
 static u32 sSteps,invalidations,stops;
+static bool classicSuppressed;
 namespace Ghost { bool observerActive() { return false; } }
+namespace WarpWheel { void suppressClassicInstantUntilRelease() { classicSuppressed=true; } }
 namespace CrashReport { void note(unsigned,unsigned,unsigned) {} }
 static const unsigned SUSAMUNE_CRASH_EVENT_PRACTICE=1;
 bool available() { return sAvailable; }
@@ -63,6 +65,9 @@ bool requestStep() { return ::requestStep(false); }
 extern "C" __declspec(dllexport) unsigned dispatch(unsigned pause,unsigned before,unsigned now) {
     localBinds.mMask[BIND_PRACTICE_PAUSE]=(u16)pause;
     localBinds.mPrevHeld=(u16)before;localBinds.mHeld=(u16)now;
+    const bool stepOverridesShortcut=!gBinds.recording() && PracticeSession::paused() &&
+        gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
+    bool practiceStepConsumed=false;
 ''' + dispatch + r'''
     return sPaused|(sStepQueued<<1);
 }
@@ -71,7 +76,7 @@ extern "C" __declspec(dllexport) void reset(unsigned flags,unsigned bind) {
     sAvailable=(flags&8)==0;sCollisionHooksReady=(flags&16)==0;sStateHookReady=true;
     sRecord=flags&32;sReplay=false;sFreeCamera=false;
     sStepQueued=false;sStripButtons=0;sMenuAction=0;sSpinRemaining=0;
-    sSteps=invalidations=stops=0;
+    sSteps=invalidations=stops=0;classicSuppressed=false;
     for (unsigned i=0;i<BIND_COUNT;++i) localBinds.mMask[i]=0;
     localBinds.mMask[BIND_PRACTICE_STEP]=(u16)bind;
     localBinds.mMask[BIND_PRACTICE_PAUSE]=4;
@@ -82,8 +87,12 @@ extern "C" __declspec(dllexport) unsigned edge(unsigned previous,unsigned curren
                                                unsigned silent,unsigned recorder) {
     localBinds.mPrevHeld=(u16)previous;localBinds.mHeld=(u16)current;
     localBinds.mRecSilent=silent!=0;localBinds.mRecState=(u8)recorder;
-    const bool active=!gBinds.recording() && gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP);
+    const bool active=!gBinds.recording() && (sPaused ?
+        gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP) : gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP));
     return active;
+}
+extern "C" __declspec(dllexport) unsigned conflicting_actions() {
+    return gBinds.wasPressed(BIND_FULL_RESTART)|(classicSuppressed<<1);
 }
 extern "C" __declspec(dllexport) void shortcut(unsigned mask,unsigned inert) {
     localBinds.mMask[inert ? BIND_PRACTICE_SPIN_CW : BIND_FULL_RESTART]=(u16)mask;
@@ -149,10 +158,44 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
             self.assertEqual(self.lib.dispatch(8, 0x208, 8), 0)
             self.assertEqual(self.lib.dispatch(8, 0, 8), 1)
 
-    def test_larger_shortcut_does_not_queue_step(self):
+    def test_paused_step_wins_over_restart_and_suppresses_both_restart_paths(self):
         self.lib.shortcut(0x208, 0)
-        self.assertEqual(self.lib.edge(0x200, 0x208, 0, 0), 0)
-        self.assertEqual(self.lib.dispatch(4, 0x200, 0x208), 1)
+        self.assertEqual(self.lib.edge(0x200, 0x208, 0, 0), 1)
+        self.assertEqual(self.lib.dispatch(4, 0x200, 0x208), 3)
+        self.assertEqual(self.lib.conflicting_actions(), 2)
+
+    def test_jumpdive_steps_keep_A_B_and_strip_only_advance(self):
+        self.lib.shortcut(0x208, 0)
+        for before in (0, 0x100, 0x200, 0x300):
+            self.lib.reset(5, 8)
+            self.lib.shortcut(0x208, 0)
+            self.assertEqual(self.lib.dispatch(4, before, 0x308), 3)
+            out, _ = self.filtered(buttons=0x308, analogA=255, analogB=255)
+            self.assertEqual((out.buttons, out.analogA, out.analogB), (0x300, 255, 255))
+            self.assertEqual(self.lib.conflicting_actions(), 2)
+        self.assertEqual(self.lib.edge(0x308, 0x308, 1, 0), 0)
+        self.assertEqual(self.lib.edge(0x300, 0x308, 1, 0), 1)
+
+    def test_every_held_gameplay_combination_allows_one_fresh_paused_step(self):
+        self.lib.shortcut(0x208, 0)
+        bits = [1 << n for n in range(16) if (1 << n) & 0x1f77]
+        for choice in range(1 << len(bits)):
+            held = sum(bit for n, bit in enumerate(bits) if choice & (1 << n))
+            self.assertEqual(self.lib.edge(held, held | 8, 1, 0), 1, hex(held))
+            self.assertEqual(self.lib.edge(held | 8, held | 8, 1, 0), 0, hex(held))
+
+    def test_inactive_larger_shortcut_does_not_block_starting_frame_advance(self):
+        self.lib.reset(4, 8)
+        self.lib.shortcut(0x208, 0)
+        self.assertEqual(self.lib.dispatch(4, 0x300, 0x308), 1)
+
+    def test_live_default_step_does_not_steal_the_normal_restart(self):
+        self.lib.reset(4, 8)
+        self.lib.shortcut(0x208, 0)
+        self.assertEqual(self.lib.dispatch(4, 0x200, 0x208), 0)
+        self.assertEqual(self.lib.conflicting_actions(), 1)
+        out, _ = self.filtered(buttons=0x208, analogB=255)
+        self.assertEqual((out.buttons, out.analogB), (0x208, 255))
 
     def test_restart_with_jump_held_does_not_pause_on_press_or_release(self):
         self.lib.reset(4, 4)
@@ -192,10 +235,11 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
         self.assertEqual(self.lib.request(0, 0) & 15, 3)
         self.assertEqual(self.lib.request(0, 0) & 15, 11)
 
-    def test_old_L_DUp_resume_does_not_also_fire_custom_DUp_step(self):
-        self.assertEqual(self.lib.dispatch(0x48, 0, 0x48), 0)
-        self.assertEqual(self.lib.dispatch(0x48, 0x48, 0x48), 0)
-        self.assertEqual(self.lib.dispatch(0x48, 0, 8), 1)
+    def test_advance_has_priority_over_an_overlapping_resume_shortcut(self):
+        self.assertEqual(self.lib.dispatch(0x48, 0, 0x48), 3)
+        self.lib.reset(5, 8)
+        self.assertEqual(self.lib.dispatch(8, 0, 8), 3)
+        self.lib.reset(5, 8)
         self.assertEqual(self.lib.dispatch(0x48, 0, 0x108), 3)
 
     def test_unavailable_or_loading_controls_arm_without_queuing_a_step(self):

@@ -320,10 +320,10 @@ extern "C" __declspec(dllexport) int bindJump(int id,int direction){BindsTab tab
                 self.assertEqual(self.lib.naming(case), 0)
 
     def test_cycle_bind_is_unassigned_and_grouped_without_changing_ids(self):
-        expected = list(range(10)) + [32, 33, 31] + list(range(10, 29))
+        expected = list(range(10)) + [32, 33, 31] + list(range(10, 29)) + list(range(34, 41))
         actual = [self.lib.bindOrder(row) for row in range(self.lib.bindCount())]
         self.assertEqual(actual, expected)
-        for bind in (31, 32, 33):
+        for bind in (31, 32, 33, 34, 35, 36, 37, 38, 39, 40):
             self.assertEqual(self.lib.bindDefault(bind), 0)
         for row, bind in enumerate(expected):
             self.assertEqual(self.lib.bindIndex(bind), row)
@@ -331,7 +331,7 @@ extern "C" __declspec(dllexport) int bindJump(int id,int direction){BindsTab tab
         self.assertEqual(self.lib.bindJump(31, -1), 8)
 
     def test_bind_scroll_rows_match_rendered_sections(self):
-        headers = {0, 7, 8, 10, 14, 15, 21, 23}
+        headers = {0, 7, 8, 10, 14, 15, 21, 23, 34}
         row = 0
         for index in range(self.lib.bindCount()):
             bind = self.lib.bindOrder(index)

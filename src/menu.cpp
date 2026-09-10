@@ -4327,14 +4327,15 @@ const u8 kBindSectionStarts[] = {
     BIND_ATTEMPT_SHOW,
     BIND_POSITION_SAVE,
     BIND_PRACTICE_PAUSE,
+    BIND_TAS_BEGINNING,
 };
 const char kBindSectionNames[] =
-    "ACTIONS\0MENU\0SAVESTATES\0WARPS AND RESTARTS\0DISPLAY\0ATTEMPT COUNTER\0POSITION\0FRAME AND CAMERA";
+    "ACTIONS\0MENU\0SAVESTATES\0WARPS AND RESTARTS\0DISPLAY\0ATTEMPT COUNTER\0POSITION\0FRAME AND CAMERA\0TAS PROJECTS";
 enum {
     kBindSectionCount =
         sizeof(kBindSectionStarts) / sizeof(kBindSectionStarts[0]),
 };
-static_assert(kBindSectionCount == 8,
+static_assert(kBindSectionCount == 9,
               "bind section metadata must be validated together");
 static_assert(BIND_REGRAB_OBJECT == 0 &&
                   BIND_REGRAB_OBJECT < BIND_MENU_TOGGLE &&
@@ -4344,7 +4345,8 @@ static_assert(BIND_REGRAB_OBJECT == 0 &&
                   BIND_TOGGLE_INPUT_DISPLAY < BIND_ATTEMPT_SHOW &&
                   BIND_ATTEMPT_SHOW < BIND_POSITION_SAVE &&
                   BIND_POSITION_SAVE < BIND_PRACTICE_PAUSE &&
-                  BIND_PRACTICE_PAUSE < BIND_COUNT,
+                  BIND_PRACTICE_PAUSE < BIND_TAS_BEGINNING &&
+                  BIND_TAS_BEGINNING < BIND_COUNT,
               "bind section starts must be ordered and in bounds");
 
 }  // namespace
@@ -5635,6 +5637,12 @@ public:
         return false;
     }
 
+    void openChild(MenuTab *target) {
+        for (u32 i = 0; i < mCount; ++i) if (mChildren[i] == target) {
+            mPage = mSel = i; focus(); return;
+        }
+    }
+
     void update(Menu *menu, TMarioGamePad *pad) override {
         MenuTab *child = current();
         if (child) {
@@ -5823,14 +5831,12 @@ static_assert(sizeof(NestedMenuTab) <= 64,
 
 class PracticeControlsTab final : public MenuTab {
 public:
-    enum Page { FRAMES, CAMERA };
-    explicit PracticeControlsTab(Page page) : mPage(page), mSel(0), mBinding(false) { focus(); }
+    PracticeControlsTab() : mSel(0), mBinding(false) { focus(); }
     const char *title() const override {
-        return mPage == FRAMES ? "Frame advance" : "Free camera";
+        return "Free camera";
     }
     const char *summary() const override {
-        return mPage == FRAMES ? "Pause the game and choose the inputs for each frame." :
-               "Move the camera while gameplay or a ghost is paused.";
+        return "Move the camera while gameplay or a ghost is paused.";
     }
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
@@ -5848,7 +5854,7 @@ public:
         }
         if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, rowCount());
         if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, rowCount());
-        if (mPage == CAMERA && mSel >= 2 && mSel <= 5 &&
+        if (mSel >= 2 && mSel <= 5 &&
             (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
             gSettings.cycle(cameraSetting(),
                 (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
@@ -5862,21 +5868,14 @@ public:
         }
         if (!(pressed & JUTGamePad::A)) return;
         bool close = false;
-        if (mPage == FRAMES) {
-            switch (mSel) {
-            case 0: close = PracticeSession::requestPauseToggle(true); break;
-            case 1: close = PracticeSession::requestStep(true); break;
-            }
-        } else {
-            switch (mSel) {
-            case 0: close = PracticeSession::requestFreeCameraToggle(); break;
-            case 1: close = PracticeSession::requestPauseToggle(true); break;
-            case 2: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
-            case 3: gSettings.cycle(SETTING_FREE_CAMERA_STRAFE_REVERSE, 1); return;
-            case 4: gSettings.cycle(SETTING_FREE_CAMERA_SENSITIVITY, 1); return;
-            case 5: gSettings.cycle(SETTING_FREE_CAMERA_HIDE_HUD, 1); return;
-            case 6: PracticeSession::recenterCamera(); break;
-            }
+        switch (mSel) {
+        case 0: close = PracticeSession::requestFreeCameraToggle(); break;
+        case 1: close = PracticeSession::requestPauseToggle(true); break;
+        case 2: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
+        case 3: gSettings.cycle(SETTING_FREE_CAMERA_STRAFE_REVERSE, 1); return;
+        case 4: gSettings.cycle(SETTING_FREE_CAMERA_SENSITIVITY, 1); return;
+        case 5: gSettings.cycle(SETTING_FREE_CAMERA_HIDE_HUD, 1); return;
+        case 6: PracticeSession::recenterCamera(); break;
         }
         if (close) menu->hide();
         menu->toast(PracticeSession::status());
@@ -5884,17 +5883,15 @@ public:
     void draw(Menu *menu, int x, int y, int w, int h) override {
         const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
             PracticeSession::manualPaused() ? "Resume gameplay" : "Pause gameplay";
-        const char *frameLabels[] = {pause, "Advance one frame"};
         const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways",
                                      "Look sensitivity", "Hide all HUD", "Recenter camera"};
-        const char *frameValues[] = {"", PracticeSession::manualPaused() ? "Step" : "Pause"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE),
             gSettings.valueLabel(SETTING_FREE_CAMERA_SENSITIVITY),
             gSettings.valueLabel(SETTING_FREE_CAMERA_HIDE_HUD), "Reset view"};
-        const char *const *labels = mPage == FRAMES ? frameLabels : cameraLabels;
-        const char *const *values = mPage == FRAMES ? frameValues : cameraValues;
+        const char *const *labels = cameraLabels;
+        const char *const *values = cameraValues;
         char status[80];
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
@@ -5925,32 +5922,22 @@ private:
             SETTING_FREE_CAMERA_HIDE_HUD};
         return ids[mSel - 2];
     }
-    int rowCount() const { return mPage == FRAMES ? 2 : 7; }
+    int rowCount() const { return 7; }
     BindId selectedBind() const {
-        static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP};
         static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT,
             BIND_COUNT, BIND_COUNT, BIND_COUNT, BIND_COUNT};
-        return mPage == FRAMES ? frame[mSel] : camera[mSel];
+        return camera[mSel];
     }
     const char *help() const {
-        if (mPage == FRAMES) {
-            if (PracticeSession::pausePending()) return "Armed: will pause on Mario's first controllable frame. Pause cancels.";
-            if (PracticeSession::freeCamera()) return "Camera is ON: Mario input is OFF. Turn camera off to jump or spin.";
-            return mSel == 0 ? "Pause or resume. The timer stops while paused and the attempt is marked TAS." :
-                "Hold your inputs and tap Step. Release A before pressing it for another jump.";
-        }
-        if (mPage == CAMERA) {
-            if (mSel == 0) return "On pauses live gameplay. Off leaves it paused; choose Resume when ready.";
-            if (mSel == 1) return "Resume closes free camera in gameplay. Ghost Watch can keep its camera.";
-            if (mSel == 2) return "C-stick left/right changes speed. Hold X while moving for a boost.";
-            if (mSel == 3) return "Reverse only main-stick sideways movement. C-stick looking stays unchanged.";
-            if (mSel == 4) return "Change how quickly the C-stick turns the camera, from 0.25x to 4x.";
-            if (mSel == 5) return "Hide game and Moonshine overlays while filming. You can still open this menu.";
-            return "Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.";
-        }
-        return "";
+        if (mSel == 0) return "On pauses live gameplay. Off leaves it paused; choose Resume when ready.";
+        if (mSel == 1) return "Resume closes free camera in gameplay. Ghost Watch can keep its camera.";
+        if (mSel == 2) return "C-stick left/right changes speed. Hold X while moving for a boost.";
+        if (mSel == 3) return "Reverse only main-stick sideways movement. C-stick looking stays unchanged.";
+        if (mSel == 4) return "Change how quickly the C-stick turns the camera, from 0.25x to 4x.";
+        if (mSel == 5) return "Hide game and Moonshine overlays while filming. You can still open this menu.";
+        return "Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.";
     }
-    u8 mPage, mSel;
+    u8 mSel;
     bool mBinding;
     RawPromptInput mInput;
 };
@@ -5972,7 +5959,7 @@ public:
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         static const char *const pages[][8] = {
-            {"FRAME CONTROLS", "Practice: Frame advance pauses or steps.",
+            {"FRAME CONTROLS", "Practice: TAS projects pauses or steps.",
              "Your shortcut appears below the list.", "Press X on an action to change its shortcut.",
              "Hold Mario's buttons, then tap Step.", "Press early to pause when Mario can move.",
              "Also works while watching ghosts.", "Camera On turns Mario input off."},
@@ -6153,7 +6140,7 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 stageLoader[sizeof(StageLoaderTab)] __attribute__((aligned(8)));
     u8 settingsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 ilsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
-    u8 practiceControls[2][sizeof(PracticeControlsTab)] __attribute__((aligned(8)));
+    u8 practiceControls[sizeof(PracticeControlsTab)] __attribute__((aligned(8)));
     u8 tasProject[sizeof(TasProjectTab)] __attribute__((aligned(8)));
     u8 guide[16] __attribute__((aligned(8)));
     u8 displayHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
@@ -6265,17 +6252,16 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     MenuTab *stageLoader = new (sStageLoaderBuf) StageLoaderTab();
     MenuTab *records = new (sRecordsBuf) RecordsTab();
 
-    MenuTab *frame = new (sMenuRuntime.practiceControls[0]) PracticeControlsTab(PracticeControlsTab::FRAMES);
-    MenuTab *camera = new (sMenuRuntime.practiceControls[1]) PracticeControlsTab(PracticeControlsTab::CAMERA);
+    MenuTab *camera = new (sMenuRuntime.practiceControls) PracticeControlsTab();
     MenuTab *inputReplay = new (sMenuRuntime.tasProject) TasProjectTab();
     MenuTab *guide = new (sMenuRuntime.guide) GuideTab();
-    MenuTab *practiceChildren[] = { frame, camera, inputReplay, savestate, practice, rng, gameplay };
+    MenuTab *practiceChildren[] = { inputReplay, camera, savestate, practice, rng, gameplay };
     MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety, timer };
     MenuTab *displayChildren[] = { creation, display, timer, cosmetics };
     MenuTab *systemChildren[] = { binds, guide };
     mTabs[mNumTabs++] = starred;
     mTabs[mNumTabs++] = new (sSettingsHubBuf) NestedMenuTab(
-        "Practice", practiceChildren, 7);
+        "Practice", practiceChildren, 6);
     mTabs[mNumTabs++] = new (sILsHubBuf) NestedMenuTab(
         "Runs", runChildren, 5);
     mTabs[mNumTabs++] = records;
@@ -6284,6 +6270,13 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
         "Display", displayChildren, 4);
     mTabs[mNumTabs++] = new (sMenuRuntime.systemHub) NestedMenuTab(
         "System", systemChildren, 2);
+}
+
+void Menu::openTasProject() {
+    auto *tab = reinterpret_cast<TasProjectTab *>(sMenuRuntime.tasProject);
+    tab->showCheckpointPrompt();
+    reinterpret_cast<NestedMenuTab *>(sSettingsHubBuf)->openChild(tab);
+    mCurTab = 1; mTabFirst = mCRepeatFrames = 0; mShown = true;
 }
 
 bool Menu::openGhostPBSave(u32 token) {

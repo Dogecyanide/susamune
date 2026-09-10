@@ -194,7 +194,7 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
             self.assertEqual(out.raw[capacity:],b'guard!\0'[capacity:])
 
     def test_translated_menu_help_fits_two_readable_lines(self):
-        source=(ROOT/'src/menu.cpp').read_text()
+        source=(ROOT/'src/menu.cpp').read_text()+(ROOT/'src/tas_menu.inc').read_text()
         literals=re.findall(r'"([^"\\\n]*)"',source)
         for literal in set(literals):
             translated=self.lib.lookup(literal.encode())
@@ -206,6 +206,29 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
             rest=self.lib.line(data,a,len(a),512,14)
             end=self.lib.line(C.cast(rest,C.c_char_p),b,len(b),512,14)
             self.assertEqual(C.string_at(end),b'',literal)
+
+    def test_tas_shortcuts_and_checkpoint_prompts_are_translated(self):
+        labels=['TAS PROJECTS','Rename TAS project','Refresh','Checkpoint',
+                'This replaces the checkpoint with your current position.',
+                'A: replace checkpoint   B: keep it',
+                'Hold new buttons, then release to save. C-stick cancels.']
+        binds=(ROOT/'src/binds_descs.inc').read_text()
+        labels+=re.findall(r'BIND_DESC\("(TAS:[^"]+)"',binds)
+        self.assertEqual(len(labels),14)
+        for label in labels:
+            with self.subTest(label=label):
+                translated=self.lib.lookup(label.encode())
+                self.assertNotEqual(translated,label.encode())
+                self.assertGreater(self.lib.measure(translated),0)
+        formats={b'%lu / %lu frames':('%lu / %luコマ',32),
+                 b'Replace %s?':('%sを置き換えますか？',64),
+                 b'Shortcut: %s   X: change   Z: clear':('割当：%s　X：変更　Z：解除',128)}
+        for english,(japanese,capacity) in formats.items():
+            translated=self.lib.lookup(english)
+            self.assertEqual(translated,japanese.encode('cp932'))
+            sample=translated.replace(b'%lu',b'4096').replace(b'%s',self.lib.lookup(b'Checkpoint 1'))
+            self.assertLess(len(sample),capacity)
+            self.assertGreater(self.lib.measure(sample),0)
 
     def test_current_navigation_has_translated_labels(self):
         source = (ROOT/'src/menu.cpp').read_text()

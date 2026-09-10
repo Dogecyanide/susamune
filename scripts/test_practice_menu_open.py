@@ -19,7 +19,7 @@ class MenuOpeningHoldTests(unittest.TestCase):
         cls.addClassCleanup(cls.folder.cleanup)
         source = (ROOT / "src/main.cpp").read_text()
         expressions = []
-        for signature in ("const bool menuOpenBeforeDirect =", "const bool menuOwnsRetailPad =",
+        for signature in ("const bool menuOpenBeforeDirect =", "bool menuOwnsRetailPad =",
                           "const bool freeze ="):
             expressions.append(signature + source.split(signature, 1)[1].split(";", 1)[0] + ";")
         program = Path(cls.folder.name) / "menu_open.cpp"
@@ -36,6 +36,7 @@ extern "C" __declspec(dllexport) unsigned opening(unsigned flags,unsigned state)
     TMarDirector director={state};TMarDirector *gpMarDirector=(flags&1)?&director:nullptr;
     menuShown=flags&2;menuPressed=flags&4;wheelShown=flags&8;practiceHold=flags&32;
     const bool sessionModalBeforeDirect=flags&16,stateDiskBusy=flags&64;
+    const bool stepOverridesShortcut=flags&256;
 ''' + "\n".join(expressions) + r'''
     return freeze;
 }
@@ -62,6 +63,10 @@ extern "C" __declspec(dllexport) unsigned opening(unsigned flags,unsigned state)
     def test_existing_modal_practice_and_storage_holds_still_apply(self):
         for owner in (8, 16, 32, 64):
             self.assertEqual(self.lib.opening(1 | owner, 4), 1)
+
+    def test_paused_advance_overrides_a_new_menu_chord_but_never_an_open_menu(self):
+        self.assertEqual(self.lib.opening(1 | 4 | 256, 4), 0)
+        self.assertEqual(self.lib.opening(1 | 2 | 4 | 256, 4), 1)
 
 
 if __name__ == "__main__":

@@ -665,6 +665,19 @@ inline void unmuteAudioDma(bool wasOn) {
     }
 }
 
+void reconcilePauseAudio(u8 previousState) {
+    if (!gpMSound || !gpMarDirector) return;
+    const u8 restoredState = gpMarDirector->mCurState;
+    if (restoredState == TMarDirector::STATE_PAUSE_MENU) {
+        if (previousState != TMarDirector::STATE_PAUSE_MENU) gpMSound->pauseOn(false);
+    } else if (previousState == TMarDirector::STATE_PAUSE_MENU &&
+               restoredState == TMarDirector::STATE_NORMAL && !gpMarDirector->mDemoState) {
+        // JAudio is retained across a load, so bypassing retail unpause must
+        // release its category mute through the same silent retail API.
+        gpMSound->pauseOff(2);
+    }
+}
+
 // ---------------------------------------------------------------------
 // Load-in-flight / transition gate
 // ---------------------------------------------------------------------
@@ -1592,6 +1605,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
         return false;
     }
 
+    const u8 previousDirectorState = gpMarDirector ? gpMarDirector->mCurState : 0;
     // Same reasoning as save().
     if (gpMSound) {
         gpMSound->stopAllSound();
@@ -1731,6 +1745,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     OSRestoreInterrupts(ints);
     sBusy = false;
 
+    reconcilePauseAudio(previousDirectorState);
     featuresOnSavestateLoaded(h->feature_state);
     gQFTTimer.restoreSavestate(saved.timer);
     SplitEvents::onSavestateLoaded();

@@ -99,7 +99,8 @@ public:
         const u16 m = mMask[id];
         return m != 0 && (mHeld & m) == m && (mPrevHeld & m) != m;
     }
-    // A larger shortcut owns its buttons, even with gameplay inputs held.
+    // Live-game shortcuts retain priority. A paused Step uses the raw subset
+    // edge instead; held gameplay buttons cannot turn it into a restart.
     bool wasPressedPracticeRaw(BindId id) const;
 
     // --- recording ---

@@ -2,6 +2,7 @@
 #define SUSAMUNE_TAS_PROJECT_HXX
 #include <Dolphin/types.h>
 #include "susamune/state_storage.h"
+#include "susamune/binds.hxx"
 namespace TasProject {
 enum { BEGINNING, CHECKPOINT1, CHECKPOINT2, ROLE_COUNT };
 struct Checkpoint { bool present; u32 frames; };
@@ -17,6 +18,12 @@ const char *roleName(u32 role);
 Checkpoint checkpoint(u32 role);
 bool newProject();
 bool saveCheckpoint(u32 role);
+bool promptPending();
+bool checkpointOverwritePending();
+u32 pendingCheckpointRole();
+bool confirmCheckpointOverwrite(bool accept);
+// Called once for a fresh shortcut edge; true includes a handled refusal.
+bool dispatchShortcut(BindId id);
 bool loadCheckpoint(u32 role);
 bool continueEditing();
 bool replay();

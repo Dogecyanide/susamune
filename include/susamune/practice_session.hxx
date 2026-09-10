@@ -59,6 +59,7 @@ bool projectAvailable();
 u32 editRevision();
 u32 takePosition();
 bool requestContinue();
+void stripShortcutButtons(u16 buttons);
 bool requestPlayback();
 void requestStop();
 // Approved warps must release the hold so the retail transition can run.

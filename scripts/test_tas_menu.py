@@ -1,0 +1,144 @@
+"""Exercise the actual TAS page's raw prompts and inline shortcut recorder."""
+import ctypes as C
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+from test_nested_menu_focus import function
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class TasMenuTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        text = (ROOT / 'src/tas_menu.inc').read_text()
+        text = text.replace(function(text, '    void draw(Menu *menu, int x, int y, int w, int h) override'), '')
+        text = text[text.index('class TasProjectTab'):text.index('static_assert')]
+        text = text.replace(' : public MenuTab', '').replace(' override', '').replace('private:', 'public:')
+        raw = (ROOT / 'include/susamune/raw_prompt_input.hxx').read_text()
+        raw = raw[raw.index('class RawPromptInput'):raw.index('#endif')]
+        shim = r'''
+#include "susamune/state_storage.h"
+#include "susamune/binds_list.h"
+typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
+#define ID(name,key) name,
+enum BindId { SUSAMUNE_BIND_LIST(ID) BIND_COUNT };
+#undef ID
+extern "C" void *memcpy(void*d,const void*s,unsigned long long n){for(unsigned i=0;i<n;++i)((volatile char*)d)[i]=((const char*)s)[i];return d;}
+extern "C" unsigned long long strlen(const char*s){unsigned n=0;while(s[n])++n;return n;}
+struct JUTGamePad {enum{A=0x100,B=0x200,X=0x400,Y=0x800,Z=0x10,START=0x1000};
+ struct Status{u16 mButton;};static Status mPadStatus[1];};
+JUTGamePad::Status JUTGamePad::mPadStatus[1];
+struct TMarioGamePad {enum{CSTICK_UP=1,CSTICK_DOWN=2,CSTICK_LEFT=4,CSTICK_RIGHT=8};
+ struct {u32 mRapidInput;}mButtons;u32 nav;};
+static int calls,lastAction,closeCount,bindTarget,cleared,confirmCount,cancelCount;
+static bool overwrite,replacePrompt,phaseBusy,dirtyState;
+void hit(int action){++calls;lastAction=action;}
+struct Menu {u32 navigationInput(TMarioGamePad*p){return p->nav;}void hide(){++closeCount;}void toast(const char*){}};
+struct Binds {bool rec;bool recording(){return rec;}void cancelRecord(){rec=false;}
+ void beginRecord(BindId id){rec=true;bindTarget=id;}void set(BindId id,u16 v){if(!v)cleared=id;}}gBinds;
+struct StateManager {struct Info{u32 generation;};Info slotInfo(u32){return {11};}}manager,*gSavestateMgr=&manager;
+int wrap(int v,int count){return (v+count)%count;}int clampi(int v,int lo,int hi){return v<lo?lo:v>hi?hi:v;}
+void updateCreationKeyboardText(TMarioGamePad*,char*,u8&,int,u8&,bool&,u8&){}
+namespace PracticeSession {
+bool starting(){return false;}bool requestPauseToggle(bool){hit(6);return true;}
+bool requestStep(bool){hit(7);return true;}const char*status(){return "status";}
+}
+namespace TasProject {
+const char*status(){return "status";}const char*name(){return "TAS";}bool active(){return true;}
+bool busy(){return phaseBusy;}bool dirty(){return dirtyState;}bool named(){return true;}
+bool replacementNeeded(){return replacePrompt;}bool replacementAllowed(u32){return true;}
+bool replace(u32,u32){replacePrompt=phaseBusy=false;hit(90);return true;}
+void cancelReplacement(){replacePrompt=phaseBusy=false;}
+bool checkpointOverwritePending(){return overwrite;}
+bool confirmCheckpointOverwrite(bool accept){overwrite=phaseBusy=false;if(accept)++confirmCount;else ++cancelCount;return true;}
+bool newProject(){hit(0);return true;}bool continueEditing(){hit(1);return true;}bool replay(){hit(2);return true;}
+bool save(const char*){hit(3);return true;}bool open(u32,u32){hit(4);return true;}
+bool saveCheckpoint(u32 role){hit(10+role);overwrite=phaseBusy=true;return true;}
+bool loadCheckpoint(u32 role){hit(20+role);return true;}
+bool refresh(u32=0){return true;}bool rename(u32,u32,const char*){return true;}bool remove(u32,u32){return true;}
+bool catalogReady(){return false;}const SusamuneStateCatalog&catalog(){static SusamuneStateCatalog c={};return c;}
+}
+'''
+        body = r'''
+static void reset(){calls=lastAction=closeCount=confirmCount=cancelCount=0;bindTarget=cleared=-1;
+ overwrite=replacePrompt=phaseBusy=dirtyState=gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;}
+static void press(TasProjectTab&t,u16 held,u32 nav=0){Menu m;TMarioGamePad p={};p.nav=nav;
+ JUTGamePad::mPadStatus[0].mButton=held;t.update(&m,&p);}
+extern "C" __declspec(dllexport) int route(int page,int row,int button,int*out){
+ reset();TasProjectTab tab;tab.mPage=page;tab.mSel=row;press(tab,button);
+ out[0]=lastAction;out[1]=closeCount;out[2]=bindTarget;out[3]=cleared;out[4]=tab.grabsInput();return calls;}
+extern "C" __declspec(dllexport) int binding(int page,int row,int fourth,int*out){
+ reset();TasProjectTab tab;tab.mPage=page;tab.mSel=row;press(tab,JUTGamePad::X);
+ out[0]=tab.grabsInput();out[1]=bindTarget;
+ press(tab,0);press(tab,0x260);gBinds.rec=false;press(tab,0x260|fourth);
+ out[2]=calls;out[3]=closeCount;out[4]=tab.mSel;out[5]=gBinds.rec;
+ press(tab,0);press(tab,JUTGamePad::A);return calls;}
+extern "C" __declspec(dllexport) int overwriteCase(int shortcut,int cancel){
+ reset();TasProjectTab tab;
+ if(shortcut){overwrite=phaseBusy=true;JUTGamePad::mPadStatus[0].mButton=JUTGamePad::A;tab.showCheckpointPrompt();}
+ else {tab.mPage=tab.CHECKPOINTS;tab.mSel=1;press(tab,JUTGamePad::A);}
+ for(int i=0;i<9;++i)press(tab,JUTGamePad::A);
+ if(confirmCount||cancelCount||!overwrite||!tab.grabsInput())return 1;
+ press(tab,0);press(tab,cancel?JUTGamePad::B:JUTGamePad::A);
+ if(overwrite||confirmCount!=(cancel?0:1)||cancelCount!=(cancel?1:0))return 2;
+ return 0;
+}
+extern "C" __declspec(dllexport) int cancelBinding(){
+ reset();TasProjectTab tab;tab.mSel=7;press(tab,JUTGamePad::X);
+ press(tab,JUTGamePad::A,TMarioGamePad::CSTICK_LEFT);
+ press(tab,JUTGamePad::A);if(gBinds.rec||calls)return 1;
+ press(tab,0);press(tab,JUTGamePad::A);return calls==1&&lastAction==7?0:2;
+}
+'''
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        source = Path(cls.tmp.name) / 'menu.cpp'
+        source.write_text(shim + raw + text + body)
+        dll = source.with_suffix('.dll')
+        result = subprocess.run([str(ROOT/'toolchain/clang++.exe'), '--target=x86_64-pc-windows-msvc',
+            '-shared','-nostdlib','-fuse-ld=lld','-Wl,/noentry','-O2','-std=c++17',
+            '-I',str(ROOT/'include'),str(source),'-o',str(dll)],capture_output=True,text=True)
+        if result.returncode: raise AssertionError(result.stderr)
+        cls.lib = C.CDLL(str(dll))
+        cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
+
+    def test_nested_checkpoint_name_is_localized_before_formatting(self):
+        text = (ROOT / 'src/tas_menu.inc').read_text()
+        self.assertIn('JapaneseUi::text(TasProject::roleName(TasProject::pendingCheckpointRole()))', text)
+
+    def test_each_inline_shortcut_edits_and_clears_without_action(self):
+        rows = [(0,1,39),(0,2,40),(0,6,23),(0,7,24)] + [(1,i,34+i) for i in range(5)]
+        for page,row,bind in rows:
+            for button in (0x400,0x10):
+                out=(C.c_int*5)()
+                self.assertEqual(self.lib.route(page,row,button,out),0)
+                self.assertEqual(out[2 if button==0x400 else 3],bind)
+
+    def test_actions_stay_reachable(self):
+        for page,row,action,closes in [(0,1,1,1),(0,2,2,1),(0,6,6,1),(0,7,7,1),
+                (1,0,20,1),(1,1,11,0),(1,2,21,0),(1,3,12,0),(1,4,22,0)]:
+            out=(C.c_int*5)()
+            self.assertEqual(self.lib.route(page,row,0x100,out),1)
+            self.assertEqual(list(out)[:2],[action,closes])
+
+    def test_fourth_recorded_button_cannot_activate_rebind_or_close(self):
+        for page,row in [(0,7),(1,1)]:
+            for button in (0x100,0x400):
+                out=(C.c_int*6)()
+                self.assertEqual(self.lib.binding(page,row,button,out),1)
+                self.assertEqual(out[0],1)
+                self.assertEqual(list(out)[2:],[0,0,row,0])
+
+    def test_cstick_cancels_recording_without_leaking_held_action(self):
+        self.assertEqual(self.lib.cancelBinding(),0)
+
+    def test_menu_and_shortcut_confirmations_require_a_new_press(self):
+        for shortcut in (0,1):
+            for cancel in (0,1):
+                self.assertEqual(self.lib.overwriteCase(shortcut,cancel),0)
+
+
+if __name__ == '__main__': unittest.main()

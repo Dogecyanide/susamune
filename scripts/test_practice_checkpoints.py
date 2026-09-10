@@ -44,6 +44,8 @@ static bool sOwnRestoreValid;
 static u32 sPendingReleases;
 static bool sOwnLoad,sHaveRead,sFrameInjected,sConsumedFrame,sTakeAttached,sPaused,sRecord,sReplay,sPausePending,sStepQueued;
 static u16 sStripButtons;
+static bool menuShown;
+static struct {bool shown(){return menuShown;}} menu,*gMenu=&menu;
 static u32 liveFingerprint,liveSettings;
 static bool gameplay,storageReady,rng,observer;
 static const char*lastMessage;
@@ -85,7 +87,7 @@ extern "C" __declspec(dllexport) void reset(){
     sOwnLoad=sHaveRead=sFrameInjected=sConsumedFrame=sTakeAttached=sPaused=sRecord=sReplay=sPausePending=sStepQueued=false;
     sPendingReleases=0;sOwnRestoreValid=sModalPadValid=false;
     sStageGeneration=1;sSettingsHash=liveSettings=123;liveFingerprint=456;
-    gameplay=storageReady=rng=true;observer=false;clockValue=0;lastMessage="";sStripButtons=0;
+    gameplay=storageReady=rng=true;observer=menuShown=false;clockValue=0;lastMessage="";sStripButtons=0;
     gpApplication.mCurrentHeap=(void*)0x80500000;gpApplication.mGamePads[0]=&pad;
 }
 extern "C" __declspec(dllexport) unsigned captureForced(unsigned omit){
@@ -129,11 +131,12 @@ extern "C" __declspec(dllexport) void config(unsigned key,unsigned value){
     case 13:archives[value].pad.meaning[0]^=1;break;
     case 14:sPendingReleases=value;break;
     case 15:sModalPadValid=true;sModalPad=pad.history;sModalPad.meaning[0]=(u8)value;break;
+    case 16:menuShown=value!=0;break;
     }
 }
 extern "C" __declspec(dllexport) unsigned value(unsigned key){
     switch(key){case 0:return sCount;case 1:return sRecord;case 2:return sPaused;case 3:return pad.history.meaning[0];
-    case 4:return sTapeSlot;case 5:return sTapeSeed;case 6:return sTakeAttached;case 7:return sTakePosition;case 8:return sPendingReleases;case 9:return sOwnRestoreValid;default:return 0;}
+    case 4:return sTapeSlot;case 5:return sTapeSeed;case 6:return sTakeAttached;case 7:return sTakePosition;case 8:return sPendingReleases;case 9:return sOwnRestoreValid;case 10:return sStripButtons;default:return 0;}
 }
 extern "C" __declspec(dllexport) unsigned input(unsigned i){return sFrames[i].input.buttons;}
 extern "C" __declspec(dllexport) int resume(){return PracticeSession::requestContinue();}
@@ -233,6 +236,14 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
         self.lib.append(99)
         self.assertEqual(self.lib.value(0), 3)
         self.assertEqual([self.lib.input(i) for i in range(3)], [10, 20, 99])
+
+    def test_continue_strips_confirming_A_only_from_menu(self):
+        self.checkpoint()
+        self.assertTrue(self.lib.resume())
+        self.assertEqual(self.lib.value(10), 0)
+        self.lib.config(16, 1)
+        self.assertTrue(self.lib.resume())
+        self.assertEqual(self.lib.value(10), 0x100)
 
     def test_changed_settings_stop_automatic_recording_without_losing_saved_take(self):
         self.checkpoint()

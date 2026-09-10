@@ -38,7 +38,7 @@ Default savestate buttons: D-Left saves; D-Right loads. D-Down toggles practice 
 
 These are defaults for new settings. Updating keeps your existing shortcuts.
 
-Free camera, input replay and the state-slot cycling shortcuts start unassigned.
+Free camera, TAS project actions and the state-slot cycling shortcuts start unassigned.
 
 Choose a Step shortcut that you can comfortably press while holding Mario's other buttons. Pause and Step accept held gameplay buttons.
 
@@ -92,13 +92,15 @@ Make fresh SD states with this build. Earlier SD states need resaving and cannot
 
 ## Pause and frame advance
 
-Open Practice > Frame advance. D-Down toggles practice pause. D-Up pauses gameplay, then advances one frame with each further press.
+Open Practice > TAS projects for Pause / Resume and Advance one frame. D-Down toggles practice pause. D-Up pauses gameplay, then advances one frame with each further press. Select either row and press X to change its shortcut, or Z to clear it.
 
 You can press Pause or Step during loading or an intro. Armed means it will pause as soon as you can control Mario. Press Pause again to cancel.
 
 While paused, the QFT stays still. Each Step advances it by one game frame. TAS appears beside the QFT for an assisted attempt. Restart the stage for a fresh, ordinary attempt.
 
 Hold A, then press Step to jump on that frame. To press A again on a later frame, release A and press it again before stepping. Keeping A held counts as holding it continuously.
+
+While paused, Advance wins over overlapping shortcuts, including B+D-Up. Hold A+B and press Advance for a jump-dive. Normal reset shortcuts still work outside practice pause.
 
 The Pause or Step shortcut itself is kept away from Mario. After choosing Step or Resume in the menu, release A to continue.
 
@@ -141,6 +143,10 @@ Open Practice > TAS projects. Your recorded inputs, Beginning and two checkpoint
 Save Checkpoint keeps a retry point in memory. Save TAS keeps everything on SD, in /moonshine_tas. Only the SD save survives closing the game or rebooting. There is no need to import the Beginning and checkpoints separately.
 
 TAS projects share the three memory slots with ordinary states. If an occupied ordinary state needs replacing, you choose which one or cancel. The TAS screen names its own Beginning and checkpoints for you.
+
+Saving over a checkpoint asks first: A replaces it, B keeps it. This also applies to checkpoint shortcuts. Save TAS updates your named SD project directly.
+
+Continue, Replay, Beginning and checkpoint actions have optional shortcuts. Select a row, then X to assign or Z to clear. They start unbound. The project name also shows recorded frames and the 4096-frame limit.
 
 In Open TAS, Start renames the highlighted file. X asks to delete its SD copy. Memory checkpoints stay; save again to keep that work after closing the game.
 

@@ -328,7 +328,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     if (gSavestateMgr) gSavestateMgr->updateDisk();
     else StateStorage::update();
     TasProject::update();
-    const bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+    bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
 
     // Sample the pad before direct(), not after: onUpdateGameMode runs inside
     // it and asks whether the menu bind was pressed this frame, which would
@@ -344,11 +344,13 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool sessionModalBeforeDirect = StageLoader::modal();
     const bool sessionResultBeforeDirect = StageLoader::resultOwnsInput();
     const bool menuOpenBeforeDirect = gMenu && gMenu->shown();
-    const bool menuOwnsRetailPad = menuOpenBeforeDirect ||
-        (gMenu && gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
+    const bool stepOverridesShortcut = !gBinds.recording() &&
+        PracticeSession::paused() && gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
+    bool menuOwnsRetailPad = menuOpenBeforeDirect ||
+        (gMenu && !stepOverridesShortcut && gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
     const bool wheelOpenBeforeDirect = WarpWheel::shown();
     const bool wheelToggleBeforeDirect = !creationEditing && !stateDiskBusy &&
-        !sessionResultBeforeDirect && !menuOwnsRetailPad &&
+        !sessionResultBeforeDirect && !menuOwnsRetailPad && !stepOverridesShortcut &&
         !gSettings.getBool(SETTING_DISABLE_WARPS) &&
         gBinds.wasPressed(BIND_WARP_WHEEL);
     const bool wheelOwnsInputBeforeDirect =
@@ -369,20 +371,42 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         gpApplication.mGamePads[0]->mButtons.mFrameInput = 0;
         gpApplication.mGamePads[0]->mButtons.mRapidInput = 0;
     }
-    const bool practiceModal = creationEditing || sessionBlocksNewInput ||
+    bool practiceModal = creationEditing || sessionBlocksNewInput ||
         menuOwnsRetailPad || wheelOwnsInputBeforeDirect || stateDiskBusy;
+    bool practiceStepConsumed = false;
     if (!practiceModal) {
         const bool pausePressed = !gBinds.recording() &&
             gBinds.wasPressedPracticeRaw(BIND_PRACTICE_PAUSE);
-        if (pausePressed) PracticeSession::requestPauseToggle();
         const bool stepPressed = !gBinds.recording() &&
-            gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP);
-        if (!pausePressed && stepPressed) PracticeSession::requestStep();
+            (stepOverridesShortcut || gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP));
+        if (stepPressed) {
+            practiceStepConsumed = PracticeSession::requestStep();
+            if (practiceStepConsumed) {
+                gBinds.suppressUntilRelease();
+                WarpWheel::suppressClassicInstantUntilRelease();
+            }
+        } else if (pausePressed) PracticeSession::requestPauseToggle();
         if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
         if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
         if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
+        for (int id = BIND_TAS_BEGINNING; id <= BIND_TAS_REPLAY; ++id) {
+            const BindId bind = static_cast<BindId>(id);
+            if (!gBinds.wasPressed(bind) || !TasProject::dispatchShortcut(bind)) continue;
+            PracticeSession::stripShortcutButtons(gBinds.get(bind));
+            gBinds.suppressUntilRelease();
+            WarpWheel::suppressClassicInstantUntilRelease();
+            if (gMenu) {
+                if (TasProject::promptPending()) gMenu->openTasProject();
+                else gMenu->toast(TasProject::status());
+            }
+            break;
+        }
     }
+    // A shortcut can queue a state operation or open its confirmation now.
+    stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+    menuOwnsRetailPad = menuOwnsRetailPad || (gMenu && gMenu->shown());
+    practiceModal = practiceModal || stateDiskBusy || menuOwnsRetailPad;
     PracticeSession::beforeDirect(practiceModal);
     gQFTTimer.beginFrame();
     if (PracticeSession::freezeRequested()) gQFTTimer.beginPracticePause();
@@ -495,7 +519,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     const bool allowExistingMenuToClose =
         StageLoader::resultOwnsInput() && !StageLoader::modal() &&
         menuOpenBeforeDirect;
-    if (gMenu && (!sessionOwnsInput || allowExistingMenuToClose)) {
+    if (gMenu && !practiceStepConsumed && (!sessionOwnsInput || allowExistingMenuToClose)) {
         gMenu->update(gpApplication.mGamePads[0]);
     }
 #if ENABLE_MEM_DIAGNOSTICS

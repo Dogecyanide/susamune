@@ -42,6 +42,7 @@ public:
     // Open the Ghosts tab on a save confirmation bound to this exact accepted
     // PB. The caller retains ownership of any action held behind that PB.
     bool openGhostPBSave(u32 token);
+    void openTasProject();
 
     // Menu-only C-stick repeat. This never changes the game's pad state.
     u32 navigationInput(TMarioGamePad *pad);

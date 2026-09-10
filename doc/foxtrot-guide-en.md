@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build AE95E374
+V2.3.0 pre-release · Build C66EEB34
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
@@ -27,7 +27,7 @@ Configuration and saved mod data belong to the device the launcher was opened fr
 Open the mod menu with your configured menu combo (default Y + Start). Use L/R for top-level tabs, the C-stick to move between rows, A to select, and B to go back.
 
 - **Quick:** your Shined favourites.
-- **Practice:** separate Frame advance, Free camera and TAS projects pages, savestates, practice rules, RNG and gameplay options.
+- **Practice:** TAS projects with frame controls, Free camera, savestates, practice rules, RNG and gameplay options.
 - **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
 - **Records:** achievements and practice statistics, also reachable from Runs.
 - **Ghosts:** race, watch, save and manage ghost tracks.
@@ -42,7 +42,7 @@ A fresh IL/streak attempt checks its own practice settings; a pause in the previ
 
 ## Pause and advance
 
-Open **Practice > Frame advance**. Selecting an action shows its current shortcut; press **X** to change it there, or use System > Button binds.
+Open **Practice > TAS projects** and select **Pause / Resume** or **Advance one frame**. The selected action shows its shortcut; press **X** to change it there, or **Z** to clear it. System > Button binds also lists these controls.
 
 | Default shortcut | Action |
 |---|---|
@@ -62,7 +62,7 @@ With free camera **Off**, hold A and press Step to jump on that frame. You can a
 
 For spins, use the main stick yourself: choose the next direction before each Step. Free camera must be Off so the stick controls Mario.
 
-An exact longer shortcut takes priority over Pause or Step. For example, if Pause is D-Up and Reset is B+D-Up, hold B then press D-Up to reset without activating practice pause. Ordinary held gameplay buttons still work with Pause and Step.
+While practice is paused, Advance takes priority over overlapping shortcuts. Hold A+B and tap Advance to jump-dive; only the Advance buttons are removed from Mario's input. Holding Advance does not repeat it. Outside practice pause, an exact longer reset shortcut still works normally without marking the attempt assisted.
 
 ## Free camera
 
@@ -124,6 +124,10 @@ Open **Practice > TAS projects**. A TAS keeps Mario's recorded inputs, its begin
 6. To return later, enter the same build, game region, setup and episode, then choose **Open TAS** and its name. Moonshine restores the necessary states and leaves you paused at your saved point. Choose **Continue** to edit or **Replay** to watch.
 
 **Continue stays paused** so you can arrange the next input before using Step or Resume. A checkpoint rewinds the recording too: when you continue, the old inputs after that point are replaced.
+
+Saving over an existing checkpoint asks before replacing it, whether you use the menu or a shortcut. A confirms; B keeps it. **Save TAS** still updates the named SD project directly.
+
+Select Continue, Replay, Beginning or a checkpoint action and press **X** to assign its shortcut; **Z** clears it. These seven TAS shortcuts start unassigned. The name at the top shows the recorded frame count and limit, for example **200/4096**.
 
 In **Open TAS**, highlight a name and press **Start** to rename it or **X** to delete its SD copy, with confirmation. Deleting the SD copy keeps the checkpoints currently in memory; save again if you want to keep that work after closing the game.
 

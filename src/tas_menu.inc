@@ -3,15 +3,28 @@
 class TasProjectTab final : public MenuTab {
 public:
     TasProjectTab() : mPage(MAIN), mSel(0), mPending(0), mLength(0), mKeyPage(0),
-        mCursor(0), mUpper(false), mReplaceConfirm(false), mRename(false), mSlot(0), mGeneration(0), mId(0), mCrc(0) { mName[0] = 0; focus(); }
+        mCursor(0), mBinding(false), mUpper(false), mReplaceConfirm(false), mRename(false), mSlot(0), mGeneration(0), mId(0), mCrc(0) { mName[0] = 0; focus(); }
     const char *title() const override { return "TAS projects"; }
     const char *summary() const override { return "New, edit, replay and save a TAS with its checkpoints."; }
     void focus() override { mInput.begin(SUSAMUNE_BIND_BUTTON_MASK); }
-    bool grabsInput() const override { return mPage != MAIN || TasProject::busy(); }
+    void showCheckpointPrompt() { mPage = CHECKPOINTS; mSel = 0; mReplaceConfirm = false; focus(); }
+    bool grabsInput() const override { return mBinding || gBinds.recording() || mPage != MAIN || TasProject::busy(); }
     bool suppressesBinds() const override { return true; }
     void update(Menu *menu, TMarioGamePad *pad) override {
-        const u16 pressed = mInput.update();
         const u32 nav = menu->navigationInput(pad);
+        if (mBinding || gBinds.recording()) {
+            if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT |
+                       TMarioGamePad::CSTICK_UP | TMarioGamePad::CSTICK_DOWN)) gBinds.cancelRecord();
+            mBinding = gBinds.recording(); focus(); return;
+        }
+        const u16 pressed = mInput.update();
+        if (TasProject::checkpointOverwritePending()) {
+            if (pressed & (JUTGamePad::A | JUTGamePad::B)) {
+                TasProject::confirmCheckpointOverwrite(!(pressed & JUTGamePad::B));
+                focus();
+            }
+            return;
+        }
         if (TasProject::replacementNeeded()) {
             if (pressed & JUTGamePad::B) {
                 if (mReplaceConfirm) mReplaceConfirm = false;
@@ -93,8 +106,17 @@ public:
             }
             focus(); return;
         }
+        if (mPage == CHECKPOINTS || mPage == MAIN) {
+            navigate(nav, mPage == CHECKPOINTS ? 5 : 8);
+            const BindId bind = selectedBind();
+            if (bind != BIND_COUNT) {
+                if (pressed & JUTGamePad::X) {
+                    mBinding = true; gBinds.beginRecord(bind); focus(); return;
+                }
+                if (pressed & JUTGamePad::Z) { gBinds.set(bind, 0); focus(); return; }
+            }
+        }
         if (mPage == CHECKPOINTS) {
-            navigate(nav, 5);
             if (!(pressed & JUTGamePad::A)) return;
             if (mSel == 0) {
                 if (TasProject::loadCheckpoint(0)) menu->hide();
@@ -102,7 +124,6 @@ public:
             else TasProject::loadCheckpoint(mSel / 2);
             menu->toast(TasProject::status()); focus(); return;
         }
-        navigate(nav, 8);
         if (!(pressed & JUTGamePad::A)) return;
         bool close = false;
         switch (mSel) {
@@ -129,7 +150,20 @@ public:
             drawCreationKeyboard(menu, mRename ? "Rename TAS project" : "Name TAS project", mName[0] ? mName : "(enter a name)", mKeyPage, mUpper, mCursor);
             return;
         }
-        menu->drawText(TasProject::name(), x + 4, y, 17, 17, cTitle());
+        char frames[32];
+        snprintf(frames, sizeof(frames), "%lu / %lu frames", PracticeSession::recordedFrames(), PracticeSession::capacityFrames());
+        const int framesWidth = Menu::textWidth(frames, 12);
+        int nameSize = 17;
+        while (nameSize > 9 && Menu::textWidth(TasProject::name(), nameSize) > w - framesWidth - 38) --nameSize;
+        menu->drawText(TasProject::name(), x + 4, y, nameSize, nameSize, cTitle());
+        menu->drawText(frames, x + w - framesWidth - 22, y + 3, 12, 12, cValue());
+        if (TasProject::checkpointOverwritePending()) {
+            char question[64];
+            snprintf(question, sizeof(question), "Replace %s?", JapaneseUi::text(TasProject::roleName(TasProject::pendingCheckpointRole())));
+            menu->drawText(question, x + 4, y + 44, 17, 17, cRowSel());
+            menu->drawText("This replaces the checkpoint with your current position.", x + 4, y + 84, 13, 13, cRow());
+            drawHelpLine(menu, x, y, w, h, "A: replace checkpoint   B: keep it"); return;
+        }
         if (TasProject::replacementNeeded()) {
             menu->drawText(mReplaceConfirm ? "Replace this memory state?" : "Choose a memory state to replace", x + 4, y + 26, 15, 15, cRowSel());
             for (u32 slot = 0; slot < 3; ++slot) {
@@ -158,7 +192,7 @@ public:
             for (int i = 0; i < 3; ++i) drawValueRow(menu, x, y + 58 + i * ROW_H, w, rows[i], "", i == mSel, false, true);
             drawHelpLine(menu, x, y, w, h, "Other memory states stay unless you choose to replace one."); return;
         }
-        const int listY = y + 28, listH = h - 78;
+        const int listY = y + 28, listH = h - 98;
         const auto &files = TasProject::catalog();
         const int fileCount = TasProject::catalogReady() ? files.count : 0;
         const int count = mPage == FILES ? fileCount + 2 : mPage == CHECKPOINTS ? 5 : 8;
@@ -176,13 +210,33 @@ public:
             drawValueRow(menu, x, listY + (i - start) * ROW_H, w, label, value, i == mSel, false, true);
         }
         drawScrollHints(menu, x, listY, w, listH, start, end, count);
+        const BindId bind = selectedBind();
+        if (bind != BIND_COUNT) {
+            char combo[kBindTextMax], line[kBindTextMax + 64];
+            Binds::format(gBinds.recording() ? gBinds.recordPreview() : gBinds.get(bind), combo);
+            snprintf(line, sizeof(line), gBinds.recording() ? "New bind: %s" : "Shortcut: %s   X: change   Z: clear", combo);
+            menu->drawText(line, x + 4, y + h - 64, 12, 12, cValue());
+        }
         menu->drawText(TasProject::status(), x + 4, y + h - 42, 11, 11, cValue());
-        drawHelpLine(menu, x, y, w, h, mPage == FILES ? "A: open   Start: rename   X: delete   B: back" :
+        drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
+            "Hold new buttons, then release to save. C-stick cancels." : mPage == FILES ? "A: open   Start: rename   X: delete   B: back" :
             mPage == CHECKPOINTS ? "A: choose action   B: back. Beginning is kept for Replay." :
             "Continue stays paused. Hold Mario inputs, then use Step or Resume.");
     }
 private:
     enum { MAIN, CHECKPOINTS, FILES, NAME, CONFIRM, DELETE };
+    BindId selectedBind() const {
+        static const BindId checkpointBinds[] = {BIND_TAS_BEGINNING, BIND_TAS_SAVE_CHECKPOINT1,
+            BIND_TAS_LOAD_CHECKPOINT1, BIND_TAS_SAVE_CHECKPOINT2, BIND_TAS_LOAD_CHECKPOINT2};
+        if (mPage == CHECKPOINTS && mSel < 5) return checkpointBinds[mSel];
+        if (mPage == MAIN) switch (mSel) {
+        case 1: return BIND_TAS_CONTINUE;
+        case 2: return BIND_TAS_REPLAY;
+        case 6: return BIND_PRACTICE_PAUSE;
+        case 7: return BIND_PRACTICE_STEP;
+        }
+        return BIND_COUNT;
+    }
     void navigate(u32 nav, int count) {
         if (nav & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, count);
         if (nav & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, count);
@@ -200,7 +254,7 @@ private:
         mPage = NAME; mKeyPage = mCursor = 0; mUpper = false;
     }
     u8 mPage, mSel, mPending, mLength, mKeyPage, mCursor;
-    bool mUpper, mReplaceConfirm, mRename;
+    bool mBinding, mUpper, mReplaceConfirm, mRename;
     u32 mSlot, mGeneration, mId, mCrc;
     char mName[32];
     RawPromptInput mInput;

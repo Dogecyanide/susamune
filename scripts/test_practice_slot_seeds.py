@@ -23,7 +23,7 @@ class PracticeSlotSeedTests(unittest.TestCase):
         seed_match = function_source(production, "bool seedMatches(")
         functions = "\n".join(function_source(production, signature) for signature in (
             "void afterDraw()", "void onSavestateSaved(", "void onSavestateCleared(", "bool requestRecordFrom(", "bool requestRecord()",
-            "static bool requestReview(", "bool requestPlayback()", "bool requestBeginning()"))
+            "static bool requestReview(", "bool requestPlayback()", "bool requestBeginning()", "void stripShortcutButtons("))
         narrow = "reinterpret_cast<u32>(gpApplication.mCurrentHeap)"
         replacement = "static_cast<u32>(reinterpret_cast<size_t>(gpApplication.mCurrentHeap))"
         source = Path(cls.folder.name) / "seeds.cpp"
@@ -137,6 +137,7 @@ extern "C" __declspec(dllexport) u32 record(){return PracticeSession::requestRec
 extern "C" __declspec(dllexport) u32 recordExplicit(u32 slot){return PracticeSession::requestRecordFrom(slot,infos[slot].generation);}
 extern "C" __declspec(dllexport) u32 beginning(){return PracticeSession::requestBeginning();}
 extern "C" __declspec(dllexport) u32 replay(){return PracticeSession::requestPlayback();}
+extern "C" __declspec(dllexport) void shortcut(u32 buttons){PracticeSession::stripShortcutButtons((u16)buttons);}
 extern "C" __declspec(dllexport) void finishTake(){sCount=4;sTapeHash=42;sRecord=false;}
 extern "C" __declspec(dllexport) void poll(){PracticeSession::afterDraw();}
 extern "C" __declspec(dllexport) void busy(u32 yes){cardStatus=yes?-1:0;}
@@ -163,7 +164,7 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
     case 4:return sRecord;case 5:return sReplay;case 6:return sCount;
     case 7:return sLoadKind;case 8:return sTapeSlot;case 9:return sTapeSeed;
     case 10:return sPausePending;case 11:return sStepQueued;case 12:return sMenuAction;
-    case 13:return sPaused;case 14:return sStartRelease;
+    case 13:return sPaused;case 14:return sStartRelease;case 15:return sStripButtons;
     default:return 999;}
 }
 ''', encoding="ascii")
@@ -283,6 +284,22 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.assertEqual(self.lib.value(6),4)
         self.assertEqual((self.lib.value(4),self.lib.value(5),self.lib.value(13)),(0,0,1))
         self.assertTrue(self.lib.replay())
+
+    def test_tas_shortcut_waits_its_own_buttons_and_preserves_gameplay_holds(self):
+        self.make_take()
+        self.lib.config(1, 0x28)  # New TAS shortcut plus an unrelated held button.
+        self.assertTrue(self.lib.beginning())
+        self.lib.shortcut(0x20)
+        self.assertEqual((self.lib.value(14), self.lib.value(15)), (0x20, 0x20))
+        self.lib.poll()
+        self.assertEqual(self.lib.value(0), 1)
+        self.lib.config(1, 8)  # Legacy Replay binding remains held.
+        self.lib.poll()
+        self.assertEqual(self.lib.value(0), 2)
+        self.lib.shortcut(2)
+        self.assertEqual((self.lib.value(14), self.lib.value(15)), (0, 2))
+        self.lib.shortcut(0x20)
+        self.assertEqual(self.lib.value(15), 0x22)
 
     def test_explicit_new_tas_does_not_require_global_rng_option(self):
         self.lib.save(1,11,71);self.lib.config(5,0)

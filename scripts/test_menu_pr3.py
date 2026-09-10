@@ -140,7 +140,7 @@ class NestedMenuContracts(unittest.TestCase):
 
     def test_settings_hub_is_grouped_coherently(self) -> None:
         menu = text("src/menu.cpp")
-        self.assertIn("{ frame, camera, inputReplay, savestate, practice, rng, gameplay }", menu)
+        self.assertIn("{ inputReplay, camera, savestate, practice, rng, gameplay }", menu)
         self.assertIn("{ creation, display, timer, cosmetics }", menu)
         self.assertIn('return "GAMEPLAY AND PRACTICE"', menu)
         self.assertIn('return "TIMING AND HUD"', menu)

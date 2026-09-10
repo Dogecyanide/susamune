@@ -1,6 +1,6 @@
 # Moonshine 2.3.0 — RC1 test log
 
-**FOXTROT candidate · Build AE95E374**
+**FOXTROT candidate · Build C66EEB34**
 
 This is the full RC1 check, covering new features and normal practice. **Keep your earlier results.** Prioritise the items marked **Updated** and one ordinary run; use the remaining items to fill gaps in team coverage. `TESTING.md` is the shorter latest-fixes sheet. `RC1_ROUTES.md` lists the expected course checkpoints.
 
@@ -48,7 +48,7 @@ Themes use **/Moonshine_Theme** at the root of the launcher's device. A missing 
 ## 3. Frame advance, free camera and timers
 
 - [ ] **3A — Pause and Step.** From live gameplay, press Step to pause, then advance a few frames and resume. During the hold, QFT stays still; each Step advances one frame of game time. There should be a small **TAS** label, with no paused waiting time added when you resume. Check both timer displays follow the same frame, including after the state load in section 4.
-- [ ] **3B — Held inputs and spins.** With freecam Off, hold A when starting Pause, then Step to jump. Release and press A again between later steps; that new press must register. Turn the main stick yourself across steps for a spin. Holding a button must not create repeated new presses. There should be no Queue spin option.
+- [ ] **3B — Held inputs and spins (Updated).** With freecam Off, hold A when starting Pause, then Step to jump. Hold A+B and tap Advance to jump-dive; an overlapping reset shortcut must not steal a paused Step. Release and press A again between later steps; that new press must register. Turn the main stick yourself across steps for a spin. Holding Advance must not repeat it. There should be no Queue spin option.
 - [ ] **3C — Pause ready for control.** Tap Pause/Step during a level intro or loading. It should pause on Mario's first controllable frame. On another transition, cancel the waiting pause and check play continues normally. If Pause is D-Up and Reset is B+D-Up, hold B then press D-Up: reset must not also pause or mark the new attempt TAS. Testers with an L-based shortcut should check it does not cause an unwanted ground-pound.
 - [ ] **3D — Camera controls (Updated).** Turn freecam on from gameplay: Mario pauses. Check movement, looking, height, Movement speed, X boost and Reverse sideways. Look sensitivity should change C-stick turning separately, from 0.25x to 4x. Hide all HUD should hide game and Moonshine overlays while freecam is On, leave the menu accessible, and restore the displays when disabled. Recenter and Off should restore the usual view; Resume restores Mario's controls. With Camera On, movement buttons belong to the camera; turn it Off before stepping Mario's jump.
 - [ ] **3E — Camera in pause.** Use it in ordinary Start pause and while stepping, then leave the area. The normal camera should return. Check camera use during Ghost Watch in section 7 rather than repeating this whole exercise there.
@@ -79,10 +79,11 @@ Keep the SD connected during transfers. Testing does not require corrupting file
 
 Open **Practice > TAS projects**. This records editable inputs separately from shareable ghosts, up to 4096 frames. Reuse a short recording for these checks and do the reboot once in section 11.
 
-- [ ] **6A — New TAS.** Choose New TAS during gameplay. It should capture the Beginning automatically and leave you paused after releasing A. Use Step or Resume to record a walk, jump and spray. Open the menu: gameplay should pause while your work stays available.
+- [ ] **6A — New TAS.** Choose New TAS during gameplay. It should capture the Beginning automatically and leave you paused after releasing A. Use Step or Resume to record a walk, jump and spray; listen for normal sound effects. Open the menu: gameplay should pause while your work stays available. The recorded count beside the project name should advance with your recording and stay still while waiting.
 - [ ] **6B — Replay and stop.** Replay should use the Beginning and repeat the sequence. Check B/Start can stop playback. Report an unexpected refusal or mismatch with its exact message.
-- [ ] **6C — Checkpoints.** Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Replay should include the original opening and new ending, without the discarded inputs. Continue stays paused until Step or Resume.
+- [ ] **6C — Checkpoints.** Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Saving over an existing checkpoint must ask first; cancel once and check it remains. Replay should include the original opening and new ending, without the discarded inputs. Continue stays paused until Step or Resume.
 - [ ] **6D — Save and open.** Console: Save TAS, name it, make a small edit and save again. It should update the same entry without asking you to export separate states. If New/Open asks about unsaved edits or replacing an ordinary state, check cancel keeps the current work. Save for the reboot in section 11. Timer/metadata edits and ordinary Save to/Load from choices must not redirect Replay to an unrelated beginning.
+- [ ] **6E — Shortcuts (Updated).** X changes the selected TAS action's bind; Z clears it. Pause/Advance are now on this page. Assign Beginning and a checkpoint Save/Go pair and try them. The seven new TAS shortcuts start unbound; overwriting through a shortcut must still ask first.
 
 ## 7. Ghosts, sharing and TAS continuation
 

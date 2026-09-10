@@ -1440,10 +1440,15 @@ bool requestContinue() {
     sRecord = true;
     sPaused = true;
     sPausePending = sStepQueued = false;
-    sStripButtons |= JUTGamePad::A;
+    if (gMenu && gMenu->shown()) sStripButtons |= JUTGamePad::A;
     invalidate();
     message("TAS editing resumed - Step or Resume when ready");
     return true;
+}
+
+void stripShortcutButtons(u16 buttons) {
+    sStripButtons |= buttons;
+    if (sLoadKind) sStartRelease = buttons & sPhysical.buttons;
 }
 
 void requestStop() {
