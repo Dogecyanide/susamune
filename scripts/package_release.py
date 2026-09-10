@@ -57,7 +57,7 @@ def read_json(path):
 
 
 def relative(path):
-    return Path(path).resolve().relative_to(ROOT).as_posix()
+    return Path(path).resolve().relative_to(ROOT.resolve()).as_posix()
 
 
 def record(path):
@@ -70,8 +70,9 @@ def evidence_path(name):
     path = PurePosixPath(name)
     require(not path.is_absolute() and ".." not in path.parts and "\\" not in name,
             "Evidence path must be repository-relative: " + name)
-    resolved = (ROOT / name).resolve()
-    require(resolved.is_relative_to(ROOT), "Evidence escaped repository")
+    root = ROOT.resolve()
+    resolved = (root / name).resolve()
+    require(resolved.is_relative_to(root), "Evidence escaped repository")
     return resolved
 
 

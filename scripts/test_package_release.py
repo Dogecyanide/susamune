@@ -101,6 +101,25 @@ class ReleasePackagingTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 release.evidence_path(name)
 
+    def test_receipts_accept_root_aliases_without_accepting_outside_files(self):
+        result = self.put("build/run.json", b'{"passed":true}')
+        anchor = self.root / "alias-anchor"
+        anchor.mkdir()
+        # Reproduce canonical file paths paired with an unresolved root, as in Windows TEMP.
+        with patch.object(release, "ROOT", anchor / ".."):
+            with self.subTest(operation="record"):
+                self.assertEqual(release.record(result), {
+                    "path": "build/run.json", "bytes": 15,
+                    "sha256": release.sha(b'{"passed":true}')})
+            with self.subTest(operation="evidence"):
+                self.assertEqual(release.evidence_path("build/run.json"), result.resolve())
+            with tempfile.TemporaryDirectory(prefix="moonshine-outside-") as outside:
+                other = Path(outside) / "run.json"
+                other.write_bytes(result.read_bytes())
+                for operation in (release.relative, release.record):
+                    with self.subTest(operation=operation.__name__), self.assertRaises(ValueError):
+                        operation(other)
+
     def test_iso_proof_binds_all_segments_hooks_and_japanese_extent(self):
         data, asset = fake_patch(), b"validated asset"
         source, target, checksum = struct.unpack("<III", data[-12:])
