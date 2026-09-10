@@ -199,7 +199,9 @@
     X(SETTING_NATIVE_TIMER_Y,                "native_timer_y")               \
     X(SETTING_NATIVE_TIMER_SCALE,            "native_timer_scale")           \
     X(SETTING_FREE_CAMERA_SPEED,             "free_camera_speed")            \
-    X(SETTING_FREE_CAMERA_STRAFE_REVERSE,    "free_camera_strafe_reverse")
+    X(SETTING_FREE_CAMERA_STRAFE_REVERSE,    "free_camera_strafe_reverse")      \
+    X(SETTING_FREE_CAMERA_SENSITIVITY,       "free_camera_sensitivity")         \
+    X(SETTING_FREE_CAMERA_HIDE_HUD,          "free_camera_hide_hud")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

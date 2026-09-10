@@ -154,6 +154,14 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
         self.assertEqual(self.lib.edge(0x200, 0x208, 0, 0), 0)
         self.assertEqual(self.lib.dispatch(4, 0x200, 0x208), 1)
 
+    def test_restart_with_jump_held_does_not_pause_on_press_or_release(self):
+        self.lib.reset(4, 4)
+        self.lib.shortcut(0x208, 0)
+        for before, now in ((0x100, 0x308), (0x300, 0x308),
+                            (0x308, 0x108), (0x108, 8)):
+            self.assertEqual(self.lib.dispatch(8, before, now), 0)
+        self.assertEqual(self.lib.dispatch(8, 0x100, 0x108), 1)
+
     def test_identical_shortcut_keeps_existing_shared_behavior(self):
         self.lib.shortcut(8, 0)
         self.assertEqual(self.lib.edge(0, 8, 0, 0), 1)

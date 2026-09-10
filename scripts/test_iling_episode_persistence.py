@@ -55,7 +55,7 @@ static SusamuneCfg cfg;
 static SusamuneMarioColorsCfg mario;static SusamuneFluddColorsCfg fludd;
 SusamuneMarioColorsCfg*MarioColorsBlock(){return &mario;}SusamuneFluddColorsCfg*FluddColorsBlock(){return &fludd;}
 static bool SawSettingsSection;
-int FindSettingKey(const char*){return -1;}int FindBindKey(const char*){return -1;}
+int FindBindKey(const char*){return -1;}
 bool ParseBindMask(const char*,u16*){return false;}
 enum {FR_OK=0,FR_DISK_ERR=1,FR_NOT_READY=3,FR_NO_FILE=4,FR_NO_PATH=5,FR_DENIED=7,FR_NOT_ENOUGH_CORE=17,FR_INVALID_NAME=6,AM_RDO=1,FA_READ=1,FA_WRITE=2,FA_OPEN_EXISTING=0,FA_CREATE_ALWAYS=8};
 struct FIL {struct {unsigned attr;}obj;char*text;unsigned length;};
@@ -82,6 +82,8 @@ static bool LoadSafe=true;
 void BuildPath(char*out,unsigned,const char*){memcpy(out,"settings.ini",13);}
 unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
 '''
+        code += kernel[kernel.index("#define SUSAMUNE_SETTING_KEY"):kernel.index("// Same, for the running disc") ]
+        code += function(kernel, "FindSettingKey")
         for name in re.findall(r"\b(Apply\w+)\(", function(kernel, "ParseIni")):
             if name != "ApplyILEpisodeKey":
                 code += f"template<class... T>void {name}(T...){{}}\n"
@@ -94,7 +96,8 @@ unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
             code += function(kernel, name)
         for name in ("EmitMovementOverlayStyle", "EmitNativeTimerStyle", "EmitMarioColors", "EmitFluddColors"):
             code += f"template<class... T>void {name}(T...){{}}\n"
-        for name in ("Settings", "Binds", "InputDisplay", "MetadataDisplay", "QftDisplay"):
+        code += function(kernel, "EmitSettingsSection")
+        for name in ("Binds", "InputDisplay", "MetadataDisplay", "QftDisplay"):
             code += f'void Emit{name}Section(FIL*f,int*e,const SusamuneCfg*){{EmitStr(f,e,"[");EmitStr(f,e,{name}Section);EmitStr(f,e,"]\\r\\n");}}\n'
         code += function(kernel, "EmitCreationSection") + function(kernel, "WriteIniFile")
         code += 'void EmitNintendontSection(FIL*f,int*e){EmitStr(f,e,"[nintendont]\\r\\ngame_version = 2\\r\\n");}\n'
@@ -111,9 +114,12 @@ API void selectRegion(const char*region){
  BuildSectionName(QftDisplaySection,SUSAMUNE_INI_SECTION_QFT_DISPLAY,region);
  BuildSectionName(CreationSection,SUSAMUNE_INI_SECTION_CREATION,region);
  resetEpisodeChoices();stageEpisodes(&episodes);memset(&cfg,0,sizeof(cfg));
+ cfg.count=SETTING_KEY_COUNT;for(unsigned i=0;i<SUSAMUNE_CFG_TOTAL_SETTINGS;i++)SusamuneCfgSetSetting(&cfg,i,SUSAMUNE_CFG_UNSET);
  attrPoison=0xa5;realAttr=0x20;statError=closeError=0;tempOpens=sourceCloses=commits=0;
 }
 API void parse(const char*text){static char input[65536];memcpy(input,text,strlen(text)+1);ParseIni(input,&cfg);}
+API unsigned getSetting(unsigned index){return SusamuneCfgGetSetting(&cfg,index);}
+API void settingCount(unsigned count){cfg.count=count;}
 API void getEpisodes(SusamuneILEpisodesCfg*out){*out=episodes;}
 API void setEpisodes(const SusamuneILEpisodesCfg*in){episodes=*in;}
 API void adopt(const SusamuneILEpisodesCfg*in,SusamuneILEpisodesCfg*out){adoptEpisodes(in);stageEpisodes(out);}
@@ -150,6 +156,34 @@ API unsigned operations(){return tempOpens|(sourceCloses<<8)|(commits<<16);}
                     self.assertEqual(self.lib.attemptRewrite(loader, original), 0)
                     self.assertTrue(self.lib.readOriginal().startswith(original))
                     self.assertEqual(self.lib.operations(), 0x10101)
+
+    def test_appended_settings_parse_and_write_without_touching_other_regions(self):
+        for region in (b'jp', b'us', b'pal'):
+            with self.subTest(region=region):
+                self.lib.selectRegion(region)
+                source = b''.join(b'[settings_' + r + b']\r\nfree_camera_sensitivity = ' +
+                    (b'4' if r == region else b'2') + b'\r\nfree_camera_hide_hud = 1\r\n'
+                    for r in (b'jp', b'us', b'pal'))
+                self.lib.parse(source)
+                self.assertEqual([self.lib.getSetting(i) for i in (128, 129)], [4, 1])
+                output = self.lib.rewrite(source)
+                self.assertIsNotNone(output)
+                self.lib.selectRegion(region)
+                self.lib.parse(output)
+                self.assertEqual([self.lib.getSetting(i) for i in (128, 129)], [4, 1])
+                for other in (b'jp', b'us', b'pal'):
+                    if other != region:
+                        self.assertIn(b'[settings_' + other +
+                            b']\r\nfree_camera_sensitivity = 2\r\nfree_camera_hide_hud = 1\r\n', output)
+
+    def test_appended_settings_missing_invalid_or_unpublished_stay_absent(self):
+        self.lib.parse(b'[settings_pal]\r\nfree_camera_sensitivity = 255\r\n'
+                       b'free_camera_hide_hud = -1\r\n')
+        self.assertEqual([self.lib.getSetting(i) for i in (128, 129)], [255, 255])
+        self.lib.parse(b'[settings_pal]\r\nfree_camera_sensitivity = 4\r\n')
+        self.lib.settingCount(128)
+        output = self.lib.rewrite(b'[settings_pal]\r\n')
+        self.assertNotIn(b'free_camera_sensitivity', output)
 
     def test_both_writers_preserve_readonly_source_and_attribute_errors(self):
         original = b"[creation_pal]\r\nil_episode_bianco_100 = 4\r\n"

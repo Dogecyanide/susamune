@@ -1567,6 +1567,9 @@ void draw(Menu *menu) {
     const u8 display = gSettings.get(SETTING_STAGE_SESSION_DISPLAY);
     if (display == 1) {
         drawCounter(menu);
+        if (sRuntime.mode == MODE_STREAKING && sRuntime.displayFrames > 0 &&
+            sRuntime.outcome >= OUTCOME_WRONG_ROUTE)
+            drawFullNotice(menu);
     } else if (display == 0 &&
                (sRuntime.displayFrames > 0 ||
                 sRuntime.state == STATE_BLOCKED)) {

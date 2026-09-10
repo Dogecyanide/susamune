@@ -131,7 +131,7 @@ API unsigned int get(unsigned int key) {
         failure = function_source(SOURCE, "if (!fits)")
         success = save[save.index(failure) + len(failure):]
         call = "rebaseMissionStopwatch(h->save_time);"
-        self.assertEqual(save.count(call), 3)
+        self.assertEqual(save.count(call), 4)
         self.assertLess(save.index("StateCodec::compress("), save.index(failure))
         for branch in (failure, success):
             self.assertEqual(branch.count(call), 1)

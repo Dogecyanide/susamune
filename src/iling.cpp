@@ -546,6 +546,7 @@ struct AttemptState {
     u8 plazaStoryFlags;
     u8 overlayCount;
     u8 assistReasons;
+    bool awaitingStageSetup;
     OverlayFlag overlayFlags[kOverlayFlagCount];
     LevelWarp::Dest start;
     u8 finish;
@@ -553,6 +554,8 @@ struct AttemptState {
     int selectedEntry;
     u32 serial;
 };
+
+static_assert(sizeof(AttemptState) == 44, "IL attempt sidecar layout changed");
 
 struct SavedAttemptData {
     AttemptState attempt;
@@ -654,6 +657,7 @@ static_assert(sizeof(ILingRuntime) <= SUSAMUNE_ILING_RUNTIME_SIZE,
 #define sPlazaStoryFlags sAttemptState.plazaStoryFlags
 #define sOverlayCount sAttemptState.overlayCount
 #define sAssistReasons sAttemptState.assistReasons
+#define sAwaitingStageSetup sAttemptState.awaitingStageSetup
 #define sOverlayFlags sAttemptState.overlayFlags
 #define sAttemptStart sAttemptState.start
 #define sFinishKind sAttemptState.finish
@@ -1338,6 +1342,7 @@ void clearAttempt() {
     }
     sRunning = false;
     sAttemptReady = false;
+    sAwaitingStageSetup = false;
     sTransitionPending = false;
     sRecordsEligible = false;
     sAssistReasons = 0;
@@ -1386,6 +1391,7 @@ void armAttempt(const Entry &entry, int selected,
     sPinnaEygRestart = entryIndex == kEntryPinnaEyg;
     sRunning = true;
     sAttemptReady = false;
+    sAwaitingStageSetup = true;
     sTransitionPending = false;
     sChildRetryContinuation = false;
     sAttemptStart = start ? *start : entry.start;
@@ -1399,10 +1405,18 @@ void armAttempt(const Entry &entry, int selected,
     if (identity < 0 || identity >= kEntryCount) identity = entryIndex;
     sSecretOnly = isSecretOnlyPbSlot(pbSlot(identity));
     sAttemptSerial = gQFTTimer.attemptSerial();
+    sAssistReasons = 0;
+    sRecordsEligible = true;
+    sNativeIgt = false;
+}
+
+void beginAttemptScene(int entry) {
+    // Selection still runs in the departing scene; its assists belong there.
+    sAwaitingStageSetup = false;
+    sNativeIgt = false;
     sAssistReasons = liveGlobalAssistReasons();
     sRecordsEligible = sAssistReasons == 0;
-    sNativeIgt = false;
-    Records::onILAttemptStarted(entryIndex);
+    Records::onILAttemptStarted(entry);
     if (!sRecordsEligible) {
         Records::invalidateAttempt(sAssistReasons);
         StageLoader::invalidatePlaylistBest();
@@ -1438,7 +1452,7 @@ bool attemptPBRecordingEnabled() {
 
 bool secretAttemptUsedFludd() {
     // isEmitting() reports nozzle pressure, not an accepted water emit.
-    return sRunning && sSecretOnly &&
+    return sRunning && !sAwaitingStageSetup && sSecretOnly &&
            stageObjectsLive() && gpMarioOriginal && gpMarioOriginal->mFludd &&
            gpMarioOriginal->mFludd->mIsEmitWater;
 }
@@ -2040,6 +2054,9 @@ void beforeStageSetup() {
             // QFT. Keep the parent attempt armed for the spawned Shine.
             sAttemptReady = isPinnaEightReturn(scene);
             sAttemptSerial = gQFTTimer.attemptSerial();
+            if (!sAttemptReady)
+                beginAttemptScene(validEntry(sSelectedEntry) ? sSelectedEntry
+                                                            : entryForStartScene(scene));
             if (isPlazaEntry(sSelectedEntry)) {
                 applyPlazaOverlay(sSelectedEntry);
             } else if (sSelectedEntry >= 0) {
@@ -2051,6 +2068,7 @@ void beforeStageSetup() {
             acceptsSelectedOriginScene(kEntries[sSelectedEntry], scene)) {
             // Their cutscene hops do not restart QFT, so keep the selected
             // attempt eligible across every intermediate scene.
+            if (sAwaitingStageSetup) beginAttemptScene(sSelectedEntry);
             sAttemptReady = true;
             sAttemptSerial = gQFTTimer.attemptSerial();
             return;
@@ -2071,6 +2089,7 @@ void beforeStageSetup() {
         // Natural entry and ordinary level reset arm every valid result from
         // this start scene; the exact TShine id chooses the PB at the finish.
         armAttempt(kEntries[entry], -1);
+        beginAttemptScene(entry);
     }
 }
 
@@ -2124,7 +2143,7 @@ void update() {
     servicePBSave();
 
     const u8 globalAssistReasons = liveGlobalAssistReasons();
-    if (sRunning && globalAssistReasons)
+    if (sRunning && !sAwaitingStageSetup && globalAssistReasons)
         invalidateForAssist(globalAssistReasons);
     if (secretAttemptUsedFludd()) invalidateForAssist(Assist::OTHER);
     if (sRunning && stageObjectsLive() && gpMarDirector->mGCConsole &&
@@ -2210,7 +2229,7 @@ void update() {
     if (sAchievementChimeBlockFrames > 0) {
         sAchievementChimeBlockFrames--;
     }
-    if (!sRunning) {
+    if (!sRunning || sAwaitingStageSetup) {
         return;
     }
 
@@ -2274,6 +2293,7 @@ void update() {
             clearAttempt();
             if (entry >= 0) {
                 armAttempt(kEntries[entry], entry);
+                beginAttemptScene(entry);
                 sAttemptSerial = serial;
                 sAttemptReady = true;
                 captureGhostRace(entry);
@@ -2409,7 +2429,7 @@ void onSavestateLoaded() {
 }
 
 void invalidateForAssist(u8 reasons) {
-    if (!sRunning) return;
+    if (!sRunning || sAwaitingStageSetup) return;
     const u8 added = reasons & ~sAssistReasons;
     if (!added) return;
     sAssistReasons |= reasons;

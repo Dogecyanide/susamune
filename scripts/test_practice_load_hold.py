@@ -29,7 +29,7 @@ class LoadHoldTests(unittest.TestCase):
                 "bool paused()", "bool manualPaused()",
                 "void beforeDirect(", 'extern "C" s32 susamunePracticeChangeState(',
                 "void afterDirect(", "void beforeStageSetup()",
-                "void releaseForDeparture()"))
+                "void releaseForDeparture()", "void requestStop()"))
         source = Path(cls.folder.name) / "load_hold.cpp"
         source.write_text(r'''
 #include "Dolphin/types.h"
@@ -56,6 +56,8 @@ static bool ready,transition,sPaused,sPausePending,sLoadHoldActive,sLoadHoldPend
 static bool sOwnLoad,sCameraWaitButtons,sFreeCamera,sStepQueued,sHaveRead;
 static bool sConsumedFrame,sStepping,sModal,sFrameInjected,sRecord,sReplay,sFreeze;
 static bool sBorrowedPause,sAssisted;
+static bool sTakeAttached,sModalPadValid;
+static u32 sTakePosition,sOriginKey[2],sPendingReleases;
 static u16 sLoadHoldButtons,sStripButtons,sBeforeRead;
 static u8 sMenuAction,sLoadKind;
 static u32 sSteps,sSettingsHash,sCount,sCursor,sTapeSeed,sStageGeneration;
@@ -67,13 +69,15 @@ static void *sCamera;
 static const char *sStatus;
 static char sReplayFailure[64];
 struct Frame { SusamunePracticeInput input;u32 fingerprint; };
-static const u32 kMaxFrames=4;
+static const u32 kMaxFrames=4,kFrameFingerprintMask=0x7fffffffu;
 static Frame sFrames[kMaxFrames];
 struct SavestateManager { static const u32 kSlotCount=3; };
 struct Seed { bool valid; };
 static Seed sSeeds[3];
 struct Timer { void beginPracticePause() {++begins;} void endPracticePause() {++ends;} } gQFTTimer;
 struct JUTGamePad { enum { A=0x100 }; };
+const int BIND_PRACTICE_STOP=1;
+static struct {bool wasPressed(int){return true;}u16 get(int){return 0x20;}void suppressUntilRelease(){}} gBinds;
 static const unsigned SUSAMUNE_CRASH_EVENT_PRACTICE=1,SUSAMUNE_CRASH_EVENT_REPLAY=2;
 namespace CrashReport { void note(unsigned,unsigned,unsigned) {} }
 namespace ILing { void invalidateForAssist() {} }
@@ -97,8 +101,10 @@ void restoreCamera() {}
 void updateCamera() {}
 void stopTape(const char *) {sRecord=sReplay=false;sLoadKind=0;}
 void inject(const SusamunePracticeInput &,TMarioGamePad *) {}
+void writeFrame(Frame &f,const SusamunePracticeInput&i,u32 h,u32){f.input=i;f.fingerprint=h;}
 void consumeControlInput() {}
 void retainPausedReleases(TMarioGamePad *) {}
+void retainModalHistory() {}
 void capturePad(u16 &out,TMarioGamePad *p) {out=p->flags;}
 void restorePad(u16 value,TMarioGamePad *p) {p->flags=value;}
 int snprintf(char *,size_t,const char *,...) {return 0;}
@@ -115,6 +121,11 @@ extern "C" __declspec(dllexport) void reset(unsigned state,unsigned modes) {
     sReadPad=0;sCamera=0;mario.mState=0;
     sSteps=sSettingsHash=sCount=sCursor=sTapeSeed=sStageGeneration=0;
     invalidations=retailCalls=begins=ends=0;Ghost::frozen=false;
+}
+extern "C" __declspec(dllexport) unsigned stopReplay() {
+    sReplay=true;sTakeAttached=true;sTakePosition=sCursor=2;sCount=4;sFrameInjected=true;sHaveRead=true;sReadPad=&pad;
+    requestStop();beforeDirect(false);afterDirect(1,!sFreeze);
+    return (sPaused?1:0)|(sFreeze?2:0)|(sTakeAttached?4:0)|(sConsumedFrame?8:0)|(sTakePosition<<8);
 }
 extern "C" __declspec(dllexport) void arm(unsigned buttons) {armLoadHold((u16)buttons);}
 extern "C" __declspec(dllexport) void physical(unsigned buttons,int error) {
@@ -175,6 +186,10 @@ extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
         self.lib.before(0)
         self.assertEqual(self.low(), 0)
         self.assertEqual(self.lib.mask(), 0)
+
+    def test_stop_shortcut_freezes_last_replay_frame_and_retains_edit_position(self):
+        self.lib.reset(4, 0)
+        self.assertEqual(self.lib.stopReplay(), 0x207)
 
     def test_timer_pause_report_includes_load_hold_without_changing_menu_toggle(self):
         self.start()
@@ -298,6 +313,15 @@ extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
         self.lib.after(4)
         self.assertEqual(self.low(), 0)
         self.assertEqual(self.lib.mask(), 0)
+
+    def test_new_warp_cancels_pause_buffered_in_old_intro(self):
+        self.start(state=2, modes=1)
+        self.assertEqual(self.low() & 16, 16)
+        self.lib.lifecycle(1)
+        self.assertEqual(self.low() & 24, 0)
+        self.lib.state(4)
+        self.lib.before(0)
+        self.assertEqual(self.low() & 24, 0)
 
     def test_first_actionable_rendered_frame_can_activate_without_transition(self):
         self.start(state=2)

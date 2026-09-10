@@ -1,8 +1,10 @@
 # Moonshine 2.3.0 — RC1 test log
 
-**FOXTROT candidate · Build 1CF3F641**
+**FOXTROT candidate · Build E4DE048F**
 
-This is the full RC1 check, covering new features and normal practice. `TESTING.md` is the shorter latest-fixes sheet. `RC1_ROUTES.md` lists the expected checkpoints for the course tests below.
+This is the full RC1 check, covering new features and normal practice. **Keep your earlier results.** Prioritise the items marked **Updated** and one ordinary run; use the remaining items to fill gaps in team coverage. `TESTING.md` is the shorter latest-fixes sheet. `RC1_ROUTES.md` lists the expected course checkpoints.
+
+**Make fresh states with this build. Earlier SD states need resaving and cannot be loaded by this update.** Settings, records and ghosts are kept.
 
 ## How to split the work
 
@@ -28,10 +30,10 @@ Dolphin testers: enable a memory card in slot B for mod settings, and set Textur
 
 - [ ] **1A — Startup.** Open the updated launcher with your usual theme and music. Text must be readable before loading finishes, including any storage wait. The theme should appear early. An SD-only setup should not wait for an unused USB drive. On a fresh setup, **/Moonshine_Theme** should be created automatically.
 - [ ] **1B — Remembered game.** Launch your usual version. If you own another supported version or use another storage device, select it and launch it once. Returning to the first selection should keep its path. An incorrect game/version selection should give a readable error.
-- [ ] **1C — Auto Boot and Guide.** If you use Auto Boot, check normal boot and holding B to reach the menu. Open the launcher's **Guide**, read a topic, turn a page and back out successfully.
+- [ ] **1C — Auto Boot and Guide (Updated).** If you use Auto Boot, check normal boot and holding B to reach the menu. Open the launcher's **Guide**, read a topic, turn a page and back out successfully. Also open System > FOXTROT guide in-game: its lines should fit without large path-separator gaps.
 - [ ] **1D — Menu navigation.** Browse Quick, Practice, Runs, Records, Ghosts, Display and System. Records should also open from Runs. Enter/back out of submenus; the A used to open a page must not also trigger an action inside it. Add and remove a Quick favourite. Check one duplicated setting shows the same value in both locations.
 - [ ] **1E — Binds and saving.** Assign one shortcut from a Practice page with X, and check it under System > Button binds. Try cancelling a bind edit too. Existing shortcuts should remain. Close the menu after changing a setting: no false “storage access denied” error. Leave a harmless change saved for the reboot check.
-- [ ] **1F — Download language.** During the menu checks above, the standard download should keep Moonshine menus English even with JP selected. In the Japanese download, the launcher stays Japanese when changing game region; JP game menus are translated, while US/PAL game menus stay English. Check long setting/bind names and button labels for missing or overlapping text, and the Japanese flag for a round circle. Some status messages and the built-in Guide body remain English. Standard Dolphin JP uses English menus; the separate Japanese JP patch enables translations.
+- [ ] **1F — Download language (Updated).** During the menu checks above, the standard download should keep Moonshine menus English even with JP selected. In the Japanese download, the launcher stays Japanese when changing game region; JP game menus are translated, while US/PAL game menus stay English. Check long setting/bind names and button labels for missing or overlapping text, and the Japanese flag for a round circle. Review the 25 amended IL/playlist/layout terms and the brighter, larger small help text. Some status messages and the built-in Guide body remain English. Standard Dolphin JP uses English menus; the separate Japanese JP patch enables translations.
 
 Themes use **/Moonshine_Theme** at the root of the launcher's device. A missing folder is created once storage is ready. The Japanese download includes its flag there; the standard download keeps your own theme. Selecting JP changes neither the download language nor the background.
 
@@ -41,14 +43,14 @@ Themes use **/Moonshine_Theme** at the root of the launcher's device. A missing 
 - [ ] **2B — Timer controls.** Toggle one QFT event freeze, such as coin or Talk, and check the displayed freeze follows it without freezing gameplay. Check QFT visibility, leading zero and section history if you use them.
 - [ ] **2C — PB Safety.** With a completed PB ghost still unsaved, request a restart/warp. Check the protection prompt: cancel keeps your choice open; saving preserves the ghost before continuing. Practice-assisted runs must not replace an ordinary PB. Restart into a fresh normal attempt and check normal PB recording becomes available again.
 - [ ] **2D — Records and profiles.** Open achievements and statistics from Records and its Runs shortcut. Existing records should remain. Switch to another profile and back; its PBs and ghosts should stay separate. Use a spare profile for a delete/reset check: cancel once, then delete one disposable PB or segment record and check neighbouring records remain.
-- [ ] **2E — Playlists and streaks.** Try a two-entry playlist and a short streak challenge. Finishing should advance/count correctly; a failed attempt or reset should follow the selected streak rule. Ending the session should return normal menu and warp control.
+- [ ] **2E — Playlists and streaks (Updated).** Try a two-entry playlist and a short streak challenge. Include starting a clean challenge after using practice pause in the previous stage: the new clean attempt should count. Finishing should advance/count correctly; a failed attempt or reset should follow the selected rule, with a brief rejection reason beside the streak counter when relevant. Ending the session should return normal menu and warp control.
 
 ## 3. Frame advance, free camera and timers
 
 - [ ] **3A — Pause and Step.** From live gameplay, press Step to pause, then advance a few frames and resume. During the hold, QFT stays still; each Step advances one frame of game time. There should be a small **TAS** label, with no paused waiting time added when you resume. Check both timer displays follow the same frame, including after the state load in section 4.
 - [ ] **3B — Held inputs and spins.** With freecam Off, hold A when starting Pause, then Step to jump. Release and press A again between later steps; that new press must register. Turn the main stick yourself across steps for a spin. Holding a button must not create repeated new presses. There should be no Queue spin option.
 - [ ] **3C — Pause ready for control.** Tap Pause/Step during a level intro or loading. It should pause on Mario's first controllable frame. On another transition, cancel the waiting pause and check play continues normally. If Pause is D-Up and Reset is B+D-Up, hold B then press D-Up: reset must not also pause or mark the new attempt TAS. Testers with an L-based shortcut should check it does not cause an unwanted ground-pound.
-- [ ] **3D — Camera controls.** Turn freecam on from gameplay: Mario pauses. Check movement, looking, height, Movement speed, X boost and Reverse sideways. Recenter and Off should restore the usual view; Resume restores Mario's controls. With Camera On, movement buttons belong to the camera; turn it Off before stepping Mario's jump.
+- [ ] **3D — Camera controls (Updated).** Turn freecam on from gameplay: Mario pauses. Check movement, looking, height, Movement speed, X boost and Reverse sideways. Look sensitivity should change C-stick turning separately, from 0.25x to 4x. Hide all HUD should hide game and Moonshine overlays while freecam is On, leave the menu accessible, and restore the displays when disabled. Recenter and Off should restore the usual view; Resume restores Mario's controls. With Camera On, movement buttons belong to the camera; turn it Off before stepping Mario's jump.
 - [ ] **3E — Camera in pause.** Use it in ordinary Start pause and while stepping, then leave the area. The normal camera should return. Check camera use during Ghost Watch in section 7 rather than repeating this whole exercise there.
 
 ## 4. Three memory states
@@ -69,17 +71,18 @@ Use states from this build and the same region, setup, level and episode. Secret
 - [ ] **5A — Names and file actions.** Save a memory state to SD, enter a name and confirm with Start. Rename it. On a disposable copy, cancel X/Delete once, then delete it. The correct file should change; your other SD and memory states should remain.
 - [ ] **5B — Y selects the Load source.** With all three memory slots occupied, highlight an SD state and press Y. Close the menu and use Load. The SD state should restore while the three memory states remain usable. Save another memory state and press Load again: the selected SD file should still be the source. Include a crowded/busy-scene file among the team's checks. When memory is full, keep at least one usable memory state for the current scene/setup as a recovery point; otherwise a safe lack-of-space refusal can be expected.
 - [ ] **5C — A imports.** Set Save to 3 and Load from another slot or SD file. Press A on an SD file: cancel once, then confirm import. Only State 3 should be replaced; Load from must keep its choice. Select 3 to use the imported state.
-- [ ] **5D — Wrong episode.** Try loading a state while in a different episode. It should refuse clearly and leave the game and saved states usable. Return to the correct episode to use it. Check restoration after reboot in section 11.
+- [ ] **5D — Wrong episode and visible errors (Updated).** Turn successful save/load messages Off, then try loading a state in a different episode. It should still refuse clearly and leave the game and saved states usable. Return to the correct episode to use it. Check restoration after reboot in section 11.
 
 Keep the SD connected during transfers. Testing does not require corrupting files or pulling the card mid-save.
 
-## 6. Local input recording and replay
+## 6. TAS checkpoints and input replay — Updated
 
-This is the short experimental take under **Practice > Input replay**, separate from saved ghosts.
+This is the experimental take under **Practice > Input replay**, separate from ghosts. It holds up to 4096 frames. Reuse one start state and a short recording for these checks; do the SD reboot part once in section 11.
 
 - [ ] **6A — Start from the menu.** Turn Save RNG state On and make a fresh memory save during gameplay. Choose Record from savestate, then release the A used to confirm. A different held gameplay button should not prevent starting. Walk, jump and spray briefly; open the menu to stop and keep the take.
 - [ ] **6B — Replay and stop.** Replay the take: it should reload the starting state and repeat the sequence. Check B/Start can stop playback. Report an unexpected refusal or mismatch with the exact message and what was recorded.
-- [ ] **6C — Correct starting state.** Select or save another slot, move the Sunshine timer or change metadata layout, then replay again. It should still use the take's original state. Replacing/clearing that original state or changing scenes should make the old take unavailable. A gameplay setting that no longer matches should produce a clear explanation.
+- [ ] **6C — Edit a checkpoint.** Keep the start state, then save a different slot during recording. Go farther, load the checkpoint and record a different ending. Replay should include the original opening and new ending, without discarded inputs. Save a stopped take too: Continue editing checkpoint should keep it paused until Step or Resume.
+- [ ] **6D — Correct starting state.** Select another Save to/Load from, or adjust timer/metadata layout, then replay. It should still use the matching start. If that start is missing, replay should ask for it rather than use an unrelated slot. A gameplay setting that no longer matches should give a clear explanation. Console testers: export both start and latest checkpoint for section 11.
 
 ## 7. Ghosts, sharing and TAS continuation
 
@@ -118,13 +121,13 @@ Divide these options among testers who use them; one useful example per feature 
 
 - [ ] **10A — Course coverage.** Check each assigned route's checkpoints happen once, in order, at the listed event. The finish and stored segment times should agree. Include old working boss/secret transitions and routes with no intermediate split, which should still finish normally.
 - [ ] **10B — Episode picker.** Across the team, choose one 100-coin IL, one Hidden and one Full Reds. Use Z to choose an episode; check cancel, keep, launch and restart. Include a Pinna/Sirena route with an area transition. Only supported ILs should offer this choice; keep it for the reboot check.
-- [ ] **10C — Pinna 1 priority.** Assign a normal movie route and the usual two Exit Area skips to separate runs/testers. Expect Talk, four Mecha-Bowser hits and finish, with progress retained through the transitions. Report the first missing checkpoint and which skip route you used.
+- [ ] **10C — Pinna 1 priority (Updated).** Assign a normal movie route and the usual two Exit Area skips to separate runs/testers. Expect Talk, four Mecha-Bowser hits and finish, with progress retained through the transitions. Report the first missing checkpoint and which skip route you used.
 - [ ] **10D — Other repaired events.** Assign Gelato 5 Talk, Sirena 2 Reds/Noki 6 Reds button presses, Noki Hidden's launch then bird, and the Spawn Shine routes. Button splits should happen on the press. Shadow Mario splits should happen on actual Talk, not merely when he becomes talkable.
 
 ## 11. One final reboot and report
 
-- [ ] **11A — Persistence.** Reboot once after saving the checks above. Confirm kept settings, binds, camera speed/direction, layouts, custom text, Mario/FLUDD colours, episode choices, records/profiles and ghosts remain correct. Check an earned achievement if you earned one during the session.
-- [ ] **11B — States after reboot.** The three memory slots should start Empty. Console: the named SD state should still be listed. Enter its matching level/episode, select it and restore it successfully. Its saved ghost opening should still be usable for a TAS continuation.
+- [ ] **11A — Persistence.** Reboot once after saving the checks above. Confirm kept settings, binds, camera movement speed/direction, look sensitivity/Hide all HUD, layouts, custom text, Mario/FLUDD colours, episode choices, records/profiles and ghosts remain correct. Check an earned achievement if you earned one during the session.
+- [ ] **11B — States and TAS after reboot (Updated).** The three memory slots should start Empty. Console: the named SD state should still be listed. Enter its matching level/episode, select it and restore it successfully. Its saved ghost opening should still be usable for a TAS continuation. For the input take from section 6, import the matching start into any RAM slot, then load the latest checkpoint. Continue editing should resume work; Replay recorded inputs should start from the beginning. The imported start need not use its original slot number.
 - [ ] **11C — Ordinary play.** Finish with a short normal practice session. Report a new crash, slowdown, stuck input or camera problem, including the last action before it happened.
 
 **Items passed:**

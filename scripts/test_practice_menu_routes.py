@@ -23,7 +23,7 @@ class PracticeMenuTests(unittest.TestCase):
                             for signature in ("void focus() override",
                                 "bool grabsInput() const override",
                                 "void update(Menu *menu, TMarioGamePad *pad) override",
-                                "int rowCount() const", "BindId selectedBind() const"))
+                                "SettingId cameraSetting() const", "int rowCount() const", "BindId selectedBind() const"))
         raw = (ROOT / "include/susamune/raw_prompt_input.hxx").read_text()
         raw = raw[raw.index("class RawPromptInput"):raw.index("#endif")]
         shim = r'''
@@ -54,6 +54,7 @@ bool requestFreeCameraToggle(){hit(5);return true;}
 void recenterCamera(){hit(6);}
 bool requestRecord(){hit(7);return true;}
 bool requestPlayback(){hit(8);return true;}
+bool requestContinue(){hit(10);return true;}
 void requestStop(){hit(9);}
 const char *status(){return "status";}
 }
@@ -125,8 +126,8 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
     def test_each_page_reaches_its_own_actions(self):
         for page, row, action, closes, from_menu in (
                 (0, 0, 1, 1, 1), (0, 1, 2, 1, 1),
-                (1, 0, 5, 1, 0), (1, 1, 1, 1, 1), (1, 4, 6, 0, 0),
-                (2, 0, 7, 1, 0), (2, 1, 8, 1, 0), (2, 2, 9, 0, 0)):
+                (1, 0, 5, 1, 0), (1, 1, 1, 1, 1), (1, 6, 6, 0, 0),
+                (2, 0, 7, 1, 0), (2, 1, 8, 1, 0), (2, 2, 9, 0, 0), (2, 3, 10, 1, 0)):
             self.assertEqual(self.route(page, row),
                              (1, [action, closes, from_menu, row, -1, 0]))
 
@@ -144,7 +145,7 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
                 self.assertEqual(list(out)[2:], [0, row, 0, action])
 
     def test_speed_and_direction_adjust_both_ways_without_closing(self):
-        for row in (2, 3):
+        for row in (2, 3, 4, 5):
             for nav, direction in ((4, -1), (8, 1)):
                 events, out = self.route(1, row, nav, 0)
                 self.assertEqual(events, 1)
@@ -159,7 +160,7 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
             self.assertEqual(list(out), [1, 0, 0, 0])
 
     def test_navigation_stays_within_each_page(self):
-        for page, last in ((0, 1), (1, 4), (2, 2)):
+        for page, last in ((0, 1), (1, 6), (2, 3)):
             self.assertEqual(self.route(page, 0, 1, 0)[1][3], last)
             self.assertEqual(self.route(page, last, 2, 0)[1][3], 0)
 

@@ -1,14 +1,40 @@
 # FOXTROT input replay start handling
 
-Input takes remain local, experimental recordings of up to 4,096 rendered
-frames. They require a locally saved gameplay state, including its controller
-decoder history and RNG. Importing an SD state does not invent that history:
-load it, then make a new memory save before recording an input take.
+Input takes remain experimental recordings of up to 4,096 rendered frames.
+Snapshot version 16 stores the used input prefix and controller decoder state,
+with checked metadata linking the take to its start. A checkpoint load rewinds
+the recorded inputs as well as the game. A checkpoint saved while recording
+resumes that recording; a stopped take can use Continue editing checkpoint.
+
+Export both the start state and the latest checkpoint to SD to preserve a TAS
+across reboot. Import the matching start into any RAM slot, then restore the
+checkpoint. Direct SD checkpoint restore is supported, but replay from the
+beginning still needs the matching RAM start. Earlier SD states require new
+saves with this build. The existing build, region, scene, ownership and gameplay
+settings checks remain. These state archives are not portable replay files.
+
+Frames remain 16 bytes. The 21-bit history of physical releases between steps
+uses spare input bits and the top fingerprint bit, so those edges remain
+lossless without enlarging the tape. The local per-frame diagnostic comparison
+uses 31 bits; whole-tape, pad, archive and start hashes retain all 32 bits. Modal
+menu navigation keeps separate gameplay controller history. Removing the old
+three-seed cache saves about 532 bytes against the intermediate checkpoint
+implementation; no memory reserve changed.
+
+The current implementation passed an isolated US Dolphin check of saving two
+checkpoints, rewinding, replacing the ending and replaying with matching
+fingerprints and position. Opening the actual Y+Start menu, navigating and
+saving a checkpoint also retained replay history. Evidence is in
+`build/rc1-tas-camera-proof/complete.json` and `menu-checkpoint-result.json`
+(private image `94714F34`, final TAS sources, before the final HUD draw gates).
+This does not establish physical-console or cross-reboot behavior.
 
 ## Start transaction
 
-Record pins the current **Save to** slot and generation. Replay pins the take's
-original slot and generation, independently of the current Save/Load selections.
+Record pins the current **Save to** slot and generation. Replay resolves the
+matching start identity to a RAM slot, then pins its generation independently of
+the current Save/Load selections. The start may have been imported into a
+different slot after reboot.
 The request clears an earlier buffered frame pause or queued Step. While waiting,
 gameplay stays held and the request defers to menus, warp confirmations, the SD
 service and memory-card work. Only the buttons that issued the request must be
@@ -26,8 +52,8 @@ the frame number. Gameplay and RNG checks remain intact.
 The settings hash excludes only audited presentation values: favourites and RNG
 favourites (`settings.cpp` stores menu stars), legacy native-timer coordinates and
 scale (`CreationExtras::adoptNativeTimer` reads layout defaults), free-camera speed
-and sideways direction (only `updateCamera` reads them, and replay disables that
-camera), metadata orientation (layout/clamping/drawing only), and ghost input
+and sideways direction, look sensitivity and hide-HUD controls (camera or
+presentation only; replay disables the camera), metadata orientation (layout/clamping/drawing only), and ghost input
 visibility (only the post-draw input overlay). Every other setting, including
 Mario appearance flags, RNG controls and new settings, remains guarded. This lets
 a user change those display preferences without receiving a false refusal.
@@ -42,7 +68,13 @@ Turning it on afterward is insufficient: a new state must be saved. The user's
 last backed-up configuration already had this enabled, so this guard is not
 evidence that RNG settings caused their reported intermittent mismatch.
 
-## Verification
+## Earlier verification
+
+The results below predate snapshot version 16 and do not establish its new
+checkpoint or reboot workflow. Current focused tests are in
+`test_practice_checkpoints.py` and `test_savestate_checkpoint_contract.py`;
+real-console checkpoint/reboot checks remain on the RC1 tester sheet.
+
 
 `scripts/test_practice_slot_seeds.py` compiles the production request, queue,
 restore-start and slot-callback functions. It exercises independent slot

@@ -5831,7 +5831,7 @@ public:
     const char *summary() const override {
         return mPage == FRAMES ? "Pause the game and choose the inputs for each frame." :
                mPage == CAMERA ? "Move the camera while gameplay or a ghost is paused." :
-               "Repeat your own inputs from a savestate. Saved ghosts are in Ghosts.";
+               "Record a TAS from a start state. Save checkpoints to try different inputs.";
     }
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
@@ -5849,10 +5849,9 @@ public:
         }
         if (nav & TMarioGamePad::CSTICK_UP) mSel = (u8)wrap(mSel - 1, rowCount());
         if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, rowCount());
-        if (mPage == CAMERA && (mSel == 2 || mSel == 3) &&
+        if (mPage == CAMERA && mSel >= 2 && mSel <= 5 &&
             (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
-            gSettings.cycle(mSel == 2 ? SETTING_FREE_CAMERA_SPEED :
-                SETTING_FREE_CAMERA_STRAFE_REVERSE,
+            gSettings.cycle(cameraSetting(),
                 (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
         const u16 pressed = mInput.update();
         const BindId bind = selectedBind();
@@ -5875,13 +5874,16 @@ public:
             case 1: close = PracticeSession::requestPauseToggle(true); break;
             case 2: gSettings.cycle(SETTING_FREE_CAMERA_SPEED, 1); return;
             case 3: gSettings.cycle(SETTING_FREE_CAMERA_STRAFE_REVERSE, 1); return;
-            case 4: PracticeSession::recenterCamera(); break;
+            case 4: gSettings.cycle(SETTING_FREE_CAMERA_SENSITIVITY, 1); return;
+            case 5: gSettings.cycle(SETTING_FREE_CAMERA_HIDE_HUD, 1); return;
+            case 6: PracticeSession::recenterCamera(); break;
             }
         } else {
             switch (mSel) {
             case 0: close = PracticeSession::requestRecord(); break;
             case 1: close = PracticeSession::requestPlayback(); break;
             case 2: PracticeSession::requestStop(); break;
+            case 3: close = PracticeSession::requestContinue(); break;
             }
         }
         if (close) menu->hide();
@@ -5891,13 +5893,17 @@ public:
         const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
             PracticeSession::manualPaused() ? "Resume gameplay" : "Pause gameplay";
         const char *frameLabels[] = {pause, "Advance one frame"};
-        const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways", "Recenter camera"};
-        const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs", "Stop recording or replay"};
+        const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways",
+                                     "Look sensitivity", "Hide all HUD", "Recenter camera"};
+        const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs",
+                                    "Stop recording or replay", "Continue editing checkpoint"};
         const char *frameValues[] = {"", PracticeSession::manualPaused() ? "Step" : "Pause"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
-            gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE), "Reset view"};
-        const char *replayValues[] = {"Record", "Play", "Stop"};
+            gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE),
+            gSettings.valueLabel(SETTING_FREE_CAMERA_SENSITIVITY),
+            gSettings.valueLabel(SETTING_FREE_CAMERA_HIDE_HUD), "Reset view"};
+        const char *replayValues[] = {"Record", "Play", "Stop", "Edit"};
         const char *const *labels = mPage == FRAMES ? frameLabels : mPage == CAMERA ? cameraLabels : replayLabels;
         const char *const *values = mPage == FRAMES ? frameValues : mPage == CAMERA ? cameraValues : replayValues;
         char status[80];
@@ -5930,11 +5936,18 @@ public:
             "Hold your new buttons, then release to save. C-stick cancels." : help());
     }
 private:
-    int rowCount() const { return mPage == FRAMES ? 2 : mPage == CAMERA ? 5 : 3; }
+    SettingId cameraSetting() const {
+        static const SettingId ids[] = {SETTING_FREE_CAMERA_SPEED,
+            SETTING_FREE_CAMERA_STRAFE_REVERSE, SETTING_FREE_CAMERA_SENSITIVITY,
+            SETTING_FREE_CAMERA_HIDE_HUD};
+        return ids[mSel - 2];
+    }
+    int rowCount() const { return mPage == FRAMES ? 2 : mPage == CAMERA ? 7 : 4; }
     BindId selectedBind() const {
         static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP};
-        static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT, BIND_COUNT, BIND_COUNT};
-        static const BindId replay[] = {BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP};
+        static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT,
+            BIND_COUNT, BIND_COUNT, BIND_COUNT, BIND_COUNT};
+        static const BindId replay[] = {BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP, BIND_COUNT};
         return mPage == FRAMES ? frame[mSel] : mPage == CAMERA ? camera[mSel] : replay[mSel];
     }
     const char *help() const {
@@ -5949,11 +5962,14 @@ private:
             if (mSel == 1) return "Resume closes free camera in gameplay. Ghost Watch can keep its camera.";
             if (mSel == 2) return "C-stick left/right changes speed. Hold X while moving for a boost.";
             if (mSel == 3) return "Reverse only main-stick sideways movement. C-stick looking stays unchanged.";
+            if (mSel == 4) return "Change how quickly the C-stick turns the camera, from 0.25x to 4x.";
+            if (mSel == 5) return "Hide game and Moonshine overlays while filming. You can still open this menu.";
             return "Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.";
         }
-        if (mSel == 0) return "Save a state first. Record reloads it; play your sequence, then Stop.";
+        if (mSel == 0) return "Keep your start state. Save other slots as checkpoints; loading rewinds the inputs too.";
         if (mSel == 1) return "Reloads the same state and repeats your inputs. B or Start cancels.";
-        return "Stop keeps this session's recording. New savestates or scenes clear it.";
+        if (mSel == 2) return "Stop keeps the take. Export its start state and latest checkpoint to SD to keep both.";
+        return "Continue a loaded TAS checkpoint. Gameplay stays paused until you Step or Resume.";
     }
     u8 mPage, mSel;
     bool mBinding;
@@ -5973,33 +5989,36 @@ public:
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         static const char *const pages[][8] = {
-            {"FRAME CONTROLS", "Practice > Frame advance: pause or step.",
-             "Your current shortcut is shown below the list.", "Press X on an action to change its shortcut.",
-             "Hold Mario's buttons, then tap Step to apply them.", "Press early to pause on the first controllable frame.",
-             "Also works while watching ghosts.", "Camera ON means Mario input OFF; turn it off to jump."},
-            {"FREE CAMERA", "Practice > Free camera: turn On to pause and explore.",
-             "Main stick: move. C-stick: look. L / R: height.", "Movement speed changes how fast you travel.",
-             "Hold X while moving for a temporary speed boost.", "Reverse sideways changes main-stick left / right.",
-             "Off returns the camera; Resume unpauses gameplay.", "Ordinary Start pause and ghost Watch also work."},
-            {"INPUT RECORDING", "Save a normal gameplay state first.", "Practice > Input replay > Record from savestate.",
-             "Stop keeps your recording. Replay reloads the state.", "A new savestate or scene clears the recording.",
-             "Up to 4096 frames, held in memory this session.", "A state mismatch stops experimental playback.", "Imported ghosts show inputs; they do not drive Mario."},
+            {"FRAME CONTROLS", "Practice: Frame advance pauses or steps.",
+             "Your shortcut appears below the list.", "Press X on an action to change its shortcut.",
+             "Hold Mario's buttons, then tap Step.", "Press early to pause when Mario can move.",
+             "Also works while watching ghosts.", "Camera On turns Mario input off."},
+            {"FREE CAMERA", "Practice: Free camera pauses and explores.",
+             "Main stick moves; C-stick turns the camera.", "L and R change height. Hold X for a boost.",
+             "Movement speed changes how fast you travel.", "Look sensitivity changes how fast you turn.",
+             "Hide all HUD removes overlays for filming.", "Turn camera Off, then Resume to play."},
+            {"INPUT RECORDING", "Save a start state before recording.", "Practice: Input replay, then Record.",
+             "Keep the start state in its original slot.", "Save other slots as checkpoints.",
+             "Load a checkpoint to rewind its inputs.", "Save start and checkpoint to SD to keep them.", "Replay stops if the recorded state does not match."},
             {"TAS PRACTICE", "The timer stops while frame advance is paused.",
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",
-             "TAS ghosts cannot earn ordinary PB credit.", "Ghosts > Ghost inputs > Both ghosts for Watch2."},
-            {"LAYOUT EDITOR", "Display > Layout editor > choose a group.",
+             "TAS ghosts cannot earn ordinary PB credit.", "Ghosts: Ghost inputs: Both ghosts for Watch2."},
+            {"LAYOUT EDITOR", "Display: Layout editor, then choose a group.",
              "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",
              "Metadata: field gap, row gap, columns, width.", "Practice feedback: wallkick, rollout and dust.",
              "Hold Y while adjusting RGB for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
-            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Timer and splits is under Runs and Display.",
-             "Split comparison: Off / PB / SOB / Ghost.", "Existing checkpoints only; new splits are handmade.",
+            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Find Timer and splits in Runs or Display.",
+             "Split comparison: Off, PB, SOB or Ghost.", "Report any missing or incorrect checkpoints.",
              "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
         };
         drawSectionHeader(menu, x, y, w, pages[mPage][0]);
-        for (int i = 1; i < 8; ++i)
-            menu->drawText(pages[mPage][i], x + 4, y + 20 + i * 25, 15, 15, cRow());
-        drawHelpLine(menu, x, y, w, h, "C-stick: previous / next page");
+        for (int i = 1; i < 8; ++i) {
+            int size = 16;
+            while (size > 13 && Menu::textWidth(pages[mPage][i], size) > w - 8) --size;
+            menu->drawText(pages[mPage][i], x + 4, y + 28 + (i - 1) * 24, size, size, cRow());
+        }
+        drawHelpLine(menu, x, y, w, h, "C-stick: previous or next page");
     }
 private:
     u8 mPage;
@@ -6536,6 +6555,17 @@ __attribute__((noinline)) static void drawHelpLine(
     menu->fillBox(x + 4, top, w - 8, 1, cRowDim());
     int size = FOOT_SZ;
 #if defined(SUSAMUNE_VERSION_JP)
+    const char *translated = JapaneseUi::text(text);
+    if (JapaneseUi::width(translated, 14) >= 0) {
+        char first[256], second[256];
+        const char *tail = JapaneseUi::fitLine(translated, first, sizeof(first), w - 12, 14);
+        const char *end = JapaneseUi::fitLine(tail, second, sizeof(second), w - 12, 14);
+        if (!*end) {
+            menu->drawText(first, x + 6, top + (*tail ? 2 : 8), 14, 14, cRow());
+            if (*tail) menu->drawText(second, x + 6, top + 17, 14, 14, cRow());
+            return;
+        }
+    }
     while (size > 10 && Menu::textWidth(text, size) > w - 12) --size;
 #endif
     menu->drawText(text, x + 6, top + 10, size, size, cFooter());
@@ -6730,6 +6760,7 @@ void Menu::update(TMarioGamePad *pad) {
 void Menu::draw(J2DOrthoGraph *ortho) {
     mOrtho = ortho;  // used by fillBox() to re-enter 2D state
     if (!mShown) {
+        if (PracticeSession::hideHud()) return;
         Ghost::draw(this);
         gInputDisplay.draw(this);
         gMetadataDisplay.draw(this);

@@ -47,7 +47,7 @@ static void GXInvalidateTexAll() {++invalidations;}
 extern "C" void *memset(void *p,int v,__SIZE_TYPE__ n) {volatile u8 *b=(volatile u8*)p;while(n--)*b++=v;return p;}
 '''
         for signature in ('bool ready()', 'unsigned int word(', 'unsigned int nextCode(', 'int glyph(',
-                          'int units(', 'u8 *image(', 'const char *text('):
+                          'int units(', 'u8 *image(', 'const char *text(', 'const char *fitLine('):
             harness += function(source, signature)+'\n'
         harness += '''
 extern "C" {
@@ -58,6 +58,7 @@ __declspec(dllexport) void reset(const u8 *p,unsigned int n) {
 }
 __declspec(dllexport) const char *lookup(const char *p) {return text(p);}
 __declspec(dllexport) int measure(const char *p) {return units(p);}
+__declspec(dllexport) const char *line(const char *p,char *out,unsigned int n,int max,int size) {return fitLine(p,out,n,max,size);}
 __declspec(dllexport) const u8 *getImage(int id) {return image(id);}
 __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?barriers:which==1?flushes:invalidations;}
 }
@@ -72,6 +73,8 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         cls.lib.reset.argtypes = [C.c_void_p,C.c_uint]
         cls.lib.lookup.argtypes = [C.c_char_p]; cls.lib.lookup.restype = C.c_char_p
         cls.lib.measure.argtypes = [C.c_char_p]; cls.lib.measure.restype = C.c_int
+        cls.lib.line.argtypes = [C.c_char_p,C.c_void_p,C.c_uint,C.c_int,C.c_int]
+        cls.lib.line.restype = C.c_void_p
         cls.lib.getImage.argtypes = [C.c_int];cls.lib.getImage.restype = C.c_void_p
         cls.lib.counts.argtypes = [C.c_uint];cls.lib.counts.restype = C.c_uint
         cls.buffer = C.create_string_buffer(bytes(cls.asset))
@@ -138,7 +141,8 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         header=struct.unpack_from('>16I',self.asset)
         for i in range(header[9]):
             raw=self.asset[header[10]+i*64:header[10]+(i+1)*64]
-            expected=bytes(v for b in raw for v in (((b>>6)*5<<4)|((b>>4&3)*5),((b>>2&3)*5<<4)|((b&3)*5)))
+            coverage=(0,7,12,15)
+            expected=bytes(v for b in raw for v in ((coverage[b>>6]<<4)|coverage[b>>4&3],(coverage[b>>2&3]<<4)|coverage[b&3]))
             self.assertEqual(C.string_at(self.lib.getImage(i),128),expected)
             self.lib.getImage(i)
         self.assertEqual(self.lib.counts(0),(header[9]-1)//64)
@@ -156,6 +160,52 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
                   'PB popup':'記録更新時に通知','Expert Spider Bouncer':'アメンボ跳びの達人',
                   'Coconut King':'ヤシの実王','Plungelo Plucker':'チュウハナ抜き'}
         for en,ja in expected.items():self.assertEqual(self.lib.lookup(en.encode()),ja.encode('cp932'))
+
+    def test_rc1_wording_amendments(self):
+        expected={'Left Bell':'西のベル','Right Bell':'東のベル','Grass Secret':'草原',
+            'Gelato GBS':'マンマ ヤシ抜け','Mode':'モード切り替え','Run playlist':'プレイリストの開始',
+            'Playlist entries':'選択されたプレイリスト','Clear playlist':'プレイリストの取り消し',
+            'Built-in preset':'プリセットを構築','Load playlist':'プレイリストの読込',
+            'Save playlist':'プレイリストの保存','Value widths':'値の幅','Field gap':'隙間',
+            'Rollout display style':'起き上がりジャンプ表示スタイル','Dust display style':'着地からの入力間隔スタイル'}
+        for en,ja in [('Bianco 3','ビアンコ3'),('Bianco 6','ビアンコ6'),('Ricco 4','リコ4'),
+                      ('Gelato 1','マンマ1'),('Pinna 2','ピンナ2'),('Pinna 6','ピンナ6'),
+                      ('Sirena 2','シレナ2'),('Sirena 4','シレナ4'),('Noki 6','マーレ6'),('Pianta 5','モンテ5')]:
+            expected[en+' Full Reds']=ja+' 赤コイン(通し)'
+        for en,ja in expected.items():
+            with self.subTest(english=en):self.assertEqual(self.lib.lookup(en.encode()),ja.encode('cp932'))
+
+    def test_readable_help_wraps_on_whole_glyphs_and_preserves_words(self):
+        text='メタデータの値と Moonshine の表示位置を変更します。'.encode('cp932')
+        source=C.create_string_buffer(text)
+        remaining=C.addressof(source);parts=[]
+        while C.string_at(remaining):
+            out=C.create_string_buffer(32)
+            next_=self.lib.line(C.cast(remaining,C.c_char_p),out,len(out),140,14)
+            self.assertGreater(next_,remaining)
+            out.value.decode('cp932')
+            self.assertLessEqual(self.lib.measure(out.value)*14//24,140)
+            self.assertNotIn(b'Moons',out.value.replace(b'Moonshine',b''))
+            parts.append(out.value);remaining=next_
+        self.assertEqual(b''.join(parts).replace(b' ',b''),text.replace(b' ',b''))
+        for capacity in (0,1,2,3):
+            out=C.create_string_buffer(b'guard!')
+            self.lib.line(source,out,capacity,140,14)
+            self.assertEqual(out.raw[capacity:],b'guard!\0'[capacity:])
+
+    def test_translated_menu_help_fits_two_readable_lines(self):
+        source=(ROOT/'src/menu.cpp').read_text()
+        literals=re.findall(r'"([^"\\\n]*)"',source)
+        for literal in set(literals):
+            translated=self.lib.lookup(literal.encode())
+            if translated==literal.encode() or self.lib.measure(translated)<0:continue
+            # Help sentences use prose punctuation, unlike labels and formatted values.
+            if not literal.endswith('.') or '%' in literal:continue
+            a=C.create_string_buffer(256);b=C.create_string_buffer(256)
+            data=C.create_string_buffer(translated)
+            rest=self.lib.line(data,a,len(a),512,14)
+            end=self.lib.line(C.cast(rest,C.c_char_p),b,len(b),512,14)
+            self.assertEqual(C.string_at(end),b'',literal)
 
     def test_current_navigation_has_translated_labels(self):
         source = (ROOT/'src/menu.cpp').read_text()

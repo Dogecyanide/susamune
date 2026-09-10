@@ -1,6 +1,6 @@
 # Moonshine FOXTROT RC1 — route assignments and checkpoints
 
-**V2.3.0 candidate · Build 1CF3F641**
+**V2.3.0 candidate · Build E4DE048F**
 
 Use this beside **RC1_TESTING.md**. It lists all **132 IL routes**, including older routes and the new handmade checkpoints.
 

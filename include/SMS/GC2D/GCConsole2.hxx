@@ -19,7 +19,10 @@ public:
     void setTimer(s32);
     s32 getFinishedTime();
 
-    u32 _00[0x24 / 4];    // 0x0000
+    u32 _00[0x0C / 4];    // 0x0000
+    u16 mPerformFlags;    // 0x000C; JDrama::TViewObj cue exclusions
+    u16 _0E;
+    u32 _viewObjPad[0x14 / 4];
     s32 mShineCount;      // 0x0024
     s32 mCurWater;        // 0x0028
     u32 _2C[0x10 / 4];    // 0x002C

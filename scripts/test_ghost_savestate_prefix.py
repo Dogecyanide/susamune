@@ -214,6 +214,8 @@ API void endpoint(u32 kind,u32 live,u32 ready){using namespace ILing;
 API void configureIL(u32 kind,u32 active){using namespace ILing;
  sFinishKind=(u8)kind;sRunning=active!=0;sAttemptReady=true;}
 API void serial(u32 value){gQFTTimer.serial=value;}
+API void pending(u32 stage,u32 boundary){using namespace Ghost;
+ sStageRoutePending=stage!=0;sBoundaryPending=boundary!=0;}
 API void clear(){Ghost::clearRecord();Ghost::sRecording=true;}
 API void continuation(){using namespace Ghost;
  sLiveArea=47;sLiveEpisode=0;sLiveRouteParentArea=2;sLiveRouteFlags=1;
@@ -369,6 +371,37 @@ API void continuation(){using namespace Ghost;
         self.restore(1, 8)
         self.assertEqual(self.lib.get(21), 3)
         self.assertEqual(self.lib.get(0), 3)
+
+    def test_pending_departure_cannot_apply_old_tas_prefix_to_new_attempt(self):
+        self.lib.frame(4, 10, 1)
+        self.capture(0)
+        self.restore(0, 4)
+        prior = self.lib.get(13)
+        for stage, boundary in ((1, 0), (0, 1), (1, 1)):
+            self.lib.pending(stage, boundary)
+            self.lib.endpoint(3, 0, 1)
+            self.assertEqual(self.lib.get(13), prior)
+            self.assertEqual([self.lib.get(i) for i in (14, 15)], [0, 0])
+        self.lib.pending(0, 0)
+        self.lib.serial(8)
+        self.lib.endpoint(3, 0, 1)
+        self.assertEqual(self.lib.get(13), prior)
+        self.assertEqual([self.lib.get(i) for i in (14, 15)], [0, 0])
+
+    def test_settled_tas_continuation_keeps_assistance_and_original_endpoint(self):
+        self.lib.frame(4, 10, 1)
+        self.capture(0)
+        self.restore(0, 4)
+        prior = self.lib.get(13)
+        self.lib.pending(1, 0)
+        self.lib.endpoint(3, 0, 1)
+        self.lib.pending(0, 1)
+        self.lib.endpoint(3, 0, 1)
+        self.lib.pending(0, 0)
+        self.lib.endpoint(3, 0, 1)
+        self.assertEqual(self.lib.get(13), prior + 1)
+        self.assertEqual([self.lib.get(i) for i in (14, 15, 16)], [1, 0, 1])
+        self.assertEqual(self.lib.get(5) & 0x21, 0x21)
 
     def test_export_keeps_tas_flags_prefix_bounds_and_existing_disqualification(self):
         source = (ROOT / "src/ghost.cpp").read_text()

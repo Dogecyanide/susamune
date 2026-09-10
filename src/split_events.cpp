@@ -198,6 +198,7 @@ u16 sActiveRoute = SplitStats::ROUTE_INVALID;
 u16 sArmedCarryRoute = SplitStats::ROUTE_INVALID;
 bool sAttemptInvalid;
 bool sRetailDirectOpen;
+bool sPinnaIntroTalkPending;
 bool sCarryAttempt;
 bool sBlockNextAttempt;
 
@@ -347,6 +348,7 @@ u32 nerveVtable(const TNerveBase<TLiveActor> *nerve) {
 }
 
 void clearAttemptState() {
+    sPinnaIntroTalkPending = false;
     sActiveRoute = SplitStats::ROUTE_INVALID;
     sLastRedCoinCount = 0;
     sCoconut = nullptr;
@@ -1595,6 +1597,10 @@ void beginFrame() {
     }
     sActiveRoute = findActiveRoute();
     sRetailDirectOpen = stageIdentityValid();
+    if (sRetailDirectOpen && sPinnaIntroTalkPending) {
+        sPinnaIntroTalkPending = false;
+        publishEvent(SplitStats::ROUTE_PINNA_1, 0);
+    }
     if (sRetailDirectOpen) samplePreDirect();
 }
 
@@ -1737,6 +1743,11 @@ extern "C" void susamuneSplitStartDemo(
 
 extern "C" void susamuneSplitOpenTalk(void *talk, TBaseNPC *npc) {
     reinterpret_cast<OpenTalkFn>(sOpenTalkTrampoline)(talk, npc);
+    // Pinna's automatic post-movie talk opens before its first live clock frame.
+    if (npc && !sRetailDirectOpen && stageIdentityValid() &&
+        SplitStats::routeActive(SplitStats::ROUTE_PINNA_1) &&
+        sceneMatches(gpApplication.mCurrentScene, 0x0D, 6))
+        sPinnaIntroTalkPending = true;
     noteTalk(npc);
 }
 

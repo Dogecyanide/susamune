@@ -1,39 +1,21 @@
-# Moonshine FOXTROT — tester notes
+# Moonshine FOXTROT — latest checks
 
-**V2.3.0 pre-release · Build 1CF3F641 · September 9 feedback update**
+**V2.3.0 pre-release · Build E4DE048F · RC1 feedback update**
 
-This sheet covers the fixes since your last test. Pick the parts that apply to your setup and the routes you know.
+Keep your earlier RC1 results. These are the checks for this update; one useful pass is enough. Reuse the same states and do the reboot once. The full `RC1_TESTING.md` remains available for gaps in the team's earlier coverage.
 
-**Tester:**
+**Tester / platform / game region / English or Japanese download:**
 
-**Wii / Wii U / Dolphin:**
+**Make fresh states with this build. Earlier SD states need resaving and will not load in this update.** Settings, records and ghosts are kept.
 
-**JP / US / PAL:**
+- [ ] **Settings stick:** Change Look sensitivity and Hide all HUD, plus one ordinary setting. Keep them for the reboot below. Existing binds, colours and episode choices should remain correct.
+- [ ] **Camera:** In Practice > Free camera, try Look sensitivity at a slow and fast setting. It should change C-stick turning speed separately from Movement speed. Hide all HUD should hide game and Moonshine overlays while freecam is On; the menu must still open. Turn it Off and check the normal displays return.
+- [ ] **TAS checkpoints:** Save a start state, record a short walk/jump, and save a different slot as a checkpoint. Go farther, load the checkpoint and try another ending. Replay should show the original opening plus the new ending. Keep the start state. A stopped checkpoint should offer Continue editing checkpoint; it stays paused until Step or Resume.
+- [ ] **TAS after reboot — console:** Save both the start and latest checkpoint to SD with recognisable names. Reboot once into the same build, region, setup and episode. Import the start into any RAM slot, then load the checkpoint. Continue editing and replay from the beginning should work. The settings saved above should also remain.
+- [ ] **States and visible errors:** Save/load all three slots once in a familiar scene. With successful save/load messages Off, try loading in the wrong episode: a readable refusal should still appear. Return to the right episode and load normally. If any slot fails, send its number and exact message; there is no confirmed JP-only State 3 fault.
+- [ ] **Pinna 1:** Start through Runs > ILs and use your usual cutscene path. Expect Talk, all four Mecha-Bowser hits and Finish, without losing progress through the movies/skips. Report the first missing event and which skip you used.
+- [ ] **Streaks:** Use practice pause in an earlier stage, then start a clean short streak challenge. The clean attempt should count normally. A rejected attempt should briefly show why beside the counter. Check your usual reset shortcut does not accidentally pause the fresh attempt.
+- [ ] **Guide and Japanese text:** Open System > FOXTROT guide and turn pages. Text should fit without large gaps. Japanese-download testers: check the corrected IL/playlist/layout terms and small help text. The standard download must still be English even on JP; the Japanese download translates JP game menus. The Guide body and some status messages remain English.
+- [ ] **One ordinary run:** Finish a familiar IL without practice assistance, then spot-check Pause/Step and a ghost you already have. Normal timing/PB recording should work, each Step advances one frame, and turning Ghost display Off also hides its input panel. Reuse earlier passes for unchanged features.
 
-**SD / USB / Disc:**
-
-## Launcher and settings
-
-- [ ] **Startup:** With your usual Sunshine version selected, close and reopen the launcher. Put your theme in **/Moonshine_Theme** at the SD root; the launcher creates this folder on a fresh setup. The theme and storage message should appear, and it should reach the menu without waiting for an unused USB drive. Change to another version once and check it still launches. If you use both SD and USB, try switching between them.
-- [ ] **Settings save:** Change one harmless setting, close the game menu, and reopen it. There should be no “storage access denied” message. Reboot once and check the setting was kept.
-
-## Buttons and ghost display
-
-- [ ] **Reset versus pause:** With Pause on D-Up and Reset on B+D-Up, hold B and press D-Up to reset. The fresh attempt should run normally, without being paused or marked TAS. D-Up by itself should still pause. Holding A while pressing Step should still work.
-- [ ] **Ghost inputs:** Show a ghost and its inputs, then turn Ghost display Off. Both should disappear. Turn it On again: your chosen input display should return. Your own separate controller overlay should be unaffected.
-
-## The splits that missed before
-
-Enable **Runs > Timer and splits > Level splits**. Pick the routes you know; tell us which ones you checked. Each event should split once, in order.
-
-- [ ] **Gelato 5:** Talk to Piantissimo. The Talk split should appear.
-- [ ] **Pinna 1:** Start the IL, use your normal cutscene skips, talk to the NPC and land all four Mecha-Bowser hits. Expect one Talk split and one for each hit, with the result kept after the second cutscene skip.
-- [ ] **Sirena 2 Reds / Noki 6 Reds:** Press the red button. The first split should happen when you press it, before collecting any red coins. Say which of the two routes you checked.
-- [ ] **Noki Hidden:** Use the launch pad below the bird, then kill the bird. Expect the second split when its Shine appears.
-- [ ] **Other “Spawn Shine” routes:** Try Gold Bird or another route that missed this split: Lighthouse, either Bell, Shine Gate or Beach Shine. Expect a split when the Shine appears, then the finish when you collect it. Say which route you tried.
-
-## Download language
-
-- [ ] **Menu language:** During the menu checks, the standard download must stay English even with JP selected. The Japanese download keeps its launcher Japanese regardless of game region, with Japanese in-game menus on JP and English on US/PAL. Check translated text fits and the flag's circle stays round. The built-in Guide body and some status messages remain English. For Dolphin, use the separate Japanese JP patch for translations; the standard JP patch stays English. Send a photo and menu name for display problems.
-
-**For a problem:** send the build checksum, route/menu, what you pressed, and what happened. A photo or short clip is useful. No long report needed.
+For a problem, send **build checksum, route/episode or menu, what you pressed, and the exact message**. A photo or short clip helps. No long report needed.

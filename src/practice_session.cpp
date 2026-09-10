@@ -76,15 +76,14 @@ static_assert(__builtin_offsetof(TMarioGamePad, _A4) == 0xa4 &&
               sizeof(TMarioGamePad) == 0xf0, "practice meaning layout");
 
 PadHistory sBeforeRead;
-struct PracticeSeed {
-    PadHistory pad;
-    u32 generation;
-    u32 stage;
-    u32 heap;
-    bool valid;
-    bool rngSaved;
+PadHistory sStatePad;
+enum SavedTakeFlags {
+    SAVED_PAD = 1, SAVED_RNG = 2, SAVED_TAKE = 4,
+    SAVED_RECORDING = 8, SAVED_PAUSED = 16,
 };
-PracticeSeed sSeeds[SavestateManager::kSlotCount];
+const u32 kSavedTakeVersion = 1;
+PadHistory sModalPad;
+bool sModalPadValid;
 TMarioGamePad *sReadPad;
 SusamunePracticeInput sPhysical;
 SusamunePracticeInput sConsumed;
@@ -125,6 +124,11 @@ u32 sSettingsHash;
 u32 sTapeHash;
 u32 sTapeStage;
 u32 sTapeStart;
+u32 sOriginKey[2];
+bool sTakeAttached;
+u32 sTakePosition;
+u32 sPendingReleases;
+bool sOwnRestoreValid;
 u16 sPriorButtons;
 u16 sStripButtons;
 u16 sStartRelease;
@@ -138,10 +142,9 @@ bool seedMatches(u32 slot, u32 generation) {
     if (!gSavestateMgr || slot >= SavestateManager::kSlotCount || !generation)
         return false;
     const SavestateManager::SlotInfo info = gSavestateMgr->slotInfo(slot);
-    const PracticeSeed &seed = sSeeds[slot];
-    return info.valid && info.generation == generation && seed.valid &&
-           seed.generation == generation && seed.stage == sStageGeneration &&
-           seed.heap == reinterpret_cast<u32>(gpApplication.mCurrentHeap);
+    PracticeSession::SavestateData data;
+    return info.valid && info.generation == generation &&
+           gSavestateMgr->practiceData(slot, &data) && (data.flags & SAVED_PAD);
 }
 
 alignas(32) u32 sPadReadTail[2];
@@ -249,6 +252,33 @@ u32 hashBytes(u32 hash, const void *data, u32 count) {
     return hash;
 }
 
+bool validSavedTake(const PracticeSession::SavestateData &data) {
+    if (data.version != kSavedTakeVersion || (data.releases & ~0x1fffffu) ||
+        (data.flags & ~31u) || data.frames > kMaxFrames ||
+        !(data.stateKey[0] | data.stateKey[1])) return false;
+    if (!(data.flags & SAVED_PAD))
+        return !data.flags && !data.frames && !data.padHash && !data.releases &&
+               !data.originKey[0] && !data.originKey[1];
+    if (data.flags & SAVED_TAKE)
+        return (data.flags & SAVED_RNG) && (data.originKey[0] | data.originKey[1]);
+    return !(data.flags & SAVED_RECORDING) && !data.frames &&
+           !data.originKey[0] && !data.originKey[1];
+}
+
+bool findTakeStart() {
+    if (!gSavestateMgr || !(sOriginKey[0] | sOriginKey[1])) return false;
+    for (u32 slot = 0; slot < SavestateManager::kSlotCount; ++slot) {
+        PracticeSession::SavestateData data;
+        if (!gSavestateMgr->practiceData(slot, &data) ||
+            data.stateKey[0] != sOriginKey[0] || data.stateKey[1] != sOriginKey[1] ||
+            !(data.flags & SAVED_RNG) || !(data.flags & SAVED_PAD)) continue;
+        sTapeSlot = slot;
+        sTapeSeed = gSavestateMgr->slotInfo(slot).generation;
+        return sTapeSeed != 0;
+    }
+    return false;
+}
+
 bool replayPresentationSetting(SettingId id) {
     if (id >= SETTING_FAVORITES_0 && id <= SETTING_FAVORITES_10) return true;
     switch (id) {
@@ -258,6 +288,8 @@ bool replayPresentationSetting(SettingId id) {
     case SETTING_NATIVE_TIMER_SCALE:
     case SETTING_FREE_CAMERA_SPEED:
     case SETTING_FREE_CAMERA_STRAFE_REVERSE:
+    case SETTING_FREE_CAMERA_SENSITIVITY:
+    case SETTING_FREE_CAMERA_HIDE_HUD:
     case SETTING_METADATA_HORIZONTAL:
     case SETTING_GHOST_INPUTS:
         return true;
@@ -313,17 +345,86 @@ void restorePad(const PadHistory &in, TMarioGamePad *pad) {
     memcpy(&pad->_A4, in.meaning, sizeof(in.meaning));
 }
 
+// Retail buttons have twelve digital and eight stick-direction bits.
+const u32 kDigitalButtons = 0x1f7fu;
+const u32 kFrameFingerprintMask = 0x7fffffffu;
+static_assert((kDigitalButtons & 0xe080u) == 0, "tape metadata button bits");
+
+u32 packReleases(u32 buttons, bool analog) {
+    return (buttons & 0x7fu) | ((buttons >> 1) & 0xf80u) |
+           ((buttons >> 4) & 0xf000u) | ((buttons >> 8) & 0xf0000u) |
+           (analog ? 0x100000u : 0);
+}
+
+u32 releaseButtons(u32 packed) {
+    return (packed & 0x7fu) | ((packed & 0xf80u) << 1) |
+           ((packed & 0xf000u) << 4) | ((packed & 0xf0000u) << 8);
+}
+
+u32 buttonMeanings(u32 buttons) {
+    u32 meanings = 0;
+    if (buttons & 0x1000u) meanings |= 1u;
+    if (buttons & 0x100u) meanings |= 0x300a0u;
+    if (buttons & 0x200u) meanings |= 0x50940u;
+    if (buttons & 0x400u) meanings |= 0x200000u;
+    if (buttons & 0x800u) meanings |= 0x4000u;
+    if (buttons & 0x10u) meanings |= 0x1000u;
+    if (buttons & 0x20u) meanings |= 0x400u;
+    if (buttons & 0x40u) meanings |= 0xa000u;
+    if (buttons & 0x08000008u) meanings |= 0x80002u;
+    if (buttons & 0x04000004u) meanings |= 0x100004u;
+    if (buttons & 0x01000001u) meanings |= 8u;
+    if (buttons & 0x02000002u) meanings |= 0x10u;
+    return meanings;
+}
+
+void applyReleases(TMarioGamePad *pad, u32 packed) {
+    const u32 released = releaseButtons(packed);
+    JUTGamePad::mPadButton[0].mInput &= ~released;
+    pad->mButtons.mInput &= ~released;
+    // A/B and D-pad/stick meanings can share a source; keep the held source.
+    pad->mMeaning &= ~(buttonMeanings(released) & ~buttonMeanings(pad->mButtons.mInput));
+    if (packed & 0x100000u) {
+        pad->_DC &= ~1u;
+        pad->mMeaning &= ~0x200u;
+    }
+    pad->mFrameMeaning = pad->_D8 = 0;
+}
+
 void retainPausedReleases(TMarioGamePad *pad) {
     const u32 held = pad->mButtons.mInput;
-    const u32 meaning = pad->mMeaning;
+    const u16 analog = pad->_DC;
     restorePad(sBeforeRead, pad);
-    // A release between steps must re-arm the next press without consuming it.
-    JUTGamePad::mPadButton[0].mInput &= held;
-    pad->mButtons.mInput &= held;
-    pad->mMeaning &= meaning;
-    pad->mFrameMeaning = 0;
-    pad->_D8 = 0;
+    const u32 released = packReleases(
+        (pad->mButtons.mInput | JUTGamePad::mPadButton[0].mInput) & ~held,
+        (pad->_DC & ~analog & 1u) != 0);
+    applyReleases(pad, released);
+    sPendingReleases |= released;
     capturePad(sBeforeRead, pad);
+}
+
+void writeFrame(Frame &frame, const SusamunePracticeInput &input, u32 hash, u32 releases) {
+    frame.input = input;
+    frame.input.error = static_cast<s8>(releases);
+    frame.input.flags = static_cast<u8>(releases >> 8);
+    frame.input.buttons = (input.buttons & kDigitalButtons) |
+        ((releases >> 9) & 0x80u) | ((releases >> 4) & 0xe000u);
+    // One diagnostic hash bit completes the lossless 21-bit release mask.
+    frame.fingerprint = (hash & kFrameFingerprintMask) | ((releases & 0x100000u) << 11);
+}
+
+u32 frameReleases(const Frame &frame) {
+    return static_cast<u8>(frame.input.error) | (static_cast<u32>(frame.input.flags) << 8) |
+        ((frame.input.buttons & 0x80u) << 9) | ((frame.input.buttons & 0xe000u) << 4) |
+        ((frame.fingerprint >> 11) & 0x100000u);
+}
+
+SusamunePracticeInput frameInput(const Frame &frame) {
+    SusamunePracticeInput input = frame.input;
+    input.buttons &= kDigitalButtons;
+    input.error = 0;
+    input.flags = 0;
+    return input;
 }
 
 SusamunePracticeInput snapshot(const PADStatus &pad) {
@@ -342,8 +443,9 @@ SusamunePracticeInput snapshot(const PADStatus &pad) {
     return out;
 }
 
-void inject(const SusamunePracticeInput &input, TMarioGamePad *pad) {
+void inject(const SusamunePracticeInput &input, TMarioGamePad *pad, u32 releases = 0) {
     restorePad(sBeforeRead, pad);
+    if (releases) applyReleases(pad, releases);
     PADStatus raw = {};
     raw.mButton = input.buttons;
     raw.mStickX = static_cast<u8>(input.stickX);
@@ -367,6 +469,27 @@ void inject(const SusamunePracticeInput &input, TMarioGamePad *pad) {
     pad->mControlStick = JUTGamePad::mPadMStick[0];
     pad->mCStick = JUTGamePad::mPadSStick[0];
 }
+
+void retainModalHistory() {
+    if (!sHaveRead || sReadPad != gpApplication.mGamePads[0]) return;
+    if (sModal && normalStage() && (sRecord || sTakeAttached)) {
+        if (!sModalPadValid) sModalPad = sBeforeRead;
+        PadHistory menuPad;
+        capturePad(menuPad, sReadPad);
+        sBeforeRead = sModalPad;
+        retainPausedReleases(sReadPad);
+        sModalPad = sBeforeRead;
+        sModalPadValid = true;
+        restorePad(menuPad, sReadPad);
+    } else if (sModalPadValid && !sModal) {
+        sBeforeRead = sModalPad;
+        inject(sPhysical, sReadPad);
+        sReadPad->updateMeaning();
+        sConsumed = sPhysical;
+        sModalPadValid = false;
+    }
+}
+
 
 void restoreCamera() {
     if (!sCameraApplied) return;
@@ -422,11 +545,13 @@ f32 axis(s8 value) {
     return static_cast<f32>(value) / 80.0f;
 }
 
-f32 cameraSpeedScale() {
+f32 cameraScale(SettingId id) {
     static const f32 scales[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
-    const u8 choice = gSettings.get(SETTING_FREE_CAMERA_SPEED);
+    const u8 choice = gSettings.get(id);
     return scales[choice < 5 ? choice : 2];
 }
+
+f32 cameraSpeedScale() { return cameraScale(SETTING_FREE_CAMERA_SPEED); }
 
 void stripControlInput(SusamunePracticeInput &input, u16 buttons) {
     input.buttons &= ~buttons;
@@ -451,7 +576,7 @@ void updateCamera() {
         if (sPhysical.buttons) return;
         sCameraWaitButtons = false;
     }
-    const f32 turn = 0.035f;
+    const f32 turn = 0.035f * cameraScale(SETTING_FREE_CAMERA_SENSITIVITY);
     sYaw -= axis(sPhysical.substickX) * turn;
     if (sYaw > 3.14159265f) sYaw -= 6.2831853f;
     if (sYaw < -3.14159265f) sYaw += 6.2831853f;
@@ -507,7 +632,6 @@ void stopTape(const char *reason) {
     sLoadKind = 0;
     sLoadWait = 0;
     sStartRelease = 0;
-    sFrameInjected = false;
     if (reason) message(reason);
 }
 
@@ -544,14 +668,16 @@ extern "C" u32 susamunePracticeReadPad() {
         stopTape("Controller disconnected - input stopped");
     if (sReplay && (pressed & (JUTGamePad::B | JUTGamePad::START))) {
         sStripButtons |= pressed & (JUTGamePad::B | JUTGamePad::START);
-        stopTape("Input playback stopped");
+        sPaused = true;
+        sPausePending = sStepQueued = false;
+        stopTape("Input playback stopped - paused for editing");
         gBinds.suppressUntilRelease();
     }
     if (sReplay && sReadPad && sCursor < sCount &&
         (!gMenu || !gMenu->shown()) && !WarpWheel::shown() &&
         !StageLoader::resultOwnsInput() && normalStage()) {
-        sConsumed = sFrames[sCursor].input;
-        inject(sConsumed, sReadPad);
+        sConsumed = frameInput(sFrames[sCursor]);
+        inject(sConsumed, sReadPad, frameReleases(sFrames[sCursor]));
         sFrameInjected = true;
     } else if (sFreeCamera && sPaused && sReadPad &&
                (!gMenu || !gMenu->shown())) {
@@ -617,6 +743,114 @@ extern "C" s32 susamunePracticeChangeState(TMarDirector *director) {
 
 namespace PracticeSession {
 
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]) {
+    memset(&out, 0, sizeof(out));
+    memset(spans, 0, sizeof(spans));
+    out.version = kSavedTakeVersion;
+    const u64 stamp = static_cast<u64>(OSGetTime());
+    out.stateKey[0] = static_cast<u32>(stamp >> 32);
+    out.stateKey[1] = static_cast<u32>(stamp);
+    if (!(out.stateKey[0] | out.stateKey[1])) out.stateKey[1] = 1;
+    if (!normalStage() || Ghost::observerStatsSuppressed()) return true;
+    if (sModalPadValid) sStatePad = sModalPad;
+    else capturePad(sStatePad, gpApplication.mGamePads[0]);
+    out.flags = SAVED_PAD | (gSettings.getBool(SETTING_SAVE_RNG_STATE) ? SAVED_RNG : 0) |
+                (sPaused ? SAVED_PAUSED : 0);
+    out.padHash = hashBytes(2166136261u, &sStatePad, sizeof(sStatePad));
+    out.savedFingerprint = fingerprint();
+    out.releases = sPendingReleases;
+    spans[0] = {&sStatePad, sizeof(sStatePad)};
+    if (sTakeAttached && (out.flags & SAVED_RNG) &&
+        (sOriginKey[0] | sOriginKey[1]) && settingsHash() == sSettingsHash) {
+        if (!tapeStorageReady() || sCount > kMaxFrames || sTakePosition > sCount) return false;
+        out.flags |= SAVED_TAKE | ((sRecord || sReplay) ? SAVED_RECORDING : 0);
+        out.frames = sTakePosition;
+        out.settingsHash = sSettingsHash;
+        out.startFingerprint = sTapeStart;
+        out.frameHash = hashBytes(2166136261u, sFrames, out.frames * sizeof(Frame));
+        out.originKey[0] = sOriginKey[0];
+        out.originKey[1] = sOriginKey[1];
+        out.steps = sSteps;
+        spans[1] = {sFrames, out.frames * static_cast<u32>(sizeof(Frame))};
+    }
+    return validSavedTake(out);
+}
+
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]) {
+    memset(spans, 0, sizeof(spans));
+    if (!validSavedTake(data) || ((data.flags & SAVED_TAKE) && !tapeStorageReady())) return false;
+    if (data.flags & SAVED_PAD) spans[0] = {&sStatePad, sizeof(sStatePad)};
+    if (data.frames) spans[1] = {sFrames, data.frames * static_cast<u32>(sizeof(Frame))};
+    return true;
+}
+
+bool copySavestateBytes(void *destination, const void *, u32 size) {
+    if (!sOwnLoad) return false;
+    const __UINTPTR_TYPE__ address = reinterpret_cast<__UINTPTR_TYPE__>(destination);
+    const __UINTPTR_TYPE__ begin = reinterpret_cast<__UINTPTR_TYPE__>(sFrames);
+    return address >= begin && address - begin <= SUSAMUNE_PRACTICE_TAPE_SIZE &&
+           size <= SUSAMUNE_PRACTICE_TAPE_SIZE - (address - begin);
+}
+
+bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation) {
+    if (!validSavedTake(data)) __builtin_trap();
+    const bool padValid = (data.flags & SAVED_PAD) && normalStage() &&
+        hashBytes(2166136261u, &sStatePad, sizeof(sStatePad)) == data.padHash;
+    if (padValid) {
+        restorePad(sStatePad, gpApplication.mGamePads[0]);
+
+    }
+    sHaveRead = sFrameInjected = sConsumedFrame = false;
+    sPendingReleases = padValid ? data.releases : 0;
+    if ((data.flags & SAVED_PAD) && !padValid) {
+        stopTape(nullptr);
+        sTakeAttached = false;
+        sPaused = true;
+        message("Savestate controller history is damaged - TAS stopped");
+        return false;
+    }
+    if (sOwnLoad) {
+        sOwnRestoreValid = padValid;
+        return padValid;
+    }
+    sCount = sCursor = 0;
+    sTapeSeed = sTapeHash = 0;
+    sOriginKey[0] = sOriginKey[1] = 0;
+    sTakeAttached = false;
+    if (!(data.flags & SAVED_TAKE)) return true;
+    if (!padValid || fingerprint() != data.savedFingerprint ||
+        hashBytes(2166136261u, sFrames, data.frames * sizeof(Frame)) != data.frameHash) {
+        sPaused = true;
+        message("TAS checkpoint inputs are damaged - recording stopped");
+        return false;
+    }
+    sCount = data.frames;
+    sTakePosition = data.frames;
+    sTapeHash = data.frameHash;
+    sSettingsHash = data.settingsHash;
+    sTapeStart = data.startFingerprint;
+    sOriginKey[0] = data.originKey[0];
+    sOriginKey[1] = data.originKey[1];
+    sTapeStage = sStageGeneration;
+    sTapeSlot = SavestateManager::kSlotCount;
+    findTakeStart();
+    sSteps = data.steps;
+    sPaused = sPaused || (data.flags & SAVED_PAUSED);
+    sTakeAttached = true;
+    if (settingsHash() != sSettingsHash) {
+        sPaused = true;
+        message("TAS saved; restore its gameplay settings to continue");
+        return false;
+    }
+    sRecord = (data.flags & SAVED_RECORDING) && sCount < kMaxFrames;
+    sStripButtons |= gBinds.get(BIND_SAVESTATE_LOAD);
+    message(sRecord ? "TAS checkpoint loaded - recording continues" : "TAS checkpoint loaded");
+    gBinds.suppressUntilRelease();
+    return true;
+}
+
 void init() {
     sPadHookReady = installEntry(kPadRead,
         reinterpret_cast<void *>(&susamunePracticeReadPad), sPadReadTail);
@@ -653,11 +887,13 @@ void beforeStageSetup() {
     sFreeze = false;
     sAssisted = false;
     sHaveRead = false;
-    for (u32 i = 0; i < SavestateManager::kSlotCount; ++i)
-        sSeeds[i].valid = false;
+    sModalPadValid = false;
     sSteps = 0;
+    sPendingReleases = 0;
     sCount = 0;
     sCursor = 0;
+    sTakeAttached = false;
+    sOriginKey[0] = sOriginKey[1] = 0;
     stopTape(nullptr);
     sStatus = sPausePending ? "Frame advance armed - waiting for Mario control" :
                              "Save a state before recording";
@@ -695,7 +931,6 @@ void beforeDirect(bool modalOwnsInput) {
     if ((sRecord || sReplay) && actionsFastForwardActive())
         stopTape("Input session stopped: fast-forward");
     if (sReplay && sModal) stopTape("Input playback stopped: menu opened");
-    if (sRecord && sModal) stopTape("Input recording stopped: menu opened");
     if (((injectedBeforeDirect && !sReplay) || (sModal && sFreeCamera)) &&
         sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         inject(sPhysical, sReadPad);
@@ -703,6 +938,7 @@ void beforeDirect(bool modalOwnsInput) {
         sConsumed = sPhysical;
         sFrameInjected = false;
     }
+    retainModalHistory();
     if (sMenuAction && !sModal && !(sPhysical.buttons & JUTGamePad::A)) {
         if (sMenuAction == 2) {
             sPaused = false;
@@ -760,12 +996,12 @@ void afterDirect(s32 appState, bool gameplayActive) {
         return;
     }
     sModal = sModal || WarpWheel::shown() || WarpWheel::promptPending();
-    if ((sRecord || sReplay) && sModal)
+    if (sReplay && sModal)
         stopTape("Input session ended: overlay opened");
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         restorePad(sBeforeRead, sReadPad);
     }
-    if ((sRecord || sReplay) && !normalStage())
+    if ((sRecord || sReplay) && !controlStage())
         stopTape("Input session ended: pause or scene change");
     sConsumedFrame = sHaveRead && gameplayActive && !sFreeze && !sModal &&
                      !actionsFastForwardActive();
@@ -780,25 +1016,32 @@ void afterDirect(s32 appState, bool gameplayActive) {
         if (sCount == kMaxFrames) {
             stopTape("Input recording full");
         } else {
-            sFrames[sCount].input = sConsumed;
-            sFrames[sCount].fingerprint = fingerprint();
+            writeFrame(sFrames[sCount], sConsumed, fingerprint(), sPendingReleases);
             ++sCount;
+            sTakePosition = sCount;
+            sTakeAttached = true;
             if (sCount == kMaxFrames) stopTape("Input recording full");
         }
     } else if (sReplay && sFrameInjected) {
-        const u32 expected = sFrames[sCursor].fingerprint;
+        const u32 expected = sFrames[sCursor].fingerprint & kFrameFingerprintMask;
         ++sCursor;
-        if (fingerprint() != expected) {
+        sTakePosition = sCursor;
+        sTakeAttached = true;
+        if ((fingerprint() & kFrameFingerprintMask) != expected) {
             snprintf(sReplayFailure, sizeof(sReplayFailure),
                      "Replay stopped at frame %lu: game state differed", sCursor);
             stopTape(sReplayFailure);
+            sTakeAttached = false;
             CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, 3, sCursor);
             sPaused = true;
         } else if (sCursor == sCount) {
             stopTape("Playback finished - fingerprints matched");
             sPaused = true;
         }
+    } else if (!sReplay) {
+        sTakeAttached = false;
     }
+    sPendingReleases = 0;
 }
 
 void afterDraw() {
@@ -828,6 +1071,13 @@ void afterDraw() {
         return;
     }
     const u8 kind = sLoadKind;
+    SavestateData seedData;
+    if (!gSavestateMgr->practiceData(slot, &seedData)) {
+        stopTape("TAS start state is unavailable");
+        return;
+    }
+    const bool recordPaused = kind == 1 && (sPaused || (seedData.flags & SAVED_PAUSED));
+    sOwnRestoreValid = false;
     sOwnLoad = true;
     const bool loaded = gSavestateMgr->loadSlot(slot, generation);
     sOwnLoad = false;
@@ -837,9 +1087,13 @@ void afterDraw() {
         stopTape("Couldn't load recording's savestate");
         return;
     }
-    restorePad(sSeeds[slot].pad, gpApplication.mGamePads[0]);
+    if (!sOwnRestoreValid) {
+        stopTape(nullptr);
+        sPaused = true;
+        return;
+    }
     sHaveRead = false;
-    sPaused = false;
+    sPaused = recordPaused;
     sPausePending = false;
     sStepQueued = false;
     sMenuAction = 0;
@@ -848,12 +1102,16 @@ void afterDraw() {
     sPriorButtons = sPhysical.buttons;
     sFreeCamera = false;
     sCursor = 0;
+    sTakePosition = 0;
     if (kind == 1) {
         sCount = 0;
         sTapeHash = 0;
         sTapeSeed = generation;
         sTapeSlot = slot;
         sTapeStage = sStageGeneration;
+        sOriginKey[0] = seedData.stateKey[0];
+        sOriginKey[1] = seedData.stateKey[1];
+        sTakeAttached = true;
         sTapeStart = fingerprint();
         sSettingsHash = settingsHash();
         sRecord = true;
@@ -878,36 +1136,30 @@ void onSavestateSaved(u32 slot, u32 generation) {
                               sTapeSeed != generation;
     const bool replacedRequest = sLoadKind && sLoadSlot == slot &&
                                  sLoadGeneration != generation;
-    PracticeSeed &seed = sSeeds[slot];
-    seed.generation = generation;
-    seed.valid = normalStage();
-    seed.rngSaved = gSettings.getBool(SETTING_SAVE_RNG_STATE);
-    seed.stage = sStageGeneration;
-    seed.heap = reinterpret_cast<u32>(gpApplication.mCurrentHeap);
-    if (seed.valid) capturePad(seed.pad, gpApplication.mGamePads[0]);
-    if (replacedRequest || (replacedTake && (sRecord || sReplay)))
+    if (replacedRequest || (replacedTake && sReplay))
         stopTape("Recording's savestate replaced - input stopped");
     if (replacedTake) {
-        sCount = sCursor = 0;
-        sTapeSeed = sTapeHash = 0;
+        sTapeSeed = 0;
+        sTapeSlot = SavestateManager::kSlotCount;
     }
 }
 
 void onSavestateCleared(u32 slot, u32 generation) {
     if (slot >= SavestateManager::kSlotCount || !generation) return;
-    if (sSeeds[slot].generation == generation) sSeeds[slot].valid = false;
     const bool removedTake = sTapeSlot == slot && sTapeSeed == generation;
     const bool removedRequest = sLoadKind && sLoadSlot == slot &&
                                 sLoadGeneration == generation;
-    if (removedRequest || (removedTake && (sRecord || sReplay)))
+    if (removedRequest || (removedTake && sReplay))
         stopTape("Recording's savestate cleared - input stopped");
     if (removedTake) {
-        sCount = sCursor = 0;
-        sTapeSeed = sTapeHash = 0;
+        sTapeSeed = 0;
+        sTapeSlot = SavestateManager::kSlotCount;
     }
 }
 
 void onSavestateLoaded() {
+    sModalPadValid = false;
+    sPendingReleases = 0;
     const bool held = !sOwnLoad && sLoadHoldButtons && sPhysical.error == 0 &&
         (sPhysical.buttons & sLoadHoldButtons) == sLoadHoldButtons;
     sLoadHoldActive = held && controlStage();
@@ -925,7 +1177,10 @@ void onSavestateLoaded() {
     sFreeCamera = false;
     sStepQueued = false;
     sHaveRead = false;
-    if (!sOwnLoad) stopTape(nullptr);
+    if (!sOwnLoad) {
+        stopTape(nullptr);
+        sTakeAttached = false;
+    }
     invalidate();
 }
 
@@ -956,12 +1211,12 @@ bool requestPauseToggle(bool fromMenu) {
         return true;
     }
     if (!sPaused && !actionableStage()) {
-        if (sRecord || sReplay) stopTape(nullptr);
+        if (sReplay) stopTape(nullptr);
         sPausePending = true;
         message("Frame advance armed - waiting for Mario control");
         return true;
     }
-    if (sRecord || sReplay) stopTape("Input stopped for frame advance");
+    if (sReplay) stopTape("Input playback stopped for frame advance");
     sMenuAction = 0;
     if (fromMenu && sPaused) {
         sMenuAction = 2;
@@ -987,13 +1242,13 @@ bool requestStep(bool fromMenu) {
     }
     if (!fromMenu) sStripButtons |= gBinds.get(BIND_PRACTICE_STEP);
     if (!sPaused && !actionableStage()) {
-        if (sRecord || sReplay) stopTape(nullptr);
+        if (sReplay) stopTape(nullptr);
         sPausePending = true;
         message("Frame advance armed - waiting for Mario control");
         return true;
     }
     if (!sPaused) {
-        if (sRecord || sReplay) stopTape(nullptr);
+        if (sReplay) stopTape(nullptr);
         sPausePending = false;
         sPaused = true;
         sStepQueued = false;
@@ -1047,7 +1302,7 @@ bool requestFreeCameraToggle() {
             message("Free camera couldn't pause gameplay");
             return false;
         }
-        if (sRecord || sReplay) stopTape(nullptr);
+        if (sReplay) stopTape(nullptr);
         sPausePending = false;
         sPaused = true;
         sStepQueued = false;
@@ -1076,7 +1331,9 @@ bool requestRecord() {
         message("Save a new gameplay state in Save to first");
         return false;
     }
-    if (!sSeeds[slot].rngSaved || !gSettings.getBool(SETTING_SAVE_RNG_STATE)) {
+    SavestateData seedData;
+    if (!gSavestateMgr->practiceData(slot, &seedData) ||
+        !(seedData.flags & SAVED_RNG) || !gSettings.getBool(SETTING_SAVE_RNG_STATE)) {
         message("Turn on Save RNG state, then save a new state");
         return false;
     }
@@ -1090,9 +1347,12 @@ bool requestPlayback() {
         return false;
     }
     if (!available() || !normalStage() || sCount == 0 ||
-        !seedMatches(sTapeSlot, sTapeSeed) ||
         sTapeStage != sStageGeneration || Ghost::observerStatsSuppressed()) {
         message("Record a take with this savestate first");
+        return false;
+    }
+    if (!findTakeStart()) {
+        message("Import this TAS's start state into a memory slot to replay");
         return false;
     }
     if (sRecord) stopTape(nullptr);
@@ -1108,7 +1368,37 @@ bool requestPlayback() {
     return true;
 }
 
+bool requestContinue() {
+    if (!available() || !normalStage() || !sTakeAttached || !tapeStorageReady() ||
+        Ghost::observerStatsSuppressed() || sTakePosition >= kMaxFrames || sTakePosition > sCount) {
+        message("Load a TAS checkpoint before continuing");
+        return false;
+    }
+    if (settingsHash() != sSettingsHash) {
+        message("Restore this TAS's gameplay settings to continue");
+        return false;
+    }
+    if (sRecord || sReplay) stopTape(nullptr);
+    if (hashBytes(2166136261u, sFrames, sCount * sizeof(Frame)) != sTapeHash) {
+        message("Input recording is damaged - load a checkpoint");
+        return false;
+    }
+    sCount = sTakePosition;
+    sTapeHash = hashBytes(2166136261u, sFrames, sCount * sizeof(Frame));
+    sRecord = true;
+    sPaused = true;
+    sPausePending = sStepQueued = false;
+    sStripButtons |= JUTGamePad::A;
+    invalidate();
+    message("TAS editing resumed - Step or Resume when ready");
+    return true;
+}
+
 void requestStop() {
+    if (sReplay) {
+        sPaused = true;
+        sPausePending = sStepQueued = false;
+    }
     if (gBinds.wasPressed(BIND_PRACTICE_STOP))
         sStripButtons |= gBinds.get(BIND_PRACTICE_STOP);
     stopTape("Input session stopped");
@@ -1116,7 +1406,10 @@ void requestStop() {
 }
 
 void releaseForDeparture() {
+    sModalPadValid = false;
+    sPendingReleases = 0;
     cancelLoadHold();
+    sPausePending = false;
     sCameraWaitButtons = false;
     const bool restoreInput = sFrameInjected || sPaused || sFreeCamera || sFreeze;
     restoreCamera();
@@ -1142,6 +1435,10 @@ bool paused() { return sPaused || sLoadHoldActive; }
 bool manualPaused() { return sPaused; }
 bool pausePending() { return sPausePending; }
 bool freeCamera() { return sFreeCamera; }
+bool hideHud() {
+    return sFreeCamera && controlStage() &&
+           gSettings.getBool(SETTING_FREE_CAMERA_HIDE_HUD);
+}
 bool recording() { return sRecord; }
 bool replaying() { return sReplay; }
 bool starting() { return sLoadKind != 0; }
@@ -1173,7 +1470,7 @@ void draw(Menu *menu) {
     menu->fillBox(42, 388, 556, 40, JUtility::TColor(8, 17, 31, 225));
     menu->drawText(text, 50, 394, 16, 16, JUtility::TColor(130, 225, 255, 255));
     menu->drawText(sFreeCamera ? "Turn camera Off to step with A or other Mario inputs" :
-                   sRecord ? "Open the Moonshine menu to stop and keep this recording." :
+                   sRecord ? "Save checkpoints to keep inputs. Use Stop to finish the take." :
                    sReplay ? "B or Start stops playback." :
                    "Other gameplay buttons can stay held. Stop cancels this request.", 50, 413, 12, 12,
                    JUtility::TColor(235, 235, 235, 255));

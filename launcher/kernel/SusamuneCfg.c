@@ -64,14 +64,14 @@ still dropped, since those sections are regenerated wholesale.
 extern u32 GAME_ID;
 
 // The ini key table, generated from the same list that defines the mod's
-// SettingId enum. Index == SettingId == index into SusamuneCfg::values.
+// SettingId enum. The shared accessor maps base and appended wire values.
 #define SUSAMUNE_SETTING_KEY(id, key) key,
 static const char *const SettingKeys[] = { SUSAMUNE_SETTING_LIST(SUSAMUNE_SETTING_KEY) };
 #undef SUSAMUNE_SETTING_KEY
 
 #define SETTING_KEY_COUNT ((u32)(sizeof(SettingKeys) / sizeof(SettingKeys[0])))
 typedef char SettingKeyCountFitsCfg[
-    SETTING_KEY_COUNT <= SUSAMUNE_CFG_MAX_SETTINGS ? 1 : -1];
+    SETTING_KEY_COUNT <= SUSAMUNE_CFG_TOTAL_SETTINGS ? 1 : -1];
 
 // Same, for the running disc's [binds_<region>] section.
 #define SUSAMUNE_BIND_KEY(id, key) key,
@@ -5721,7 +5721,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 		{
 			idx = FindSettingKey(Trim(line));
 			if (idx >= 0 && ParseU8(Trim(eq + 1), &value))
-				cfg->values[idx] = value;
+				SusamuneCfgSetSetting(cfg, (u32)idx, value);
 		}
 		else if (section == SECTION_BINDS)
 		{
@@ -5829,10 +5829,11 @@ static void EmitSettingsSection(FIL *f, int *err, const struct SusamuneCfg *cfg)
 
 	for (i = 0; i < count; i++)
 	{
-		if (cfg->values[i] == SUSAMUNE_CFG_UNSET)
+		const u8 value = SusamuneCfgGetSetting(cfg, i);
+		if (value == SUSAMUNE_CFG_UNSET)
 			continue;
 		Emit(f, err, line,
-		     (u32)_sprintf(line, "%s = %u\r\n", SettingKeys[i], cfg->values[i]));
+		     (u32)_sprintf(line, "%s = %u\r\n", SettingKeys[i], value));
 	}
 }
 
@@ -6788,8 +6789,8 @@ void SusamuneCfgInit(void)
 	BuildSectionName(QftDisplaySection, SUSAMUNE_INI_SECTION_QFT_DISPLAY, region);
 	BuildSectionName(CreationSection, SUSAMUNE_INI_SECTION_CREATION, region);
 
-	for (i = 0; i < SUSAMUNE_CFG_MAX_SETTINGS; i++)
-		cfg->values[i] = SUSAMUNE_CFG_UNSET;
+	for (i = 0; i < SUSAMUNE_CFG_TOTAL_SETTINGS; i++)
+		SusamuneCfgSetSetting(cfg, i, SUSAMUNE_CFG_UNSET);
 	for (i = 0; i < SUSAMUNE_CFG_MAX_BINDS; i++)
 		cfg->binds[i] = SUSAMUNE_CFG_BIND_UNSET;
 	cfg->inputDisplay.magic          = SUSAMUNE_INPUT_CFG_MAGIC;

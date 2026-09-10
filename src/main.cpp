@@ -532,6 +532,12 @@ extern "C" void afterDraw() {
         
         if (gMenu)
             gMenu->draw(&ortho);
+        if (PracticeSession::hideHud()) {
+            if (StageLoader::modal()) StageLoader::draw(gMenu);
+            if (WarpWheel::shown() || WarpWheel::promptPending())
+                WarpWheel::draw();
+            return;
+        }
         GameplayPolish::draw(gMenu);
         PracticeSession::draw(gMenu);
         if (gMenu && !gMenu->shown())

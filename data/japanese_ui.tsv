@@ -820,12 +820,12 @@ Delfino Cop Secret	警察署のヒミツ
 Pachinko	パチンコ
 Delfino Slide	ドルピックスライダー
 Lily Pad	どくの川
-Grass Secret	草原の地下
+Grass Secret	草原
 Lighthouse	灯台
 Box Game 1	木箱ゲーム1
 Box Game 2	木箱ゲーム2
-Left Bell	左の鐘
-Right Bell	右の鐘
+Left Bell	西のベル
+Right Bell	東のベル
 Chuckster	モンテ投げ
 Shine Gate	シャインゲート
 Delfino 100	ドルピック100枚
@@ -1392,3 +1392,42 @@ Save latest ghost	最新のゴーストを保存
 BROWSE	閲覧
 OPTIONS	オプション
 Unlock popup and chime	実績達成の通知・効果音
+
+# RC1 wording amendments supplied by the Japanese testers.
+Gelato GBS	マンマ ヤシ抜け
+Mode	モード切り替え
+Run playlist	プレイリストの開始
+Playlist entries	選択されたプレイリスト
+Clear playlist	プレイリストの取り消し
+Built-in preset	プリセットを構築
+Load playlist	プレイリストの読込
+Save playlist	プレイリストの保存
+Value widths	値の幅
+Field gap	隙間
+Rollout display style	起き上がりジャンプ表示スタイル
+Dust display style	着地からの入力間隔スタイル
+Bianco 3 Full Reds	ビアンコ3 赤コイン(通し)
+Bianco 6 Full Reds	ビアンコ6 赤コイン(通し)
+Ricco 4 Full Reds	リコ4 赤コイン(通し)
+Gelato 1 Full Reds	マンマ1 赤コイン(通し)
+Pinna 2 Full Reds	ピンナ2 赤コイン(通し)
+Pinna 6 Full Reds	ピンナ6 赤コイン(通し)
+Sirena 2 Full Reds	シレナ2 赤コイン(通し)
+Sirena 4 Full Reds	シレナ4 赤コイン(通し)
+Noki 6 Full Reds	マーレ6 赤コイン(通し)
+Pianta 5 Full Reds	モンテ5 赤コイン(通し)
+
+# RC1 free-camera controls.
+Look sensitivity	視点移動の感度
+Hide all HUD	すべてのHUDを隠す
+Free camera sensitivity	フリーカメラの感度
+Hide HUD in free camera	フリーカメラ中はHUDを隠す
+Change how quickly the C-stick turns the camera, from 0.25x to 4x.	Cスティックの視点移動速度を0.25倍から4倍まで変更します。
+Hide game and Moonshine overlays while filming. You can still open this menu.	撮影中はゲームとMoonshineの表示を隠します。メニューは開けます。
+
+# RC1 TAS checkpoints.
+Record a TAS from a start state. Save checkpoints to try different inputs.	開始ステートからTASを記録します。途中のステートを保存して入力を試せます。
+Continue editing checkpoint	途中のステートから編集を続ける
+Keep your start state. Save other slots as checkpoints; loading rewinds the inputs too.	開始ステートを残し、別の枠に途中経過を保存します。読込で入力も巻き戻ります。
+Stop keeps the take. Export its start state and latest checkpoint to SD to keep both.	停止しても入力は残ります。開始と最新のステートをSDに保存してください。
+Continue a loaded TAS checkpoint. Gameplay stays paused until you Step or Resume.	読み込んだTASの編集を続けます。コマ送りか再開を選ぶまで停止します。

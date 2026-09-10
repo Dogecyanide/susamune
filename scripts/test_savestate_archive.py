@@ -63,7 +63,7 @@ static void rebaseMissionStopwatch(OSTime){++rebased;}
 static void DCStoreRange(void*,u32){++stores;}
 static void*codecWorkspace(){return workspace;}
 struct Menu{void toast(const char*){++notified;}}menu;static Menu*gMenu=&menu;
-namespace PracticeSession{void onSavestateCleared(u32,u32){++cleared;}void cancelLoadHold(){}}
+namespace PracticeSession{enum{kSavestateSpanCount=0};static bool copySavestateBytes(void*,const void*,u32){return false;}void onSavestateCleared(u32,u32){++cleared;}void cancelLoadHold(){}}
 namespace Ghost{enum{kSavestateSpanCount=0};}
 namespace StateArchiveProfile{static void copyGameBytes(void*,void*d,const void*s,u32 n){policyBytes+=n;memcpy(d,s,n);}}
 static u32 sLiveArchiveProfile;
@@ -158,7 +158,7 @@ class SavestateArchiveTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         source=FIXTURE
         for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(',
-                     'bool archiveStageReady()', 'bool admitArchiveStage()',
+                     'bool archiveStageReady()', 'bool admitArchiveStage()', 'void copyStateBytes(',
                      'bool SavestateManager::diskBusy()', 'void SavestateManager::updateDisk()'):
             source+=function_source(SOURCE,name)
         load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
@@ -416,7 +416,7 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         self.assertLess(update.index('StateSlotPoolCommitBanked('),update.index('sSlots[sDiskSlot] = sCandidate'))
         load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
         self.assertLess(load.index('StateArchiveProfile::matches('),load.index('StateCodec::decompress('))
-        self.assertIn('durable ? StateArchiveProfile::copyGameBytes : nullptr',load)
+        self.assertIn('copyStateBytes,\n            durable ? &sLiveArchiveProfile : nullptr',load)
 
     def test_sd_admission_requires_normal_play_and_reports_refusal(self):
         for state in range(13):

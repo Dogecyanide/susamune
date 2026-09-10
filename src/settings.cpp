@@ -310,8 +310,8 @@ void Settings::save() {
     stageInto(cfg);
 
     // Publish the payload before the doorbell, so the kernel can never see a
-    // bumped saveSeq alongside a half-written values[]/binds[]. Both live in
-    // the same mod-owned run of cache lines starting at values[].
+    // bumped saveSeq alongside half-written values[]/binds[]. Extra settings
+    // share line 0 and are published together with the doorbell below.
     DCStoreRange((void *)cfg->values,
                  sizeof(cfg->values) + sizeof(cfg->binds) + sizeof(cfg->inputDisplay) +
                  sizeof(cfg->metadataDisplay));
@@ -330,7 +330,7 @@ void Settings::save() {
 
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
-    DCStoreRange((void *)cfg, 32);  // line 0: magic/version/count/saveSeq
+    DCStoreRange((void *)cfg, 32);  // line 0 includes extraValues and saveSeq
 
     mDirty          = false;
     mLastError      = 0;
@@ -403,7 +403,7 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
         n = SETTING_COUNT;
     }
     for (u16 i = 0; i < n; i++) {
-        u8 v = cfg->values[i];
+        u8 v = SusamuneCfgGetSetting(cfg, i);
         if (v == SUSAMUNE_CFG_UNSET) {
             continue;  // absent from the ini -- keep the default
         }
@@ -481,7 +481,8 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
 }
 
 void Settings::stageInto(volatile SusamuneCfg *cfg) {
-    memcpy((void *)cfg->values, mValues, sizeof(mValues));
+    for (u16 i = 0; i < SETTING_COUNT; ++i)
+        SusamuneCfgSetSetting(cfg, i, mValues[i]);
     cfg->count = SETTING_COUNT;
 
     gBinds.stageInto(cfg->binds);
@@ -638,7 +639,7 @@ static_assert(sizeof(kSettingDescs) / sizeof(kSettingDescs[0]) == SETTING_COUNT,
               "kSettingDescs must have one row per SUSAMUNE_SETTING_LIST entry");
 static_assert(SETTING_CAT_COUNT <= kCategoryMask + 1,
               "SettingCategory no longer fits packed descriptor");
-static_assert(SETTING_COUNT <= SUSAMUNE_CFG_MAX_SETTINGS,
+static_assert(SETTING_COUNT <= SUSAMUNE_CFG_TOTAL_SETTINGS,
               "SETTING_COUNT exceeds the MEM2 handoff block's values[] capacity");
 static_assert(BIND_COUNT <= SUSAMUNE_CFG_MAX_BINDS,
               "BIND_COUNT exceeds the MEM2 handoff block's binds[] capacity");

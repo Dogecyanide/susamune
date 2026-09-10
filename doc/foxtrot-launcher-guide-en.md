@@ -60,7 +60,7 @@ Hold your Load shortcut to keep gameplay still after loading. Release it to move
 
 An intro finishes before the hold begins. Keep Load held to stop on Mario's first controllable frame, or release early to continue. A previous practice pause still takes effect when Mario can move.
 
-Clear save slot asks before clearing the slot under Save to. Other slots are kept.
+Clear save slot asks before clearing the slot under Save to. Other slots are kept. Errors remain visible even if successful save/load messages are switched Off.
 
 Memory states are lost when you close the game or reboot. Save a separate copy to SD if you want to keep one.
 
@@ -88,7 +88,7 @@ Large SD files can load with three full memory slots if one saved slot matches t
 
 If an SD read fails partway through, the game restores that recovery state and tells you its slot number. If there is no suitable recovery state and too little temporary space, loading is refused safely.
 
-SD states are specific to their build and setup. Use ghosts when you want to share an attempt across game regions.
+Make fresh SD states with this build. Earlier SD states need resaving and cannot be loaded by this update. States are specific to their build and setup; use ghosts to share an attempt across game regions.
 
 ## Pause and frame advance
 
@@ -112,7 +112,9 @@ Open Practice > Free camera and turn it On. This also pauses live gameplay.
 
 Main stick: move. C-stick: look. L/R analog pressure: move down/up. Hold X for a temporary speed boost.
 
-Movement speed saves a speed from 0.25x to 4x. Reverse sideways changes main-stick left/right movement if it feels backwards to you.
+Movement speed saves a speed from 0.25x to 4x. Look sensitivity separately changes C-stick turning speed from 0.25x to 4x. Reverse sideways changes main-stick left/right movement.
+
+Hide all HUD hides game and Moonshine overlays while using free camera. You can still open the menu. Turn it or free camera Off to restore your overlays.
 
 Recenter returns to the game's camera view. Turning free camera Off also restores that view; gameplay stays paused until you choose Resume.
 
@@ -124,29 +126,29 @@ Free camera also works in the normal Start pause and while watching ghosts. Duri
 
 Input replay repeats your actual button presses from a starting savestate. It is separate from ghost playback and is still experimental.
 
-1. Turn Save RNG state On, then save a new memory state during normal gameplay. Record uses the slot under Save to.
+1. Turn Save RNG state On and save a new gameplay state. Keep this start state in its slot. Record uses the slot under Save to.
 
-2. Open Practice > Input replay (experimental), then choose Record from savestate.
+2. Choose Practice > Input replay (experimental) > Record from savestate. Release the A used to confirm. Other gameplay buttons may stay held.
 
-3. The menu closes. Release the A button used to confirm; you can keep Mario's other buttons held. The starting state reloads and recording begins.
+3. Play normally or use Pause and Step. Save another slot as a checkpoint. It keeps the inputs from the start to that moment.
 
-4. Play the sequence. Open the mod menu to stop recording and keep the take.
+4. Load the checkpoint to rewind those inputs and try a different continuation. A checkpoint saved during recording resumes recording after loading. For a stopped take, choose Continue editing checkpoint, then Step or Resume.
 
-5. Choose Replay recorded inputs to reload that same starting state and replay the take. Changing Save to or Load from does not change its starting state.
+5. Opening the menu stops recording and keeps the take. Replay recorded inputs uses its matching start state, even if Save to or Load from has changed. B or Start stops playback.
 
-Stop recording or replay is on the same page. B or Start also stops playback.
+To keep a TAS after rebooting, save both the start state and latest checkpoint to SD. Use names that distinguish them.
 
-Keep the starting memory state. Replacing or clearing it, or leaving the scene, makes the take unusable. Other memory slots can still be used.
+After rebooting into the same build, game region, setup and scene, import the matching start into any memory slot, then load the latest checkpoint. Continue editing checkpoint resumes work; Replay recorded inputs plays from the beginning.
 
-A take lasts about 2 minutes at most. It is kept only for this session and cannot be saved to SD or shared as a replay file.
+You can load a checkpoint directly from SD, but replay from the beginning still needs the matching start imported into memory.
 
-For an imported SD state, load it first, then make a new memory save before recording inputs.
+A take holds up to 4096 game frames, about 137 seconds at 30 fps or 164 seconds at 25 fps. Only exported SD copies survive reboot. Keep both the start and checkpoint.
 
-Starting means the take is waiting to begin. Settings changed means you need to restore the settings used for that take or make a new one.
+Changing scenes clears the live take; load its matching checkpoint when you return. Gameplay settings must match. Timer and metadata layout, ghost inputs and camera presentation can still be adjusted.
 
-Menu favourites, timer position/size, free-camera speed/sideways controls, metadata layout and the ghost input display can still be adjusted. Settings that affect the recorded setup must match.
+Starting means the take is waiting to begin. If it asks for the start state, import the matching start into memory. If settings or game state differ, keep the exact error when reporting it.
 
-If the replay says the game state differs, it has stopped rather than continuing with the wrong movement. Make a fresh starting state and take. Experimental replay cannot reproduce every timed event reliably.
+Replay stops on a mismatch. It checks only selected game state, so it cannot reproduce every timed event reliably.
 
 ## Save, race and watch ghosts
 
@@ -181,6 +183,8 @@ The new handmade checkpoints include the remaining level routes and Full Reds. A
 In Runs > ILs, press Z on a supported row to choose its starting episode. Use C-stick Up/Down, A to keep or B to cancel. Your choice is saved separately for JP, US and PAL.
 
 Episode choices cover the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden, and the ten Full Reds ILs. Other IL starts stay fixed.
+
+A practice pause in the previous stage should not disqualify a new clean IL or streak attempt. Rejected streak attempts briefly show the reason beside the counter.
 
 Choose Off, PB, SOB or Ghost for comparison. SOB adds your best recorded segments together. Ghost compares against your selected race ghost.
 

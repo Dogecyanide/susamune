@@ -35,12 +35,16 @@ extern "C" void *memcpy(void *dst,const void *src,size_t n) {
     for(size_t i=0;i<n;++i)((volatile u8*)dst)[i]=((const u8*)src)[i];return dst;
 }
 struct PadHistory {u8 shared[80],controls[80],meaning[0x4c];};
-''' + function_source(production, "struct PracticeSeed {") + r''';
+''' + "struct PracticeSeed {PadHistory pad;u32 stage;}" + r''';
 static PracticeSeed sSeeds[SavestateManager::kSlotCount];
 struct Pad {PadHistory history;};
 static Pad pad;
 static struct {void *mCurrentHeap;Pad *mGamePads[1];} gpApplication;
 static SavestateManager::SlotInfo infos[3];
+enum {SAVED_PAD=1,SAVED_RNG=2,SAVED_PAUSED=16};
+static PracticeSession::SavestateData meta[3];
+static u32 sOriginKey[2],sTakePosition;
+static bool sTakeAttached,sOwnRestoreValid,restorePadValid;
 static u32 selected,loadedSlot,loadedGeneration,loadCalls;
 SavestateManager::SavestateManager() {}
 u32 SavestateManager::activeSlot()const{return selected;}
@@ -48,7 +52,8 @@ SavestateManager::SlotInfo SavestateManager::slotInfo(u32 slot)const {
     return slot<3?infos[slot]:SlotInfo{};
 }
 bool SavestateManager::loadSlot(u32 slot,u32 generation) {
-    ++loadCalls;loadedSlot=slot;loadedGeneration=generation;
+    ++loadCalls;loadedSlot=slot;loadedGeneration=generation;sOwnRestoreValid=restorePadValid;
+    if(slot<3)pad.history=sSeeds[slot].pad;
     return slot<3&&infos[slot].valid&&infos[slot].generation==generation;
 }
 static SavestateManager manager;
@@ -60,6 +65,10 @@ static u8 sLoadKind;
 static u8 sMenuAction;
 static u16 sLoadWait,sStartRelease,sStripButtons,sPriorButtons;
 static u32 sTapeStart;
+bool SavestateManager::practiceData(u32 slot,PracticeSession::SavestateData*out)const {
+    if(slot>=3||!infos[slot].valid||sSeeds[slot].stage!=sStageGeneration)return false;
+    *out=meta[slot];return true;
+}
 static SusamunePracticeInput sPhysical;
 static struct Frame {u32 words[4];} frames[4],*sFrames=frames;
 static bool menuOpen,wheelOpen,promptOpen,resultOpen,diskActive,rngSaved;
@@ -97,18 +106,19 @@ void message(const char *text){lastMessage=text;}
 void stopTape(const char *reason){sRecord=sReplay=false;sLoadKind=0;sLoadWait=sStartRelease=0;
     sTapeHash=42;if(reason)message(reason);}
 ''' + function_source(production, "void queueTapeLoad(") + r'''
-''' + seed_match.replace(narrow, replacement) + r'''
+''' + seed_match.replace(narrow, replacement) + function_source(production, "bool findTakeStart()") + r'''
 namespace PracticeSession {
 bool available(){return true;}
 ''' + functions.replace(narrow, replacement) + r'''
 }
 extern "C" __declspec(dllexport) void reset() {
-    for(u32 i=0;i<3;++i){infos[i]={};sSeeds[i]={};}
+    for(u32 i=0;i<3;++i){infos[i]={};sSeeds[i]={};meta[i]={};}
+    sOriginKey[0]=sOriginKey[1]=sTakePosition=0;sTakeAttached=false;sPaused=false;
     selected=0;loadedSlot=99;loadedGeneration=loadCalls=0;
     sStageGeneration=7;sTapeSeed=sTapeSlot=sLoadSlot=sLoadGeneration=0;
     sCount=sCursor=sTapeStage=sSettingsHash=sTapeHash=0;
     sLoadKind=0;sLoadWait=0;sRecord=sReplay=sOwnLoad=false;
-    sPhysical={};cardStatus=0;pad={};rngSaved=true;
+    sPhysical={};cardStatus=0;pad={};rngSaved=restorePadValid=true;
     menuOpen=wheelOpen=promptOpen=resultOpen=diskActive=false;
     sPausePending=sStepQueued=false;sMenuAction=0;sStartRelease=sStripButtons=sPriorButtons=0;
     currentHash=tapeHash=42;currentFingerprint=123;recordBind=4;replayBind=8;
@@ -117,6 +127,8 @@ extern "C" __declspec(dllexport) void reset() {
 }
 extern "C" __declspec(dllexport) void save(u32 slot,u32 generation,u32 marker) {
     infos[slot]={true,2,0,generation,1234};pad.history.meaning[0]=(u8)marker;
+    sSeeds[slot].pad=pad.history;sSeeds[slot].stage=sStageGeneration;
+    meta[slot]={};meta[slot].flags=SAVED_PAD|(rngSaved?SAVED_RNG:0);meta[slot].stateKey[1]=generation;
     PracticeSession::onSavestateSaved(slot,generation);
 }
 extern "C" __declspec(dllexport) void select(u32 slot){selected=slot;}
@@ -138,7 +150,7 @@ extern "C" __declspec(dllexport) void config(u32 which,u32 value) {
     case 3:currentHash=value;break;case 4:currentFingerprint=value;break;
     case 5:rngSaved=value!=0;break;case 6:diskActive=value!=0;break;
     case 7:promptOpen=value!=0;break;case 8:sPhysical.error=(s8)value;break;
-    case 9:tapeHash=value;break;
+    case 9:tapeHash=value;break;case 10:restorePadValid=value!=0;break;
     }
 }
 extern "C" __declspec(dllexport) const char *status(){return lastMessage;}
@@ -177,6 +189,21 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.assertEqual([self.lib.value(i) for i in (1, 2, 3, 4, 8, 9)],
                          [1, 11, 71, 1, 1, 11])
 
+    def test_restored_game_cannot_start_record_or_replay_with_bad_controller_history(self):
+        self.lib.save(0, 10, 70)
+        self.assertTrue(self.lib.record())
+        self.lib.config(10, 0)
+        self.lib.poll()
+        self.assertEqual([self.lib.value(i) for i in (4, 5, 7, 13)], [0, 0, 0, 1])
+        self.lib.config(10, 1)
+        self.assertTrue(self.lib.record())
+        self.lib.poll()
+        self.lib.finishTake()
+        self.assertTrue(self.lib.replay())
+        self.lib.config(10, 0)
+        self.lib.poll()
+        self.assertEqual([self.lib.value(i) for i in (4, 5, 7, 13)], [0, 0, 0, 1])
+
     def test_playback_uses_recorded_seed_when_selection_changes(self):
         self.lib.save(0, 10, 70)
         self.assertTrue(self.lib.record())
@@ -188,14 +215,14 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.lib.poll()
         self.assertEqual([self.lib.value(i) for i in (1, 2, 3, 5)], [0, 10, 70, 1])
 
-    def test_save_other_slot_keeps_recording_but_replacing_seed_invalidates_it(self):
+    def test_replacing_start_preserves_editing_but_disables_replay_until_reimport(self):
         self.lib.save(0, 10, 70)
         self.assertTrue(self.lib.record())
         self.lib.poll()
         self.lib.save(2, 11, 71)
         self.assertEqual((self.lib.value(4), self.lib.value(9)), (1, 10))
         self.lib.save(0, 12, 72)
-        self.assertEqual([self.lib.value(i) for i in (4, 5, 6, 7, 9)], [0] * 5)
+        self.assertEqual([self.lib.value(i) for i in (4, 5, 6, 7, 9)], [1, 0, 0, 0, 0])
         self.assertFalse(self.lib.replay())
 
     def test_pending_record_cancelled_only_when_its_seed_is_replaced(self):
@@ -239,7 +266,7 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.lib.clearNotify(0, 9)
         self.assertEqual((self.lib.value(4), self.lib.value(9)), (1, 10))
         self.lib.clearNotify(0, 10)
-        self.assertEqual([self.lib.value(i) for i in (4, 5, 6, 7, 9)], [0] * 5)
+        self.assertEqual([self.lib.value(i) for i in (4, 5, 6, 7, 9)], [1, 0, 0, 0, 0])
 
     def make_take(self):
         self.lib.save(0, 10, 70)

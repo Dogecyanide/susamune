@@ -34,7 +34,7 @@ class PracticeControlsTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
             "bool observerTransition()", "f32 axis(s8 value)",
-            "f32 cameraSpeedScale()", "void updateCamera()"))
+            "f32 cameraScale(", "f32 cameraSpeedScale()", "void updateCamera()"))
         source.write_text(r'''
 #include "susamune/practice_input.h"
 typedef unsigned char u8;
@@ -46,7 +46,9 @@ struct CameraView { Vec position,target,up; float fovy; };
 struct JUTGamePad { enum { X=0x400 }; };
 static const int SETTING_FREE_CAMERA_SPEED=1;
 static const int SETTING_FREE_CAMERA_STRAFE_REVERSE=2;
-struct Settings { u8 choice,reverse; u8 get(int id) { return id==1?choice:reverse; } } gSettings;
+static const int SETTING_FREE_CAMERA_SENSITIVITY=3;
+typedef int SettingId;
+struct Settings { u8 choice,reverse,sensitivity; u8 get(int id) { return id==1?choice:id==2?reverse:sensitivity; } } gSettings;
 static CameraView sCameraView;
 static SusamunePracticeInput sPhysical;
 static bool sFreeCamera,sModal,sCameraWaitButtons,sControl,sNormal,sPaused;
@@ -77,7 +79,8 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     const SusamunePracticeInput *input,float *out) {
     sPhysical=*input;sYaw=yaw;sPitch=0;sFreeCamera=true;
     sModal=flags&1;sCameraWaitButtons=flags&2;sControl=!(flags&4);
-    gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;sCameraView.position.set(0,0,0);
+    gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;
+    gSettings.sensitivity=(flags&16)?(flags>>5):2;sCameraView.position.set(0,0,0);
     sCameraView.target.set(0,0,0);updateCamera();
     out[0]=sCameraView.position.x;out[1]=sCameraView.position.y;
     out[2]=sCameraView.position.z;out[3]=sCameraView.target.x;
@@ -138,6 +141,14 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
                              {"substickY": 80}, {"triggerR": 255}):
                 self.assertEqual(self.camera(yaw, **controls),
                                  self.camera(yaw, flags=8, **controls))
+
+    def test_look_sensitivity_changes_both_angles_without_scaling_movement(self):
+        for choice, scale in enumerate((.25, .5, 1, 2, 4)):
+            out = self.camera(flags=16 | choice << 5, substickX=80, substickY=80, triggerR=255)
+            self.assertAlmostEqual(out[6], -.035 * scale, places=6)
+            self.assertAlmostEqual(out[7], .035 * scale, places=6)
+            self.assertAlmostEqual(out[1], 20)
+        self.assertAlmostEqual(self.camera(flags=16 | 255 << 5, substickX=80)[6], -.035, places=6)
 
     def test_camera_modal_release_latch_and_deadzone(self):
         for flags in (1, 4):

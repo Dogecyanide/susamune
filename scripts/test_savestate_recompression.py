@@ -33,7 +33,7 @@ class SavestateRecompressionTests(unittest.TestCase):
         helper = helper.replace("StateCodec::compress(", "testCompress(")
         begin=production.index('    StateCodec::Result result = StateCodec::compress(codecWorkspace(),')
         end=production.index('\n    if (!fits)',begin)
-        adaptive=production[begin:end].replace('h->region_count + Ghost::kSavestateSpanCount','count').replace('sActiveSlot','slot')
+        adaptive=production[begin:end].replace('h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount','count').replace('sActiveSlot','slot')
         source.write_text(r'''
 #include "susamune/state_codec.hxx"
 #include "susamune/state_slot_pool.h"
@@ -148,6 +148,38 @@ extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory
 
     def test_staged_success_uses_one_pass(self):
         self.assertEqual(self.execute(1000), (1, 0, 0))
+
+    def test_three_fresh_states_roundtrip_and_full_third_save_preserves_first_two(self):
+        payloads = [random.Random(612 + slot).randbytes(70000) for slot in range(3)]
+        for capacity, expected_last in ((220000, 1), (180000, 0)):
+            with self.subTest(capacity=capacity):
+                pool = Pool()
+                buffers = [Guarded(145000), Guarded(capacity - 145000)]
+                memory = Memory((C.c_void_p * 2)(*[b.ptr for b in buffers]),
+                                (C.c_uint * 2)(*[b.size for b in buffers]))
+                staging, work = Guarded(4096), Guarded(0x50000)
+                published = []
+                for slot, data in enumerate(payloads):
+                    owner = C.create_string_buffer(data)
+                    source = (Span * 1)(Span(C.addressof(owner), len(data)))
+                    before = metadata(pool), b''.join(b.data() for b in buffers)[:pool.used]
+                    result = Result()
+                    success = self.lib.runAdaptive(C.byref(pool), C.byref(memory), staging.ptr,
+                        staging.size, work.ptr, source, 1, len(data), slot, C.byref(result))
+                    self.assertEqual(success, expected_last if slot == 2 else 1)
+                    contents = b''.join(b.data() for b in buffers)
+                    if success:
+                        entry = pool.slots[slot]
+                        encoded = contents[entry.offset:entry.offset + entry.size]
+                        self.assertEqual(reference_quick_frame(encoded, len(data)), data)
+                        published.append(encoded)
+                    else:
+                        self.assertEqual((metadata(pool), contents[:pool.used]), before)
+                        self.assertEqual(pool.slots[slot].size, 0)
+                    for retained, encoded in enumerate(published):
+                        entry = pool.slots[retained]
+                        self.assertEqual(contents[entry.offset:entry.offset + entry.size], encoded)
+                    self.assertTrue(all(b.guards() for b in buffers) and work.guards() and staging.guards())
 
     def test_true_capacity_or_incomplete_count_failure_keeps_all_original_states(self):
         self.assertEqual(self.execute(90000), (0, 0, 3))

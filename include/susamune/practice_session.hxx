@@ -3,10 +3,26 @@
 
 #include <Dolphin/types.h>
 #include "susamune/practice_input.h"
+#include "susamune/state_codec.hxx"
 
 class Menu;
 
 namespace PracticeSession {
+
+enum { kSavestateSpanCount = 2 };
+struct SavestateData {
+    u32 version, flags, frames, settingsHash, startFingerprint, frameHash;
+    u32 stateKey[2], originKey[2];
+    u32 padHash, savedFingerprint, steps, releases;
+};
+static_assert(sizeof(SavestateData) == 56, "practice state metadata size");
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]);
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]);
+bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation);
+// Own replay loads restore the start state without replacing the live take.
+bool copySavestateBytes(void *destination, const void *source, u32 size);
 
 void init();
 void beforeStageSetup();
@@ -30,6 +46,7 @@ bool requestPauseToggle(bool fromMenu = false);
 bool requestStep(bool fromMenu = false);
 bool requestFreeCameraToggle();
 bool requestRecord();
+bool requestContinue();
 bool requestPlayback();
 void requestStop();
 // Approved warps must release the hold so the retail transition can run.
@@ -42,6 +59,7 @@ bool manualPaused();
 // An armed hold survives loading and waits for Mario's controls to return.
 bool pausePending();
 bool freeCamera();
+bool hideHud();
 bool recording();
 bool replaying();
 bool starting();

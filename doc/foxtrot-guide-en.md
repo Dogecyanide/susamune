@@ -1,14 +1,14 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 1CF3F641
+V2.3.0 pre-release · Build E4DE048F
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
 ## Install and update
 
-Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace the package files, and keep your existing themes, music, `susamune.ini`, records and ghosts. The launcher supports the existing JP, US and PAL disc revisions. Use your own disc or game image. Do not mix FOXTROT's launcher with older mod binaries: its memory format changed.
+Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace the package files, and keep your existing themes, music, `susamune.ini`, records and ghosts. The launcher supports the existing JP, US and PAL disc revisions. Use your own disc or game image. Do not mix FOXTROT's launcher with older mod binaries: its memory format changed. **Make fresh SD states with this build. Earlier SD states must be resaved; they cannot be loaded by this update.** Settings, records and ghosts remain usable.
 
-The **standard download keeps every Moonshine menu in English**, including when you play JP. It does not change Sunshine's own language. The **Japanese download** uses Japanese launcher menus regardless of the selected game region, and translates Moonshine's in-game menus on JP; US/PAL in-game menus stay English. Some Japanese status messages and the built-in Guide body remain English.
+The **standard download keeps every Moonshine menu in English**, including when you play JP. It does not change Sunshine's own language. The **Japanese download** uses Japanese launcher menus regardless of the selected game region, and translates Moonshine's in-game menus on JP; US/PAL in-game menus stay English. Some Japanese status messages and the built-in Guide body remain English. This update applies the 25 new wording corrections and makes small Japanese help brighter and easier to read. System > FOXTROT guide uses clearer spacing and avoids missing path-separator symbols.
 
 Keep the supplied **language.txt** beside **boot.dol** when updating: the standard download contains `en`, the Japanese download `ja`. A missing or invalid file selects English. The Japanese download also needs its supplied **ja_ui.bin** for JP game text.
 
@@ -35,6 +35,8 @@ Open the mod menu with your configured menu combo (default Y + Start). Use L/R f
 - **System:** button binds and the built-in quick guide.
 
 In **Runs > ILs**, press **Z** on a supported row to choose its starting episode. Use C-stick Up/Down, A to keep or B to cancel. The choice is shown beside its PB and saved separately for JP, US and PAL. This is available for the seven main-course 100-coin ILs, Gelato/Noki/Pianta Hidden, and all ten Full Reds ILs.
+
+A fresh IL/streak attempt checks its own practice settings; a pause in the previous stage should not disqualify it. If a streak attempt is rejected, its counter briefly shows the reason.
 
 **Runs > Timer and splits > Level splits** enables the checkpoint display. New routes include the handmade checkpoints for the remaining levels and Full Reds. A route can have up to eight segments, including its finish. Old attempt counts and records remain; individual segment times are carried forward only when their start and end checkpoints still match.
 
@@ -64,7 +66,9 @@ An exact longer shortcut takes priority over Pause or Step. For example, if Paus
 
 ## Free camera
 
-Open **Practice > Free camera** and turn it On. This automatically pauses live gameplay. Move with the main stick, look with the C-stick, and use L/R analog pressure to descend/ascend. **Movement speed** saves a speed from 0.25x to 4x; hold X for a temporary boost.
+Open **Practice > Free camera** and turn it On. This automatically pauses live gameplay. Move with the main stick, look with the C-stick, and use L/R analog pressure to descend/ascend. **Movement speed** saves a speed from 0.25x to 4x; hold X for a temporary boost. **Look sensitivity** separately sets C-stick turning speed from 0.25x to 4x.
+
+**Hide all HUD** hides game and Moonshine overlays while free camera is On. You can still open the mod menu to change settings. Turn the option or free camera Off to show your normal overlays again.
 
 If main-stick left/right feels backwards, enable **Reverse sideways** on the same page. It changes sideways movement only, leaving C-stick look unchanged; the default is Off. Recenter returns to the retail camera's view. Turn free camera Off to restore that view; gameplay stays paused until you choose Resume.
 
@@ -82,7 +86,7 @@ Hold your **Load** shortcut to keep gameplay still after the state restores. Rel
 
 If the saved state is in an intro, the intro finishes first. Keep Load held to stop on Mario's first controllable frame, or release it early to let play continue. A previous practice pause still takes effect when Mario becomes controllable.
 
-The three states share **17.938 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state.
+The three states share **17.938 MiB** of compressed-state memory with this launcher. Their size depends on the scene and the length of any ghost recording included in the state. Nothing is deleted automatically. A replacement can reuse its old state's space once the new save is known to fit. If it cannot fit, all previous states remain, including the state you tried to replace. **Clear save slot** asks for confirmation before clearing the slot shown under Save to; the other states stay saved. Loading still requires the stage and episode where the state was made. Saving and loading can briefly stop the game while it processes the state. Errors remain visible even if you disable successful save/load messages. If a slot refuses, report its exact error; there is no confirmed problem specific to Japanese State 3.
 
 The three memory slots start empty after closing the game or rebooting. To keep a state, save a separate SD copy before closing the game.
 
@@ -108,19 +112,21 @@ The game also checks that its loaded resources match the saved state. A matching
 
 Keep the storage device connected until the transfer or its cancellation finishes. A tester has confirmed SD-state restoration after a real Wii reboot on the previous build. Full ghost recording after frame advance, timer alignment and colour persistence were also confirmed. The new file controls still need feedback across more scenes and setups; use the latest section of TESTING.md.
 
-## Record and replay an input take
+## Record, edit and keep a TAS
 
-1. Turn **Save RNG state** On, then save a new savestate during normal gameplay. Recording uses the slot under **Save to**.
-2. Choose **Practice > Input replay (experimental) > Record from savestate**.
-3. The menu closes. Release the A button used to confirm; other held gameplay buttons may stay held. The saved state reloads and recording begins.
-4. Play the sequence, then open the mod menu to stop recording and keep the take. Stop recording or replay is on the same page; you can assign it a shortcut with X.
-5. Select Replay recorded inputs. It reloads the same starting state and replays the take, even if you have since changed Save to or Load from.
+1. Turn **Save RNG state** On, then save a new state during normal gameplay. Keep this **start state** in its slot; recording begins from the slot under **Save to**.
+2. Choose **Practice > Input replay (experimental) > Record from savestate**. The menu closes. Release the A used to confirm; other gameplay buttons may stay held. Your start state reloads and recording begins.
+3. Play normally or use Pause and Step. Save another slot as a **checkpoint** when you want a place to retry. It stores the inputs from the start through that point.
+4. Load that checkpoint to discard the later inputs and try a different continuation. A checkpoint saved while recording continues recording after loading. For a stopped take, choose **Continue editing checkpoint**, then Step or Resume when ready.
+5. Opening the menu stops recording and keeps the take. **Replay recorded inputs** reloads the matching start state and repeats it. Changing Save to or Load from does not change the take's start. B or Start stops playback.
 
-A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. It exists only in memory for this session and stays attached to its starting state, even if you select or save another slot. Replacing or clearing that starting state, or changing scenes, invalidates the take. Settings that affect the recorded setup must still match. Menu favourites, timer position/size, free-camera speed/sideways controls, metadata layout and the ghost input display can still be adjusted. B or Start aborts playback.
+To **keep the TAS after rebooting**, save both the start state and the latest checkpoint to SD, with names that distinguish them. After rebooting into the same build, game region, setup and scene, import the matching start into **any memory slot**, then load the latest checkpoint. The checkpoint restores the inputs you had kept. Choose Continue editing checkpoint to work from there, or Replay recorded inputs to play from the beginning. Loading the checkpoint directly from SD is supported, but replay from the beginning still needs the matching start imported into memory.
 
-Playback is experimental. It compares a small fingerprint of Mario, RNG and counters after each consumed frame, and pauses on the first mismatch. A matched fingerprint is not proof that every enemy, particle or timed event stayed identical. Keep important ghost tracks separately; this local take is not a shareable replay file.
+A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. The three memory slots disappear on reboot; only exported SD copies preserve the work. Keep the start state as well as the checkpoint: a checkpoint alone cannot reconstruct the beginning for replay. Changing scenes clears the live take; load its matching checkpoint when you return.
 
-**Starting** means the take is waiting to begin. **Settings changed** means you need to restore the settings used for the take or make a new one. **Replay start differs** means the restored starting state did not match; a later **game state differed** message identifies where playback stopped. After importing an SD state, load it and make a new local memory save before recording inputs.
+Replay is experimental. It checks selected Mario, RNG and counter values and stops on a mismatch; not every enemy or timed event is covered. Gameplay settings must match. Presentation choices such as the timer layout, metadata, ghost inputs and free-camera controls can be changed. The state files keep the usual build, region, scene and setup checks; they are not cross-region sharing files.
+
+**Starting** means it is waiting to begin. **Settings changed** means restore the gameplay settings used for the take. A request to import the start state means the matching start is missing from memory. Keep the exact message when reporting any other refusal or mismatch. Use exported ghosts to share a finished attempt.
 
 ## Ghost inputs and splits
 
@@ -134,7 +140,7 @@ In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same co
 
 Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
 
-Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. Local input takes remain separate and are not saved to SD.
+Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. Local input takes are separate from ghosts; the checkpoint workflow above keeps them inside SD states.
 
 In Display > Timer and splits > Timer and splits, choose the comparison: **Off → PB → SOB → Ghost**. SOB means the cumulative sum of your best recorded segments. Ghost uses the selected race target's compatible split timestamps. Missing or incompatible timestamps show `--`; no checkpoint timing is guessed.
 

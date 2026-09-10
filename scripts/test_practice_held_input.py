@@ -22,7 +22,8 @@ class HeldInputTests(unittest.TestCase):
         cls.addClassCleanup(cls.folder.cleanup)
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
-            "void capturePad(", "void restorePad(", "void retainPausedReleases("))
+            "void capturePad(", "void restorePad(", "u32 packReleases(", "u32 releaseButtons(",
+            "u32 buttonMeanings(", "void applyReleases(", "void retainPausedReleases("))
         source = Path(cls.folder.name) / "held.cpp"
         source.write_text(r'''
 #include "Dolphin/types.h"
@@ -34,11 +35,12 @@ struct Stick {u8 rest[16];};
 struct JUTGamePad {static Button mPadButton[1];static Stick mPadMStick[1],mPadSStick[1];};
 Button JUTGamePad::mPadButton[1];Stick JUTGamePad::mPadMStick[1],JUTGamePad::mPadSStick[1];
 struct TMarioGamePad {Button mButtons;Stick main,sub;u32 _A4;u8 prefix[40];
-    u32 mMeaning,mFrameMeaning,_D8;u8 suffix[20];};
+    u32 mMeaning,mFrameMeaning,_D8;u16 _DC;u8 suffix[18];};
 static_assert(sizeof(Button)==48,"retail buttons");
 static_assert(sizeof(TMarioGamePad)==156,"retail captured ranges");
 struct PadHistory {u8 shared[80],controls[80],meaning[0x4c];};
 static PadHistory sBeforeRead;
+static u32 sPendingReleases;
 static TMarioGamePad pad;
 ''' + functions + r'''
 // These are retail's button/meaning edge equations for normal A/B input.

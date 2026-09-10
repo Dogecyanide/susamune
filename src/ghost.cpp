@@ -570,7 +570,9 @@ s32 recordQf(s32 liveQf) {
 }
 
 void updateRestoredRecorder() {
-    if (sAttemptSerial != gQFTTimer.attemptSerial() ||
+    // The departing prefix may still belong to an attempt being restarted.
+    if (sStageRoutePending || sBoundaryPending ||
+        sAttemptSerial != gQFTTimer.attemptSerial() ||
         (!sRecording && !sPendingContinueRecording)) return;
     if (sRestoredPrefix) ILing::updateSavestateGhostEndpoint(sRestoredEndpoint);
     // A child scene can arm a new IL while this assisted full-route prefix carries on.

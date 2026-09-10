@@ -99,8 +99,7 @@ public:
         const u16 m = mMask[id];
         return m != 0 && (mHeld & m) == m && (mPrevHeld & m) != m;
     }
-    // Held gameplay input is allowed, but an exact larger shortcut owns its
-    // press (for example B+D-Up restart over D-Up practice pause).
+    // A larger shortcut owns its buttons, even with gameplay inputs held.
     bool wasPressedPracticeRaw(BindId id) const;
 
     // --- recording ---

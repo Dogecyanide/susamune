@@ -5,6 +5,7 @@
 #include "susamune/state_storage.h"
 
 class Menu;
+namespace PracticeSession { struct SavestateData; }
 
 class SavestateManager {
 public:
@@ -23,6 +24,7 @@ public:
     u32 saveSlot() const;
     u32 loadSlot() const;
     SlotInfo slotInfo(u32 slot) const;
+    bool practiceData(u32 slot, PracticeSession::SavestateData *out) const;
     bool selectSlot(u32 slot);
     bool cycleSlot();
     bool selectSaveSlot(u32 slot);

@@ -68,7 +68,8 @@ u16 sActiveRoute,sArmedCarryRoute,statsRoute;
 u8 expected,sGatekeeperHits,sGenericTalkCount,sMirrorsCleared,sHanachanHits,sTinKoopaHits;
 s32 sLastRedCoinCount,sPreGoldCoins,sPreBalloons;
 void *sClearedMirrors[3];
-bool sRetailDirectOpen,valid;
+bool sRetailDirectOpen,valid,sPinnaIntroTalkPending;
+namespace SplitStats { bool routeActive(u16 r) { return r==statsRoute; } }
 u32 emitted[16],emittedCount;
 const u32 kEmarioVtable=1,kEnemyMarioVtable=2,kShineVtable=3;
 u32 objectVtable(const void *p) { return p?*(const u32*)p:0; }
@@ -99,7 +100,7 @@ void retailMovie(TMarDirector *p,u8 movie) {
  p->mGameState|=0x100;
 }
 void clearAttemptState() {
- sActiveRoute=0xffff;sGenericTalkCount=sTinKoopaHits=0;
+ sActiveRoute=0xffff;sGenericTalkCount=sTinKoopaHits=0;sPinnaIntroTalkPending=false;
 }
 u16 findActiveRoute() { return statsRoute; }
 void samplePreDirect() {}
@@ -111,6 +112,9 @@ auto sMirrorMessageTrampoline=&retailMirror;
 auto sHanachanDamageTrampoline=&retailHanachan;
 auto sTinKoopaHitTrampoline=&retailMecha;
 auto sStreamingMovieTrampoline=&retailMovie;
+void retailOpen(void*,TBaseNPC*) {}
+typedef void (*OpenTalkFn)(void*,TBaseNPC*);
+auto sOpenTalkTrampoline=&retailOpen;
 '''.replace('ENUM', enum)
         carry = SOURCE[SOURCE.index('struct CarryDesc'):SOURCE.index('const int kPiantaCount')]
         carry = carry[:carry.index('};',carry.index('const CarryDesc kCarryRoutes'))+2]
@@ -121,6 +125,7 @@ auto sStreamingMovieTrampoline=&retailMovie;
             'void armCarryTransition()', 'void beforeStageSetup()',
             'void onStageSetup(', 'void beginFrame()', 'void armPinnaOneRetailExit()',
             'void noteGatekeeper(', 'void noteTalk(', 'void updateCountEvents()',
+            'extern "C" void susamuneSplitOpenTalk(',
             'extern "C" void susamuneSplitMapObjAppear(',
             'extern "C" bool susamuneSplitRedSwitchMessage(',
             'extern "C" void susamuneSplitSandCastle(',
@@ -134,7 +139,7 @@ __declspec(dllexport) void reset(int r,int a,int e,int first) {
  sActiveRoute=statsRoute=(u16)r;stage={(u8)a,(u8)e,0};expected=(u8)first;
  sAttemptSerial=1;capturedTarget=0xffff;
  selectedEpisode=-1;sAttemptInvalid=sCarryAttempt=sBlockNextAttempt=false;
- sArmedCarryRoute=0xffff;sRetailDirectOpen=valid=true;
+ sArmedCarryRoute=0xffff;sRetailDirectOpen=valid=true;sPinnaIntroTalkPending=false;
  sGatekeeperHits=sGenericTalkCount=sMirrorsCleared=sHanachanHits=sTinKoopaHits=0;
  sLastRedCoinCount=sPreGoldCoins=sPreBalloons=0;emittedCount=0;
  for(int i=0;i<3;++i)sClearedMirrors[i]=0;
@@ -158,6 +163,13 @@ __declspec(dllexport) void plant(int before,int after) { noteGatekeeper(0,0,0,(u
 __declspec(dllexport) void talk(int actor,const char *name) {
  u32 type=actor;TBaseNPC npc={&type,{0,0,0},name};noteTalk(&npc);
 }
+__declspec(dllexport) void introTalk(int carried,int live,int npcPresent) {
+ sCarryAttempt=carried;onStageSetup(&stage);valid=live;sRetailDirectOpen=false;
+ gpApplication.mCurrentScene={stage.mAreaID,stage.mEpisodeID};
+ TBaseNPC npc={0,{0,0,0},0};susamuneSplitOpenTalk(0,npcPresent?&npc:0);
+}
+__declspec(dllexport) void nextFrame() { beginFrame(); }
+__declspec(dllexport) void nextStage() { sCarryAttempt=false;onStageSetup(&stage); }
 __declspec(dllexport) void castle(int before,int after,int accepted) {
  TMapObjBase object={(u16)before};accept=accepted;nextValue=after;susamuneSplitSandCastle(&object);
 }
@@ -211,6 +223,35 @@ __declspec(dllexport) void shine(int id,int actualShine) {
 
     def events(self):
         return [self.lib.eventAt(i) for i in range(self.lib.size())]
+
+    def test_pinna_automatic_intro_talk_waits_for_carried_live_frame(self):
+        self.reset('PINNA_1', 0x0d, 6)
+        self.lib.introTalk(1, 1, 1)
+        self.assertEqual(self.events(), [])
+        self.lib.nextFrame()
+        self.assertEqual(self.events(), [0])
+        self.lib.nextFrame()
+        self.assertEqual(self.events(), [0])
+        self.lib.mecha(4, 3, 1)  # The park cannot manufacture boss hits.
+        self.assertEqual(self.events(), [0])
+
+    def test_pinna_intro_talk_does_not_admit_wrong_route_scene_or_lifetime(self):
+        for route, area, episode, carried, live, npc in (
+            ('PINNA_1', 0x0d, 6, 0, 1, 1),
+            ('PINNA_1', 0x0d, 6, 1, 0, 1),
+            ('PINNA_1', 0x0d, 6, 1, 1, 0),
+            ('PINNA_1', 0x0d, 5, 1, 1, 1),
+            ('PINNA_8', 0x0d, 6, 1, 1, 1),
+        ):
+            self.reset(route, area, episode)
+            self.lib.introTalk(carried, live, npc)
+            self.lib.nextFrame()
+            self.assertEqual(self.events(), [], (route, area, episode, carried, live, npc))
+        self.reset('PINNA_1', 0x0d, 6)
+        self.lib.introTalk(1, 1, 1)
+        self.lib.nextStage()
+        self.lib.nextFrame()
+        self.assertEqual(self.events(), [])
 
     def test_red_thresholds_and_held_duplicates(self):
         self.reset('BIANCO_3_REDS',0x2f)

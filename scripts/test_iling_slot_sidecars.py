@@ -44,6 +44,7 @@ static s32 sSavedSecondNozzleFlag,sSavedBowserNozzleFlag;
 static int sFanfareDelay,sAchievementChimeBlockFrames,sBannerFrames;
 #define sRunning sAttemptState.running
 #define sAttemptReady sAttemptState.ready
+#define sAwaitingStageSetup sAttemptState.awaitingStageSetup
 #define sCarryRestorePending sAttemptState.carryRestorePending
 #define sTransitionPending sAttemptState.transitionPending
 #define sRecordsEligible sAttemptState.recordsEligible

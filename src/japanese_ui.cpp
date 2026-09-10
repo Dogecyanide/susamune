@@ -89,6 +89,7 @@ int units(const char *str) {
 }
 
 u8 *image(int id) {
+    static const u8 coverage[] = {0, 7, 12, 15};
     for (unsigned int i = 0; i < 64; ++i)
         if (sCacheIds[i] == id + 1) return sCache[i];
     // GX may still sample an earlier string when the bounded cache wraps.
@@ -101,8 +102,8 @@ u8 *image(int id) {
     const u8 *src = sAsset + word(40) + id * 64;
     u8 *dst = sCache[slot];
     for (unsigned int i = 0; i < 64; ++i) {
-        dst[2*i] = ((src[i] >> 6) * 5 << 4) | (((src[i] >> 4) & 3) * 5);
-        dst[2*i+1] = (((src[i] >> 2) & 3) * 5 << 4) | ((src[i] & 3) * 5);
+        dst[2*i] = (coverage[src[i] >> 6] << 4) | coverage[(src[i] >> 4) & 3];
+        dst[2*i+1] = (coverage[(src[i] >> 2) & 3] << 4) | coverage[src[i] & 3];
     }
     sCacheIds[slot] = id + 1;
     DCFlushRange(dst, 128);
@@ -160,6 +161,38 @@ int format(char *out, size_t capacity, const char *fmt, ...) {
 int width(const char *str, int size) {
     const int u = units(str);
     return u < 0 ? -1 : u * size / 24;
+}
+
+const char *fitLine(const char *str, char *out, unsigned int capacity,
+                    int maxWidth, int size) {
+    if (!out || !capacity) return str;
+    out[0] = 0;
+    if (!str || !ready() || maxWidth <= 0 || maxWidth > 640 || size <= 0) return str;
+    const u8 *begin = reinterpret_cast<const u8 *>(str);
+    const u8 *p = begin;
+    unsigned int bytes = 0, lastSpace = 0;
+    int advance = 0;
+    while (*p) {
+        const u8 *start = p;
+        const unsigned int code = nextCode(p);
+        const int id = glyph(code);
+        if (id < 0) break;
+        const unsigned int used = p - start;
+        const int next = advance + sAsset[word(32) + id * 4 + 2];
+        if (used >= capacity - bytes || next > maxWidth * 24 / size) {
+            // Keep a split English word together inside Japanese help text.
+            if (code < 128 && code != ' ' && lastSpace) bytes = lastSpace;
+            break;
+        }
+        if (code == ' ') lastSpace = bytes;
+        for (unsigned int i = 0; i < used; ++i) out[bytes++] = start[i];
+        advance = next;
+    }
+    const char *remaining = str + bytes;
+    while (bytes && out[bytes - 1] == ' ') --bytes;
+    out[bytes] = 0;
+    while (*remaining == ' ') ++remaining;
+    return remaining;
 }
 
 bool draw(const char *str, int x, int y, int sx, int sy,

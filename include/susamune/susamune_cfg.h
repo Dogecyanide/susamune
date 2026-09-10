@@ -48,6 +48,8 @@
 // mod built at different times still agree on the layout, and count/bindCount
 // say how much of each is meaningful.
 #define SUSAMUNE_CFG_MAX_SETTINGS 128
+#define SUSAMUNE_CFG_MAX_EXTRA_SETTINGS 14
+#define SUSAMUNE_CFG_TOTAL_SETTINGS (SUSAMUNE_CFG_MAX_SETTINGS + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS)
 #define SUSAMUNE_CFG_MAX_BINDS    64
 
 // Value meaning "the ini had no entry for this setting" -- the mod leaves the
@@ -1257,14 +1259,16 @@ struct SusamuneCfg {
     // --- cache line 0: written by the kernel at boot, by the mod on save ---
     unsigned int   magic;
     unsigned short version;
-    unsigned short count;    // entries of values[] the writer filled in
+    unsigned short count;    // settings filled across values[] and extraValues[]
     unsigned int   saveSeq;  // mod -> kernel: bump to request an ini write
     unsigned int   flags;    // SUSAMUNE_CFG_FLAG_*
     // Entries of binds[] the writer filled in. Zero from a kernel built before
     // binds existed (it memsets only as much of the block as it knows about),
     // which is exactly the "no persisted binds -- keep the defaults" answer.
     unsigned short bindCount;
-    unsigned char  pad0[14];
+    // Append-only settings 128..141 reuse padding in the PPC-owned line.
+    // Older writers publish count <= 128, so these bytes remain ignored.
+    unsigned char  extraValues[SUSAMUNE_CFG_MAX_EXTRA_SETTINGS];
 
     // --- cache line 1: written ONLY by the kernel ---
     unsigned int   ackSeq;   // kernel -> mod: echoes saveSeq once written
@@ -1289,6 +1293,26 @@ struct SusamuneCfg {
     struct SusamuneMovementStyleCfg movementStyle;
     struct SusamuneNativeTimerStyleCfg nativeTimerStyle;
 };
+
+static inline unsigned char SusamuneCfgGetSetting(const volatile struct SusamuneCfg *cfg,
+                                                  unsigned int index)
+{
+    if (index < SUSAMUNE_CFG_MAX_SETTINGS) return cfg->values[index];
+    index -= SUSAMUNE_CFG_MAX_SETTINGS;
+    return index < SUSAMUNE_CFG_MAX_EXTRA_SETTINGS ? cfg->extraValues[index] : SUSAMUNE_CFG_UNSET;
+}
+
+static inline int SusamuneCfgSetSetting(volatile struct SusamuneCfg *cfg,
+                                       unsigned int index, unsigned char value)
+{
+    if (index < SUSAMUNE_CFG_MAX_SETTINGS) cfg->values[index] = value;
+    else {
+        index -= SUSAMUNE_CFG_MAX_SETTINGS;
+        if (index >= SUSAMUNE_CFG_MAX_EXTRA_SETTINGS) return 0;
+        cfg->extraValues[index] = value;
+    }
+    return 1;
+}
 
 #define SUSAMUNE_CFG_PPC_PTR  ((struct SusamuneCfg *)SUSAMUNE_MEM2_CFG_PPC_BASE)
 #define SUSAMUNE_CFG_PHYS_PTR ((struct SusamuneCfg *)SUSAMUNE_MEM2_CFG_PHYS_BASE)
@@ -1399,6 +1423,8 @@ typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_
 
 // Portable compile-time checks (no C11 dependency): a negative array size
 // fails the build if the layout the three toolchains agree on ever drifts.
+typedef char susamune_cfg_extra_values_check[(__builtin_offsetof(struct SusamuneCfg, extraValues) == 18 &&
+    __builtin_offsetof(struct SusamuneCfg, extraValues) + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS == 32) ? 1 : -1];
 typedef char susamune_cfg_line0_check[(__builtin_offsetof(struct SusamuneCfg, ackSeq) == 32) ? 1 : -1];
 typedef char susamune_cfg_line2_check[(__builtin_offsetof(struct SusamuneCfg, values) == 64) ? 1 : -1];
 typedef char susamune_cfg_binds_check[(__builtin_offsetof(struct SusamuneCfg, binds) == 192) ? 1 : -1];

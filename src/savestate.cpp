@@ -237,12 +237,12 @@ const int kNumPointedAllocs = sizeof(kPointedAllocs) / sizeof(kPointedAllocs[0])
 // One header lives at the very start of the snapshot buffer; the saved
 // bytes follow at kHeaderSize.
 const u32 kSnapshotMagic   = 0x53555341u; // 'SUSA'
-const u32 kSnapshotVersion = 15u;
+const u32 kSnapshotVersion = 16u;
 const u32 kHeaderSize      = 0x120u;
 // One slot per static range, one per pointed alloc, plus one for the heap.
 const int kMaxRegions      = kNumStaticRanges + kNumPointedAllocs + 1;
-static_assert(kMaxRegions + Ghost::kSavestateSpanCount <= StateCodec::kMaxSpans,
-              "game and ghost state spans exceed the codec limit");
+static_assert(kMaxRegions + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount <= StateCodec::kMaxSpans,
+              "game, ghost and practice state spans exceed the codec limit");
 
 struct RegionEntry {
     u32 addr;       // virtual address restored to
@@ -276,6 +276,7 @@ struct StoredState {
     QFTTimer::SavestateData timer;
     ILing::SavestateData attempt;
     Ghost::SavestateData ghost;
+    PracticeSession::SavestateData practice;
     StateArchiveProfile::Data archiveProfile;
     u32 generation;
     u32 rawSize;
@@ -606,11 +607,20 @@ bool archiveCandidateMatches(const SusamuneStateArchiveHeader &file) {
         !validSnapshotRegions(&h, begin, end)) return false;
     StateCodec::WriteSpan ghost[Ghost::kSavestateSpanCount];
     if (!Ghost::savestateRestoreSpans(sCandidate.ghost, ghost)) return false;
+    StateCodec::WriteSpan practice[PracticeSession::kSavestateSpanCount];
+    if (!PracticeSession::savestateRestoreSpans(sCandidate.practice, practice)) return false;
     u32 raw = h.regions[h.region_count - 1].buf_offset + h.heap_size;
     for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i) raw += ghost[i].size;
+    for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i) raw += practice[i].size;
     if (raw != sCandidate.rawSize) return false;
     captureArchiveProfile(sLiveArchiveProfile);
     return StateArchiveProfile::matches(sCandidate.archiveProfile, sLiveArchiveProfile);
+}
+
+void copyStateBytes(void *profile, void *destination, const void *source, unsigned int size) {
+    if (PracticeSession::copySavestateBytes(destination, source, size)) return;
+    if (profile) StateArchiveProfile::copyGameBytes(profile, destination, source, size);
+    else memcpy(destination, source, size);
 }
 
 #pragma clang section text=".foxtrot.text"
@@ -661,7 +671,7 @@ bool readStateWindow(void *, unsigned int offset, StateCodec::ReadSpan *out) {
 struct SDRecovery {
     u32 slot, count;
     StateCodec::ReadSpan source[2];
-    StateCodec::WriteSpan destination[kMaxRegions + Ghost::kSavestateSpanCount];
+    StateCodec::WriteSpan destination[kMaxRegions + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount];
 };
 
 bool prepareSDRecovery(SDRecovery &recovery, u32 heapStart, u32 heapEnd) {
@@ -676,16 +686,21 @@ bool prepareSDRecovery(SDRecovery &recovery, u32 heapStart, u32 heapEnd) {
             !StateArchiveProfile::matches(saved.archiveProfile, sLiveArchiveProfile)) continue;
         StateCodec::WriteSpan ghost[Ghost::kSavestateSpanCount];
         if (!Ghost::savestateRestoreSpans(saved.ghost, ghost)) continue;
+        StateCodec::WriteSpan practice[PracticeSession::kSavestateSpanCount];
+        if (!PracticeSession::savestateRestoreSpans(saved.practice, practice)) continue;
         u32 raw = h.regions[h.region_count - 1].buf_offset + h.heap_size;
         for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i) raw += ghost[i].size;
+        for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i) raw += practice[i].size;
         if (raw != saved.rawSize || packedChecksum(sPool.slots[slot].offset, saved.packedSize) != sPackedChecksums[slot]) continue;
         poolReadSpans(sPool.slots[slot].offset, saved.packedSize, recovery.source);
         for (u32 i = 0; i < h.region_count; ++i)
             recovery.destination[i] = {reinterpret_cast<void *>(h.regions[i].addr), h.regions[i].size};
         for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i)
             recovery.destination[h.region_count + i] = ghost[i];
+        for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i)
+            recovery.destination[h.region_count + Ghost::kSavestateSpanCount + i] = practice[i];
         recovery.slot = slot;
-        recovery.count = h.region_count + Ghost::kSavestateSpanCount;
+        recovery.count = h.region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount;
         if (StateCodec::validateRestore(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
             recovery.source, 2, recovery.destination, recovery.count, saved.rawSize, saved.adler32) != StateCodec::SUCCESS) continue;
         return true;
@@ -756,6 +771,12 @@ void SavestateManager::setStatus(const char *msg) {
 
 void SavestateManager::feedback(const char *debug, const char *message) {
     SET_STATUS(debug);
+    // A failed action must remain visible when routine confirmations are off.
+    if (debug[0] == 'E' && debug[1] == ':' && gMenu) {
+        gMenu->toast(message);
+        mFeedbackFrames = 0;
+        return;
+    }
     if (!gSettings.getBool(SETTING_SAVESTATE_FEEDBACK)) {
         mFeedbackFrames = 0;
         return;
@@ -782,6 +803,17 @@ SavestateManager::SlotInfo SavestateManager::slotInfo(u32 slot) const {
     info.generation = saved.generation;
     info.packedBytes = saved.packedSize;
     return info;
+}
+
+bool SavestateManager::practiceData(u32 slot, PracticeSession::SavestateData *out) const {
+    if (!out || slot >= kSlotCount || !validStore()) return false;
+    const StoredState &saved = sSlots[slot];
+    if (saved.header.magic != kSnapshotMagic || saved.header.version != kSnapshotVersion ||
+        saved.header.game_version != SUSAMUNE_GAME_VERSION) return false;
+    StateCodec::WriteSpan spans[PracticeSession::kSavestateSpanCount];
+    if (!PracticeSession::savestateRestoreSpans(saved.practice, spans)) return false;
+    *out = saved.practice;
+    return true;
 }
 
 bool SavestateManager::selectSlot(u32 slot) {
@@ -1189,7 +1221,16 @@ bool SavestateManager::saveState() {
         feedback("E:ghost", "Ghost recording unavailable - try again");
         return false;
     }
-    StateCodec::ReadSpan source[kMaxRegions + Ghost::kSavestateSpanCount];
+    StateCodec::ReadSpan practiceSource[PracticeSession::kSavestateSpanCount];
+    if (!PracticeSession::captureSavestate(sCandidate.practice, practiceSource)) {
+        rebaseMissionStopwatch(h->save_time);
+        unmuteAudioDma(dma);
+        OSRestoreInterrupts(ints);
+        sBusy = false;
+        feedback("E:practice", "Input recording unavailable - try again");
+        return false;
+    }
+    StateCodec::ReadSpan source[kMaxRegions + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount];
     for (u32 i = 0; i < h->region_count; ++i)
         source[i] = {reinterpret_cast<const void *>(h->regions[i].addr), h->regions[i].size};
     u32 rawSize = offset;
@@ -1197,12 +1238,16 @@ bool SavestateManager::saveState() {
         source[h->region_count + i] = ghostSource[i];
         rawSize += ghostSource[i].size;
     }
+    for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i) {
+        source[h->region_count + Ghost::kSavestateSpanCount + i] = practiceSource[i];
+        rawSize += practiceSource[i].size;
+    }
     StateCodec::WriteSpan output[3];
     output[0] = {reinterpret_cast<void *>(kStagingBase), SUSAMUNE_STATE_STAGING_SIZE};
     poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output + 1);
     StateCodec::Result result = StateCodec::compress(codecWorkspace(),
         SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source,
-        h->region_count + Ghost::kSavestateSpanCount, output, 3, false, true);
+        h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3, false, true);
     bool quick = true;
     bool compact = false;
     if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
@@ -1210,25 +1255,27 @@ bool SavestateManager::saveState() {
                                  SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
         quick = false;
         result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
-            source, h->region_count + Ghost::kSavestateSpanCount, output, 3);
+            source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3);
     }
     if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
         StateSlotPoolPlanReplace(&sPool, poolCapacity(), sActiveSlot, result.compressedBytes,
                                  SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
         compact = true;
         result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
-            source, h->region_count + Ghost::kSavestateSpanCount, output, 3, compact);
+            source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3, compact);
     }
-    const bool fits = commitPackedState(source, h->region_count + Ghost::kSavestateSpanCount,
+    const bool fits = commitPackedState(source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount,
                                          rawSize, sActiveSlot, result, compact, quick);
     if (!fits) {
         rebaseMissionStopwatch(h->save_time);
         unmuteAudioDma(dma);
         OSRestoreInterrupts(ints);
         sBusy = false;
-        feedback("E:space", result.status == StateCodec::SUCCESS ||
+        char text[48];
+        snprintf(text, sizeof(text), result.status == StateCodec::SUCCESS ||
             result.status == StateCodec::OUTPUT_FULL ?
-            "State won't fit - clear another slot" : "State could not be compressed");
+            "State %lu won't fit - clear another slot" : "State %lu could not be compressed", sActiveSlot + 1);
+        feedback("E:space", text);
         return false;
     }
     sCandidate.rawSize = rawSize;
@@ -1283,7 +1330,9 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     StoredState &saved = fromSD ? sCandidate : sSlots[slot];
     SavestateHeader *h = &saved.header;
     if (h->magic != kSnapshotMagic) {
-        feedback("E:nosnap", "No savestate yet");
+        char text[48];
+        snprintf(text, sizeof(text), "State %lu is empty - choose a saved state", slot + 1);
+        feedback("E:nosnap", text);
         return false;
     }
     if (!expectedGeneration || saved.generation != expectedGeneration) {
@@ -1349,9 +1398,16 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
         feedback("E:ghost", "Ghost recording unavailable - try again");
         return false;
     }
+    StateCodec::WriteSpan practiceDestinations[PracticeSession::kSavestateSpanCount];
+    if (!PracticeSession::savestateRestoreSpans(saved.practice, practiceDestinations)) {
+        feedback("E:practice", "Input recording unavailable - try again");
+        return false;
+    }
     u32 rawSize = h->regions[h->region_count - 1].buf_offset + heapSize;
     for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i)
         rawSize += ghostDestinations[i].size;
+    for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i)
+        rawSize += practiceDestinations[i].size;
     if (rawSize != saved.rawSize) {
         feedback("E:badsnap", "Savestate is damaged - save again");
         return false;
@@ -1406,11 +1462,13 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
         compressed[0] = {reinterpret_cast<const void *>(kStagingBase), first};
         poolReadSpans(sDiskPoolUsed, saved.packedSize - first, compressed + 1);
     } else if (!fromSD) poolReadSpans(sPool.slots[slot].offset, saved.packedSize, compressed);
-    StateCodec::WriteSpan destinations[kMaxRegions + Ghost::kSavestateSpanCount];
+    StateCodec::WriteSpan destinations[kMaxRegions + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount];
     for (u32 i = 0; i < h->region_count; ++i)
         destinations[i] = {reinterpret_cast<void *>(h->regions[i].addr), h->regions[i].size};
     for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i)
         destinations[h->region_count + i] = ghostDestinations[i];
+    for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i)
+        destinations[h->region_count + Ghost::kSavestateSpanCount + i] = practiceDestinations[i];
     StateCodec::Status restored;
     if (fromSD && sDiskStream) {
         SDRecovery recovery;
@@ -1438,13 +1496,13 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
             sStreamSize = 0;
             restored = StateCodec::decompressStreamVerified(codecWorkspace(),
                 SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source, destinations,
-                h->region_count + Ghost::kSavestateSpanCount, saved.rawSize, saved.adler32,
-                StateArchiveProfile::copyGameBytes, &sLiveArchiveProfile);
+                h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, saved.rawSize, saved.adler32,
+                copyStateBytes, &sLiveArchiveProfile);
             if (restored == StateCodec::COMMIT_FAILED) {
                 const StoredState &fallback = sSlots[recovery.slot];
                 if (StateCodec::decompressVerified(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
                     recovery.source, 2, recovery.destination, recovery.count, fallback.rawSize,
-                    fallback.adler32, StateArchiveProfile::copyGameBytes, &sLiveArchiveProfile) != StateCodec::SUCCESS)
+                    fallback.adler32, copyStateBytes, &sLiveArchiveProfile) != StateCodec::SUCCESS)
                     __builtin_trap();
                 sCandidate = fallback;
                 slot = recovery.slot;
@@ -1455,15 +1513,15 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     } else if (fromSD) {
         restored = StateCodec::decompress(codecWorkspace(),
             SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, compressed, 3, destinations,
-            h->region_count + Ghost::kSavestateSpanCount, saved.rawSize, saved.adler32,
-            StateArchiveProfile::copyGameBytes, &sLiveArchiveProfile);
+            h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, saved.rawSize, saved.adler32,
+            copyStateBytes, &sLiveArchiveProfile);
     } else if (packedChecksum(sPool.slots[slot].offset, saved.packedSize) != sPackedChecksums[slot]) {
         restored = StateCodec::CORRUPT_STREAM;
     } else {
         restored = StateCodec::decompressVerified(codecWorkspace(),
             SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, compressed, 3, destinations,
-            h->region_count + Ghost::kSavestateSpanCount, saved.rawSize, saved.adler32,
-            durable ? StateArchiveProfile::copyGameBytes : nullptr,
+            h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, saved.rawSize, saved.adler32,
+            copyStateBytes,
             durable ? &sLiveArchiveProfile : nullptr);
     }
     if (restored == StateCodec::COMMIT_FAILED) __builtin_trap();
@@ -1521,12 +1579,17 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     Records::onSavestateLoaded();
     if (fromSD && sDiskRecovered) PracticeSession::cancelLoadHold();
     PracticeSession::onSavestateLoaded();
+    const bool practiceRestored = PracticeSession::restoreSavestate(saved.practice, slot, saved.generation);
     CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 2, slot + 1);
     char text[48];
     if (sDiskRecovered && fromSD) snprintf(text, sizeof(text), "SD read failed; restored state %lu", slot + 1);
     else if (fromSD) strcpy(text, "SD state loaded");
     else snprintf(text, sizeof(text), "State %lu loaded", slot + 1);
-    feedback("loaded", text);
+    if (practiceRestored) feedback(sDiskRecovered && fromSD ? "E:recovered" : "loaded", text);
+    else if (sDiskRecovered && fromSD) {
+        snprintf(text, sizeof(text), "SD read failed; state %lu restored, TAS stopped", slot + 1);
+        feedback("E:recovered", text);
+    }
     return true;
 }
 

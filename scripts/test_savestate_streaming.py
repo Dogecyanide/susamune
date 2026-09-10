@@ -31,7 +31,7 @@ extern "C" int memcmp(const void*a,const void*b,__SIZE_TYPE__ n){const u8*x=(con
 #define SUSAMUNE_STATE_STAGING_SIZE 4096u
 #define SUSAMUNE_GAME_VERSION 2u
 #define OSSecondsToTicks(n) ((n)*1000ll)
-static const u32 kSnapshotVersion=15,kMaxRegions=1;
+static const u32 kSnapshotVersion=16,kMaxRegions=1;
 static const u32 kStreamWindows=32;
 static u8 bank0[250064],bank1[250064],stage[4160],live[300064];
 alignas(32)static u8 workspace[0x4E040];
@@ -40,7 +40,7 @@ static StateSlotPool sPool;
 static __UINTPTR_TYPE__ kStagingBase=(__UINTPTR_TYPE__)(stage+32);
 struct Region{__UINTPTR_TYPE__ addr;u32 size,buf_offset;};
 struct SavestateHeader{u32 version,game_version,heap_addr,heap_size,area_id,episode_id,region_count;Region regions[1];};
-struct StoredState{SavestateHeader header;u32 ghost,archiveProfile,generation,rawSize,packedSize,adler32,parentEpisode,metadataTag;};
+struct StoredState{SavestateHeader header;u32 ghost,practice,archiveProfile,generation,rawSize,packedSize,adler32,parentEpisode,metadataTag;};
 static StoredState sSlots[3],sCandidate;
 static SusamuneStateArchiveHeader sStreamHeader;
 static u32 sPackedChecksums[3],sLoadSlot,sStreamSeen,sStreamOffset,sStreamSize,sStreamCrc,sStreamId;
@@ -52,12 +52,16 @@ static u32 clockValue;
 struct App{struct{u32 mAreaID,mEpisodeID;}mCurrentScene;}gpApplication;
 class SavestateManager{public:enum{kSlotCount=3};};
 static u32 parentEpisode(){return 3;}
-static bool validSnapshotRegions(const SavestateHeader*h,u32,u32){return !regionFault&&h->region_count==1&&h->regions[0].addr==(__UINTPTR_TYPE__)(live+32)&&h->regions[0].size==rawSize;}
+static u32 gameBytes(){return rawSize-512;}
+static bool validSnapshotRegions(const SavestateHeader*h,u32,u32){return !regionFault&&h->region_count==1&&h->regions[0].addr==(__UINTPTR_TYPE__)(live+32)&&h->regions[0].size==gameBytes();}
 static void*codecWorkspace(){return workspace+32;}
 static OSTime OSGetTime(){clockValue+=100;return clockValue;}
 static void unmuteAudioDma(bool){}static void OSRestoreInterrupts(bool){}static bool sBusy;
 static void feedback(const char*,const char*){++errorText;}
 namespace Ghost{enum{kSavestateSpanCount=0};static bool savestateRestoreSpans(u32,StateCodec::WriteSpan*){return true;}}
+namespace PracticeSession{enum{kSavestateSpanCount=2};static bool ownReplay;
+static bool savestateRestoreSpans(u32 invalid,StateCodec::WriteSpan*out){out[0]={live+32+gameBytes(),236};out[1]={live+32+gameBytes()+236,276};return !invalid;}
+static bool copySavestateBytes(void*d,const void*,u32 n){return ownReplay&&(u8*)d>=live+32+gameBytes()+236&&(u8*)d+n<=live+32+rawSize;}}
 namespace StateArchiveProfile{
 static bool matches(u32 saved,u32 current){return saved==current&&saved==71;}
 static void copyGameBytes(void*,void*d,const void*s,u32 n){++writes;memcpy(d,s,n);}
@@ -96,7 +100,7 @@ __declspec(dllexport) void reset(const StateCodec::ReadSpan*slots,const u32*adle
  const u32 first=sPool.used/2;sPoolMemory={{bank0+32,bank1+32},{first,sPool.used-first}};
  u32 offset=0;
  for(u32 i=0;i<3;++i){sPool.slots[i]={offset,slots[i].size};StatePoolMemoryCopyIn(&sPoolMemory,offset,slots[i].data,slots[i].size);
-  StoredState&s=sSlots[i];s.header={15,2,0x80500000,raw,1,2,1,{{(__UINTPTR_TYPE__)(live+32),raw,0}}};
+  StoredState&s=sSlots[i];s.header={16,2,0x80500000,gameBytes(),1,2,1,{{(__UINTPTR_TYPE__)(live+32),gameBytes(),0}}};
   s.archiveProfile=71;s.generation=100+i;s.rawSize=raw;s.packedSize=slots[i].size;s.adler32=adlers[i];s.parentEpisode=3;
   sPackedChecksums[i]=packedChecksum(offset,slots[i].size);offset+=slots[i].size;}
  sCandidate=sSlots[0];sCandidate.generation=900;sCandidate.packedSize=size;sCandidate.adler32=adler;
@@ -107,13 +111,16 @@ __declspec(dllexport) void reset(const StateCodec::ReadSpan*slots,const u32*adle
  StateStorage::pending=StateStorage::ready=false;
  gpApplication.mCurrentScene={1,2};reads=writes=cancelled=errorText=ownerFault=regionFault=transportFault=clockValue=0;
  faultOffset=8192;
+ PracticeSession::ownReplay=false;
 }
+__declspec(dllexport) void replay(){PracticeSession::ownReplay=true;}
 __declspec(dllexport) void fault(u32 kind,u32 offset){transportFault=kind;faultOffset=offset;}
 __declspec(dllexport) void change(u32 kind){
  if(kind==1)for(u32 i=0;i<3;++i)++sSlots[i].archiveProfile;
  if(kind==2)for(u32 i=0;i<3;++i){u8 b;StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[i].offset,&b,1);b^=1;StatePoolMemoryCopyIn(&sPoolMemory,sPool.slots[i].offset,&b,1);}
  if(kind==3)ownerFault=1;if(kind==4)regionFault=1;if(kind==5)++sStreamHeader.payloadCrc;
  if(kind==6)for(u32 i=0;i<3;++i)++sSlots[i].header.episode_id;
+ if(kind==7)for(u32 i=0;i<3;++i)++sSlots[i].practice;
 }
 __declspec(dllexport) const void*output(){return live+32;}
 __declspec(dllexport) void slotBytes(u32 slot,void*out){StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset,out,sPool.slots[slot].size);}
@@ -136,7 +143,7 @@ class SavestateStreamingTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         text = FIXTURE
         for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(',
-                     'bool waitStateWindow(', 'bool readStateWindow('):
+                     'bool waitStateWindow(', 'bool readStateWindow(', 'void copyStateBytes('):
             text += function_source(SOURCE, name)
         production = SOURCE.read_text()
         text += production[production.index('struct SDRecovery {'):production.index('bool prepareSDRecovery(')]
@@ -145,9 +152,9 @@ class SavestateStreamingTests(unittest.TestCase):
         dispatch = load[load.index('    StateCodec::Status restored;'):load.rindex('    if (restored == StateCodec::COMMIT_FAILED)')]
         text += EXPORTS + r'''
 extern "C" __declspec(dllexport) u32 restore(){
- bool fromSD=true,ints=true,dma=true,durable=true;u32 slot=3,heapStart=0x80500000,heapEnd=heapStart+rawSize;
+ bool fromSD=true,ints=true,dma=true,durable=true;u32 slot=3,heapStart=0x80500000,heapEnd=heapStart+gameBytes();
  StoredState&saved=sCandidate;SavestateHeader*h=&saved.header;
- StateCodec::ReadSpan compressed[3]={};StateCodec::WriteSpan destinations[1]={{live+32,rawSize}};
+ StateCodec::ReadSpan compressed[3]={};StateCodec::WriteSpan destinations[3]={{live+32,gameBytes()},{live+32+gameBytes(),236},{live+32+gameBytes()+236,276}};
 ''' + dispatch + '\nreturn restored;\n}\n'
         path = Path(cls.temp.name) / 'test.cpp'
         path.write_text(text)
@@ -199,7 +206,7 @@ extern "C" __declspec(dllexport) u32 restore(){
 
     def test_preflight_cancellation_bad_stream_and_owner_change_leave_live_state_unchanged(self):
         for quick in (False,True):
-            for fault in ('cancel','stream','owners','crc','scene','regions'):
+            for fault in ('cancel','stream','owners','crc','scene','regions','practice'):
                 with self.subTest(quick=quick,fault=fault):
                     self.setup_state(quick,bad=fault=='stream')
                     if fault=='cancel':self.lib.fault(2,8192)
@@ -207,6 +214,7 @@ extern "C" __declspec(dllexport) u32 restore(){
                     elif fault=='crc':self.lib.change(5)
                     elif fault=='scene':self.lib.change(6)
                     elif fault=='regions':self.lib.change(4)
+                    elif fault=='practice':self.lib.change(7)
                     self.lib.restore()
                     self.assertEqual(self.output(),b'\xe3'*len(self.raw))
                     self.assertEqual(self.lib.value(1),0)
@@ -234,6 +242,19 @@ extern "C" __declspec(dllexport) u32 restore(){
         self.assertEqual(self.output(),b'\xe3'*len(self.raw))
         self.assertEqual(self.lib.value(4),1)
         self.preserved()
+
+    def test_replay_copy_policy_keeps_take_bytes_during_success_and_recovery(self):
+        for fail in (False, True):
+            with self.subTest(recovery=fail):
+                self.setup_state()
+                self.lib.replay()
+                if fail:
+                    self.lib.fault(1, 65536)
+                self.assertEqual(self.lib.restore(), 0)
+                expected = self.old_raw[1] if fail else self.raw
+                self.assertEqual(self.output(), expected[:-276] + b'\xe3' * 276)
+                self.assertEqual(self.lib.value(0), int(fail))
+                self.preserved()
 
 
 if __name__ == '__main__':unittest.main()
