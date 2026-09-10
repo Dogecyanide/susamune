@@ -295,9 +295,15 @@ StoredState (&sSlots)[SavestateManager::kSlotCount] =
     *reinterpret_cast<StoredState (*)[SavestateManager::kSlotCount]>(SUSAMUNE_STATE_METADATA_PPC_BASE);
 StoredState &sCandidate = *reinterpret_cast<StoredState *>(
     SUSAMUNE_STATE_METADATA_PPC_BASE + sizeof(sSlots));
+// Live ownership survives restores; it must never share the archived records.
+StateArchiveProfile::Data &sLiveArchiveProfile = *reinterpret_cast<StateArchiveProfile::Data *>(
+    SUSAMUNE_STATE_METADATA_PPC_BASE + SUSAMUNE_STATE_LIVE_PROFILE_OFFSET);
 bool sMetadataReady;
-static_assert(sizeof(sSlots) + sizeof(sCandidate) <= SUSAMUNE_STATE_METADATA_RUNTIME_SIZE,
-              "state metadata exceeds recording-input padding");
+static_assert(SUSAMUNE_STATE_METADATA_SIZE * (SavestateManager::kSlotCount + 1) <=
+                  SUSAMUNE_STATE_LIVE_PROFILE_OFFSET,
+              "state metadata overlaps live owner profile");
+static_assert(sizeof(sLiveArchiveProfile) == SUSAMUNE_STATE_LIVE_PROFILE_SIZE,
+              "live state owner profile size changed");
 static_assert(SUSAMUNE_GHOST_INPUT_MAX_COUNT * sizeof(SusamuneGhostInputSample) <=
                   SUSAMUNE_STATE_METADATA_OFFSET, "state metadata overlaps ghost inputs");
 u32 sActiveSlot;
@@ -308,9 +314,6 @@ u32 sPendingSlot;
 u32 sPendingGeneration;
 bool sAwaitingLoadApproval;
 bool sBusy;
-#pragma clang section bss=".foxtrot.bss"
-StateArchiveProfile::Data sLiveArchiveProfile;
-#pragma clang section bss=""
 u32 sDurableSlots;
 u32 sPackedChecksums[SavestateManager::kSlotCount];
 u32 sDiskSlot, sDiskGeneration, sDiskPoolUsed, sDiskScene;

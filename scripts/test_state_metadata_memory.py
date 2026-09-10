@@ -35,6 +35,10 @@ static const int kNumStaticRanges=11,kNumPointedAllocs=8;
 static_assert(SUSAMUNE_CONSOLE_STATE_METADATA_PPC_BASE==0x91C11F00u,"console address");
 static_assert(SUSAMUNE_DOLPHIN_STATE_METADATA_PPC_BASE==0x712D2F00u,"emulator address");
 static_assert(SUSAMUNE_STATE_METADATA_RUNTIME_SIZE==53504u,"exact tail");
+static_assert(SUSAMUNE_STATE_LIVE_PROFILE_OFFSET==0x7000u,"four maximum metadata records");
+static_assert(SUSAMUNE_STATE_LIVE_PROFILE_SIZE==5920u,"exact profile size");
+static_assert(SUSAMUNE_CONSOLE_STATE_METADATA_PPC_BASE+SUSAMUNE_STATE_LIVE_PROFILE_OFFSET==0x91C18F00u,"console profile address");
+static_assert(SUSAMUNE_DOLPHIN_STATE_METADATA_PPC_BASE+SUSAMUNE_STATE_LIVE_PROFILE_OFFSET==0x712D9F00u,"emulator profile address");
 static_assert(SUSAMUNE_STATE_METADATA_OFFSET==SUSAMUNE_GHOST_INPUT_MAX_COUNT*sizeof(SusamuneGhostInputSample),"full inputs preserved");
 static SusamuneCfg testCfg;
 static SusamuneGhostStorageMailbox testMailbox;
@@ -75,9 +79,13 @@ __declspec(dllexport) void setup(u32 fault){
 __declspec(dllexport) u32 get(u32 key){switch(key){
  case 0:return sMetadataReady;case 1:return validStore();case 2:return invalidations;
  case 3:return wrongInvalidate;case 4:return sizeof(sSlots)+sizeof(sCandidate);
- case 5:return manager.slotInfo(0).valid;case 6:return manager.slotInfo(0).generation;}
+ case 5:return manager.slotInfo(0).valid;case 6:return manager.slotInfo(0).generation;
+ case 7:return (__UINTPTR_TYPE__)&sLiveArchiveProfile-(__UINTPTR_TYPE__)(memory+32);
+ case 8:return sizeof(sLiveArchiveProfile);}
  return 0;}
 __declspec(dllexport) const void*bytes(){return memory;}
+__declspec(dllexport) void fillProfile(u32 value){if(validStore())memset(&sLiveArchiveProfile,value,sizeof(sLiveArchiveProfile));}
+__declspec(dllexport) void reinitializeMetadata(){initStateMetadata();}
 __declspec(dllexport) void changeMailbox(){testCfg.magic=0;testMailbox.response.protocolVersion=0;}
 }
 '''
@@ -97,6 +105,7 @@ __declspec(dllexport) void changeMailbox(){testCfg.magic=0;testMailbox.response.
         lib=self.libs[0]
         for fault in range(1,8):
             lib.setup(fault)
+            lib.fillProfile(0x5a)
             self.assertEqual([lib.get(i)for i in (0,1,5,6)],[0,0,0,0])
             self.assertEqual(C.string_at(lib.bytes(),53568),bytes([0xa5])*53568)
             self.assertEqual(lib.get(2),int(fault>=5))
@@ -114,6 +123,19 @@ __declspec(dllexport) void changeMailbox(){testCfg.magic=0;testMailbox.response.
                 self.assertEqual(lib.get(3),0)
                 lib.changeMailbox();self.assertEqual(lib.get(1),1)
 
+    def test_live_profile_uses_only_its_reserved_tail_and_survives_metadata_reset(self):
+        for lib in self.libs:
+            lib.setup(0);used=lib.get(4);offset=lib.get(7);size=lib.get(8)
+            self.assertEqual((offset,size),(0x7000,5920))
+            self.assertLessEqual(used,offset)
+            self.assertEqual(offset%32,0)
+            lib.fillProfile(0x5a)
+            expected=(bytes([0xa5])*32+bytes(used)+bytes([0xa5])*(offset-used)+
+                      bytes([0x5a])*size+bytes([0xa5])*(53536-offset-size))
+            self.assertEqual(C.string_at(lib.bytes(),53568),expected)
+            lib.reinitializeMetadata()
+            self.assertEqual(C.string_at(lib.bytes(),53568),expected)
+
     def test_public_paths_validate_before_access_and_constructor_only_uses_gated_initialization(self):
         init=function_source(SOURCE,'SavestateManager::SavestateManager()')
         self.assertIn('initStateMetadata()',init)
@@ -128,6 +150,30 @@ __declspec(dllexport) void changeMailbox(){testCfg.magic=0;testMailbox.response.
             self.assertLess(body.index('validStore()'),body.index(access))
         self.assertIn('sMetadataReady && StateStorage::available()',
             function_source(SOURCE,'bool SavestateManager::sdAvailable()'))
+
+    def test_live_profile_is_captured_after_admission_and_never_archived_as_live_state(self):
+        source=SOURCE.read_text()
+        self.assertNotIn('StateArchiveProfile::Data sLiveArchiveProfile;',source)
+        load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
+        self.assertLess(load.index('validStore()'),load.index('captureArchiveProfile(sLiveArchiveProfile)'))
+        self.assertLess(load.index('StateArchiveProfile::matches(saved.archiveProfile, sLiveArchiveProfile)'),
+                        load.index('prepareSDRecovery('))
+        update=function_source(SOURCE,'void SavestateManager::updateDisk(')
+        self.assertLess(update.index('validStore()'),update.index('archiveCandidateMatches('))
+        candidate=function_source(SOURCE,'bool archiveCandidateMatches(')
+        self.assertLess(candidate.index('captureArchiveProfile(sLiveArchiveProfile)'),
+                        candidate.index('StateArchiveProfile::matches(sCandidate.archiveProfile, sLiveArchiveProfile)'))
+        save=function_source(SOURCE,'bool SavestateManager::saveSlotExplicit(')
+        self.assertIn('captureArchiveProfile(sCandidate.archiveProfile)',save)
+        self.assertNotIn('sLiveArchiveProfile',save)
+        regions=function_source(SOURCE,'bool validSnapshotRegions(')
+        self.assertIn('heapEnd > 0x81800000u',regions)
+        self.assertIn('target >= 0x81800000u',regions)
+        ghost=ROOT/'src/ghost.cpp'
+        decode=function_source(ghost,'bool decodeSavedPrefix(')
+        self.assertIn('track.inputCount > SUSAMUNE_GHOST_INPUT_MAX_COUNT',decode)
+        restore=function_source(ghost,'bool savestateRestoreSpans(')
+        self.assertIn('saved.track.inputCount * static_cast<u32>(sizeof(SusamuneGhostInputSample))',restore)
 
 
 if __name__=='__main__':unittest.main()

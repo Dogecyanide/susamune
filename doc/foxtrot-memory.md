@@ -20,23 +20,39 @@ Offsets are relative to each region's linked mod base.
 The two code/data spans provide 608 KiB of capacity. Mod-bin V3, launcher
 injection and Dolphin DOL/BPS output all carry them separately. Initialized
 bytes and trailing BSS are checked separately; zero filling cannot touch the
-attachment heap or scratch. The 512 KiB BPS disc-file extent is a separate
+attachment heap or scratch. The 640 KiB BPS disc-file extent is a separate
 storage constraint, not the size of the runtime reservation.
 
-Final console mod builds on 2026-09-08:
+Console build `9975EF7F`, measured on 2026-09-10 from the two segments in
+`build/susamune_manifest_<region>.json`:
 
-| Region | Initialized image | Full runtime image | Free code/data capacity |
+| Region | Initialized bytes | Runtime bytes | Low span free | Upper span free | Total free |
+|---|---:|---:|---:|---:|---:|
+| JP | 526,272 B | 621,188 B | 1,224 B | 180 B | 1,404 B |
+| US | 520,512 B | 607,100 B | 14,512 B | 980 B | 15,492 B |
+| PAL | 520,640 B | 607,228 B | 14,384 B | 980 B | 15,364 B |
+
+Add each segment's `memory_size` to measure occupied runtime bytes. The
+manifest's top-level `memory_size` is an address extent that includes the
+protected hole between segments. It must not be subtracted from the combined
+code/data capacity. Space in one span also cannot absorb growth in the other.
+
+The subsequent September 10 refactor moves the 5,920-byte live state-owner
+profile into slack inside the existing MEM2 metadata allocation. The linked
+result saves **5,952 bytes per region**: 5,920 bytes in the upper span and 32
+bytes in the low span. Development-build headroom is now:
+
+| Region | Low span free | Upper span free | Total free |
 |---|---:|---:|---:|
-| JP | 366,224 B | 405,888 B | 216,704 B |
-| US | 364,944 B | 404,608 B | 217,984 B |
-| PAL | 365,060 B | 404,704 B | 217,888 B |
+| JP | 1,256 B | 6,100 B | 7,356 B |
+| US | 14,544 B | 6,900 B | 21,444 B |
+| PAL | 14,416 B | 6,900 B | 21,316 B |
 
-The largest runtime image is about 396.4 KiB; it leaves about 211.6 KiB of
-unused code/data capacity inside the requested reservation.
+The `9975EF7F` tester downloads remain unchanged. This is mod capacity, not
+additional game heap. Before/after measurements are retained under
+`build/foxtrot-quick-refactor/`.
 
-The September 8 feedback update adds 1,500 B to the largest runtime image
-relative to the September 7 package. The game arena reservation remains
-768 KiB. Metadata spacing and the two health colours reuse
+The game arena reservation remains 768 KiB. Metadata spacing and the two health colours reuse
 reserved settings bytes; the eight-byte native timer style occupies the final
 gap before the fixed playlist mailbox. Original/Custom timer appearance uses
 three reserved style bytes. Existing payload offsets do not move.
@@ -58,31 +74,68 @@ All ends below are exclusive. ARM physical aliases subtract `0x80000000`.
 
 | PPC range | Owner |
 |---|---|
+| `0x91300000–0x91700000` | Temporary state save/import staging after Sunshine boot; 4 MiB |
+| `0x91780000–0x91800000` | Ghost recording poses, catalog cache and segment table |
+| `0x91800000–0x91880000` | Ghost playback poses, primary model heap and segment table |
 | `0x91880000–0x91880100` | Existing ghost storage doorbells |
 | `0x91880100–0x91890100` | PPC-only local input take |
+| `0x91891000–0x918DF000` | Shared codec/CRC workspace; 312 KiB |
+| `0x918DF000–0x918EA000` | Split-statistics V9 mailbox |
 | `0x918EA000–0x91900000` | Existing secondary ghost model heap |
-| `0x91900000–0x91B3F000` | Bounded external file-patch handoff |
-| `0x91B3F000–0x91C1F000` | Ghost recording inputs |
+| `0x91900000–0x9193F000` | Bounded immutable external file-patch handoff |
+| `0x9193F000–0x91B3F000` | Extra compressed-state pool bank; 2 MiB |
+| `0x91B3F000–0x91C11F00` | Ghost recording inputs |
+| `0x91C11F00–0x91C1F000` | PPC-only saved-state metadata, candidate and live owner profile |
 | `0x91C1F000–0x91CFF000` | Primary playback inputs |
-| `0x91CFF000–0x91E3F000` | Complete ghost file transfer |
+| `0x91CFF000–0x91E3D000` | Complete ghost file transfer |
+| `0x91E3D000–0x91E3F000` | SD state/TAS mailbox |
 | `0x91E3F000–0x91EDE000` | Immutable mod file staging |
 | `0x91EDE000–0x91F00000` | Existing immutable model asset vault |
 | `0x91F00000–0x92EF0000` | Existing savestate payload window |
 | `0x92EF0000–0x92F00000` | Existing configuration/runtime block |
 
-External `patch.bin` and per-game `patch.txt` files now have a
-`0x23F000` (2,355,200-byte) limit. The handoff fits up to 294,399 patch
+External `patch.bin` and per-game `patch.txt` files have a
+`0x3F000` (258,048-byte) limit. The handoff fits up to 32,255 patch
 records plus its count header. Global `/apps/gc_devo/patch.txt` retains its
 existing limit below 1 MiB. Oversized files, invalid binary record counts,
 incomplete reads and generated-output overflow cancel boot with a specific
 error; patches are never silently truncated or disabled to fit. This limit
 does not apply to the bundled `mod_jp.bin`, `mod_us.bin` or `mod_pal.bin`.
 
-The tape requires ghost storage protocol 4, which moved file I/O out of the
+The tape requires ghost storage protocol 5; earlier protocol 4 moved file I/O out of the
 old transfer payload. It does not require a mounted storage device. The ARM
 never reads or writes the tape. The mod staging prefix remains immutable so
-reset can inject the same image again. Snapshot size and established settings,
-split and PB wire offsets are unchanged.
+reset can inject the same image again. The three compressed states share
+17.9375 MiB across the two pool banks. The temporary 4 MiB staging area is not
+additional persistent slot capacity. Snapshot version 17 and state/TAS transport
+protocol 7 retain exact-build compatibility checks; established settings and
+PB wire offsets remain fixed.
+
+The live owner profile occupies metadata offsets `0x7000–0x8720`, after room
+for four maximum-sized metadata records. Its Wii address is `0x91C18F00`;
+Dolphin uses `0x712D9F00`. It is scalar CPU data, never a restore destination
+or ARM mailbox. Existing metadata admission precedes all accesses, and each
+use captures a fresh profile. Compile checks bind the size, alignment and
+separation from archived records. The MEM2 allocation and pool capacity do
+not grow.
+
+Regional console/emulator builds and the launcher/kernel builds pass. Host
+checks cover admission failures, metadata/profile separation and retained-byte
+filtering. An isolated US Dolphin Bianco restore (`89A27770` development
+baseline) used the relocated profile for 136 filtered copies across 15,017,504
+bytes. Mario returned to the saved position while the profile, neighbouring
+metadata, guard words and slot generation stayed intact; a live controller
+field remained fresh. The private adapter supplied archive identity and marked
+one real RAM state durable. This verifies the durable restore path, not SD
+transport or reboot behaviour. Evidence is in
+`build/foxtrot-owner-profile-proof/complete.json`.
+
+The September 10 static audit also identifies 150,080 bytes (146.5625 KiB)
+of unassigned gaps within the mapped mod windows, the largest 64 KiB. These
+are fragmented gaps, not a free heap or savestate capacity. The profile move
+uses already-reserved metadata slack, so it does not consume those gaps.
+Codec scratch, file-transfer staging, model heaps, immutable assets, reserved
+migration slots and Nintendont/IOS allocations are excluded from this count.
 
 New live binds/settings/menu windows occupy configuration offsets `0x5B80`,
 `0x5C00` and `0x6000`; the old live slots stay reserved. Cache-line ownership,
