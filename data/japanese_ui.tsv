@@ -1431,3 +1431,58 @@ Continue editing checkpoint	途中のステートから編集を続ける
 Keep your start state. Save other slots as checkpoints; loading rewinds the inputs too.	開始ステートを残し、別の枠に途中経過を保存します。読込で入力も巻き戻ります。
 Stop keeps the take. Export its start state and latest checkpoint to SD to keep both.	停止しても入力は残ります。開始と最新のステートをSDに保存してください。
 Continue a loaded TAS checkpoint. Gameplay stays paused until you Step or Resume.	読み込んだTASの編集を続けます。コマ送りか再開を選ぶまで停止します。
+
+# TAS project workflow.
+Pause / Resume	一時停止 / 再開
+Memory %lu: area %u, episode %u	メモリ%lu：エリア%u・エピソード%u
+C-stick: choose   A: select   B: cancel	Cスティック：選択　A：決定　B：中止
+A: replace this state   B: keep it	A：置き換える　B：残す
+%lu frames	%luコマ
+Please wait until the current action finishes.	現在の操作が終わるまでお待ちください。
+Delete this TAS from SD?	このTASをSDから削除しますか？
+Its beginning and checkpoint files will be deleted.	開始地点と中間地点のファイルを削除します。
+A: delete SD project   B: keep. Memory checkpoints stay.	A：SDから削除　B：残す。メモリの中間地点は残ります。
+A: open   Start: rename   X: delete   B: back	A：開く　Start：名前変更　X：削除　B：戻る
+TAS renamed on SD.	SD上のTASの名前を変更しました。
+TAS deleted from SD. Memory checkpoints were kept.	SD上のTASを削除しました。メモリの中間地点は残っています。
+TAS projects	TAS管理
+New, edit, replay and save a TAS with its checkpoints.	TASの作成・編集・再生と、中間地点を含む保存ができます。
+New TAS	新しいTAS
+Continue	編集を続ける
+Replay	再生
+Save TAS	TASを保存
+Open TAS	TASを開く
+Checkpoints	中間地点
+Beginning	開始地点
+Checkpoint 1	中間地点1
+Checkpoint 2	中間地点2
+Go to Beginning	開始地点に戻る
+Save Checkpoint 1	中間地点1を保存
+Go to Checkpoint 1	中間地点1に戻る
+Save Checkpoint 2	中間地点2を保存
+Go to Checkpoint 2	中間地点2に戻る
+Name TAS project	TASに名前を付ける
+Unsaved TAS	未保存のTAS
+Replace this memory state?	このメモリステートを置き換えますか？
+Choose a memory state to replace	置き換えるメモリステートを選択
+In this TAS	このTASで使用中
+This TAS has unsaved edits.	このTASには未保存の編集があります。
+Save TAS and stay here	TASを保存してここに戻る
+Discard edits and continue	編集を破棄して続ける
+Other memory states stay unless you choose to replace one.	置き換えを選ばない限り、他のメモリステートは残ります。
+A: open the whole TAS   B: back	A：TASをまとめて開く　B：戻る
+A: choose action   B: back. Beginning is kept for Replay.	A：操作を選択　B：戻る。開始地点は再生用に残ります。
+Continue stays paused. Hold Mario inputs, then use Step or Resume.	編集再開後も停止します。入力を押してコマ送りか再開を選びます。
+New TAS captures your beginning automatically.	新しいTASは開始地点を自動で保存します。
+Start a TAS when Mario can move in the level.	レベル内でマリオが動けるときにTASを始めてください。
+Checkpoint saved. Continue to edit, or Replay to watch.	中間地点を保存しました。編集を続けるか再生を選んでください。
+TAS saved to SD, with its beginning and checkpoints.	開始地点と中間地点を含むTASをSDに保存しました。
+TAS is paused here. Continue to edit, or Replay to watch.	この地点で停止しています。編集を続けるか再生を選んでください。
+This checkpoint has not been saved yet.	この中間地点はまだ保存されていません。
+Choose a TAS project to open.	開くTASを選んでください。
+TAS action canceled. Memory states were not changed.	操作を中止しました。メモリステートは変更していません。
+Not enough room; existing saved TAS files are safe.	空き容量が足りません。保存済みのTASは残っています。
+Use this TAS's game version, episode and settings.	このTASと同じゲーム版・エピソード・設定にしてください。
+TAS files need the matching Moonshine launcher.	対応するMoonshineランチャーが必要です。
+Release A to begin. Gameplay will stay paused.	Aを離すと準備が完了します。ゲームは停止したままです。
+Please wait...	しばらくお待ちください。

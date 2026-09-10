@@ -68,7 +68,7 @@ static void copyGameBytes(void*,void*d,const void*s,u32 n){++writes;memcpy(d,s,n
 }
 static void captureArchiveProfile(u32&out){out=ownerFault?72:71;}
 namespace StateStorage{
-struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;};
+struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
 static Result result;static bool ready,pending;
 static bool startWindow(u32 id,u32 crc,u32 packed,u32 offset,u32 size){
  ++reads;if(pending||id!=sStreamId||crc!=sStreamHeader.headerCrc||packed!=archiveSize||size>4096||offset+size>packed)return false;

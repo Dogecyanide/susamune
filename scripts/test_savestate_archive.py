@@ -32,7 +32,9 @@ static u8 banks[2][50000], staging[4096];alignas(32)static u8 workspace[0x50000]
 static __UINTPTR_TYPE__ kStagingBase=(__UINTPTR_TYPE__)staging;
 static StateSlotPool sPool;
 static StatePoolMemory sPoolMemory={{banks[0],banks[1]},{50000,50000}};
-struct StoredState {u32 generation,rawSize,packedSize,adler32,metadataTag;};
+namespace PracticeSession{struct SavestateData{u32 flags,stateKey[2],originKey[2],frames;};
+enum{kMaxFrames=4096,SAVED_PAD=1,SAVED_RNG=2,SAVED_TAKE=4};}
+struct StoredState {u32 generation,rawSize,packedSize,adler32,metadataTag;PracticeSession::SavestateData practice;};
 static StoredState sSlots[3],sCandidate,returned;
 static u32 sDiskSlot,sDiskGeneration,sDiskPoolUsed,sDiskScene,sDurableSlots;
 static u32 sPackedChecksums[3],fullDecodes,verifiedDecodes,policyBytes;
@@ -74,14 +76,18 @@ static StateCodec::Status verifiedDecode(void*w,u32 n,const StateCodec::ReadSpan
  const StateCodec::WriteSpan*d,u32 dn,u32 raw,u32 adler,StateCodec::CopyBytes copy,void*ctx){
  ++verifiedDecodes;return StateCodec::decompressVerified(w,n,s,count,d,dn,raw,adler,copy,ctx);}
 namespace StateStorage{
-struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;};
+struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
 static Result result;
 void update(){}
 bool takeResult(Result&out){if(!ready)return false;out=result;ready=false;transportBusy=false;return true;}
 bool busy(){return transportBusy;}
 }
 class SavestateManager{public:enum{kSlotCount=3};bool mLoadPending;u32 mLoadWaitFrames;
+ struct TransferResult {u32 command,status,id,slot,generation;SusamuneStateArchiveHeader header;};
+ bool takeTransferResult(TransferResult&);
  static bool diskBusy();void updateDisk();}manager;
+static u32 sProjectStartKey[2],sProjectFrames,sProjectRole;
+static bool sExplicitTransfer,sTransferReady;static SavestateManager::TransferResult sTransferResult;
 '''
 
 EXPORTS = r'''
@@ -92,6 +98,7 @@ __declspec(dllexport) void reset(const void*packed,u32 packedSize,u32 raw,u32 ad
   for(u32 j=0;j<13000;++j)banks[0][i*13000+j]=(u8)(20+i);}
  sPool.used=39000;sDiskSlot=slot;sDiskGeneration=100+slot;sDiskPoolUsed=39000;
  sDiskScene=scene=0x10203;sDiskActive=true;sDiskStarted=17;sDurableSlots=0;
+ sExplicitTransfer=sTransferReady=false;
  sDiskRestore=sDiskLoadReady=manager.mLoadPending=false;manager.mLoadWaitFrames=0;
  sLoadSlot=2;sPendingSlot=sPendingGeneration=0;sSelectedSD={};sSelectedSD.id=71;
  fullDecodes=verifiedDecodes=policyBytes=0;
@@ -118,6 +125,15 @@ __declspec(dllexport) void change(u32 which){
  if(which==10)sDiskActive=false;
 }
 __declspec(dllexport) void directRestore(){sDiskRestore=true;}
+__declspec(dllexport) void explicitTransfer(){sExplicitTransfer=true;sProjectStartKey[0]=1;sProjectStartKey[1]=2;
+ sProjectFrames=16;sProjectRole=1;returned.practice={7,{3,4},{1,2},16};}
+__declspec(dllexport) void projectFault(u32 n){switch(n){case 1:++returned.practice.originKey[0];break;
+ case 2:++returned.practice.frames;break;case 3:returned.practice.flags&=~2u;break;
+ case 4:returned.practice.flags&=~4u;break;case 5:sProjectRole=0;break;}}
+__declspec(dllexport) u32 consumeTransfer(u32*out){SavestateManager::TransferResult result;
+ if(!manager.takeTransferResult(result))return 0;
+ out[0]=result.command;out[1]=result.status;out[2]=result.id;out[3]=result.slot;
+ out[4]=result.generation;out[5]=result.header.payloadCrc;return 1;}
 __declspec(dllexport) void metadataResult(u32 command,u32 id,u32 status){
  StateStorage::result.command=command;StateStorage::result.id=id;StateStorage::result.status=status;
  memcpy(StateStorage::result.name,"renamed",8);}
@@ -128,7 +144,7 @@ __declspec(dllexport) u32 get(u32 key){switch(key){case 0:return sPool.used;case
  case 8:return sDiskLoadReady;case 9:return manager.mLoadPending;case 10:return sPendingSlot;
  case 11:return sPendingGeneration;case 12:return sLoadSlot;case 13:return sSelectedSD.id;
  case 14:return sSelectedSD.name[0];case 15:return sDiskRestore;
- case 16:return fullDecodes;case 17:return verifiedDecodes;case 18:return policyBytes;}return 0;}
+ case 16:return fullDecodes;case 17:return verifiedDecodes;case 18:return policyBytes;case 19:return notified;}return 0;}
 __declspec(dllexport) u32 trustedChecksum(u32 slot){return sPackedChecksums[slot];}
 __declspec(dllexport) void corruptSlot(u32 slot,u32 at){u8 v;
  StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset+at,&v,1);v^=0x80;
@@ -156,10 +172,11 @@ class SavestateArchiveTests(unittest.TestCase):
         if not compiler.exists():raise unittest.SkipTest('Bundled host compiler required')
         cls.temp=tempfile.TemporaryDirectory(prefix='moonshine-sd-commit-')
         cls.addClassCleanup(cls.temp.cleanup)
-        source=FIXTURE
+        source=FIXTURE+'\nnamespace PracticeSession {\n'+function_source(ROOT/'src/practice_session.cpp','bool projectSavestateMatches(')+'\n}\n'
         for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(',
                      'bool archiveStageReady()', 'bool admitArchiveStage()', 'void copyStateBytes(',
-                     'bool SavestateManager::diskBusy()', 'void SavestateManager::updateDisk()'):
+                     'bool SavestateManager::diskBusy()', 'void SavestateManager::updateDisk()',
+                     'bool SavestateManager::takeTransferResult('):
             source+=function_source(SOURCE,name)
         load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
         spans=load[load.index('    StateCodec::ReadSpan compressed[3]'):
@@ -192,6 +209,7 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         cls.lib.decodeReady.argtypes=[C.c_void_p]
         cls.lib.restorePayload.argtypes=[C.c_uint,C.c_uint,C.c_void_p]
         cls.lib.trustedChecksum.restype=C.c_uint
+        cls.lib.consumeTransfer.argtypes=[C.POINTER(C.c_uint)]
 
     def setupCandidate(self,slot=1,size=20000,quick=False,fault=None):
         self.raw=random.Random(99).randbytes(size)
@@ -357,15 +375,46 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
                 self.assertEqual(self.lib.trustedChecksum(1),trusted)
                 for slot in (0,2):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
 
+    def test_project_transfer_reports_validated_import_generation_once_without_generic_toast(self):
+        for accepted in (True,False):
+            self.setupCandidate(slot=1);self.lib.explicitTransfer()
+            if not accepted:self.lib.change(3)
+            result=(C.c_uint*6)()
+            self.assertEqual(self.lib.consumeTransfer(result),0)
+            self.lib.tick()
+            self.assertEqual(self.lib.consumeTransfer(result),1)
+            self.assertEqual(list(result)[0:5],[2,0 if accepted else 3,0,1,555 if accepted else 101])
+            self.assertEqual(result[5],zlib.crc32(self.packed))
+            self.assertEqual(self.lib.consumeTransfer(result),0)
+            self.assertEqual(self.lib.get(4),int(accepted))
+            self.assertEqual(self.lib.get(19),0)
+            self.assertEqual(self.lib.get(12),2)
+            self.assertEqual(self.lib.get(13),71)
+
+    def test_wrong_project_checkpoint_refuses_before_replacing_any_ram_slot(self):
+        for fault in range(1,6):
+            self.setupCandidate(slot=1);self.lib.explicitTransfer();self.lib.projectFault(fault)
+            before=[self.slot(i) for i in range(3)]
+            self.lib.tick();result=(C.c_uint*6)()
+            self.assertEqual(self.lib.consumeTransfer(result),1)
+            self.assertEqual(list(result)[0:5],[2,3,0,1,101])
+            self.assertEqual([self.slot(i) for i in range(3)],before)
+            self.assertEqual(self.lib.get(4),0)
+            self.assertEqual(self.lib.get(19),0)
+
+    def test_ordinary_transfer_does_not_publish_project_completion(self):
+        self.setupCandidate();self.lib.tick();result=(C.c_uint*6)()
+        self.assertEqual(self.lib.consumeTransfer(result),0)
+
     def test_trusted_crc_is_local_and_checked_with_interrupts_off_before_fast_decode(self):
         production=SOURCE.read_text()
         stored=production[production.index('struct StoredState'):production.index('StateSlotPool sPool;')]
         self.assertNotIn('sPackedChecksums',stored)
         constructor=function_source(SOURCE,'SavestateManager::SavestateManager()')
         self.assertIn('memset(sPackedChecksums, 0, sizeof(sPackedChecksums))',constructor)
-        save=function_source(SOURCE,'bool SavestateManager::saveState()')
-        crc=save.index('sPackedChecksums[sActiveSlot] = packedChecksum(')
-        self.assertLess(save.index('const bool fits = commitPackedState('),crc)
+        save=function_source(SOURCE,'bool SavestateManager::saveSlotExplicit(')
+        crc=save.index('sPackedChecksums[slot] = packedChecksum(')
+        self.assertLess(save.index('bool fits = compressCandidate('),crc)
         self.assertLess(save.index('if (!fits)'),crc)
         self.assertGreater(save.index('OSRestoreInterrupts(ints)',crc),crc)
         load=function_source(SOURCE,'bool SavestateManager::loadSlot(')
@@ -427,7 +476,7 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
         self.assertIn('gMenu->toast(sDiskStatus)',admission)
         self.assertIn('beginSDLoad(id, crc, packed, false)',
                       function_source(SOURCE,'bool SavestateManager::loadFromSD('))
-        for action in ('saveToSD','beginSDLoad','refreshSD','renameSD','deleteSD'):
+        for action in ('beginSDExport','beginSDLoad','refreshSD','renameSD','deleteSD'):
             code=function_source(SOURCE,f'bool SavestateManager::{action}(')
             self.assertLess(code.index('admitArchiveStage()'),code.index('StateStorage::'))
 

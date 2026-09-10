@@ -42,6 +42,15 @@ Result compress(void *workspace, unsigned int workspaceBytes,
                 const WriteSpan *output, unsigned int outputCount = 2,
                 bool compact = false, bool quick = false);
 
+// Re-encode immutable packed bytes without restoring the game. Both workspaces
+// and all output spans must be separate from each other and the source.
+Result repack(void *workspace, unsigned int workspaceBytes,
+              void *packWorkspace, unsigned int packWorkspaceBytes,
+              const ReadSpan *source, unsigned int sourceCount,
+              const WriteSpan *output, unsigned int outputCount,
+              unsigned int expectedRaw, unsigned int expectedAdler,
+              bool compact = false);
+
 // Input spans contain exactly the stream's bytes, excluding allocation padding.
 Status validate(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,

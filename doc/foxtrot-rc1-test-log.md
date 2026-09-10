@@ -1,6 +1,6 @@
 # Moonshine 2.3.0 — RC1 test log
 
-**FOXTROT candidate · Build E4DE048F**
+**FOXTROT candidate · Build AE95E374**
 
 This is the full RC1 check, covering new features and normal practice. **Keep your earlier results.** Prioritise the items marked **Updated** and one ordinary run; use the remaining items to fill gaps in team coverage. `TESTING.md` is the shorter latest-fixes sheet. `RC1_ROUTES.md` lists the expected course checkpoints.
 
@@ -75,14 +75,14 @@ Use states from this build and the same region, setup, level and episode. Secret
 
 Keep the SD connected during transfers. Testing does not require corrupting files or pulling the card mid-save.
 
-## 6. TAS checkpoints and input replay — Updated
+## 6. TAS projects — Updated
 
-This is the experimental take under **Practice > Input replay**, separate from ghosts. It holds up to 4096 frames. Reuse one start state and a short recording for these checks; do the SD reboot part once in section 11.
+Open **Practice > TAS projects**. This records editable inputs separately from shareable ghosts, up to 4096 frames. Reuse a short recording for these checks and do the reboot once in section 11.
 
-- [ ] **6A — Start from the menu.** Turn Save RNG state On and make a fresh memory save during gameplay. Choose Record from savestate, then release the A used to confirm. A different held gameplay button should not prevent starting. Walk, jump and spray briefly; open the menu to pause gameplay while keeping the recording ready.
-- [ ] **6B — Replay and stop.** Replay the take: it should reload the starting state and repeat the sequence. Check B/Start can stop playback. Report an unexpected refusal or mismatch with the exact message and what was recorded.
-- [ ] **6C — Edit a checkpoint.** Keep the start state, then save a different slot during recording. Go farther, load the checkpoint and record a different ending. Replay should include the original opening and new ending, without discarded inputs. Save a stopped take too: Continue editing checkpoint should keep it paused until Step or Resume.
-- [ ] **6D — Correct starting state.** Select another Save to/Load from, or adjust timer/metadata layout, then replay. It should still use the matching start. If that start is missing, replay should ask for it rather than use an unrelated slot. A gameplay setting that no longer matches should give a clear explanation. Console testers: export both start and latest checkpoint for section 11.
+- [ ] **6A — New TAS.** Choose New TAS during gameplay. It should capture the Beginning automatically and leave you paused after releasing A. Use Step or Resume to record a walk, jump and spray. Open the menu: gameplay should pause while your work stays available.
+- [ ] **6B — Replay and stop.** Replay should use the Beginning and repeat the sequence. Check B/Start can stop playback. Report an unexpected refusal or mismatch with its exact message.
+- [ ] **6C — Checkpoints.** Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Replay should include the original opening and new ending, without the discarded inputs. Continue stays paused until Step or Resume.
+- [ ] **6D — Save and open.** Console: Save TAS, name it, make a small edit and save again. It should update the same entry without asking you to export separate states. If New/Open asks about unsaved edits or replacing an ordinary state, check cancel keeps the current work. Save for the reboot in section 11. Timer/metadata edits and ordinary Save to/Load from choices must not redirect Replay to an unrelated beginning.
 
 ## 7. Ghosts, sharing and TAS continuation
 
@@ -127,7 +127,7 @@ Divide these options among testers who use them; one useful example per feature 
 ## 11. One final reboot and report
 
 - [ ] **11A — Persistence.** Reboot once after saving the checks above. Confirm kept settings, binds, camera movement speed/direction, look sensitivity/Hide all HUD, layouts, custom text, Mario/FLUDD colours, episode choices, records/profiles and ghosts remain correct. Check an earned achievement if you earned one during the session.
-- [ ] **11B — States and TAS after reboot (Updated).** The three memory slots should start Empty. Console: the named SD state should still be listed. Enter its matching level/episode, select it and restore it successfully. Its saved ghost opening should still be usable for a TAS continuation. For the input take from section 6, import the matching start into any RAM slot. In the SD menu, highlight the latest checkpoint and press Y to select it for loading; close the menu and use your normal Load shortcut. This keeps the RAM start available. Continue editing should resume work; Replay recorded inputs should start from the beginning. The imported start need not use its original slot number.
+- [ ] **11B — States and TAS after reboot (Updated).** Memory slots should start Empty. Console: restore your ordinary SD state in its matching level/episode; its ghost opening should still support a TAS continuation. For section 6's TAS, return to its matching setup/episode and use Open TAS by name. Continue and Replay should work without importing separate states.
 - [ ] **11C — Ordinary play.** Finish with a short normal practice session. Report a new crash, slowdown, stuck input or camera problem, including the last action before it happened.
 
 **Items passed:**

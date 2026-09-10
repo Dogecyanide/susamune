@@ -39,8 +39,11 @@ static void DCFlushRange(void *p,u32 n) {
 static void DCInvalidateRange(void *p,u32 n) {if(invalidateCount<32)invalidated[invalidateCount++]={p,n};}
 static u64 OSGetTime() {return 0x123456789ABCULL;}
 namespace StateStorage {
-struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];SusamuneStateWindowReceipt window;};
+struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
 bool busy();
+bool startExport(const SusamuneStateArchiveHeader &,const void *,u32,const SusamuneTasRequest * = nullptr);
+bool startImport(u32,u32,u32,u32,const SusamuneTasRequest * = nullptr);
+bool startWindow(u32,u32,u32,u32,u32,const SusamuneTasRequest * = nullptr);
 }
 '''
 EXPORTS = r'''
@@ -87,6 +90,58 @@ __declspec(dllexport) void acknowledge(u32 status,u32 change,u32 oldSeq) {
  if(oldSeq)testMailbox.response.ackSeq=oldSeq;
 }
 __declspec(dllexport) u32 result(void) {StateStorage::Result r;return StateStorage::takeResult(r)?r.status:999;}
+__declspec(dllexport) u32 projectResult(void) {StateStorage::Result r;return StateStorage::takeProjectResult(r)?r.status:999;}
+__declspec(dllexport) u32 beginProject(const char *name) {return StateStorage::projectBegin(name);}
+__declspec(dllexport) u32 beginProjectRead(u32 id,u32 crc) {return StateStorage::projectRead(id,crc);}
+__declspec(dllexport) u32 beginProjectCatalog(void) {return StateStorage::projectCatalog(0);}
+__declspec(dllexport) u32 prepareProject(u32 corrupt) {
+ auto &p=testMailbox.tasProject;memset(&p,0,sizeof(p));
+ p.magic=SUSAMUNE_TAS_MAGIC;p.version=1;p.projectId=10;p.generation=1;
+ p.gameId=0x474D5350;p.buildCrc=23;p.configId=123;p.sceneKey=0x01020000;
+ p.currentRole=1;p.componentCount=2;memcpy(p.name,"Test TAS",9);p.startKey[1]=123;
+ p.components[0]={1,101,100,0,0,0};p.components[1]={2,102,120,1,42,0};
+ if(corrupt==1)p.components[1].componentId=1;if(corrupt==2)p.components[0].frames=1;
+ if(corrupt==3)p.components[1].frames=4097;if(corrupt==4)p.currentRole=2;
+ if(corrupt==5)p.components[2].reserved=1;if(corrupt==6)p.components[1].packedBytes=SUSAMUNE_STATE_POOL_EXPANDED_SIZE;
+ if(corrupt==7)p.componentCount=3;if(corrupt==8)p.startKey[1]=0;
+ if(corrupt==9)p.currentRole=0;
+ p.checksum=SusamuneTasManifestCrc(&p);return p.checksum;
+}
+__declspec(dllexport) u32 projectValid(void) {return SusamuneTasManifestValid(&testMailbox.tasProject);}
+__declspec(dllexport) u32 beginProjectCommit(u32 previous) {return StateStorage::projectCommit(testMailbox.tasProject,previous);}
+__declspec(dllexport) void projectReceipt(u32 corrupt) {
+ acknowledge(0,0,0);auto&p=testMailbox.tasProject;auto&r=testMailbox.receipt;
+ testMailbox.response.resultId=10;r.headerCrc=p.checksum;
+ if(corrupt==1)r.headerCrc^=1;if(corrupt==2)testMailbox.response.resultId++;
+ if(corrupt==3)p.name[0]^=1;
+ if(corrupt==4){p.name[0]^=1;p.checksum=SusamuneTasManifestCrc(&p);r.headerCrc=p.checksum;}
+}
+__declspec(dllexport) u32 beginProjectExport(u32 corrupt) {
+ SusamuneStateArchiveHeader h={};h.metadataSize=8;h.packedSize=100;h.rawSize=200;
+ h.gameId=0x474D5345;h.buildCrc=1234;h.snapshotVersion=15;
+ const u32 meta[2]={123,456};SusamuneTasRequest context={10,0,1,0,345,{0,0},0};
+ if(corrupt==1)context.componentId=7;if(corrupt==2)context.role=3;
+ context.checksum=SusamuneTasRequestCrc(&context);if(corrupt==3)context.checksum^=1;
+ return StateStorage::startExport(h,meta,32,&context);
+}
+__declspec(dllexport) void exportReceipt(u32 id) {
+ acknowledge(0,0,0);auto &r=testMailbox.receipt;auto &h=testMailbox.header;
+ testMailbox.response.resultId=id;r.headerCrc=h.headerCrc;r.packedSize=h.packedSize;
+ r.metadataSize=h.metadataSize;r.reserved=SusamuneStateCrc(testMailbox.resultName,32);
+}
+__declspec(dllexport) u32 beginProjectImport(u32 corrupt) {
+ SusamuneTasRequest context={10,7,1,1,345,{0,0},0};
+ if(corrupt==1)context.componentId=8;if(corrupt==2)context.role=3;
+ if(corrupt==3)context.reserved[1]=1;
+ context.checksum=SusamuneTasRequestCrc(&context);if(corrupt==4)context.checksum^=1;
+ return StateStorage::startImport(7,999,100,0,&context);
+}
+__declspec(dllexport) u32 projectContextFlushedBeforeRequest(void) {
+ int context=-1,request=-1;for(u32 i=0;i<flushCount;++i){
+  if(flushed[i].address==&testMailbox.tasRequest && flushed[i].size==32)context=i;
+  if(flushed[i].address==&testMailbox.request)request=i;}
+ return context>=0 && request>context && testMailbox.tasRequest.projectId==10;
+}
 __declspec(dllexport) void windowReceipt(u32 corrupt) {
  acknowledge(0,0,0);auto &r=testMailbox.receipt;auto &h=testMailbox.header;auto &w=testMailbox.window;
  r.headerCrc=h.headerCrc;r.packedSize=h.packedSize;r.metadataSize=h.metadataSize;
@@ -105,6 +160,17 @@ __declspec(dllexport) u32 command(void) {return testMailbox.request.command;}
 __declspec(dllexport) void clearCacheLog(void) {flushCount=invalidateCount=0;}
 __declspec(dllexport) u32 stagingInvalidations(void) {
  u32 count=0;for(u32 i=0;i<invalidateCount;++i) if(invalidated[i].address==testStaging)++count;return count;
+}
+__declspec(dllexport) u32 projectScratchFlushedBeforeRequest(void) {
+ int scratch=-1,request=-1;for(u32 i=0;i<flushCount;++i){
+  if(flushed[i].address==testStaging && flushed[i].size==SUSAMUNE_STATE_CHUNK_SIZE)scratch=i;
+  if(flushed[i].address==&testMailbox.request)request=i;}
+ return scratch>=0 && request>scratch;
+}
+__declspec(dllexport) u32 projectScratchInvalidated(void) {
+ for(u32 i=0;i<invalidateCount;++i)
+  if(invalidated[i].address==testStaging && invalidated[i].size==SUSAMUNE_STATE_CHUNK_SIZE)return 1;
+ return 0;
 }
 __declspec(dllexport) u32 poolTailInvalidated(u32 offset,u32 size) {
  for(u32 i=0;i<invalidateCount;++i) if(invalidated[i].address==testPool+offset && invalidated[i].size==size)return 1;
@@ -176,11 +242,100 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
         if proc.returncode: raise RuntimeError(proc.stdout+proc.stderr)
         cls.lib = C.CDLL(str(path/'test.dll'))
         cls.lib.beginRename.argtypes = [C.c_uint, C.c_uint, C.c_char_p]
+        cls.lib.beginProject.argtypes = [C.c_char_p]
         cls.lib.mailbox.restype = C.c_void_p
         cls.pool_size,cls.staging_size=cls.lib.poolSize(),cls.lib.stagingSize()
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
 
     def setUp(self): self.lib.reset(0)
+
+    def test_project_manifest_enforces_roles_identity_capacity_and_start(self):
+        self.lib.prepareProject(0)
+        self.assertEqual(self.lib.projectValid(),1)
+        for corruption in range(1,10):
+            self.lib.prepareProject(corruption)
+            self.assertEqual(self.lib.projectValid(),0)
+            self.assertEqual(self.lib.beginProjectCommit(0),0)
+            self.assertEqual(self.lib.seq(),0)
+
+    def test_project_read_receipt_is_checked_and_not_consumed_by_state_manager(self):
+        for corruption in range(4):
+            self.lib.reset(0)
+            crc=self.lib.prepareProject(0)
+            self.assertEqual(self.lib.beginProjectRead(10,crc),1)
+            self.lib.projectReceipt(corruption);self.lib.tick()
+            self.assertEqual(self.lib.result(),999)
+            self.assertEqual(self.lib.projectResult(),0 if corruption==0 else 3)
+            self.assertEqual(self.lib.projectResult(),999)
+
+    def test_project_context_is_validated_and_published_before_transfer_request(self):
+        for corruption in range(1,5):
+            self.assertEqual(self.lib.beginProjectImport(corruption),0)
+            self.assertEqual(self.lib.seq(),0)
+        self.assertEqual(self.lib.beginProjectImport(0),1)
+        self.assertEqual(self.lib.projectContextFlushedBeforeRequest(),1)
+        self.lib.acknowledge(3,0,0);self.lib.tick()
+        self.assertEqual(self.lib.projectResult(),999)
+        self.assertEqual(self.lib.result(),3)
+
+    def test_project_commit_owns_mailbox_until_receipt_and_cannot_be_canceled(self):
+        self.lib.prepareProject(0)
+        self.assertEqual(self.lib.beginProjectCommit(0),1)
+        self.assertEqual(self.lib.cancel(),0)
+        self.assertEqual(self.lib.beginProject(b'Other'),0)
+        self.lib.projectReceipt(0);self.lib.tick()
+        self.assertEqual(self.lib.projectResult(),0)
+        self.assertEqual(self.lib.beginProject(b'Other'),1)
+
+    def test_all_project_operations_keep_their_project_result_route(self):
+        for operation in ('begin', 'read', 'catalog'):
+            with self.subTest(operation=operation):
+                self.lib.reset(0)
+                accepted = (self.lib.beginProject(b'New') if operation == 'begin' else
+                            self.lib.beginProjectRead(10, 0) if operation == 'read' else
+                            self.lib.beginProjectCatalog())
+                self.assertEqual(accepted, 1)
+                sequence = self.lib.seq()
+                self.assertEqual(self.lib.cancel(), 0)
+                self.assertEqual(self.lib.seq(), sequence)
+                self.lib.acknowledge(3, 0, 0); self.lib.tick()
+                self.assertEqual(self.lib.result(), 999)
+                self.assertEqual(self.lib.projectResult(), 3)
+
+    def test_project_commit_hands_off_scratch_until_matching_receipt(self):
+        self.lib.prepareProject(0)
+        self.assertEqual(self.lib.beginProjectCommit(0), 1)
+        self.assertEqual(self.lib.projectScratchFlushedBeforeRequest(), 1)
+        self.lib.clearCacheLog()
+        self.lib.acknowledge(3, 1, 0); self.lib.tick()
+        self.assertEqual(self.lib.stagingInvalidations(), 0)
+        self.assertEqual(self.lib.busy(), 1)
+        self.lib.acknowledge(3, 0, 0); self.lib.tick()
+        self.assertEqual(self.lib.projectScratchInvalidated(), 1)
+        self.assertEqual(self.lib.projectResult(), 3)
+
+    def test_commit_receipt_must_match_the_submitted_project_contents(self):
+        self.lib.prepareProject(0)
+        self.assertEqual(self.lib.beginProjectCommit(0), 1)
+        self.lib.projectReceipt(4); self.lib.tick()
+        self.assertEqual(self.lib.projectResult(), 3)
+
+    def test_rejected_export_context_keeps_borrowed_metadata_unchanged(self):
+        for corruption in (1, 2, 3):
+            self.lib.reset(0)
+            self.lib.prepareWindow(100)
+            before = C.string_at(self.lib.mailbox(), 8192)
+            self.assertEqual(self.lib.beginProjectExport(corruption), 0)
+            self.assertEqual(C.string_at(self.lib.mailbox(), 8192), before)
+        self.assertEqual(self.lib.beginProjectExport(0), 1)
+        self.assertEqual(self.lib.projectContextFlushedBeforeRequest(), 1)
+
+    def test_export_receipt_requires_a_valid_new_file_identity(self):
+        for identity in (0, 100000000, 1):
+            self.lib.reset(0)
+            self.assertEqual(self.lib.beginExport(100, 32), 1)
+            self.lib.exportReceipt(identity); self.lib.tick()
+            self.assertEqual(self.lib.result(), 0 if identity == 1 else 3)
 
     def test_all_four_receipt_identity_fields_must_match(self):
         self.assertEqual(self.lib.beginImport(100,0),1)
@@ -241,7 +396,7 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
 
     def test_previous_protocol_with_old_bank_boundary_exposes_no_service(self):
         self.assertGreater(self.lib.version(),3)
-        for version in (2,3,4):
+        for version in (2,3,4,5):
             with self.subTest(version=version):
                 self.lib.reset(0)
                 self.assertEqual(self.lib.setVersion(version),0)

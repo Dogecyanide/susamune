@@ -36,7 +36,12 @@ static u8 stateExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE + 64];
 #define STATE_POOL (statePool + 32)
 #define STATE_POOL_EXTRA (stateExtra + 32)
 #define STATE_STAGING (stateStaging + 32)
-static int f_mkdir_char(const char *p) { (void)p; return FR_EXIST; }
+static int f_mkdir_char(const char *p) {
+ if(lookup(p)>=0)return FR_EXIST;
+ if(testCount>=FIXTURE_FILES)return FR_DENIED;
+ struct TestFile *v=&testFiles[testCount++];copystr(v->path,p);
+ v->live=1;v->directory=1;return FR_OK;
+}
 static bool failRename;
 static u32 failReadAfter = 0xffffffffu;
 static int f_read(FIL *file,void *out,UINT amount,UINT *done) {
@@ -140,11 +145,18 @@ class StateStorageKernelTests(unittest.TestCase):
         path = Path(cls.temp.name)
         fixture = (ROOT / 'scripts/ghost_kernel_fixture.h').read_text()
         fixture = fixture.replace('#define FIXTURE_FILES 60000', '#define FIXTURE_FILES 100')
-        fixture = fixture.replace('#define FIXTURE_WRITES 80', '#define FIXTURE_WRITES 8')
+        fixture = fixture.replace('#define FIXTURE_WRITES 80', '#define FIXTURE_WRITES 16')
         fixture = fixture.replace('#define FIXTURE_FILE_BYTES 1400000', '#define FIXTURE_FILE_BYTES 6000000')
         fixture = fixture.replace('f_open_char(', 'fixture_open(').replace('f_unlink_char(', 'fixture_unlink(')
         fixture = fixture.replace('f_read(', 'fixture_read(')
+        fixture = fixture.replace('int live; int writable;', 'int live; int writable; int directory;')
+        fixture = fixture.replace('info->fsize=testFiles[i].size; return FR_OK;',
+                                  'info->fsize=testFiles[i].size; info->fattrib=testFiles[i].directory?AM_DIR:0; return FR_OK;')
+        fixture = fixture.replace('info->fsize=v->size; return FR_OK;',
+                                  'info->fsize=v->size; info->fattrib=v->directory?AM_DIR:0; return FR_OK;')
         source = (ROOT / 'launcher/kernel/SusamuneStateStorage.c').read_text()
+        source = source.replace('#include "SusamuneTasStorage.inc"',
+                                (ROOT / 'launcher/kernel/SusamuneTasStorage.inc').read_text())
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         start = source.index('static u32 BootConfigId(void)')
         end = source.index('\nstatic void Paths(', start)

@@ -16,7 +16,7 @@ Settings and binds are saved separately for JP, US and PAL. They belong to the d
 
 Quick: your Shined favourites.
 
-Practice: savestates, frame advance, free camera, input replay, RNG and gameplay options.
+Practice: savestates, frame advance, free camera, TAS projects, RNG and gameplay options.
 
 Runs: individual levels, playlists, timer and splits, and PB Safety.
 
@@ -122,33 +122,31 @@ Camera On means Mario input Off. Turn it Off before stepping a jump or spin.
 
 Free camera also works in the normal Start pause and while watching ghosts. During Ghost Watch you can resume playback with free camera still On.
 
-## Record and replay inputs
+## TAS projects
 
-Input replay repeats your actual button presses from a starting savestate. It is separate from ghost playback and is still experimental.
+Open Practice > TAS projects. Your recorded inputs, Beginning and two checkpoints stay together under one name.
 
-1. Turn Save RNG state On and save a new gameplay state. Keep this start state in its slot. Record uses the slot under Save to.
+1. Choose New TAS where you want to begin. Moonshine captures the Beginning and RNG automatically. Release A; gameplay stays paused.
 
-2. Choose Practice > Input replay (experimental) > Record from savestate. Release the A used to confirm. Other gameplay buttons may stay held.
+2. Hold Mario's buttons and press Step to record one frame, or Resume to record normal play. Opening the menu pauses your work.
 
-3. Play normally or use Pause and Step. Save another slot as a checkpoint. It keeps the inputs from the start to that moment.
+3. Open Checkpoints and Save Checkpoint 1 before a move you might want to retry. Later, Go to Checkpoint 1 rewinds the recording too. Continue lets you replace the old continuation. Checkpoint 2 gives you another retry point.
 
-4. Load the checkpoint to rewind those inputs and try a different continuation. A checkpoint saved during recording resumes recording after loading. For a stopped take, choose Continue editing checkpoint, then Step or Resume.
+4. Replay watches your inputs from the Beginning. B or Start stops playback. Continue stays paused until you Step or Resume.
 
-5. Opening the menu stops recording and keeps the take. Replay recorded inputs uses its matching start state, even if Save to or Load from has changed. B or Start stops playback.
+5. Save TAS asks for a name the first time. Confirm with Start and wait for the saved message. It saves your current point, Beginning and checkpoints together on SD. Later saves update the same TAS.
 
-To keep a TAS after rebooting, save both the start state and latest checkpoint to SD. Use names that distinguish them.
+6. After rebooting into the same build, game version, setup and episode, choose Open TAS and its name. The saved point opens paused. Continue to edit, or Replay to watch.
 
-After rebooting into the same build, game region, setup and scene, import the matching start into any memory slot, then load the latest checkpoint. Continue editing checkpoint resumes work; Replay recorded inputs plays from the beginning.
+Save Checkpoint keeps a retry point in memory. Save TAS keeps everything on SD, in /moonshine_tas. Only the SD save survives closing the game or rebooting. There is no need to import the Beginning and checkpoints separately.
 
-You can load a checkpoint directly from SD, but replay from the beginning still needs the matching start imported into memory.
+TAS projects share the three memory slots with ordinary states. If an occupied ordinary state needs replacing, you choose which one or cancel. The TAS screen names its own Beginning and checkpoints for you.
 
-A take holds up to 4096 game frames, about 137 seconds at 30 fps or 164 seconds at 25 fps. Only exported SD copies survive reboot. Keep both the start and checkpoint.
+In Open TAS, Start renames the highlighted file. X asks to delete its SD copy. Memory checkpoints stay; save again to keep that work after closing the game.
 
-Changing scenes clears the live take; load its matching checkpoint when you return. Gameplay settings must match. Timer and metadata layout, ghost inputs and camera presentation can still be adjusted.
+A TAS holds up to 4096 game frames: about 137 seconds at 30 fps or 164 seconds at 25 fps. Changing scenes clears the live recording; return and open the saved TAS.
 
-Starting means the take is waiting to begin. If it asks for the start state, import the matching start into memory. If settings or game state differ, keep the exact error when reporting it.
-
-Replay stops on a mismatch. It checks only selected game state, so it cannot reproduce every timed event reliably.
+Replay is experimental and stops if checked game state differs. Gameplay settings must match. Timer layout, metadata and camera presentation can still be adjusted. Use an exported ghost to share a finished attempt.
 
 ## Save, race and watch ghosts
 

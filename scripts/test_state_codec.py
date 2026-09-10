@@ -157,6 +157,11 @@ __declspec(dllexport) void packQuick(void *w,unsigned int ws,const StateCodec::R
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,StateCodec::Result *r) {
  *r=StateCodec::compress(w,ws,s,n,d,dn,false,true);
 }
+__declspec(dllexport) void repack(void *w,unsigned int ws,void *pw,unsigned int pws,
+ const StateCodec::ReadSpan *s,unsigned int n,const StateCodec::WriteSpan *d,
+ unsigned int dn,unsigned int raw,unsigned int adler,unsigned int compact,StateCodec::Result *r) {
+ *r=StateCodec::repack(w,ws,pw,pws,s,n,d,dn,raw,adler,compact!=0);
+}
 __declspec(dllexport) int check(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,unsigned int raw,unsigned int adler) {
  return StateCodec::validate(w,ws,s,n,raw,adler);
@@ -227,6 +232,9 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
                                      C.POINTER(Span), C.c_uint, C.POINTER(Result)]
         cls.lib.packMode.argtypes = cls.lib.packMany.argtypes[:-1]+[C.c_uint,C.POINTER(Result)]
         cls.lib.packQuick.argtypes = cls.lib.packMany.argtypes
+        cls.lib.repack.argtypes = [C.c_void_p,C.c_uint,C.c_void_p,C.c_uint,
+            C.POINTER(Span),C.c_uint,C.POINTER(Span),C.c_uint,C.c_uint,C.c_uint,
+            C.c_uint,C.POINTER(Result)]
         cls.lib.check.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
                                   C.c_uint, C.c_uint]
         cls.lib.unpack.argtypes = [C.c_void_p, C.c_uint, C.POINTER(Span), C.c_uint,
@@ -288,6 +296,89 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
                     self.assertEqual(out.data(), raw)
                     self.assertTrue(out.guards() and buffer.guards() and self.work.guards())
                     self.assertGreater(len(calls), 1)
+
+    def repack(self, encoded, raw, compact=False, capacities=None):
+        packed_work = Guarded(self.lib.workspace())
+        source = self.source(encoded, sorted(set((0, 1, 7, len(encoded) // 2, len(encoded) - 1))))
+        before = b''.join(C.string_at(s.data, s.size) for s in source)
+        buffers = [] if capacities is None else [Guarded(n) for n in capacities]
+        output = None if capacities is None else (Span * len(buffers))(*[Span(b.ptr,b.size) for b in buffers])
+        result = Result()
+        self.lib.repack(self.work.ptr,self.work.size,packed_work.ptr,packed_work.size,
+            source,len(source),output,len(buffers),len(raw),zlib.adler32(raw),compact,C.byref(result))
+        self.assertEqual(b''.join(C.string_at(s.data,s.size) for s in source), before)
+        self.assertTrue(packed_work.guards() and all(b.guards() for b in buffers))
+        return result, b''.join(b.data() for b in buffers)[:result.compressed]
+
+    def test_repack_quick_and_zlib_retain_exact_bytes_across_blocks_and_dictionary(self):
+        random_bytes = random.Random(67021).randbytes(70013)
+        for raw in (b'x', bytes(range(251))*1600 + random_bytes, random_bytes*3):
+            measured,_ = self.pack(self.source(raw),quick=True)
+            _,quick = self.pack(self.source(raw),[measured.compressed],quick=True)
+            for encoded in (quick,zlib.compress(raw)):
+                for compact in (False,True):
+                    count,_ = self.repack(encoded,raw,compact)
+                    self.assertEqual(count.status,SUCCESS)
+                    result,packed = self.repack(encoded,raw,compact,[1,count.compressed//2,count.compressed-1-count.compressed//2])
+                    self.assertEqual((result.status,result.raw,result.adler),(SUCCESS,len(raw),zlib.adler32(raw)))
+                    self.assertEqual(zlib.decompress(packed),raw)
+                    self.assertEqual(result.compressed,count.compressed)
+                    self.assertEqual(self.lib.check(self.work.ptr,self.work.size,self.source(packed),1,len(raw),result.adler),SUCCESS)
+
+    def test_repack_full_counts_complete_size_and_never_changes_source(self):
+        raw = random.Random(2304).randbytes(270001)
+        encoded = zlib.compress(raw)
+        count,_ = self.repack(encoded,raw,True)
+        for capacity in (0,1,count.compressed-1,count.compressed):
+            result,_ = self.repack(encoded,raw,True,[capacity])
+            self.assertEqual(result.status,SUCCESS if capacity==count.compressed else FULL)
+            self.assertEqual((result.compressed,result.raw,result.adler),(count.compressed,len(raw),zlib.adler32(raw)))
+
+    def test_repack_miniz_streams_keeps_exact_bytes_when_size_reduction_is_small(self):
+        for raw in (random.Random(903).randbytes(100000),
+                    random.Random(913).randbytes(32768)*4):
+            for initial_compact in (False,True):
+                count,_ = self.pack(self.source(raw),compact=initial_compact)
+                _,encoded = self.pack(self.source(raw),[count.compressed],compact=initial_compact)
+                for compact in (False,True):
+                    result,packed = self.repack(encoded,raw,compact,[len(raw)+1024])
+                    self.assertEqual(result.status,SUCCESS)
+                    self.assertEqual(zlib.decompress(packed),raw)
+                    self.assertEqual(result.adler,zlib.adler32(raw))
+
+    def test_repack_corrupt_stream_cannot_be_committed(self):
+        raw = bytes(range(253))*800
+        measured,_ = self.pack(self.source(raw),quick=True)
+        _,quick = self.pack(self.source(raw),[measured.compressed],quick=True)
+        for encoded in (quick,zlib.compress(raw)):
+            for broken,expected in ((encoded[:-1],raw),(encoded+b'\0',raw),(encoded,raw+b'\0'),
+                                    (encoded,bytes([raw[0]^1])+raw[1:])):
+                result,_ = self.repack(broken,expected,capacities=[len(raw)])
+                self.assertEqual(result.status,CORRUPT)
+                self.assertEqual(result.compressed,0)
+
+    def test_repack_rejects_workspace_and_output_aliases_before_writing(self):
+        raw = b'ownership'*10000
+        source = self.source(zlib.compress(raw))
+        work = Guarded(self.lib.workspace())
+        target = Guarded(len(raw))
+        good = (Span*1)(Span(target.ptr,target.size))
+        cases = [(self.work.ptr,self.work.size,good,1,INVALID),
+                 (work.ptr+1,work.size-1,good,1,INVALID),
+                 (work.ptr,work.size-1,good,1,WORKSPACE),
+                 (work.ptr,work.size,(Span*1)(Span(work.ptr,100)),1,INVALID),
+                 (work.ptr,work.size,(Span*1)(Span(self.work.ptr,100)),1,INVALID),
+                 (work.ptr,work.size,(Span*1)(Span(source[0].data,source[0].size)),1,INVALID),
+                 (work.ptr,work.size,C.cast(work.ptr,C.POINTER(Span)),1,INVALID),
+                 (work.ptr,work.size,good,65,INVALID)]
+        for pointer,size,output,count,expected in cases:
+            before = (work.data(),self.work.data(),target.data())
+            result = Result()
+            self.lib.repack(self.work.ptr,self.work.size,pointer,size,source,1,output,count,
+                len(raw),zlib.adler32(raw),False,C.byref(result))
+            self.assertEqual(result.status,expected)
+            self.assertEqual((work.data(),self.work.data(),target.data()),before)
+        self.assertTrue(work.guards() and target.guards())
 
     def test_stream_reader_faults_and_malformed_input_do_not_write_during_validation(self):
         raw = random.Random(199).randbytes(90000)

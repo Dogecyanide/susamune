@@ -15,6 +15,7 @@
 #include "susamune/japanese_ui.hxx"
 #include <Dolphin/mem.h>
 #include "susamune/practice_session.hxx"
+#include "susamune/tas_project.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
@@ -5822,16 +5823,14 @@ static_assert(sizeof(NestedMenuTab) <= 64,
 
 class PracticeControlsTab final : public MenuTab {
 public:
-    enum Page { FRAMES, CAMERA, INPUT_REPLAY };
+    enum Page { FRAMES, CAMERA };
     explicit PracticeControlsTab(Page page) : mPage(page), mSel(0), mBinding(false) { focus(); }
     const char *title() const override {
-        return mPage == FRAMES ? "Frame advance" :
-               mPage == CAMERA ? "Free camera" : "Input replay (experimental)";
+        return mPage == FRAMES ? "Frame advance" : "Free camera";
     }
     const char *summary() const override {
         return mPage == FRAMES ? "Pause the game and choose the inputs for each frame." :
-               mPage == CAMERA ? "Move the camera while gameplay or a ghost is paused." :
-               "Record a TAS from a start state. Save checkpoints to try different inputs.";
+               "Move the camera while gameplay or a ghost is paused.";
     }
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
@@ -5868,7 +5867,7 @@ public:
             case 0: close = PracticeSession::requestPauseToggle(true); break;
             case 1: close = PracticeSession::requestStep(true); break;
             }
-        } else if (mPage == CAMERA) {
+        } else {
             switch (mSel) {
             case 0: close = PracticeSession::requestFreeCameraToggle(); break;
             case 1: close = PracticeSession::requestPauseToggle(true); break;
@@ -5877,13 +5876,6 @@ public:
             case 4: gSettings.cycle(SETTING_FREE_CAMERA_SENSITIVITY, 1); return;
             case 5: gSettings.cycle(SETTING_FREE_CAMERA_HIDE_HUD, 1); return;
             case 6: PracticeSession::recenterCamera(); break;
-            }
-        } else {
-            switch (mSel) {
-            case 0: close = PracticeSession::requestRecord(); break;
-            case 1: close = PracticeSession::requestPlayback(); break;
-            case 2: PracticeSession::requestStop(); break;
-            case 3: close = PracticeSession::requestContinue(); break;
             }
         }
         if (close) menu->hide();
@@ -5895,24 +5887,15 @@ public:
         const char *frameLabels[] = {pause, "Advance one frame"};
         const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways",
                                      "Look sensitivity", "Hide all HUD", "Recenter camera"};
-        const char *replayLabels[] = {"Record from savestate", "Replay recorded inputs",
-                                    "Stop recording or replay", "Continue editing checkpoint"};
         const char *frameValues[] = {"", PracticeSession::manualPaused() ? "Step" : "Pause"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE),
             gSettings.valueLabel(SETTING_FREE_CAMERA_SENSITIVITY),
             gSettings.valueLabel(SETTING_FREE_CAMERA_HIDE_HUD), "Reset view"};
-        const char *replayValues[] = {"Record", "Play", "Stop", "Edit"};
-        const char *const *labels = mPage == FRAMES ? frameLabels : mPage == CAMERA ? cameraLabels : replayLabels;
-        const char *const *values = mPage == FRAMES ? frameValues : mPage == CAMERA ? cameraValues : replayValues;
+        const char *const *labels = mPage == FRAMES ? frameLabels : cameraLabels;
+        const char *const *values = mPage == FRAMES ? frameValues : cameraValues;
         char status[80];
-        if (mPage == INPUT_REPLAY)
-            snprintf(status, sizeof(status), "%s   Recorded: %lu frames",
-                PracticeSession::recording() ? "Recording" : PracticeSession::replaying() ? "Replaying" :
-                PracticeSession::starting() ? "Starting" : "Stopped",
-                PracticeSession::recordedFrames());
-        else
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
                 PracticeSession::manualPaused() ? "Paused" : "Live",
@@ -5942,13 +5925,12 @@ private:
             SETTING_FREE_CAMERA_HIDE_HUD};
         return ids[mSel - 2];
     }
-    int rowCount() const { return mPage == FRAMES ? 2 : mPage == CAMERA ? 7 : 4; }
+    int rowCount() const { return mPage == FRAMES ? 2 : 7; }
     BindId selectedBind() const {
         static const BindId frame[] = {BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP};
         static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT,
             BIND_COUNT, BIND_COUNT, BIND_COUNT, BIND_COUNT};
-        static const BindId replay[] = {BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP, BIND_COUNT};
-        return mPage == FRAMES ? frame[mSel] : mPage == CAMERA ? camera[mSel] : replay[mSel];
+        return mPage == FRAMES ? frame[mSel] : camera[mSel];
     }
     const char *help() const {
         if (mPage == FRAMES) {
@@ -5966,16 +5948,17 @@ private:
             if (mSel == 5) return "Hide game and Moonshine overlays while filming. You can still open this menu.";
             return "Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.";
         }
-        if (mSel == 0) return "Keep your start state. Save other slots as checkpoints; loading rewinds the inputs too.";
-        if (mSel == 1) return "Reloads the same state and repeats your inputs. B or Start cancels.";
-        if (mSel == 2) return "Stop keeps the take. Export its start state and latest checkpoint to SD to keep both.";
-        return "Continue a loaded TAS checkpoint. Gameplay stays paused until you Step or Resume.";
+        return "";
     }
     u8 mPage, mSel;
     bool mBinding;
     RawPromptInput mInput;
 };
 static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
+
+#pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+#include "tas_menu.inc"
+#pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
 class GuideTab final : public MenuTab {
 public:
@@ -5997,9 +5980,9 @@ public:
              "Main stick moves; C-stick turns the camera.", "L and R change height. Hold X for a boost.",
              "Movement speed changes how fast you travel.", "Look sensitivity changes how fast you turn.",
              "Hide all HUD removes overlays for filming.", "Turn camera Off, then Resume to play."},
-            {"INPUT RECORDING", "Save a start state before recording.", "Practice: Input replay, then Record.",
-             "Keep the start state in its original slot.", "Save other slots as checkpoints.",
-             "Load a checkpoint to rewind its inputs.", "Save start and checkpoint to SD to keep them.", "Replay stops if the recorded state does not match."},
+            {"TAS PROJECTS", "Practice: TAS projects, then New TAS.", "The beginning is captured automatically.",
+             "Continue edits while paused; Step or Resume.", "Checkpoints save places to return to.",
+             "Save TAS keeps everything together on SD.", "Open TAS restores its current checkpoint.", "Replay stops if the recorded state does not match."},
             {"TAS PRACTICE", "The timer stops while frame advance is paused.",
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",
@@ -6170,7 +6153,8 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 stageLoader[sizeof(StageLoaderTab)] __attribute__((aligned(8)));
     u8 settingsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 ilsHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
-    u8 practiceControls[3][sizeof(PracticeControlsTab)] __attribute__((aligned(8)));
+    u8 practiceControls[2][sizeof(PracticeControlsTab)] __attribute__((aligned(8)));
+    u8 tasProject[sizeof(TasProjectTab)] __attribute__((aligned(8)));
     u8 guide[16] __attribute__((aligned(8)));
     u8 displayHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 systemHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
@@ -6283,7 +6267,7 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
 
     MenuTab *frame = new (sMenuRuntime.practiceControls[0]) PracticeControlsTab(PracticeControlsTab::FRAMES);
     MenuTab *camera = new (sMenuRuntime.practiceControls[1]) PracticeControlsTab(PracticeControlsTab::CAMERA);
-    MenuTab *inputReplay = new (sMenuRuntime.practiceControls[2]) PracticeControlsTab(PracticeControlsTab::INPUT_REPLAY);
+    MenuTab *inputReplay = new (sMenuRuntime.tasProject) TasProjectTab();
     MenuTab *guide = new (sMenuRuntime.guide) GuideTab();
     MenuTab *practiceChildren[] = { frame, camera, inputReplay, savestate, practice, rng, gameplay };
     MenuTab *runChildren[] = { iling, stageLoader, records, pbSafety, timer };

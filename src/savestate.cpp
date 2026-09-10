@@ -290,10 +290,15 @@ static_assert(sizeof(StoredState) <= SUSAMUNE_STATE_METADATA_SIZE,
 
 StateSlotPool sPool;
 StatePoolMemory sPoolMemory;
-#pragma clang section bss=".foxtrot.bss"
-StoredState sSlots[SavestateManager::kSlotCount];
-StoredState sCandidate;
-#pragma clang section bss=""
+StoredState (&sSlots)[SavestateManager::kSlotCount] =
+    *reinterpret_cast<StoredState (*)[SavestateManager::kSlotCount]>(SUSAMUNE_STATE_METADATA_PPC_BASE);
+StoredState &sCandidate = *reinterpret_cast<StoredState *>(
+    SUSAMUNE_STATE_METADATA_PPC_BASE + sizeof(sSlots));
+bool sMetadataReady;
+static_assert(sizeof(sSlots) + sizeof(sCandidate) <= SUSAMUNE_STATE_METADATA_RUNTIME_SIZE,
+              "state metadata exceeds recording-input padding");
+static_assert(SUSAMUNE_GHOST_INPUT_MAX_COUNT * sizeof(SusamuneGhostInputSample) <=
+                  SUSAMUNE_STATE_METADATA_OFFSET, "state metadata overlaps ghost inputs");
 u32 sActiveSlot;
 u32 sLoadSlot;
 SusamuneStateCatalogEntry sSelectedSD, sPendingSD;
@@ -302,12 +307,17 @@ u32 sPendingSlot;
 u32 sPendingGeneration;
 bool sAwaitingLoadApproval;
 bool sBusy;
+#pragma clang section bss=".foxtrot.bss"
 StateArchiveProfile::Data sLiveArchiveProfile;
+#pragma clang section bss=""
 u32 sDurableSlots;
 u32 sPackedChecksums[SavestateManager::kSlotCount];
 u32 sDiskSlot, sDiskGeneration, sDiskPoolUsed, sDiskScene;
 OSTime sDiskStarted;
 bool sDiskActive;
+bool sExplicitTransfer, sTransferReady;
+SavestateManager::TransferResult sTransferResult;
+u32 sProjectStartKey[2], sProjectFrames, sProjectRole;
 bool sDiskRestore, sDiskLoadReady;
 bool sDiskStream, sDiskRecovered;
 SusamuneStateArchiveHeader sStreamHeader;
@@ -320,6 +330,28 @@ static_assert(STATE_SLOT_POOL_COUNT == SavestateManager::kSlotCount,
               "state slot counts differ");
 static_assert(StateCodec::kWorkspaceLimit <= SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
               "state codec workspace overlaps packed states");
+
+bool stateMetadataAvailable() {
+#if IS_EMULATOR
+    return true;
+#else
+    const volatile SusamuneCfg *cfg = SUSAMUNE_CFG_PPC_PTR;
+    const u32 flags = SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION | SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED;
+    if (cfg->magic != SUSAMUNE_CFG_MAGIC || cfg->version != SUSAMUNE_CFG_VERSION ||
+        (cfg->flags & flags) != flags) return false;
+    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    DCInvalidateRange((void *)&mailbox->response, 32);
+    return mailbox->response.responseMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
+        mailbox->response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION;
+#endif
+}
+
+void initStateMetadata() {
+    sMetadataReady = stateMetadataAvailable();
+    if (!sMetadataReady) return;
+    memset(sSlots, 0, sizeof(sSlots));
+    memset(&sCandidate, 0, sizeof(sCandidate));
+}
 
 u32 poolCapacity() { return StatePoolMemoryCapacity(&sPoolMemory); }
 
@@ -394,6 +426,7 @@ u32 metadataTag(const StoredState &slot) {
 }
 
 bool validStore() {
+    if (!sMetadataReady) return false;
     if (!StateSlotPoolValid(&sPool, poolCapacity())) return false;
     for (u32 i = 0; i < SavestateManager::kSlotCount; ++i) {
         const StoredState &slot = sSlots[i];
@@ -406,6 +439,92 @@ bool validStore() {
             slot.metadataTag != metadataTag(slot)) return false;
     }
     return true;
+}
+
+bool compressCandidate(const StateCodec::ReadSpan *source, u32 sourceCount,
+                       u32 rawSize, u32 slot, StateCodec::Result &result) {
+    StateCodec::WriteSpan output[3];
+    output[0] = {reinterpret_cast<void *>(kStagingBase), SUSAMUNE_STATE_STAGING_SIZE};
+    poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output + 1);
+    result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+        source, sourceCount, output, 3, false, true);
+    bool quick = true;
+    bool compact = false;
+    if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
+        StateSlotPoolPlanReplace(&sPool, poolCapacity(), slot, result.compressedBytes,
+                                 SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
+        quick = false;
+        result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+            source, sourceCount, output, 3);
+    }
+    if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
+        StateSlotPoolPlanReplace(&sPool, poolCapacity(), slot, result.compressedBytes,
+                                 SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
+        compact = true;
+        result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+            source, sourceCount, output, 3, compact);
+    }
+    return commitPackedState(source, sourceCount, rawSize, slot, result, compact, quick);
+}
+
+bool quickStoredState(u32 slot) {
+    u8 magic[4];
+    return sPool.slots[slot].size >= sizeof(magic) &&
+        StatePoolMemoryCopyOut(&sPoolMemory, sPool.slots[slot].offset, magic, sizeof(magic)) &&
+        magic[0] == 'M' && magic[1] == 'S' && magic[2] == 'L' && magic[3] == '4';
+}
+
+bool repackRetainedState(u32 slot, bool compact) {
+    StoredState &saved = sSlots[slot];
+    if (packedChecksum(sPool.slots[slot].offset, saved.packedSize) != sPackedChecksums[slot])
+        return false;
+    u8 *packWorkspace = reinterpret_cast<u8 *>(kStagingBase);
+    u8 *staging = packWorkspace + SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE;
+    const u32 stagingSize = SUSAMUNE_STATE_STAGING_SIZE - SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE;
+    StateCodec::ReadSpan source[2];
+    poolReadSpans(sPool.slots[slot].offset, saved.packedSize, source);
+    StateCodec::WriteSpan output[3] = {{staging, stagingSize}, {nullptr, 0}, {nullptr, 0}};
+    poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output + 1);
+    const StateCodec::Result result = StateCodec::repack(codecWorkspace(),
+        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, packWorkspace, SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
+        source, 2, output, 3, saved.rawSize, saved.adler32, compact);
+    // A retained source is never reclaimed to make room for its replacement.
+    if (result.status != StateCodec::SUCCESS || result.rawBytes != saved.rawSize ||
+        result.adler32 != saved.adler32 || result.compressedBytes >= saved.packedSize ||
+        !StateSlotPoolCommitBanked(&sPool, &sPoolMemory, slot, result.compressedBytes,
+                                  staging, stagingSize)) return false;
+    saved.packedSize = result.compressedBytes;
+    saved.metadataTag = metadataTag(saved);
+    sPackedChecksums[slot] = packedChecksum(sPool.slots[slot].offset, saved.packedSize);
+    return true;
+}
+
+bool repackForCandidate(const StateCodec::ReadSpan *source, u32 sourceCount,
+                        u32 rawSize, u32 slot, StateCodec::Result &result) {
+    if ((result.status != StateCodec::SUCCESS && result.status != StateCodec::OUTPUT_FULL) ||
+        result.rawBytes != rawSize ||
+        StateSlotPoolPlanReplace(&sPool, poolCapacity(), slot, result.compressedBytes,
+                                 SUSAMUNE_STATE_STAGING_SIZE) != STATE_SLOT_REPLACE_REFUSE)
+        return false;
+    u32 retainedSlots = 0, quickSlots = 0;
+    for (u32 i = 0; i < SavestateManager::kSlotCount; ++i) {
+        if (i == slot || !sPool.slots[i].size) continue;
+        retainedSlots |= 1u << i;
+        if (quickStoredState(i)) quickSlots |= 1u << i;
+    }
+    for (u32 mode = 0; mode < 2; ++mode) {
+        for (u32 i = 0; i < SavestateManager::kSlotCount; ++i) {
+            if (!((mode ? retainedSlots : quickSlots) & (1u << i)) ||
+                !repackRetainedState(i, mode != 0)) continue;
+            if (StateSlotPoolPlanReplace(&sPool, poolCapacity(), slot, result.compressedBytes,
+                                         SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE)
+                continue;
+            if (compressCandidate(source, sourceCount, rawSize, slot, result)) return true;
+            if ((result.status != StateCodec::SUCCESS && result.status != StateCodec::OUTPUT_FULL) ||
+                result.rawBytes != rawSize) return false;
+        }
+    }
+    return false;
 }
 
 u32 nextGeneration() {
@@ -746,7 +865,7 @@ SavestateManager::SavestateManager() {
 
     memset(&sPool, 0, sizeof(sPool));
     sPoolMemory = statePoolMemory();
-    memset(sSlots, 0, sizeof(sSlots));
+    initStateMetadata();
     sActiveSlot = sLoadSlot = sNextGeneration = 0;
     memset(&sSelectedSD, 0, sizeof(sSelectedSD));
     memset(&sPendingSD, 0, sizeof(sPendingSD));
@@ -754,7 +873,7 @@ SavestateManager::SavestateManager() {
     sAwaitingLoadApproval = sBusy = false;
     sDurableSlots = 0;
     memset(sPackedChecksums, 0, sizeof(sPackedChecksums));
-    sDiskActive = false;
+    sDiskActive = sExplicitTransfer = sTransferReady = false;
     sDiskRestore = sDiskLoadReady = false;
     sDiskStream = sDiskRecovered = false;
 }
@@ -865,17 +984,41 @@ bool SavestateManager::selectSDForLoad(u32 id, u32 crc, u32 packed, const char *
 }
 
 bool SavestateManager::diskBusy() { return sDiskActive || sDiskLoadReady || StateStorage::busy(); }
-bool SavestateManager::sdAvailable() const { return StateStorage::available(); }
+bool SavestateManager::sdAvailable() const { return sMetadataReady && StateStorage::available(); }
 bool SavestateManager::sdCatalogReady() const { return StateStorage::catalogReady(); }
 const SusamuneStateCatalog &SavestateManager::sdCatalog() const { return StateStorage::catalog(); }
 const char *SavestateManager::sdStatus() const {
-    return sdAvailable() ? sDiskStatus : "SD states need Moonshine Launcher";
+    return sdAvailable() ? sDiskStatus : "Savestates need the matching Moonshine Launcher";
+}
+
+bool SavestateManager::projectCompatible(const SusamuneTasManifest &project) const {
+    return project.gameId == archiveGameId() && project.buildCrc == archiveBuildId() &&
+        project.configId == StateStorage::configId() && project.sceneKey == archiveSceneKey();
+}
+
+bool SavestateManager::takeTransferResult(TransferResult &out) {
+    if (!sTransferReady) return false;
+    out = sTransferResult;
+    sTransferReady = false;
+    return true;
 }
 
 bool SavestateManager::saveToSD(const char *name) {
-    if (sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval || !validStore()) return false;
+    return beginSDExport(sActiveSlot, slotInfo(sActiveSlot).generation, name, nullptr);
+}
+
+bool SavestateManager::exportSlotExplicit(u32 slot, u32 expectedGeneration,
+                                          const SusamuneTasRequest *project) {
+    if (!project || !expectedGeneration || sTransferReady) return false;
+    return beginSDExport(slot, expectedGeneration, nullptr, project);
+}
+
+bool SavestateManager::beginSDExport(u32 slot, u32 expectedGeneration, const char *name,
+                                     const SusamuneTasRequest *project) {
+    if (slot >= kSlotCount || sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval || !validStore()) return false;
+    if (sSlots[slot].generation != expectedGeneration) return false;
     if (!admitArchiveStage()) return false;
-    const StoredState &saved = sSlots[sActiveSlot];
+    const StoredState &saved = sSlots[slot];
     if (!StateArchiveProfile::valid(saved.archiveProfile)) {
         sDiskStatus = "Save a supported stage state first";
         if (gMenu) gMenu->toast(sDiskStatus);
@@ -891,9 +1034,12 @@ bool SavestateManager::saveToSD(const char *name) {
     h.sceneKey = (static_cast<u32>(saved.header.area_id) << 24) |
         (static_cast<u32>(saved.header.episode_id) << 16) | (saved.parentEpisode & 0xFFFFu);
     if (name) strncpy(h.name, name, sizeof(h.name) - 1);
-    else snprintf(h.name, sizeof(h.name), "State %lu - area %u episode %u", sActiveSlot + 1,
+    else snprintf(h.name, sizeof(h.name), "State %lu - area %u episode %u", slot + 1,
                   saved.header.area_id, saved.header.episode_id);
-    if (!StateStorage::startExport(h, &saved, sPool.slots[sActiveSlot].offset)) return false;
+    if (!StateStorage::startExport(h, &saved, sPool.slots[slot].offset, project)) return false;
+    sDiskSlot = slot;
+    sDiskGeneration = expectedGeneration;
+    sExplicitTransfer = project != nullptr;
     sDiskStarted = OSGetTime();
     sDiskActive = true;
     sDiskStatus = "Saving state to SD...";
@@ -904,18 +1050,41 @@ bool SavestateManager::loadFromSD(u32 id, u32 crc, u32 packed) {
     return beginSDLoad(id, crc, packed, false);
 }
 
-bool SavestateManager::beginSDLoad(u32 id, u32 crc, u32 packed, bool restore) {
+bool SavestateManager::importSlotExplicit(u32 slot, u32 expectedGeneration, u32 id,
+                                          u32 crc, u32 packed, const SusamuneTasRequest *project,
+                                          const SusamuneTasManifest *manifest) {
+    if (!project || !manifest || !SusamuneTasManifestValid(manifest) ||
+        !projectCompatible(*manifest) || project->role >= SUSAMUNE_TAS_COMPONENTS ||
+        manifest->projectId != project->projectId || manifest->generation != project->projectGeneration ||
+        manifest->checksum != project->expectedProjectCrc || sTransferReady || slot >= kSlotCount ||
+        slotInfo(slot).generation != expectedGeneration) return false;
+    const SusamuneTasComponent &component = manifest->components[project->role];
+    if (component.componentId != id || project->componentId != id ||
+        component.headerCrc != crc || component.packedBytes != packed || component.role != project->role ||
+        !beginSDLoad(id, crc, packed, false, slot, project)) return false;
+    sProjectStartKey[0] = manifest->startKey[0];
+    sProjectStartKey[1] = manifest->startKey[1];
+    sProjectFrames = component.frames;
+    sProjectRole = component.role;
+    return true;
+}
+
+bool SavestateManager::beginSDLoad(u32 id, u32 crc, u32 packed, bool restore,
+                                  u32 slot, const SusamuneTasRequest *project) {
+    if (slot == kSlotCount) slot = sActiveSlot;
+    if (slot >= kSlotCount) return false;
     if (sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval || !validStore()) return false;
     if (!admitArchiveStage()) return false;
-    if (!restore && !StateSlotPoolCanCommit(&sPool, poolCapacity(), sActiveSlot, packed, SUSAMUNE_STATE_STAGING_SIZE)) {
+    if (!restore && !StateSlotPoolCanCommit(&sPool, poolCapacity(), slot, packed, SUSAMUNE_STATE_STAGING_SIZE)) {
         sDiskStatus = "Not enough state memory - clear a slot";
         if (gMenu) gMenu->toast(sDiskStatus);
         return false;
     }
     const bool stream = restore && packed > SUSAMUNE_STATE_STAGING_SIZE + poolCapacity() - sPool.used;
-    if (stream ? !StateStorage::startWindow(id, crc, packed, 0, SUSAMUNE_STATE_STAGING_SIZE) :
-        !StateStorage::startImport(id, crc, packed, sPool.used)) return false;
-    sDiskSlot = sActiveSlot;
+    if (stream ? !StateStorage::startWindow(id, crc, packed, 0, SUSAMUNE_STATE_STAGING_SIZE, project) :
+        !StateStorage::startImport(id, crc, packed, sPool.used, project)) return false;
+    sDiskSlot = slot;
+    sExplicitTransfer = project != nullptr;
     sDiskGeneration = sSlots[sDiskSlot].generation;
     sDiskPoolUsed = sPool.used;
     sDiskScene = archiveSceneKey();
@@ -982,6 +1151,9 @@ void SavestateManager::updateDisk() {
             memcpy(&sCandidate, result.metadata, sizeof(sCandidate));
             valid = archiveCandidateMatches(result.header);
         }
+        if (valid && sExplicitTransfer)
+            valid = PracticeSession::projectSavestateMatches(sCandidate.practice,
+                sProjectStartKey, sProjectRole, sProjectFrames);
         if (valid && !sDiskRestore) {
             const u32 first = sCandidate.packedSize < SUSAMUNE_STATE_STAGING_SIZE ?
                 sCandidate.packedSize : SUSAMUNE_STATE_STAGING_SIZE;
@@ -1027,13 +1199,21 @@ void SavestateManager::updateDisk() {
         OSRestoreInterrupts(ints);
         if (!valid) result.status = SUSAMUNE_STATE_BAD_FILE;
     } else if (wasActive) rebaseMissionStopwatch(sDiskStarted);
+    if (wasActive && sExplicitTransfer) {
+        sTransferResult = {result.command, result.status, result.id, sDiskSlot,
+            imported ? sSlots[sDiskSlot].generation : sDiskGeneration, result.header};
+        sTransferReady = true;
+    }
+    const bool projectTransfer = sExplicitTransfer;
+    sExplicitTransfer = false;
     sDiskActive = false;
     sDiskRestore = false;
     if (result.status != SUSAMUNE_STATE_OK) {
         sDiskStatus = archiveStatusText(result.status);
         PracticeSession::cancelLoadHold();
     }
-    else if (result.command == SUSAMUNE_STATE_CMD_EXPORT) sDiskStatus = "State saved in /moonshine_states";
+    else if (result.command == SUSAMUNE_STATE_CMD_EXPORT) sDiskStatus = projectTransfer ?
+        "TAS checkpoint saved" : "State saved in /moonshine_states";
     else if (result.command == SUSAMUNE_STATE_CMD_CATALOG) sDiskStatus = "SD states ready";
     else if (result.command == SUSAMUNE_STATE_CMD_RENAME) {
         sDiskStatus = "SD state renamed";
@@ -1049,8 +1229,8 @@ void SavestateManager::updateDisk() {
         sDiskStatus = "SD state imported into memory";
         char message[48];
         snprintf(message, sizeof(message), "Imported into state %lu", sDiskSlot + 1);
-        if (gMenu) gMenu->toast(message);
-    } else if (wasActive && gMenu) gMenu->toast(sDiskStatus);
+        if (gMenu && !projectTransfer) gMenu->toast(message);
+    } else if (wasActive && gMenu && !projectTransfer) gMenu->toast(sDiskStatus);
 }
 
 bool SavestateManager::clearSlot(u32 slot, u32 expectedGeneration) {
@@ -1072,12 +1252,17 @@ bool SavestateManager::clearSlot(u32 slot, u32 expectedGeneration) {
 }
 
 bool SavestateManager::saveState() {
+    return saveSlotExplicit(sActiveSlot);
+}
+
+bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracticeTake) {
     if (sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval) {
         feedback("E:busy", "Wait for the pending state load");
         return false;
     }
-    if (!validStore()) {
-        feedback("E:store", "State memory damaged - restart game");
+    if (slot >= kSlotCount || !validStore()) {
+        feedback("E:store", sMetadataReady ? "State memory damaged - restart game" :
+            "Savestates need matching Moonshine Launcher");
         return false;
     }
     // Refuse while a stage load is in flight or the intro sequence is playing;
@@ -1178,7 +1363,8 @@ bool SavestateManager::saveState() {
         // seed when "Save RNG state" is Off). It simply won't be in the region
         // list, so a later load leaves that memory untouched.
         if (kStaticRanges[i].gate != kNoGate &&
-            !gSettings.getBool((SettingId)kStaticRanges[i].gate)) {
+            !gSettings.getBool((SettingId)kStaticRanges[i].gate) &&
+            !(forceRng && kStaticRanges[i].gate == SETTING_SAVE_RNG_STATE)) {
             continue;
         }
         u32 sz = kStaticRanges[i].end - kStaticRanges[i].start;
@@ -1222,7 +1408,7 @@ bool SavestateManager::saveState() {
         return false;
     }
     StateCodec::ReadSpan practiceSource[PracticeSession::kSavestateSpanCount];
-    if (!PracticeSession::captureSavestate(sCandidate.practice, practiceSource)) {
+    if (!PracticeSession::captureSavestate(sCandidate.practice, practiceSource, forceRng, omitPracticeTake)) {
         rebaseMissionStopwatch(h->save_time);
         unmuteAudioDma(dma);
         OSRestoreInterrupts(ints);
@@ -1242,30 +1428,11 @@ bool SavestateManager::saveState() {
         source[h->region_count + Ghost::kSavestateSpanCount + i] = practiceSource[i];
         rawSize += practiceSource[i].size;
     }
-    StateCodec::WriteSpan output[3];
-    output[0] = {reinterpret_cast<void *>(kStagingBase), SUSAMUNE_STATE_STAGING_SIZE};
-    poolWriteSpans(sPool.used, poolCapacity() - sPool.used, output + 1);
-    StateCodec::Result result = StateCodec::compress(codecWorkspace(),
-        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, source,
-        h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3, false, true);
-    bool quick = true;
-    bool compact = false;
-    if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
-        StateSlotPoolPlanReplace(&sPool, poolCapacity(), sActiveSlot, result.compressedBytes,
-                                 SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
-        quick = false;
-        result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
-            source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3);
-    }
-    if ((result.status == StateCodec::SUCCESS || result.status == StateCodec::OUTPUT_FULL) &&
-        StateSlotPoolPlanReplace(&sPool, poolCapacity(), sActiveSlot, result.compressedBytes,
-                                 SUSAMUNE_STATE_STAGING_SIZE) == STATE_SLOT_REPLACE_REFUSE) {
-        compact = true;
-        result = StateCodec::compress(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
-            source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount, output, 3, compact);
-    }
-    const bool fits = commitPackedState(source, h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount,
-                                         rawSize, sActiveSlot, result, compact, quick);
+    StateCodec::Result result;
+    bool fits = compressCandidate(source, h->region_count + Ghost::kSavestateSpanCount +
+        PracticeSession::kSavestateSpanCount, rawSize, slot, result);
+    if (!fits) fits = repackForCandidate(source, h->region_count + Ghost::kSavestateSpanCount +
+        PracticeSession::kSavestateSpanCount, rawSize, slot, result);
     if (!fits) {
         rebaseMissionStopwatch(h->save_time);
         unmuteAudioDma(dma);
@@ -1274,7 +1441,7 @@ bool SavestateManager::saveState() {
         char text[48];
         snprintf(text, sizeof(text), result.status == StateCodec::SUCCESS ||
             result.status == StateCodec::OUTPUT_FULL ?
-            "State %lu won't fit - clear another slot" : "State %lu could not be compressed", sActiveSlot + 1);
+            "State %lu won't fit - clear another slot" : "State %lu could not be compressed", slot + 1);
         feedback("E:space", text);
         return false;
     }
@@ -1284,9 +1451,9 @@ bool SavestateManager::saveState() {
     sCandidate.generation = nextGeneration();
     h->magic = kSnapshotMagic;
     sCandidate.metadataTag = metadataTag(sCandidate);
-    sSlots[sActiveSlot] = sCandidate;
-    sDurableSlots &= ~(1u << sActiveSlot);
-    sPackedChecksums[sActiveSlot] = packedChecksum(sPool.slots[sActiveSlot].offset, sCandidate.packedSize);
+    sSlots[slot] = sCandidate;
+    sDurableSlots &= ~(1u << slot);
+    sPackedChecksums[slot] = packedChecksum(sPool.slots[slot].offset, sCandidate.packedSize);
     // The pool stays PPC-owned; SD export flushes its exact spans before handoff.
 
     // The mission countdown must not charge time spent compressing a state.
@@ -1295,11 +1462,11 @@ bool SavestateManager::saveState() {
     OSRestoreInterrupts(ints);
     sBusy = false;
 
-    PracticeSession::onSavestateSaved(sActiveSlot, sCandidate.generation);
-    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, sActiveSlot + 1);
+    PracticeSession::onSavestateSaved(slot, sCandidate.generation);
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, slot + 1);
     char text[48];
-    snprintf(text, sizeof(text), "State %lu saved", sActiveSlot + 1);
-    feedback("saved", text);
+    snprintf(text, sizeof(text), "State %lu saved", slot + 1);
+    if (!forceRng) feedback("saved", text);
     return true;
 }
 
@@ -1324,7 +1491,8 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     }
 
     if (!validStore() || (slot >= kSlotCount && !fromSD)) {
-        feedback("E:store", "State memory damaged - restart game");
+        feedback("E:store", sMetadataReady ? "State memory damaged - restart game" :
+            "Savestates need matching Moonshine Launcher");
         return false;
     }
     StoredState &saved = fromSD ? sCandidate : sSlots[slot];

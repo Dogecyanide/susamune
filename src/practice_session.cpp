@@ -127,6 +127,7 @@ u32 sTapeStart;
 u32 sOriginKey[2];
 bool sTakeAttached;
 u32 sTakePosition;
+u32 sEditRevision;
 u32 sPendingReleases;
 bool sOwnRestoreValid;
 u16 sPriorButtons;
@@ -744,7 +745,8 @@ extern "C" s32 susamunePracticeChangeState(TMarDirector *director) {
 namespace PracticeSession {
 
 bool captureSavestate(SavestateData &out,
-                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]) {
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount],
+                      bool forceRng, bool omitTake) {
     memset(&out, 0, sizeof(out));
     memset(spans, 0, sizeof(spans));
     out.version = kSavedTakeVersion;
@@ -755,13 +757,13 @@ bool captureSavestate(SavestateData &out,
     if (!normalStage() || Ghost::observerStatsSuppressed()) return true;
     if (sModalPadValid) sStatePad = sModalPad;
     else capturePad(sStatePad, gpApplication.mGamePads[0]);
-    out.flags = SAVED_PAD | (gSettings.getBool(SETTING_SAVE_RNG_STATE) ? SAVED_RNG : 0) |
+    out.flags = SAVED_PAD | ((forceRng || gSettings.getBool(SETTING_SAVE_RNG_STATE)) ? SAVED_RNG : 0) |
                 (sPaused ? SAVED_PAUSED : 0);
     out.padHash = hashBytes(2166136261u, &sStatePad, sizeof(sStatePad));
     out.savedFingerprint = fingerprint();
     out.releases = sPendingReleases;
     spans[0] = {&sStatePad, sizeof(sStatePad)};
-    if (sTakeAttached && (out.flags & SAVED_RNG) &&
+    if (!omitTake && sTakeAttached && (out.flags & SAVED_RNG) &&
         (sOriginKey[0] | sOriginKey[1]) && settingsHash() == sSettingsHash) {
         if (!tapeStorageReady() || sCount > kMaxFrames || sTakePosition > sCount) return false;
         out.flags |= SAVED_TAKE | ((sRecord || sReplay) ? SAVED_RECORDING : 0);
@@ -775,6 +777,17 @@ bool captureSavestate(SavestateData &out,
         spans[1] = {sFrames, out.frames * static_cast<u32>(sizeof(Frame))};
     }
     return validSavedTake(out);
+}
+
+bool projectSavestateMatches(const SavestateData &data, const u32 (&startKey)[2],
+                             u32 role, u32 frames) {
+    if (role >= 3 || frames > kMaxFrames || !(startKey[0] | startKey[1]) ||
+        (data.flags & (SAVED_PAD | SAVED_RNG)) != (SAVED_PAD | SAVED_RNG) ||
+        data.frames != frames) return false;
+    if (!role) return !frames && !(data.flags & SAVED_TAKE) &&
+        data.stateKey[0] == startKey[0] && data.stateKey[1] == startKey[1];
+    return (data.flags & SAVED_TAKE) && data.originKey[0] == startKey[0] &&
+        data.originKey[1] == startKey[1];
 }
 
 bool savestateRestoreSpans(const SavestateData &data,
@@ -826,6 +839,7 @@ bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation) {
         message("TAS checkpoint inputs are damaged - recording stopped");
         return false;
     }
+    ++sEditRevision;
     sCount = data.frames;
     sTakePosition = data.frames;
     sTapeHash = data.frameHash;
@@ -878,6 +892,7 @@ void beforeStageSetup() {
     sCameraWaitButtons = false;
     restoreCamera();
     ++sStageGeneration;
+    ++sEditRevision;
     sFreeCamera = false;
     sCamera = nullptr;
     sPaused = false;
@@ -1018,6 +1033,7 @@ void afterDirect(s32 appState, bool gameplayActive) {
         } else {
             writeFrame(sFrames[sCount], sConsumed, fingerprint(), sPendingReleases);
             ++sCount;
+            ++sEditRevision;
             sTakePosition = sCount;
             sTakeAttached = true;
             if (sCount == kMaxFrames) stopTape("Input recording full");
@@ -1062,7 +1078,7 @@ void afterDraw() {
         stopTape("Save a new gameplay state first");
         return;
     }
-    if (sLoadKind == 2 && settingsHash() != sSettingsHash) {
+    if (sLoadKind != 1 && settingsHash() != sSettingsHash) {
         stopTape("Settings changed since recording - record again");
         return;
     }
@@ -1076,7 +1092,8 @@ void afterDraw() {
         stopTape("TAS start state is unavailable");
         return;
     }
-    const bool recordPaused = kind == 1 && (sPaused || (seedData.flags & SAVED_PAUSED));
+    const bool recordPaused = kind == 3 ||
+        (kind == 1 && (sPaused || (seedData.flags & SAVED_PAUSED)));
     sOwnRestoreValid = false;
     sOwnLoad = true;
     const bool loaded = gSavestateMgr->loadSlot(slot, generation);
@@ -1104,6 +1121,7 @@ void afterDraw() {
     sCursor = 0;
     sTakePosition = 0;
     if (kind == 1) {
+        ++sEditRevision;
         sCount = 0;
         sTapeHash = 0;
         sTapeSeed = generation;
@@ -1122,8 +1140,8 @@ void afterDraw() {
             sPaused = true;
             return;
         }
-        sReplay = true;
-        message("Input playback - B or Start stops");
+        sReplay = kind == 2;
+        message(sReplay ? "TAS replay - B or Start stops" : "Beginning loaded - Continue to edit here");
     }
     CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, kind, sCount);
     invalidate();
@@ -1317,36 +1335,40 @@ bool requestFreeCameraToggle() {
     return true;
 }
 
-bool requestRecord() {
-    if (!tapeStorageReady()) {
-        message("Input sessions need a matching launcher");
-        return false;
-    }
-    const u32 slot = gSavestateMgr ? gSavestateMgr->activeSlot() :
-                                   SavestateManager::kSlotCount;
-    const u32 generation = gSavestateMgr ?
-        gSavestateMgr->slotInfo(slot).generation : 0;
-    if (!available() || !normalStage() || !seedMatches(slot, generation) ||
-        Ghost::observerStatsSuppressed()) {
-        message("Save a new gameplay state in Save to first");
+bool requestRecordFrom(u32 slot, u32 generation) {
+    if (!tapeStorageReady() || !available() || !normalStage() ||
+        !seedMatches(slot, generation) || Ghost::observerStatsSuppressed()) {
+        message("TAS needs a ready gameplay scene");
         return false;
     }
     SavestateData seedData;
-    if (!gSavestateMgr->practiceData(slot, &seedData) ||
-        !(seedData.flags & SAVED_RNG) || !gSettings.getBool(SETTING_SAVE_RNG_STATE)) {
-        message("Turn on Save RNG state, then save a new state");
+    if (!gSavestateMgr->practiceData(slot, &seedData) || !(seedData.flags & SAVED_RNG)) {
+        message("This beginning does not contain RNG state");
         return false;
     }
+    sPaused = true;
     queueTapeLoad(1, slot, generation);
     return true;
 }
 
-bool requestPlayback() {
+bool requestRecord() {
+    const u32 slot = gSavestateMgr ? gSavestateMgr->activeSlot() : SavestateManager::kSlotCount;
+    if (!gSettings.getBool(SETTING_SAVE_RNG_STATE)) {
+        message("Turn on Save RNG state, then save a new state");
+        return false;
+    }
+    const bool wasPaused = sPaused;
+    const bool accepted = requestRecordFrom(slot, gSavestateMgr ? gSavestateMgr->slotInfo(slot).generation : 0);
+    sPaused = wasPaused;
+    return accepted;
+}
+
+static bool requestReview(bool beginning) {
     if (!tapeStorageReady()) {
         message("Input sessions need a matching launcher");
         return false;
     }
-    if (!available() || !normalStage() || sCount == 0 ||
+    if (!available() || !normalStage() || (!beginning && sCount == 0) ||
         sTapeStage != sStageGeneration || Ghost::observerStatsSuppressed()) {
         message("Record a take with this savestate first");
         return false;
@@ -1364,9 +1386,38 @@ bool requestPlayback() {
         message("Input recording is damaged - record again");
         return false;
     }
-    queueTapeLoad(2, sTapeSlot, sTapeSeed);
+    if (beginning) sPaused = true;
+    queueTapeLoad(beginning ? 3 : 2, sTapeSlot, sTapeSeed);
     return true;
 }
+
+bool requestPlayback() { return requestReview(false); }
+bool requestBeginning() { return requestReview(true); }
+void pauseForCheckpoint() {
+    if (sReplay) stopTape(nullptr);
+    sPaused = true;
+    sPausePending = sStepQueued = false;
+    sMenuAction = 0;
+    invalidate();
+}
+void pauseEditing() {
+    stopTape(nullptr);
+    pauseForCheckpoint();
+}
+bool attachedTo(const u32 (&key)[2]) {
+    return sTakeAttached && sTapeStage == sStageGeneration &&
+        sOriginKey[0] == key[0] && sOriginKey[1] == key[1];
+}
+bool checkpointReady() {
+    return normalStage() && sTakeAttached && sTapeStage == sStageGeneration &&
+        settingsHash() == sSettingsHash && (sPaused || sRecord || sReplay) &&
+        !Ghost::observerStatsSuppressed();
+}
+bool projectAvailable() {
+    return available() && tapeStorageReady() && normalStage() && !Ghost::observerStatsSuppressed();
+}
+u32 editRevision() { return sEditRevision; }
+u32 takePosition() { return sTakePosition; }
 
 bool requestContinue() {
     if (!available() || !normalStage() || !sTakeAttached || !tapeStorageReady() ||
@@ -1383,6 +1434,7 @@ bool requestContinue() {
         message("Input recording is damaged - load a checkpoint");
         return false;
     }
+    if (sCount != sTakePosition) ++sEditRevision;
     sCount = sTakePosition;
     sTapeHash = hashBytes(2166136261u, sFrames, sCount * sizeof(Frame));
     sRecord = true;

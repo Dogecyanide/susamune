@@ -15,7 +15,7 @@ const u32 kMailbox = SUSAMUNE_STATE_STORAGE_PPC_BASE;
 const u32 kStaging = SUSAMUNE_STATE_STAGING_PPC_BASE;
 #endif
 SusamuneStateStorageMailbox *const sMailbox = reinterpret_cast<SusamuneStateStorageMailbox *>(kMailbox);
-u32 sSession, sSequence, sConfig, sImportSize, sImportOffset;
+u32 sSession, sSequence, sConfig, sImportSize, sImportOffset, sProjectReplyCrc;
 SusamuneStateRequest sPending;
 bool sAvailable, sResultReady, sCatalogReady;
 Result sResult;
@@ -46,8 +46,11 @@ void syncImport(bool finished) {
     if (sImportSize > first) syncPool(sImportOffset, sImportSize - first, finished);
 }
 
-bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize = 0) {
+bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize = 0,
+            const SusamuneTasRequest *project = nullptr) {
     if (!sAvailable || sPending.command || sResultReady) return false;
+    if (project && (!SusamuneTasRequestValid(project) || !project->projectId ||
+        project->componentId != id)) return false;
     memset(&sPending, 0, sizeof(sPending));
     if (++sSequence == 0) ++sSequence;
     sPending.seq = sSequence;
@@ -58,8 +61,14 @@ bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize =
     sPending.packedSize = size;
     sPending.expectedHeaderCrc = crc;
     sPending.reserved = windowSize;
-    if (command == SUSAMUNE_STATE_CMD_IMPORT || command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
-        sImportSize = windowSize ? windowSize : size;
+    memset(&sMailbox->tasRequest, 0, sizeof(sMailbox->tasRequest));
+    if (project) sMailbox->tasRequest = *project;
+    DCFlushRange(&sMailbox->tasRequest, sizeof(sMailbox->tasRequest));
+    if (command == SUSAMUNE_STATE_CMD_IMPORT || command == SUSAMUNE_STATE_CMD_READ_WINDOW ||
+        command == SUSAMUNE_STATE_CMD_TAS_COMMIT) {
+        // Project verification borrows the first chunk as ARM-only scratch.
+        sImportSize = command == SUSAMUNE_STATE_CMD_TAS_COMMIT ?
+            SUSAMUNE_STATE_CHUNK_SIZE : (windowSize ? windowSize : size);
         sImportOffset = offset;
         syncImport(false);
     }
@@ -72,7 +81,7 @@ bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize =
 void init() {
     sAvailable = sResultReady = sCatalogReady = false;
     memset(&sPending, 0, sizeof(sPending));
-    sConfig = sImportSize = sImportOffset = 0;
+    sConfig = sImportSize = sImportOffset = sProjectReplyCrc = 0;
     sMemory = statePoolMemory();
 #if !IS_EMULATOR
     DCInvalidateRange(&sMailbox->response, sizeof(sMailbox->response));
@@ -116,6 +125,8 @@ void update() {
             h.metadataSize != r.metadataSize || h.packedSize != r.packedSize ||
             !SusamuneStateNameValid(sMailbox->resultName) ||
             SusamuneStateCrc(sMailbox->resultName, sizeof(sMailbox->resultName)) != r.reserved ||
+            (sPending.command == SUSAMUNE_STATE_CMD_EXPORT &&
+             (!sResult.id || sResult.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID)) ||
             (payload && (h.configId != sConfig || h.packedSize != sPending.packedSize)) ||
             (sPending.command != SUSAMUNE_STATE_CMD_EXPORT &&
              (h.headerCrc != sPending.expectedHeaderCrc || sResult.id != sPending.id))) {
@@ -141,7 +152,28 @@ void update() {
                 }
             }
         }
-    } else if (sPending.command == SUSAMUNE_STATE_CMD_CATALOG) {
+    } else if (sPending.command == SUSAMUNE_STATE_CMD_TAS_READ ||
+               sPending.command == SUSAMUNE_STATE_CMD_TAS_COMMIT ||
+               sPending.command == SUSAMUNE_STATE_CMD_TAS_RENAME) {
+        if (sResult.status == SUSAMUNE_STATE_OK) {
+            DCInvalidateRange(&sMailbox->tasProject, sizeof(sMailbox->tasProject));
+            const SusamuneTasManifest &project = sMailbox->tasProject;
+            if (!SusamuneTasManifestValid(&project) || project.projectId != sPending.id ||
+                project.projectId != sResult.id || project.checksum != r.headerCrc ||
+                (sPending.command == SUSAMUNE_STATE_CMD_TAS_COMMIT && project.checksum != sProjectReplyCrc) ||
+                (sPending.command == SUSAMUNE_STATE_CMD_TAS_READ &&
+                 sPending.expectedHeaderCrc && project.checksum != sPending.expectedHeaderCrc))
+                sResult.status = SUSAMUNE_STATE_BAD_FILE;
+            else sResult.project = project;
+        }
+    } else if (sPending.command == SUSAMUNE_STATE_CMD_TAS_BEGIN ||
+               sPending.command == SUSAMUNE_STATE_CMD_TAS_DELETE) {
+        if (sResult.status == SUSAMUNE_STATE_OK &&
+            (!sResult.id || sResult.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+             (sPending.command == SUSAMUNE_STATE_CMD_TAS_DELETE && sResult.id != sPending.id)))
+            sResult.status = SUSAMUNE_STATE_BAD_FILE;
+    } else if (sPending.command == SUSAMUNE_STATE_CMD_CATALOG ||
+               sPending.command == SUSAMUNE_STATE_CMD_TAS_CATALOG) {
         sCatalogReady = false;
         if (sResult.status == SUSAMUNE_STATE_OK) {
             DCInvalidateRange(&sMailbox->catalog, sizeof(sMailbox->catalog));
@@ -166,9 +198,11 @@ bool available() { return sAvailable; }
 bool busy() { return sPending.command != 0; }
 u32 configId() { return sConfig; }
 
-bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset) {
+bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset,
+                 const SusamuneTasRequest *project) {
     const StatePoolMemory &memory = sMemory;
     if (!sAvailable || busy() || sResultReady || !metadata || !SusamuneStatePoolRange(offset, source.packedSize) ||
+        (project && (!SusamuneTasRequestValid(project) || !project->projectId || project->componentId)) ||
         !StatePoolMemoryRangeValid(&memory, offset, source.packedSize) ||
         !source.metadataSize || source.metadataSize > SUSAMUNE_STATE_METADATA_SIZE) return false;
     SusamuneStateArchiveHeader h = source;
@@ -185,18 +219,18 @@ bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata,
     DCFlushRange(&sMailbox->header, sizeof(h));
     DCFlushRange(sMailbox->metadata, h.metadataSize);
     syncPool(offset, h.packedSize, false);
-    return submit(SUSAMUNE_STATE_CMD_EXPORT, 0, offset, h.packedSize, 0);
+    return submit(SUSAMUNE_STATE_CMD_EXPORT, 0, offset, h.packedSize, 0, 0, project);
 }
-bool startImport(u32 id, u32 crc, u32 size, u32 offset) {
+bool startImport(u32 id, u32 crc, u32 size, u32 offset, const SusamuneTasRequest *project) {
     const StatePoolMemory &memory = sMemory;
     const u32 tail = size > SUSAMUNE_STATE_STAGING_SIZE ? size - SUSAMUNE_STATE_STAGING_SIZE : 0;
     if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !SusamuneStateImportRange(offset, size)) return false;
     if (size > StatePoolMemoryCapacity(&memory) || !StatePoolMemoryRangeValid(&memory, offset, tail)) return false;
-    return submit(SUSAMUNE_STATE_CMD_IMPORT, id, offset, size, crc);
+    return submit(SUSAMUNE_STATE_CMD_IMPORT, id, offset, size, crc, 0, project);
 }
-bool startWindow(u32 id, u32 crc, u32 packed, u32 offset, u32 size) {
+bool startWindow(u32 id, u32 crc, u32 packed, u32 offset, u32 size, const SusamuneTasRequest *project) {
     if (!id || id > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !SusamuneStateWindowRange(packed, offset, size)) return false;
-    return submit(SUSAMUNE_STATE_CMD_READ_WINDOW, id, offset, packed, crc, size);
+    return submit(SUSAMUNE_STATE_CMD_READ_WINDOW, id, offset, packed, crc, size, project);
 }
 bool refresh(u32 afterId) {
     if (afterId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) return false;
@@ -222,16 +256,58 @@ bool remove(u32 id, u32 crc) {
 }
 bool cancel() {
     if (!busy() || sPending.command == SUSAMUNE_STATE_CMD_CANCEL ||
-        sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE) return false;
+        sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE ||
+        sPending.command >= SUSAMUNE_STATE_CMD_TAS_BEGIN) return false;
     // Keep the imported range owned until cancellation's own receipt arrives.
     memset(&sPending, 0, sizeof(sPending));
     return submit(SUSAMUNE_STATE_CMD_CANCEL, 0, 0, 0, 0);
 }
 bool takeResult(Result &out) {
-    if (!sResultReady) return false;
+    if (!sResultReady || sResult.command >= SUSAMUNE_STATE_CMD_TAS_BEGIN) return false;
     out = sResult;
     sResultReady = false;
     return true;
+}
+bool takeProjectResult(Result &out) {
+    if (!sResultReady || sResult.command < SUSAMUNE_STATE_CMD_TAS_BEGIN) return false;
+    out = sResult;
+    sResultReady = false;
+    return true;
+}
+bool projectName(const char *name) {
+    if (!sAvailable || busy() || sResultReady || !SusamuneStateNameValid(name) || !name[0]) return false;
+    memset(sMailbox->requestName, 0, sizeof(sMailbox->requestName));
+    for (u32 i = 0; name[i]; ++i) sMailbox->requestName[i] = name[i];
+    DCFlushRange(sMailbox->requestName, sizeof(sMailbox->requestName));
+    return true;
+}
+bool projectBegin(const char *name) {
+    return projectName(name) && submit(SUSAMUNE_STATE_CMD_TAS_BEGIN, 0, 0, 0, 0);
+}
+bool projectRead(u32 id, u32 crc) {
+    return id && id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
+        submit(SUSAMUNE_STATE_CMD_TAS_READ, id, 0, 0, crc);
+}
+bool projectCommit(const SusamuneTasManifest &project, u32 previousCrc) {
+    if (!sAvailable || busy() || sResultReady || !SusamuneTasManifestValid(&project)) return false;
+    sProjectReplyCrc = project.checksum;
+    sMailbox->tasProject = project;
+    DCFlushRange(&sMailbox->tasProject, sizeof(sMailbox->tasProject));
+    return submit(SUSAMUNE_STATE_CMD_TAS_COMMIT, project.projectId, 0, 0, previousCrc);
+}
+bool projectCatalog(u32 afterId) {
+    if (afterId > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+        !submit(SUSAMUNE_STATE_CMD_TAS_CATALOG, afterId, 0, 0, 0)) return false;
+    sCatalogReady = false;
+    return true;
+}
+bool projectRename(u32 id, u32 crc, const char *name) {
+    return id && id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID && projectName(name) &&
+        submit(SUSAMUNE_STATE_CMD_TAS_RENAME, id, 0, 0, crc);
+}
+bool projectDelete(u32 id, u32 crc) {
+    return id && id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
+        submit(SUSAMUNE_STATE_CMD_TAS_DELETE, id, 0, 0, crc);
 }
 bool catalogReady() { return sCatalogReady; }
 const SusamuneStateCatalog &catalog() { return sMailbox->catalog; }

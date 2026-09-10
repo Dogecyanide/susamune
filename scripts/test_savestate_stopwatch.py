@@ -127,18 +127,18 @@ API unsigned int get(unsigned int key) {
         self.assertEqual([self.lib.get(i) for i in (0, 1, 2)], [0, 0, 0])
 
     def test_both_save_outcomes_rebase_after_compression_before_interrupts(self):
-        save = function_source(SOURCE, "bool SavestateManager::saveState()")
-        failure = function_source(SOURCE, "if (!fits)")
+        save = function_source(SOURCE, "bool SavestateManager::saveSlotExplicit(")
+        failure = function_source(SOURCE, "if (!fits) {")
         success = save[save.index(failure) + len(failure):]
         call = "rebaseMissionStopwatch(h->save_time);"
         self.assertEqual(save.count(call), 4)
-        self.assertLess(save.index("StateCodec::compress("), save.index(failure))
+        self.assertLess(save.index("compressCandidate("), save.index(failure))
         for branch in (failure, success):
             self.assertEqual(branch.count(call), 1)
             self.assertLess(branch.index(call), branch.index("unmuteAudioDma(dma);"))
             self.assertLess(branch.index(call), branch.index("OSRestoreInterrupts(ints);"))
-        self.assertLess(save.index("commitPackedState("), save.index(failure))
-        self.assertLess(success.index("sSlots[sActiveSlot] = sCandidate;"), success.index(call))
+        self.assertLess(save.index("repackForCandidate("), save.index(failure))
+        self.assertLess(success.index("sSlots[slot] = sCandidate;"), success.index(call))
 
     def test_restore_rebases_saved_time_after_decode_and_before_interrupts(self):
         load = function_source(SOURCE, "bool SavestateManager::loadSlot(")

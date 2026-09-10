@@ -26,34 +26,101 @@ supplied file bytes/ARM receipts, so it does not measure actual SD speed or prov
 cold-reboot behavior for this new build. See `build/foxtrot-speed-sd-proof` and the
 codec document for the exact evidence.
 
-## Archive version 1, transport protocol 5
+## Archive version 1, transport protocol 6
 
 `include/susamune/state_storage.h` keeps archive version 1: a 96-byte big-endian
 header, bounded opaque metadata, then the exact compressed stream (bounded MSL4
-or zlib). Current PowerPC
-`StoredState` sizes are 6,896 bytes for JP and 6,872 bytes for US/PAL, below the
-7,168-byte metadata limit. This includes QFT, IL and ghost sidecars plus the
-5,920-byte owner profile; the used ghost pose/input/segment prefix is part of the
-compressed stream. Separate CRCs cover header, metadata and compressed payload.
+or zlib). PowerPC `StoredState` has a compile-checked 7,168-byte metadata limit.
+It includes QFT, IL and ghost sidecars, the 5,920-byte owner profile and the
+56-byte practice sidecar. Snapshot version 16 also preserves the used input take
+and controller state; used input and ghost prefixes belong to the compressed
+stream. Earlier snapshots need resaving with the current build. Separate CRCs
+cover header, metadata and compressed payload.
 The header contains no restore pointers or pool offsets. Its printable name is
 at most 31 characters and never becomes a path.
 
-The mailbox transport is now protocol 5. This requires the bounded window reader
+The mailbox transport is now protocol 6. This requires the bounded window reader
 and rejects older workers, including those whose primary pool boundary predates
-workspace relocation (now 0xFF0000). Its 8,000-byte structure
-remains inside
-the same 8 KiB allocation; the appended request/result name buffers occupy their
+workspace relocation (now 0xFF0000). Its 8,192-byte structure exactly fills
+the same 8 KiB allocation; the request/result name buffers occupy their
 own 32-byte lines at offsets 7,904 and 7,936. Request, response and receipt also
 have separate cache lines. A receipt must match request sequence, process session,
 command and archive ID. The effective returned name has its own receipt CRC.
 The appended 32-byte window receipt at offset 7,968 identifies the returned
 payload offset, length and CRC; its five reserved words must remain zero.
+The new 32-byte TAS transfer context starts at offset 8,000, followed by the
+160-byte project manifest at 8,032. Earlier wire fields and memory banks do not move.
 An incompatible transport is rejected rather than interpreted using an older pool map.
 
 Transport changes do not rewrite existing archives. The original `.mss` file and
 its header CRC remain immutable after successful export, including across renames.
 Build/region/configuration restrictions still apply independently of archive-format
 compatibility.
+
+## TAS project version 1
+
+A saved TAS groups its Beginning and one or two checkpoints in a separate
+`/moonshine_tas/tas_00000001/` directory on the same configuration device. The
+ordinary SD-state catalog still reads only `/moonshine_states`; project components
+do not appear as ordinary saved states. Names are display text, never paths.
+
+Each project component is an immutable `state_00000001.mss` archive using the
+same version-1 header, metadata and compressed stream described above. Every
+export allocates a new component ID; it cannot overwrite an earlier component.
+`project.a` and `project.b` hold alternating checked 160-byte manifests. A manifest
+records project ID and generation, game/build/configuration/scene identity, the
+Beginning's two-word identity, the selected checkpoint and up to three component
+references. Each reference binds a role, file ID, header CRC, packed byte count
+and input-frame count.
+
+Role 0 is Beginning and has no recorded frames. Roles 1 and 2 are checkpoints;
+the selected role must be one of those checkpoints. A valid project has Beginning
+and at least one checkpoint, unique component IDs, at most 4,096 input frames per
+checkpoint, and a combined packed size within the supported expanded RAM pool.
+Absent component entries and reserved fields are zero. PPC independently checks
+the imported snapshot's role, Beginning identity and frame count before adopting
+it into the project; ARM treats the snapshot metadata as opaque checked bytes.
+The file format does not remove RAM capacity, compatibility or owner-profile checks.
+
+BEGIN allocates a previously unused project directory without publishing an
+incomplete project. Component transfers pin the project ID, current generation,
+manifest CRC and role in a separately checked request context; a zero context
+selects the ordinary state directory. Generation and manifest CRC are both zero
+only while the allocated project is still empty. Reads require that the requested
+file ID, header CRC and packed size match the published reference for that role.
+Unpublished orphan components cannot be imported through the project interface.
+
+COMMIT accepts only the next generation against the expected previous manifest
+CRC. Before publication, ARM reads every referenced component and verifies exact
+file size, header identity, metadata CRC and complete compressed-payload CRC.
+It then writes, syncs and closes the inactive manifest's temporary file before
+renaming it into place. The current published generation survives a failed read,
+write, sync or rename. Both valid generations' component files are retained.
+After publication, the worker removes only component IDs from the overwritten,
+previously checked manifest that neither retained generation references. Cleanup
+handles at most one file per service pass; failure leaves the published save
+successful. Unrelated files and unreferenced files from earlier failed exports or
+commits are preserved. The project browser pages eight entries at a time and
+omits empty, invalid and deleted projects.
+
+READ returns the newest valid manifest. RENAME publishes a new manifest generation
+without rewriting any component. DELETE first publishes a checked
+`project.deleted` tombstone, then removes only files referenced by the two checked
+manifest copies and their manifest temporary files. It leaves unrelated files and
+the directory itself intact, reserving the project ID. A failure before tombstone
+publication preserves the project; a cleanup failure afterward leaves it deleted.
+A malformed tombstone is refused, and restoring an old manifest alone cannot
+resurrect a deleted project.
+
+All project metadata operations wait for their own receipt and cannot be cancelled
+through the PPC API. Component export/import/window requests retain ordinary
+cancellation behavior. COMMIT borrows only the first 16 KiB of the existing staging
+window for payload verification: PPC flushes it before publishing the request and
+invalidates it only after a matching success or failure receipt. It does not lend
+retained RAM-slot bytes to the worker. Payload I/O is limited to 16 KiB per service
+pass; scans inspect at most 16 directory entries per pass. Returned manifests are
+checked against their receipt, and COMMIT additionally requires the exact checksum
+of the submitted candidate.
 
 ## File creation, names and deletion
 
@@ -188,11 +255,23 @@ CRC implementation, stale selection/receipt rejection, late cancellation,
 failed writes/sync/rename, bank boundaries, archive admission, both load paths,
 RAM trust cache and pinned generations. Relevant files are
 `test_state_storage_kernel.py`, `test_state_storage_client.py`,
-`test_state_storage_crc.py`, `test_savestate_archive.py`,
+`test_tas_storage_kernel.py`, `test_state_storage_crc.py`, `test_savestate_archive.py`,
 `test_state_archive_profile.py`, `test_state_codec.py`,
 `test_state_pool_memory.py`, `test_savestate_recompression.py`,
 `test_savestate_queue.py` and `test_savestate_stopwatch.py`. Host tests are not
 physical SD-card or Wii filesystem timing measurements.
+
+The TAS storage tests execute the production client and ARM worker against a
+memory-backed filesystem. They cover publication/reopen, role-bound imports and
+window reads, separate paged catalogs, stale contexts, payload/metadata corruption,
+partial I/O and sync/rename failures, preservation of the previous manifest,
+tombstone deletion, immutable components and retained RAM bytes. Repeated saves
+and renames check cleanup of only obsolete known components, retention of shared
+Beginning files and both published generations, and successful receipts even when
+post-publication cleanup fails. Client tests also
+check staging cache ownership, receipt routing and exact COMMIT candidate identity.
+The new worker and client compile with the actual ARM and PowerPC toolchains.
+This is not yet evidence of TAS project saving or reopening on a physical SD card.
 
 The new direct-load proof is in `build/foxtrot-sd-direct/results.json`, on interim
 US target `DE29BE2F`. It saved three distinct RAM states, restored the first through

@@ -164,6 +164,13 @@ struct ScatterSink {
     }
 };
 
+typedef bool (*EmitBytes)(void *, const void *, unsigned int);
+
+bool deflateBytes(void *context, const void *bytes, unsigned int size) {
+    return tdefl_compress_buffer(static_cast<tdefl_compressor *>(context),
+                                bytes, size, TDEFL_NO_FLUSH) == TDEFL_STATUS_OKAY;
+}
+
 struct SpanReader {
     const ReadSpan *spans;
     unsigned int count, index, offset;
@@ -259,7 +266,8 @@ Status quickPass(void *workspace, const ReadSpan *source, unsigned int sourceCou
                  unsigned int compressedBytes, const WriteSpan *output,
                  unsigned int outputCount, unsigned int expectedRaw,
                  unsigned int expectedAdler, CopyBytes copy, void *copyContext,
-                 const StreamSource *stream = NULL) {
+                 const StreamSource *stream = NULL,
+                 EmitBytes emit = NULL, void *emitContext = NULL) {
     QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
     SpanReader reader = {source, sourceCount, 0, 0, stream, 0};
     ScatterSink sink = {output, outputCount, 0, 0, copy, copyContext};
@@ -291,6 +299,7 @@ Status quickPass(void *workspace, const ReadSpan *source, unsigned int sourceCou
             bytes = direct ? direct : work->raw;
         }
         adler = mz_adler32(adler, bytes, raw);
+        if (emit && !emit(emitContext, bytes, raw)) return CODEC_ERROR;
         if (output && !direct && !sink.put(bytes, raw)) return CODEC_ERROR;
         consumed += packed;
         decoded += raw;
@@ -303,13 +312,15 @@ Status inflatePass(void *workspace, const ReadSpan *source,
                    const WriteSpan *output, unsigned int outputCount,
                    unsigned int expectedRaw, unsigned int expectedAdler,
                    CopyBytes copy = 0, void *copyContext = 0,
-                   const StreamSource *stream = NULL) {
+                   const StreamSource *stream = NULL,
+                   EmitBytes emit = NULL, void *emitContext = NULL) {
     SpanReader probe = {source, sourceCount, 0, 0, stream, 0};
     unsigned char prefix[4];
     const unsigned char *magic = compressedBytes >= 4 ? probe.take(4, prefix) : NULL;
     if (magic && readWord(magic) == kQuickMagic)
         return quickPass(workspace, source, sourceCount, compressedBytes, output,
-                         outputCount, expectedRaw, expectedAdler, copy, copyContext, stream);
+                         outputCount, expectedRaw, expectedAdler, copy, copyContext,
+                         stream, emit, emitContext);
     InflateWorkspace *work = static_cast<InflateWorkspace *>(workspace);
     tinfl_init(&work->state);
     ScatterSink sink = {output, outputCount, 0, 0, copy, copyContext};
@@ -333,6 +344,8 @@ Status inflatePass(void *workspace, const ReadSpan *source,
             produced > expectedRaw - decoded) return CORRUPT_STREAM;
         input += static_cast<unsigned int>(consumed);
         reader.skip(static_cast<unsigned int>(consumed));
+        if (emit && !emit(emitContext, work->ring + ringOffset,
+                          static_cast<unsigned int>(produced))) return CODEC_ERROR;
         if (output && !sink.put(work->ring + ringOffset, static_cast<unsigned int>(produced)))
             return CODEC_ERROR;
         decoded += static_cast<unsigned int>(produced);
@@ -383,6 +396,51 @@ Result compress(void *workspace, unsigned int workspaceBytes,
     }
     result.compressedBytes = sink.written;
     result.adler32 = tdefl_get_adler32(state);
+    result.status = output && sink.written > capacity ? OUTPUT_FULL : SUCCESS;
+    return result;
+}
+
+Result repack(void *workspace, unsigned int workspaceBytes,
+              void *packWorkspace, unsigned int packWorkspaceBytes,
+              const ReadSpan *source, unsigned int sourceCount,
+              const WriteSpan *output, unsigned int outputCount,
+              unsigned int expectedRaw, unsigned int expectedAdler, bool compact) {
+    Result result = {INVALID_ARGUMENT, 0, 0, 0};
+    unsigned int packedBytes, ignored, capacity = 0;
+    result.status = checkSource(workspace, workspaceBytes, source, sourceCount, &packedBytes);
+    if (result.status != SUCCESS) return result;
+    result.status = checkSource(packWorkspace, packWorkspaceBytes, source, sourceCount, &ignored);
+    if (result.status != SUCCESS) return result;
+    if (!expectedRaw || overlaps(workspace, workspaceBytes, packWorkspace, packWorkspaceBytes)) {
+        result.status = INVALID_ARGUMENT;
+        return result;
+    }
+    if (output) {
+        result.status = checkOutput(workspace, workspaceBytes, source, sourceCount,
+                                    output, outputCount, &capacity);
+        if (result.status != SUCCESS) return result;
+        result.status = checkOutput(packWorkspace, packWorkspaceBytes, source, sourceCount,
+                                    output, outputCount, &ignored);
+        if (result.status != SUCCESS) return result;
+    }
+    tdefl_compressor *state = static_cast<tdefl_compressor *>(packWorkspace);
+    PackSink sink = {output, outputCount, 0};
+    const unsigned int probes = compact ? 8 : 1 | TDEFL_GREEDY_PARSING_FLAG;
+    if (tdefl_init(state, packOutput, &sink, TDEFL_WRITE_ZLIB_HEADER | probes) != TDEFL_STATUS_OKAY) {
+        result.status = CODEC_ERROR;
+        return result;
+    }
+    result.status = inflatePass(workspace, source, sourceCount, packedBytes, NULL, 0,
+                                expectedRaw, expectedAdler, NULL, NULL, NULL, deflateBytes, state);
+    if (result.status != SUCCESS) return result;
+    if (tdefl_compress_buffer(state, NULL, 0, TDEFL_FINISH) != TDEFL_STATUS_DONE ||
+        tdefl_get_adler32(state) != expectedAdler) {
+        result.status = CODEC_ERROR;
+        return result;
+    }
+    result.compressedBytes = sink.written;
+    result.rawBytes = expectedRaw;
+    result.adler32 = expectedAdler;
     result.status = output && sink.written > capacity ? OUTPUT_FULL : SUCCESS;
     return result;
 }

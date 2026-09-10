@@ -1,6 +1,6 @@
 # Moonshine FOXTROT — latest checks
 
-**V2.3.0 pre-release · Build E4DE048F · RC1 feedback update**
+**V2.3.0 pre-release · Build AE95E374 · RC1 feedback update**
 
 Keep your earlier RC1 results. These are the checks for this update; one useful pass is enough. Reuse the same states and do the reboot once. The full `RC1_TESTING.md` remains available for gaps in the team's earlier coverage.
 
@@ -8,14 +8,11 @@ Keep your earlier RC1 results. These are the checks for this update; one useful 
 
 **Make fresh states with this build. Earlier SD states need resaving and will not load in this update.** Settings, records and ghosts are kept.
 
-- [ ] **Settings stick:** Change Look sensitivity and Hide all HUD, plus one ordinary setting. Keep them for the reboot below. Existing binds, colours and episode choices should remain correct.
-- [ ] **Camera:** In Practice > Free camera, try Look sensitivity at a slow and fast setting. It should change C-stick turning speed separately from Movement speed. Hide all HUD should hide game and Moonshine overlays while freecam is On; the menu must still open. Turn it Off and check the normal displays return.
-- [ ] **TAS checkpoints:** Save a start state, record a short walk/jump, and save a different slot as a checkpoint. Go farther, load the checkpoint and try another ending. Replay should show the original opening plus the new ending. Keep the start state. A stopped checkpoint should offer Continue editing checkpoint; it stays paused until Step or Resume.
-- [ ] **TAS after reboot — console:** Save both the start and latest checkpoint to SD with recognisable names. Reboot once into the same build, region, setup and episode. Import the start into any RAM slot. In the SD menu, highlight the checkpoint and press Y to select it for loading; close the menu and use your normal Load shortcut. This keeps the RAM start available. Continue editing and replay from the beginning should work. The settings saved above should also remain.
-- [ ] **States and visible errors:** Save/load all three slots once in a familiar scene. With successful save/load messages Off, try loading in the wrong episode: a readable refusal should still appear. Return to the right episode and load normally. If any slot fails, send its number and exact message; there is no confirmed JP-only State 3 fault.
-- [ ] **Pinna 1:** Start through Runs > ILs and use your usual cutscene path. Expect Talk, all four Mecha-Bowser hits and Finish, without losing progress through the movies/skips. Report the first missing event and which skip you used.
-- [ ] **Streaks:** Use practice pause in an earlier stage, then start a clean short streak challenge. The clean attempt should count normally. A rejected attempt should briefly show why beside the counter. Check your usual reset shortcut does not accidentally pause the fresh attempt.
-- [ ] **Guide and Japanese text:** Open System > FOXTROT guide and turn pages. Text should fit without large gaps. Japanese-download testers: check the corrected IL/playlist/layout terms and small help text. The standard download must still be English even on JP; the Japanese download translates JP game menus. The Guide body and some status messages remain English.
-- [ ] **One ordinary run:** Finish a familiar IL without practice assistance, then spot-check Pause/Step and a ghost you already have. Normal timing/PB recording should work, each Step advances one frame, and turning Ghost display Off also hides its input panel. Reuse earlier passes for unchanged features.
+- [ ] **Three Plaza states:** Save all three slots at different places in Delfino Plaza, then load each. Replace one while keeping the other two. If a save still refuses, send the exact message and which episode you used. Check that the older states still load.
+- [ ] **Start and edit a TAS:** Open Practice > TAS projects > New TAS. You should start paused without preparing a state yourself. Record a short walk/jump with Step or Resume. Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Replay should show the original opening and new ending, with the discarded inputs gone.
+- [ ] **Keep the TAS on SD — console:** Choose Save TAS and give it a name. Make a small edit and Save TAS again; it should update the same entry. Reboot once, return to the same setup/episode and Open TAS by name. Continue and Replay should both work without importing separate states. Your settings, binds and colours should remain correct too.
+- [ ] **Understand the choices:** If asked to replace an ordinary memory state, cancel once: the old state should remain. If you start or open another TAS with unsaved edits, the choices should be clear. Report any point where you cannot tell what will be saved, replaced or loaded.
+- [ ] **Japanese wording — JP download:** Check the new TAS screen and small help text. Use earlier results for unchanged wording. The standard download must remain English on JP.
+- [ ] **One ordinary run:** Finish a familiar IL without assistance and check timing/PB recording. Spot-check an existing ghost. No need to repeat the already-passed Pinna 1, streak and camera checks unless something behaves differently.
 
 For a problem, send **build checksum, route/episode or menu, what you pressed, and the exact message**. A photo or short clip helps. No long report needed.

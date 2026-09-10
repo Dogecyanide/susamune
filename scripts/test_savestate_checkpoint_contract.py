@@ -93,7 +93,7 @@ class SavestateCheckpointContractTests(unittest.TestCase):
         for region, count in (('JP', 11), ('US', 9), ('PAL', 9)):
             path = Path(cls.temp.name) / f'{region}.cpp'
             source = FIXTURE + f'const int kNumStaticRanges={count},kNumPointedAllocs=8;\n'
-            source += stored + '\nStateSlotPool sPool; StoredState sSlots[3];\n' + methods + EXPORTS
+            source += stored + '\nStateSlotPool sPool; StoredState sSlots[3];bool sMetadataReady=true;\n' + methods + EXPORTS
             path.write_text(source)
             result = subprocess.run([str(compiler), '--target=x86_64-pc-windows-msvc', '-shared',
                 '-nostdlib', '-fuse-ld=lld', '-Wl,/noentry', '-O2', '-fno-builtin', '-mno-stack-arg-probe',
@@ -149,8 +149,8 @@ class SavestateCheckpointContractTests(unittest.TestCase):
                         self.assertEqual(lib.value(2), int(durable and not skipped))
 
     def test_practice_sidecar_is_validated_before_restore_and_adopted_after_cleanup(self):
-        save = function_source(SOURCE, 'bool SavestateManager::saveState()')
-        self.assertLess(save.index('PracticeSession::captureSavestate('), save.index('StateCodec::compress('))
+        save = function_source(SOURCE, 'bool SavestateManager::saveSlotExplicit(')
+        self.assertLess(save.index('PracticeSession::captureSavestate('), save.index('compressCandidate('))
         load = function_source(SOURCE, 'bool SavestateManager::loadSlot(')
         self.assertLess(load.index('PracticeSession::savestateRestoreSpans('), load.index('OSDisableInterrupts()'))
         self.assertLess(load.index('PracticeSession::onSavestateLoaded()'), load.index('PracticeSession::restoreSavestate('))

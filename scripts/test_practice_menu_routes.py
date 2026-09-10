@@ -126,17 +126,16 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
     def test_each_page_reaches_its_own_actions(self):
         for page, row, action, closes, from_menu in (
                 (0, 0, 1, 1, 1), (0, 1, 2, 1, 1),
-                (1, 0, 5, 1, 0), (1, 1, 1, 1, 1), (1, 6, 6, 0, 0),
-                (2, 0, 7, 1, 0), (2, 1, 8, 1, 0), (2, 2, 9, 0, 0), (2, 3, 10, 1, 0)):
+                (1, 0, 5, 1, 0), (1, 1, 1, 1, 1), (1, 6, 6, 0, 0)):
             self.assertEqual(self.route(page, row),
                              (1, [action, closes, from_menu, row, -1, 0]))
 
     def test_held_entry_press_does_not_pause_enable_camera_or_record(self):
-        for page in range(3):
+        for page in range(2):
             self.assertEqual(self.lib.entry(page), 0)
 
     def test_inline_binding_never_activates_selected_action(self):
-        for page, row, action in ((0, 1, 2), (1, 0, 5), (2, 0, 7)):
+        for page, row, action in ((0, 1, 2), (1, 0, 5)):
             for cancel in (0, 1):
                 out = (C.c_int * 6)()
                 self.assertEqual(self.lib.modal(page, row, cancel, out), 1)
@@ -160,7 +159,7 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
             self.assertEqual(list(out), [1, 0, 0, 0])
 
     def test_navigation_stays_within_each_page(self):
-        for page, last in ((0, 1), (1, 6), (2, 3)):
+        for page, last in ((0, 1), (1, 6)):
             self.assertEqual(self.route(page, 0, 1, 0)[1][3], last)
             self.assertEqual(self.route(page, last, 2, 0)[1][3], 0)
 

@@ -31,9 +31,7 @@ class SavestateRecompressionTests(unittest.TestCase):
         # the host so the test can inspect that no slot was published afterward.
         helper = helper.replace("__builtin_trap()", "return trapped()")
         helper = helper.replace("StateCodec::compress(", "testCompress(")
-        begin=production.index('    StateCodec::Result result = StateCodec::compress(codecWorkspace(),')
-        end=production.index('\n    if (!fits)',begin)
-        adaptive=production[begin:end].replace('h->region_count + Ghost::kSavestateSpanCount + PracticeSession::kSavestateSpanCount','count').replace('sActiveSlot','slot')
+        candidate = function(production, "compressCandidate")
         source.write_text(r'''
 #include "susamune/state_codec.hxx"
 #include "susamune/state_slot_pool.h"
@@ -60,7 +58,7 @@ StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 co
  if(fault==4)r.adler32^=1;
  return r;
 }
-''' + function(production, "poolCapacity") + function(production, "poolWriteSpans") + helper + r'''
+''' + function(production, "poolCapacity") + function(production, "poolWriteSpans") + helper + candidate + r'''
 extern "C" __declspec(dllexport) int run(StateSlotPool*p,StatePoolMemory*m,u32 cap,u8*t,u32 ts,
  void*w,const StateCodec::ReadSpan*s,u32 count,u32 raw,u32 slot,int bad,u32 compact,u32 quick,StateCodec::Result*out,int*calls){
  sPool=*p;sPoolMemory=*m;capacity=cap;staging=t;stagingSize=ts;work=w;fault=bad;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
@@ -79,7 +77,8 @@ extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory
  void*w,const StateCodec::ReadSpan*source,u32 count,u32 rawSize,u32 slot,StateCodec::Result*out){
  sPool=*p;sPoolMemory=*m;capacity=StatePoolMemoryCapacity(m);staging=t;stagingSize=ts;work=w;fault=0;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
  StateCodec::WriteSpan output[3]={{t,ts},{0,0},{0,0}};poolWriteSpans(p->used,capacity-p->used,output+1);
-''' + adaptive + r'''
+ StateCodec::Result result;
+ const bool fits=compressCandidate(source,count,rawSize,slot,result);
  *p=sPool;*out=result;return trapCount?-1:fits;
 }
 ''', encoding="ascii")

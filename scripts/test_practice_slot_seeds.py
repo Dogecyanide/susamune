@@ -22,8 +22,8 @@ class PracticeSlotSeedTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         seed_match = function_source(production, "bool seedMatches(")
         functions = "\n".join(function_source(production, signature) for signature in (
-            "void afterDraw()", "void onSavestateSaved(", "void onSavestateCleared(", "bool requestRecord()",
-            "bool requestPlayback()"))
+            "void afterDraw()", "void onSavestateSaved(", "void onSavestateCleared(", "bool requestRecordFrom(", "bool requestRecord()",
+            "static bool requestReview(", "bool requestPlayback()", "bool requestBeginning()"))
         narrow = "reinterpret_cast<u32>(gpApplication.mCurrentHeap)"
         replacement = "static_cast<u32>(reinterpret_cast<size_t>(gpApplication.mCurrentHeap))"
         source = Path(cls.folder.name) / "seeds.cpp"
@@ -43,6 +43,7 @@ static struct {void *mCurrentHeap;Pad *mGamePads[1];} gpApplication;
 static SavestateManager::SlotInfo infos[3];
 enum {SAVED_PAD=1,SAVED_RNG=2,SAVED_PAUSED=16};
 static PracticeSession::SavestateData meta[3];
+static u32 sEditRevision;
 static u32 sOriginKey[2],sTakePosition;
 static bool sTakeAttached,sOwnRestoreValid,restorePadValid;
 static u32 selected,loadedSlot,loadedGeneration,loadCalls;
@@ -133,6 +134,8 @@ extern "C" __declspec(dllexport) void save(u32 slot,u32 generation,u32 marker) {
 }
 extern "C" __declspec(dllexport) void select(u32 slot){selected=slot;}
 extern "C" __declspec(dllexport) u32 record(){return PracticeSession::requestRecord();}
+extern "C" __declspec(dllexport) u32 recordExplicit(u32 slot){return PracticeSession::requestRecordFrom(slot,infos[slot].generation);}
+extern "C" __declspec(dllexport) u32 beginning(){return PracticeSession::requestBeginning();}
 extern "C" __declspec(dllexport) u32 replay(){return PracticeSession::requestPlayback();}
 extern "C" __declspec(dllexport) void finishTake(){sCount=4;sTapeHash=42;sRecord=false;}
 extern "C" __declspec(dllexport) void poll(){PracticeSession::afterDraw();}
@@ -274,6 +277,18 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.lib.poll()
         self.lib.finishTake()
 
+    def test_project_beginning_preserves_full_take_and_waits_paused(self):
+        self.make_take()
+        self.assertTrue(self.lib.beginning());self.lib.poll()
+        self.assertEqual(self.lib.value(6),4)
+        self.assertEqual((self.lib.value(4),self.lib.value(5),self.lib.value(13)),(0,0,1))
+        self.assertTrue(self.lib.replay())
+
+    def test_explicit_new_tas_does_not_require_global_rng_option(self):
+        self.lib.save(1,11,71);self.lib.config(5,0)
+        self.assertTrue(self.lib.recordExplicit(1));self.lib.poll()
+        self.assertEqual((self.lib.value(1),self.lib.value(4),self.lib.value(13)),(1,1,1))
+
     def test_menu_start_releases_only_confirming_A(self):
         self.lib.save(0, 10, 70)
         self.lib.config(0, 1)
@@ -310,7 +325,7 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.lib.save(0, 10, 70)
         self.lib.config(5, 1)
         self.assertFalse(self.lib.record())
-        self.assertIn(b"Save RNG state", self.lib.status())
+        self.assertIn(b"RNG state", self.lib.status())
         self.lib.save(0, 11, 70)
         self.assertTrue(self.lib.record())
 

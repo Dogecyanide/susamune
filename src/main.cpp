@@ -36,6 +36,7 @@
 #include "susamune/records.hxx"
 #include "susamune/practice_visuals.hxx"
 #include "susamune/practice_session.hxx"
+#include "susamune/tas_project.hxx"
 #include "susamune/records_persistence.hxx"
 #include "susamune/ricco_fruit.hxx"
 #include "susamune/rng_control.hxx"
@@ -326,7 +327,8 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
 
     if (gSavestateMgr) gSavestateMgr->updateDisk();
     else StateStorage::update();
-    const bool stateDiskBusy = SavestateManager::diskBusy();
+    TasProject::update();
+    const bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
 
     // Sample the pad before direct(), not after: onUpdateGameMode runs inside
     // it and asks whether the menu bind was pressed this frame, which would
@@ -513,6 +515,7 @@ extern "C" void afterDraw() {
         !StageLoader::resultOwnsInput() && !Ghost::observerStatsSuppressed())
         gSavestateMgr->processPendingLoad();
     PracticeSession::afterDraw();
+    TasProject::afterDraw();
     // gpPollution is stale until the async setup thread reaches onSetup.
     if (gpMarDirector && gpMarDirector->_260 != 0 &&
         gpMarDirector->mCurState >= TMarDirector::STATE_GAME_STARTING) {

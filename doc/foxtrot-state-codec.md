@@ -200,6 +200,58 @@ zlib stream despite correct file CRCs. Its ARM file receipt was supplied by a
 host adapter; its post-delivery duration is not SD-card transfer time. Private
 retail memory captures and extracted payloads must never enter release packages.
 
+## Metadata storage
+
+The three slot records and the uncommitted candidate occupy a fixed PPC-only
+window in the recording input bank's unused tail: Wii `0x91C11F00`, Dolphin
+`0x712D2F00`, with a 53,504-byte bound. The complete 54,000 input samples end
+exactly before this window. Recording, imports and ghost-prefix restoration
+copy only their checked input counts. Ghost model assets, the packed state
+pool, codec workspace and MEM1 reserve stay at their existing addresses.
+
+Console admission is latched before the first metadata initialization. It
+requires the current configuration version, expanded-pool and relocated-codec
+capabilities, and a valid ghost protocol 5 response. An older or mismatched
+launcher disables savestates; no metadata is read or written at the new address.
+Dolphin owns its separate window without a launcher. The guard does not
+invalidate the configuration request cache line, which also contains PPC-owned
+settings fields. Only the ARM-owned ghost response line is invalidated.
+
+`scripts/test_state_metadata_memory.py` checks refusal without touching the
+window, bounded initialization, adjacent canaries, independent Dolphin admission
+and metadata access ordering. `sLiveArchiveProfile` remains in MEM1, in the
+existing upper linker span.
+
+## Crowded memory slots
+
+An ordinary save still tries the quick format, fast Deflate, then compact
+Deflate only as capacity requires. If the new state still cannot fit, it can
+re-encode the other retained slots. Their complete compressed bytes remain
+intact until a smaller replacement has been produced
+and checked. The second compressor borrows the first 312 KiB of the existing
+4 MiB temporary area; its output uses the remaining temporary area and unused
+pool tail. No retained state is reclaimed to stage its own replacement.
+
+The fallback tries each originally quick retained slot at most once with fast
+Deflate. Every retained slot can then get one compact attempt, including Deflate
+states from an earlier save or import. This extra save time occurs only after
+a capacity refusal. It regenerates the new candidate only when the recovered
+space could hold its previously measured compact size, and
+stops when the save succeeds. Ordinary saves that fit do no retained-state work.
+
+Repacking checks the old packed CRC and the decoded size/Adler checksum. A
+successful replacement updates only packed size, metadata checksum and packed
+CRC. Slot generations, QFT/IL/ghost/input sidecars, SD-backed status and replay
+references remain unchanged. If the requested save ultimately fails, existing
+states still restore their original content; some may now use a smaller encoding.
+This increases usable capacity without changing the memory map or ghost limits.
+
+`scripts/test_retained_state_repacking.py` executes the production capacity
+fallback, codec and two-bank commit with bounded host buffers. It checks a third
+save recovered by shrinking an earlier quick state, output-capacity refusal,
+corrupt retained CRCs, malformed packed streams, later saves with already-Deflate
+neighbors, unchanged slot identities and preserved decoded content.
+
 ## Timing and mission countdowns
 
 `rebaseMissionStopwatch` shifts the mission timer's absolute start timestamp by

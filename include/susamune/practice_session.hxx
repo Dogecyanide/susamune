@@ -17,12 +17,15 @@ struct SavestateData {
 };
 static_assert(sizeof(SavestateData) == 56, "practice state metadata size");
 bool captureSavestate(SavestateData &out,
-                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]);
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount],
+                      bool forceRng = false, bool omitTake = false);
 bool savestateRestoreSpans(const SavestateData &data,
                           StateCodec::WriteSpan (&spans)[kSavestateSpanCount]);
 bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation);
 // Own replay loads restore the start state without replacing the live take.
 bool copySavestateBytes(void *destination, const void *source, u32 size);
+bool projectSavestateMatches(const SavestateData &data, const u32 (&startKey)[2],
+                             u32 role, u32 frames);
 
 void init();
 void beforeStageSetup();
@@ -46,6 +49,15 @@ bool requestPauseToggle(bool fromMenu = false);
 bool requestStep(bool fromMenu = false);
 bool requestFreeCameraToggle();
 bool requestRecord();
+bool requestRecordFrom(u32 slot, u32 generation);
+bool requestBeginning();
+void pauseEditing();
+void pauseForCheckpoint();
+bool attachedTo(const u32 (&key)[2]);
+bool checkpointReady();
+bool projectAvailable();
+u32 editRevision();
+u32 takePosition();
 bool requestContinue();
 bool requestPlayback();
 void requestStop();

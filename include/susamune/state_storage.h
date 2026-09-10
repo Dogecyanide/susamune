@@ -2,9 +2,10 @@
 #define SUSAMUNE_STATE_STORAGE_H
 
 #include "susamune/mem2_map.h"
+#include "susamune/tas_storage.h"
 
 #define SUSAMUNE_STATE_STORAGE_MAGIC 0x4D535354u
-#define SUSAMUNE_STATE_STORAGE_VERSION 5u
+#define SUSAMUNE_STATE_STORAGE_VERSION 6u
 #define SUSAMUNE_STATE_ARCHIVE_MAGIC 0x4D535341u
 #define SUSAMUNE_STATE_ARCHIVE_VERSION 1u
 #define SUSAMUNE_STATE_METADATA_SIZE 7168u
@@ -18,7 +19,10 @@ enum SusamuneStateCommand {
     SUSAMUNE_STATE_CMD_NONE, SUSAMUNE_STATE_CMD_EXPORT,
     SUSAMUNE_STATE_CMD_IMPORT, SUSAMUNE_STATE_CMD_CATALOG,
     SUSAMUNE_STATE_CMD_CANCEL, SUSAMUNE_STATE_CMD_RENAME, SUSAMUNE_STATE_CMD_DELETE,
-    SUSAMUNE_STATE_CMD_READ_WINDOW
+    SUSAMUNE_STATE_CMD_READ_WINDOW,
+    SUSAMUNE_STATE_CMD_TAS_BEGIN, SUSAMUNE_STATE_CMD_TAS_READ,
+    SUSAMUNE_STATE_CMD_TAS_COMMIT, SUSAMUNE_STATE_CMD_TAS_CATALOG,
+    SUSAMUNE_STATE_CMD_TAS_RENAME, SUSAMUNE_STATE_CMD_TAS_DELETE
 };
 enum SusamuneStateStatus {
     SUSAMUNE_STATE_OK, SUSAMUNE_STATE_UNAVAILABLE, SUSAMUNE_STATE_IO_ERROR,
@@ -74,14 +78,18 @@ struct SusamuneStateStorageMailbox {
     char requestName[SUSAMUNE_STATE_NAME_BYTES];
     char resultName[SUSAMUNE_STATE_NAME_BYTES];
     struct SusamuneStateWindowReceipt window;
+    struct SusamuneTasRequest tasRequest;
+    struct SusamuneTasManifest tasProject;
 };
 typedef char StateHeaderSize[sizeof(struct SusamuneStateArchiveHeader) == 96 ? 1 : -1];
 typedef char StateCatalogSize[sizeof(struct SusamuneStateCatalogEntry) == 64 ? 1 : -1];
 typedef char StateNameSize[sizeof(struct SusamuneStateNameRecord) == 64 ? 1 : -1];
-typedef char StateMailboxSize[sizeof(struct SusamuneStateStorageMailbox) == 8000 &&
+typedef char StateMailboxSize[sizeof(struct SusamuneStateStorageMailbox) == 8192 &&
     sizeof(struct SusamuneStateStorageMailbox) <= SUSAMUNE_STATE_STORAGE_SIZE ? 1 : -1];
 typedef char StateNameMailboxLines[__builtin_offsetof(struct SusamuneStateStorageMailbox, requestName) == 7904 &&
     __builtin_offsetof(struct SusamuneStateStorageMailbox, resultName) == 7936 ? 1 : -1];
+typedef char TasMailboxLines[__builtin_offsetof(struct SusamuneStateStorageMailbox, tasRequest) == 8000 &&
+    __builtin_offsetof(struct SusamuneStateStorageMailbox, tasProject) == 8032 ? 1 : -1];
 
 // C++ callers share the table; the ARM C worker keeps its local definition.
 #ifdef __cplusplus
@@ -181,6 +189,55 @@ static inline int SusamuneStateImportRange(unsigned int offset, unsigned int siz
 static inline int SusamuneStateWindowRange(unsigned int packed, unsigned int offset, unsigned int size) {
     return packed && packed <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE && size &&
         size <= SUSAMUNE_STATE_STAGING_SIZE && offset <= packed && size <= packed - offset;
+}
+
+static inline unsigned int SusamuneTasRequestCrc(const struct SusamuneTasRequest *request) {
+    return SusamuneStateCrc(request, __builtin_offsetof(struct SusamuneTasRequest, checksum));
+}
+static inline int SusamuneTasRequestValid(const struct SusamuneTasRequest *request) {
+    const unsigned char *bytes = (const unsigned char *)request;
+    unsigned int i, any = 0;
+    for (i = 0; i < sizeof(*request); ++i) any |= bytes[i];
+    if (!any) return 1;
+    return request->projectId && request->projectId <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
+        request->componentId <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
+        request->role < SUSAMUNE_TAS_COMPONENTS && !request->reserved[0] && !request->reserved[1] &&
+        request->checksum == SusamuneTasRequestCrc(request);
+}
+static inline unsigned int SusamuneTasManifestCrc(const struct SusamuneTasManifest *project) {
+    const unsigned char *bytes = (const unsigned char *)project;
+    const unsigned int zero = 0;
+    unsigned int crc = SusamuneStateCrcUpdate(0xFFFFFFFFu, bytes, 40);
+    crc = SusamuneStateCrcUpdate(crc, &zero, 4);
+    return ~SusamuneStateCrcUpdate(crc, bytes + 44, sizeof(*project) - 44);
+}
+static inline int SusamuneTasManifestValid(const struct SusamuneTasManifest *project) {
+    unsigned int i, j, count = 0, total = 0;
+    if (project->magic != SUSAMUNE_TAS_MAGIC || project->version != SUSAMUNE_TAS_VERSION ||
+        !project->projectId || project->projectId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !project->generation ||
+        !SusamuneStateGameValid(project->gameId) || !project->buildCrc || !project->configId ||
+        !project->currentRole || project->currentRole >= SUSAMUNE_TAS_COMPONENTS || project->componentCount < 2 ||
+        project->componentCount > SUSAMUNE_TAS_COMPONENTS || project->reserved ||
+        !SusamuneStateNameValid(project->name) || !project->name[0] ||
+        !(project->startKey[0] | project->startKey[1]) ||
+        project->checksum != SusamuneTasManifestCrc(project)) return 0;
+    for (i = 0; i < SUSAMUNE_TAS_COMPONENTS; ++i) {
+        const struct SusamuneTasComponent *component = &project->components[i];
+        if (!component->componentId) {
+            if (component->headerCrc || component->packedBytes || component->role ||
+                component->frames || component->reserved) return 0;
+            continue;
+        }
+        if (component->componentId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || component->role != i ||
+            !component->packedBytes || component->packedBytes > SUSAMUNE_STATE_POOL_EXPANDED_SIZE - total ||
+            component->frames > 4096u || component->reserved) return 0;
+        for (j = 0; j < i; ++j)
+            if (project->components[j].componentId == component->componentId) return 0;
+        total += component->packedBytes;
+        ++count;
+    }
+    return count == project->componentCount && project->components[0].componentId &&
+        !project->components[0].frames && project->components[project->currentRole].componentId;
 }
 
 #endif

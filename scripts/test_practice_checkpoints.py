@@ -38,6 +38,7 @@ static struct PracticeSeed {PadHistory pad;u32 generation,stage,heap;bool valid,
 static Frame storage[kMaxFrames],*sFrames=storage;
 static PadHistory sStatePad,sModalPad;
 static bool sModalPadValid;
+static u32 sEditRevision;
 static u32 sOriginKey[2],sCount,sCursor,sTakePosition,sTapeSeed,sTapeSlot,sTapeHash,sTapeStage,sTapeStart,sStageGeneration,sSteps,sSettingsHash;
 static bool sOwnRestoreValid;
 static u32 sPendingReleases;
@@ -86,6 +87,11 @@ extern "C" __declspec(dllexport) void reset(){
     sStageGeneration=1;sSettingsHash=liveSettings=123;liveFingerprint=456;
     gameplay=storageReady=rng=true;observer=false;clockValue=0;lastMessage="";sStripButtons=0;
     gpApplication.mCurrentHeap=(void*)0x80500000;gpApplication.mGamePads[0]=&pad;
+}
+extern "C" __declspec(dllexport) unsigned captureForced(unsigned omit){
+    PracticeSession::SavestateData data;StateCodec::ReadSpan spans[2];
+    if(!PracticeSession::captureSavestate(data,spans,true,omit!=0))return 0;
+    return data.flags|(data.frames<<8);
 }
 extern "C" __declspec(dllexport) int save(unsigned i){
     StateCodec::ReadSpan spans[2];if(!PracticeSession::captureSavestate(archives[i].data,spans))return 0;
@@ -189,6 +195,23 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
         self.lib.load(1, 1)
         self.assertEqual(self.lib.value(0), 4)
         self.assertEqual(self.lib.input(3), 40)
+
+    def test_project_beginning_forces_rng_without_mutating_or_carrying_old_take(self):
+        self.checkpoint();self.lib.config(4,0)
+        captured=self.lib.captureForced(1)
+        self.assertEqual(captured&7,3)
+        self.assertEqual(captured>>8,0)
+        self.assertEqual(self.lib.value(0),3)
+        self.assertEqual([self.lib.input(i) for i in range(3)],[10,20,30])
+        self.assertTrue(self.lib.save(2))
+        self.assertTrue(self.lib.load(2,0))
+        self.assertFalse(self.lib.value(6))
+
+    def test_project_checkpoint_forces_rng_and_keeps_prefix_with_option_off(self):
+        self.checkpoint();self.lib.config(4,0)
+        captured=self.lib.captureForced(0)
+        self.assertEqual(captured&7,7)
+        self.assertEqual(captured>>8,3)
 
     def test_stopped_take_can_continue_at_checkpoint_but_not_unrelated_gameplay(self):
         self.checkpoint()

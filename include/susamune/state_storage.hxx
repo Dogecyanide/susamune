@@ -9,15 +9,19 @@ struct Result {
     const void *metadata;
     char name[SUSAMUNE_STATE_NAME_BYTES];
     SusamuneStateWindowReceipt window;
+    SusamuneTasManifest project;
 };
 void init();
 void update();
 bool available();
 bool busy();
 u32 configId();
-bool startExport(const SusamuneStateArchiveHeader &, const void *metadata, u32 poolOffset);
-bool startImport(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 freePoolOffset);
-bool startWindow(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 offset, u32 size);
+bool startExport(const SusamuneStateArchiveHeader &, const void *metadata, u32 poolOffset,
+                 const SusamuneTasRequest *project = nullptr);
+bool startImport(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 freePoolOffset,
+                 const SusamuneTasRequest *project = nullptr);
+bool startWindow(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 offset, u32 size,
+                 const SusamuneTasRequest *project = nullptr);
 bool refresh(u32 afterId = 0);
 bool rename(u32 id, u32 expectedHeaderCrc, const char *name);
 bool remove(u32 id, u32 expectedHeaderCrc);
@@ -25,6 +29,13 @@ bool remove(u32 id, u32 expectedHeaderCrc);
 bool cancel();
 // Borrowed metadata stays valid until another request is accepted.
 bool takeResult(Result &);
+bool takeProjectResult(Result &);
+bool projectBegin(const char *name);
+bool projectRead(u32 id, u32 expectedCrc);
+bool projectCommit(const SusamuneTasManifest &, u32 previousCrc);
+bool projectCatalog(u32 afterId = 0);
+bool projectRename(u32 id, u32 expectedCrc, const char *name);
+bool projectDelete(u32 id, u32 expectedCrc);
 bool catalogReady();
 const SusamuneStateCatalog &catalog();
 }

@@ -57,6 +57,7 @@ static bool sOwnLoad,sCameraWaitButtons,sFreeCamera,sStepQueued,sHaveRead;
 static bool sConsumedFrame,sStepping,sModal,sFrameInjected,sRecord,sReplay,sFreeze;
 static bool sBorrowedPause,sAssisted;
 static bool sTakeAttached,sModalPadValid;
+static u32 sEditRevision;
 static u32 sTakePosition,sOriginKey[2],sPendingReleases;
 static u16 sLoadHoldButtons,sStripButtons,sBeforeRead;
 static u8 sMenuAction,sLoadKind;

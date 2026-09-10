@@ -16,16 +16,18 @@ extern u32 GAME_ID;
 #endif
 
 enum { IDLE, EXPORT_FIND, OPEN_FILE, HEADER_IO, METADATA_IO, PAYLOAD_IO,
-       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE };
+       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE, PREPARED_REQUEST };
 static bool Enabled, FileOpen, DirOpen;
 static u32 Ack, Phase, FileId, Offset, PayloadCrc, ConfigId;
 static struct SusamuneStateRequest Request;
 static struct SusamuneStateArchiveHeader Header;
 static FIL File;
 static DIR Scan;
-static char Directory[32], Path[72], Temporary[72];
+static char Directory[64], Path[96], Temporary[96];
 static u32 ScanId, ScanSize;
 static char RequestName[SUSAMUNE_STATE_NAME_BYTES];
+static struct SusamuneTasRequest TasContext;
+static struct SusamuneTasManifest TasProject;
 
 static u8 *PoolPiece(u32 offset, u32 *size)
 {
@@ -169,6 +171,12 @@ static void Finish(u32 status)
     m->receipt.command = Request.command;
     m->receipt.id = Request.id;
     m->receipt.seq = Request.seq;
+    if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_TAS_READ ||
+        Request.command == SUSAMUNE_STATE_CMD_TAS_COMMIT || Request.command == SUSAMUNE_STATE_CMD_TAS_RENAME)) {
+        m->tasProject = TasProject;
+        sync_after_write(&m->tasProject, sizeof(m->tasProject));
+        m->receipt.headerCrc = TasProject.checksum;
+    }
     if (status == SUSAMUNE_STATE_OK && (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW || Request.command == SUSAMUNE_STATE_CMD_IMPORT ||
         Request.command == SUSAMUNE_STATE_CMD_EXPORT || Request.command == SUSAMUNE_STATE_CMD_RENAME ||
         Request.command == SUSAMUNE_STATE_CMD_DELETE)) {
@@ -207,6 +215,7 @@ void SusamuneStateStorageInit(void)
     FRESULT result;
     Enabled = FileOpen = DirOpen = false;
     Phase = Ack = 0;
+    memset(&TasContext, 0, sizeof(TasContext));
     if (!SusamuneStateGameValid(GAME_ID)) return;
     memset(m, 0, sizeof(*m));
     ConfigId = BootConfigId();
@@ -268,6 +277,8 @@ static void AddCatalog(void)
     c->entries[at] = entry;
 }
 
+#include "SusamuneTasStorage.inc"
+
 void SusamuneStateStorageService(void)
 {
     struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
@@ -278,15 +289,25 @@ void SusamuneStateStorageService(void)
     u8 *bytes;
     if (!Enabled) return;
     sync_before_read(&m->request, sizeof(m->request));
-    if (Phase != IDLE && memcmp(&Request, &m->request, sizeof(Request))) {
+    sync_before_read(&m->tasRequest, sizeof(m->tasRequest));
+    if (Phase != IDLE && (memcmp(&Request, &m->request, sizeof(Request)) ||
+        memcmp(&TasContext, &m->tasRequest, sizeof(TasContext)))) {
         Finish(SUSAMUNE_STATE_CANCELLED);
         return;
     }
+    if (Phase >= TAS_PHASE_BASE) { TasService(); return; }
     if (Phase == IDLE) {
         if (m->request.seq == Ack) return;
         Request = m->request;
+        TasContext = m->tasRequest;
+        _sprintf(Directory, "%s/moonshine_states", SusamuneCfgStoragePrefix());
         FileId = Offset = 0;
-        if (!Request.seq || !Request.session || (Request.reserved && Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+        if (!Request.seq || !Request.session || !SusamuneTasRequestValid(&TasContext) ||
+            (Request.reserved && Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+        if (TasStart()) return;
+        Phase = PREPARED_REQUEST;
+    }
+    if (Phase == PREPARED_REQUEST) {
         if (Request.command == SUSAMUNE_STATE_CMD_CANCEL) { Finish(SUSAMUNE_STATE_CANCELLED); return; }
         if (Request.command == SUSAMUNE_STATE_CMD_CATALOG) {
             if (Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }

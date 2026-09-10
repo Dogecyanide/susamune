@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build E4DE048F
+V2.3.0 pre-release · Build AE95E374
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
@@ -27,7 +27,7 @@ Configuration and saved mod data belong to the device the launcher was opened fr
 Open the mod menu with your configured menu combo (default Y + Start). Use L/R for top-level tabs, the C-stick to move between rows, A to select, and B to go back.
 
 - **Quick:** your Shined favourites.
-- **Practice:** separate Frame advance, Free camera and Input replay pages, savestates, practice rules, RNG and gameplay options.
+- **Practice:** separate Frame advance, Free camera and TAS projects pages, savestates, practice rules, RNG and gameplay options.
 - **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
 - **Records:** achievements and practice statistics, also reachable from Runs.
 - **Ghosts:** race, watch, save and manage ghost tracks.
@@ -114,19 +114,22 @@ Keep the storage device connected until the transfer or its cancellation finishe
 
 ## Record, edit and keep a TAS
 
-1. Turn **Save RNG state** On, then save a new state during normal gameplay. Keep this **start state** in its slot; recording begins from the slot under **Save to**.
-2. Choose **Practice > Input replay (experimental) > Record from savestate**. The menu closes. Release the A used to confirm; other gameplay buttons may stay held. Your start state reloads and recording begins.
-3. Play normally or use Pause and Step. Save another slot as a **checkpoint** when you want a place to retry. It stores the inputs from the start through that point.
-4. Load that checkpoint to discard the later inputs and try a different continuation. A checkpoint saved while recording continues recording after loading. For a stopped take, choose **Continue editing checkpoint**, then Step or Resume when ready.
-5. Opening the menu stops recording and keeps the take. **Replay recorded inputs** reloads the matching start state and repeats it. Changing Save to or Load from does not change the take's start. B or Start stops playback.
+Open **Practice > TAS projects**. A TAS keeps Mario's recorded inputs, its beginning and up to two checkpoints together.
 
-To **keep the TAS after rebooting**, save both the start state and the latest checkpoint to SD, with names that distinguish them. After rebooting into the same build, game region, setup and scene, import the matching start into **any memory slot**, then load the latest checkpoint. The checkpoint restores the inputs you had kept. Choose Continue editing checkpoint to work from there, or Replay recorded inputs to play from the beginning. Loading the checkpoint directly from SD is supported, but replay from the beginning still needs the matching start imported into memory.
+1. Choose **New TAS** where you want the recording to begin. Moonshine saves the beginning automatically, including the RNG. Release the A used to confirm. Gameplay stays paused until you use Step or Resume.
+2. Hold Mario's buttons and press **Step** to record one frame, or use **Resume** to record normal play. Opening the menu pauses your work.
+3. Under **Checkpoints**, choose **Save Checkpoint 1** before a move you might want to redo. Play farther, then choose **Go to Checkpoint 1** to return there. **Continue** lets you replace the old continuation. Checkpoint 2 gives you another place to retry. The Beginning is kept for replay.
+4. Choose **Replay** to watch your recorded inputs from the beginning. B or Start stops playback.
+5. Choose **Save TAS**, enter a name and confirm with Start. It saves the current point, the beginning and your checkpoints together on SD. Later saves update that same TAS. Wait for the saved message before closing the game.
+6. To return later, enter the same build, game region, setup and episode, then choose **Open TAS** and its name. Moonshine restores the necessary states and leaves you paused at your saved point. Choose **Continue** to edit or **Replay** to watch.
 
-A take holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. The three memory slots disappear on reboot; only exported SD copies preserve the work. Keep the start state as well as the checkpoint: a checkpoint alone cannot reconstruct the beginning for replay. Changing scenes clears the live take; load its matching checkpoint when you return.
+**Continue stays paused** so you can arrange the next input before using Step or Resume. A checkpoint rewinds the recording too: when you continue, the old inputs after that point are replaced.
 
-Replay is experimental. It checks selected Mario, RNG and counter values and stops on a mismatch; not every enemy or timed event is covered. Gameplay settings must match. Presentation choices such as the timer layout, metadata, ghost inputs and free-camera controls can be changed. The state files keep the usual build, region, scene and setup checks; they are not cross-region sharing files.
+In **Open TAS**, highlight a name and press **Start** to rename it or **X** to delete its SD copy, with confirmation. Deleting the SD copy keeps the checkpoints currently in memory; save again if you want to keep that work after closing the game.
 
-**Starting** means it is waiting to begin. **Settings changed** means restore the gameplay settings used for the take. A request to import the start state means the matching start is missing from memory. Keep the exact message when reporting any other refusal or mismatch. Use exported ghosts to share a finished attempt.
+TAS projects use the same three memory slots as ordinary savestates. A new TAS uses an empty slot when possible. If it needs an occupied ordinary slot, it asks which state you want to replace; cancel to keep it. Its Beginning and two checkpoints have clear names in the TAS screen, so you do not need to manage their slot numbers or import separate files. **Save Checkpoint** keeps a retry point in memory; **Save TAS** keeps the whole project on SD, under `/moonshine_tas`. Only the SD save survives closing the game or rebooting. The ordinary SD states menu remains separate.
+
+A TAS holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. Changing scenes clears the live recording; return to the matching scene and open your saved TAS. Replay is experimental and stops if the checked game state differs. Gameplay settings must match; timer layout, metadata, ghost inputs and camera presentation can still be adjusted. TAS projects cannot be shared across regions or builds. Use an exported ghost to share a finished attempt.
 
 ## Ghost inputs and splits
 
@@ -140,7 +143,7 @@ In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same co
 
 Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
 
-Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. Local input takes are separate from ghosts; the checkpoint workflow above keeps them inside SD states.
+Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. TAS projects save editable inputs; ghosts save the finished attempt for watching, racing and sharing.
 
 In Display > Timer and splits > Timer and splits, choose the comparison: **Off → PB → SOB → Ghost**. SOB means the cumulative sum of your best recorded segments. Ghost uses the selected race target's compatible split timestamps. Missing or incompatible timestamps show `--`; no checkpoint timing is guessed.
 

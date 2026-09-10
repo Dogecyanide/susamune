@@ -35,6 +35,16 @@ public:
 
     static bool diskBusy();
     void updateDisk();
+    struct TransferResult {
+        u32 command, status, id, slot, generation;
+        SusamuneStateArchiveHeader header;
+    };
+    bool takeTransferResult(TransferResult &out);
+    bool projectCompatible(const SusamuneTasManifest &project) const;
+    bool exportSlotExplicit(u32 slot, u32 expectedGeneration, const SusamuneTasRequest *project);
+    bool importSlotExplicit(u32 slot, u32 expectedGeneration, u32 archiveId,
+                            u32 expectedHeaderCrc, u32 packedBytes, const SusamuneTasRequest *project,
+                            const SusamuneTasManifest *manifest = nullptr);
     bool saveToSD(const char *name = nullptr);
     bool loadFromSD(u32 archiveId, u32 expectedHeaderCrc, u32 packedBytes);
     bool selectSDForLoad(u32 archiveId, u32 expectedHeaderCrc, u32 packedBytes, const char *name);
@@ -66,13 +76,17 @@ public:
 
     // Public so callers can trigger from elsewhere (e.g. a debug menu).
     bool saveState();
+    bool saveSlotExplicit(u32 slot, bool forceRng = false, bool omitPracticeTake = false);
     bool loadState();
     // Replay loads its original slot even if the menu selection changed.
     bool loadSlot(u32 slot, u32 expectedGeneration);
 
 private:
     void feedback(const char *debug, const char *message);
-    bool beginSDLoad(u32 archiveId, u32 expectedHeaderCrc, u32 packedBytes, bool restore);
+    bool beginSDExport(u32 slot, u32 expectedGeneration, const char *name,
+                       const SusamuneTasRequest *project);
+    bool beginSDLoad(u32 archiveId, u32 expectedHeaderCrc, u32 packedBytes, bool restore,
+                     u32 slot = kSlotCount, const SusamuneTasRequest *project = nullptr);
 
 #if ENABLE_SAVESTATE_DBG
     void setStatus(const char *msg);
