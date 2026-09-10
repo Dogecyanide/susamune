@@ -51,6 +51,20 @@ STATIC_HOOKS = {
 }
 
 DYNAMIC_HOOKS = {
+    "kStreamingMovie": ("sStreamingMovieTrampoline", "susamuneSplitStreamingMovie",
+                        (0x800ED5C8, 0x8029A044, 0x80291EDC), 0x7C0802A6),
+    "kMapObjAppear": ("sMapObjAppearTrampoline", "susamuneSplitMapObjAppear",
+                    (0x8018C434, 0x801B401C, 0x801ABED4), 0x7C0802A6),
+    "kRedSwitchMessage": ("sRedSwitchMessageTrampoline", "susamuneSplitRedSwitchMessage",
+                           (0x80198910, 0x801C0A9C, 0x801B8954), 0x7C0802A6),
+    "kSandCastle": ("sSandCastleTrampoline", "susamuneSplitSandCastle",
+                    (0x801A9DEC, 0x801D2294, 0x801CA14C), 0x7C0802A6),
+    "kMirrorMessage": ("sMirrorMessageTrampoline", "susamuneSplitMirrorMessage",
+                       (0x801A968C, 0x801D1AB0, 0x801C9968), 0x7C0802A6),
+    "kHanachanDamage": ("sHanachanDamageTrampoline", "susamuneSplitHanachanDamage",
+                        (0x802FF7EC, 0x800ED9FC, 0x800E709C), 0x7C0802A6),
+    "kTinKoopaHit": ("sTinKoopaHitTrampoline", "susamuneSplitTinKoopaHit",
+                     (0x802B2B84, 0x800A002C, 0x800996CC), 0x7C0802A6),
     "kChangePlayerStatus": (
         "sChangePlayerStatusTrampoline",
         "susamuneSplitChangePlayerStatus",
@@ -163,8 +177,8 @@ class SplitEventContractTests(unittest.TestCase):
         self.assertEqual(
             tuple(map(len, checkpoint_schema.CHECKPOINTS)), ROUTE_COUNTS
         )
-        self.assertEqual(sum(ROUTE_COUNTS), 153)
-        self.assertEqual(sum(count + 1 for count in ROUTE_COUNTS), 285)
+        self.assertEqual(sum(ROUTE_COUNTS), 363)
+        self.assertEqual(sum(count + 1 for count in ROUTE_COUNTS), 495)
         self.assertEqual(
             checkpoint_schema.schema_hash(),
             checkpoint_schema.EXPECTED_SCHEMA_HASH,
@@ -239,7 +253,7 @@ class SplitEventContractTests(unittest.TestCase):
         self.assertLess(main.rindex("gQFTTimer.update();", direct, update), update)
         savestate = source_text(SAVESTATE)
         self.assertLess(
-            savestate.index("gQFTTimer.onSavestateLoaded();"),
+            savestate.index("gQFTTimer.restoreSavestate(saved.timer);"),
             savestate.index("SplitEvents::onSavestateLoaded();"),
         )
         source = source_text()
@@ -290,9 +304,9 @@ class SplitEventContractTests(unittest.TestCase):
 
     def test_bianco_two_petey_damage_has_exact_hook_and_poll_fallback(self) -> None:
         text = source_text()
-        self.assertNotIn("susamuneSplitStreamingMovie", text)
-        self.assertNotIn("sStreamingMovieTrampoline", text)
-        self.assertNotIn("kStreamingMovie", text)
+        movie = text.rsplit('extern "C" void susamuneSplitStreamingMovie', 1)[1]
+        self.assertNotIn("ROUTE_BIANCO_2", movie)
+        self.assertIn("ROUTE_AIRSTRIP_1", movie)
         petey = text.split("void notePeteyDamage", 1)[1].split(
             "void notePetey(", 1
         )[0]
@@ -353,7 +367,13 @@ class SplitEventContractTests(unittest.TestCase):
                 carry_table,
             )
         )
-        self.assertEqual(parsed, CARRY_ROWS)
+        self.assertEqual(len(parsed), len(set(parsed)))
+        self.assertTrue(set(CARRY_ROWS).issubset(parsed))
+        for route in ("BIANCO_3", "BIANCO_6", "RICCO_4", "GELATO_1",
+                      "PINNA_2", "PINNA_6", "SIRENA_2", "SIRENA_4",
+                      "NOKI_6", "PIANTA_5"):
+            self.assertIn(f"ROUTE_{route}_FULL_REDS", {row[0] for row in parsed})
+        self.assertIn(("ROUTE_AIRSTRIP_1", 0, 0, 0, 1), parsed)
         publish = text.split("bool publishTransition", 1)[1].split(
             "bool isSpinStatus", 1
         )[0]
@@ -407,10 +427,10 @@ class SplitEventContractTests(unittest.TestCase):
         )
         self.assertIn("sceneMatches(current, 0x37, 0)", text)
         self.assertIn(
-            "routeScene(sActiveRoute, 0x0D, 6)", text
+            "pinnaOneParkScene()", text
         )
         self.assertIn(
-            "routeScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1)", text
+            "hookScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1)", text
         )
         transitions = text.split("void updateTransitions()", 1)[1].split(
             "bool crossedAbove", 1
@@ -446,10 +466,10 @@ class SplitEventContractTests(unittest.TestCase):
         middle = text.split("void armCarryTransition()", 1)[1].split(
             "bool isSpinStatus", 1
         )[0]
-        self.assertIn("routeScene(sActiveRoute, 0x0D, 6)", middle)
+        self.assertIn("pinnaOneParkScene()", middle)
         self.assertIn("mNextScene.mAreaID == 0x3A", middle)
         self.assertLess(
-            middle.index("routeScene(sActiveRoute, 0x0D, 6)"),
+            middle.index("pinnaOneParkScene()"),
             middle.index("SUSAMUNE_ADDR_QFT_TRANSITION_TARGET"),
         )
 
@@ -512,10 +532,9 @@ class SplitEventContractTests(unittest.TestCase):
         self.assertIn("publishEvent(sActiveRoute, 0)", wake)
         for threshold in (2, 5, 7, 10):
             self.assertIn(f"sCleanedPiantaCount == {threshold}", text)
-        self.assertIn("count == 1", text)
-        self.assertIn("count == 5", text)
-        self.assertIn("count == 8", text)
-        self.assertIn("routeScene(sActiveRoute, 0x0D, 6)", text)
+        self.assertIn("{1, 5, 8, 0}", text)
+        self.assertIn("before < desc.coins[i] && count >= desc.coins[i]", text)
+        self.assertIn("pinnaOneParkScene()", text)
 
     def test_actor_and_polling_primitives_cover_bosses_and_eel_edges(self) -> None:
         text = source_text()
@@ -536,27 +555,22 @@ class SplitEventContractTests(unittest.TestCase):
         self.assertIn("before <= 1 || after != 1", text)
         self.assertIn("eelToothAlreadyCounted(tooth)", text)
 
-        self.assertIn("reinterpret_cast<const u8 *>(sTinKoopa) + 0x1C8", text)
+        self.assertIn("static_cast<const u8 *>(actor) + 0x1C8", text)
         self.assertIn("reinterpret_cast<const u8 *>(manager) + 0x8C", text)
         self.assertIn("degree < 18768", text)
         self.assertIn("kGetNumGripsDead", text)
 
-    def test_shadow_mario_finds_manager_free_conductor_actor(self) -> None:
+    def test_shadow_mario_requires_actual_talk_to_connected_actor(self) -> None:
         text = source_text()
-        finder = text.split("void *findStandaloneActor", 1)[1].split(
-            "bool isShadowRoute", 1
-        )[0]
-        self.assertIn("gpConductor->_30.begin()", finder)
-        self.assertIn("gpConductor->_30.end()", finder)
-        self.assertIn("objectVtable(actor) == actorVtable", finder)
-
-        update = text.split("void updateShadowMario()", 1)[1].split(
-            "void updateBowser()", 1
-        )[0]
-        self.assertIn("findStandaloneActor(kEmarioVtable)", update)
+        self.assertNotIn("emarioDownWaitingToTalk", text)
+        self.assertNotIn("updateShadowMario", text)
+        talk = text.split("void noteTalk(", 1)[1].split("void updateTransitions", 1)[0]
+        self.assertIn("objectVtable(npc->mDummyConnectActor)", talk)
+        self.assertIn("talkActor == kEmarioVtable || talkActor == kEnemyMarioVtable", talk)
+        self.assertIn("publishEvent(sActiveRoute, shadowEvent(sActiveRoute));", talk)
+        wrapper = text.rsplit('extern "C" void susamuneSplitOpenTalk', 1)[1]
         self.assertLess(
-            update.index("findStandaloneActor(kEmarioVtable)"),
-            update.index("findManagedActor(kEmarioManagerVtable, kEmarioVtable)"),
+            wrapper.index("sOpenTalkTrampoline"), wrapper.index("noteTalk(npc)"),
         )
 
     def test_ricco_one_uses_exact_tentacle_call_and_post_direct_health(self) -> None:
@@ -630,18 +644,18 @@ class SplitEventContractTests(unittest.TestCase):
     def test_yoshi_and_nozzle_callbacks_are_wired_to_existing_wrappers(self) -> None:
         header = source_text(HEADER)
         self.assertIn("void onYoshiMounted();", header)
-        self.assertIn("void onNozzleCollected();", header)
+        self.assertIn("void onNozzleCollected(TItemNozzle *nozzle);", header)
         gameplay = source_text(GAMEPLAY)
         self.assertIn('#include "susamune/split_events.hxx"', gameplay)
         self.assertIn("SplitEvents::onYoshiMounted();", gameplay)
-        self.assertIn("SplitEvents::onNozzleCollected();", gameplay)
+        self.assertIn("SplitEvents::onNozzleCollected(nozzle);", gameplay)
         text = source_text()
         yoshi = text.split("void onYoshiMounted()", 1)[1].split(
-            "void onNozzleCollected()", 1
+            "void onNozzleCollected(", 1
         )[0]
         self.assertIn("ROUTE_PINNA_EYG", yoshi)
         self.assertNotIn("ROUTE_RICCO_6", yoshi)
-        self.assertIn("ROUTE_CORONA", text.split("void onNozzleCollected()", 1)[1])
+        self.assertIn("ROUTE_CORONA", text.split("void onNozzleCollected(", 1)[1])
 
     def test_expected_event_only_and_fixed_storage_contracts(self) -> None:
         stats = source_text(SPLIT_STATS)

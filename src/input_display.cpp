@@ -366,8 +366,44 @@ void InputDisplay::updateEditor(TMarioGamePad *pad) {
 
 void InputDisplay::draw(Menu *menu, bool force) const {
     if ((!mVisible && !force) || !menu) return;
-
     const PADStatus &raw = JUTGamePad::mPadStatus[0];
+    const JUTGamePad::CStick &main = JUTGamePad::mPadMStick[0];
+    const JUTGamePad::CStick &sub = JUTGamePad::mPadSStick[0];
+    drawState(menu, raw, main.mStickX, main.mStickY,
+              sub.mStickX, sub.mStickY, true);
+}
+
+void InputDisplay::drawSnapshot(Menu *menu,
+        const SusamunePracticeInput &input, int x, int y, int scale,
+        const char *label) const {
+    if (!menu) return;
+    InputDisplay view = *this;
+    view.mStyle.x = x;
+    view.mStyle.y = y;
+    view.mStyle.scale = clampi(scale, 40, 100);
+    view.mCfg.valueMode = SUSAMUNE_INPUT_VALUES_OFF;
+    PADStatus raw = {};
+    raw.mButton = input.buttons;
+    raw.mStickX = input.stickX;
+    raw.mStickY = input.stickY;
+    raw.mSubStickX = input.substickX;
+    raw.mSubStickY = input.substickY;
+    raw.mTriggerLeft = input.triggerL;
+    raw.mTriggerRight = input.triggerR;
+    JUTGamePad::CStick main, sub;
+    main.update(input.stickX, input.stickY, JUTGamePad::Clamped,
+                JUTGamePad::WhichStick_ControlStick);
+    sub.update(input.substickX, input.substickY, JUTGamePad::Clamped,
+               JUTGamePad::WhichStick_CStick);
+    view.drawState(menu, raw, main.mStickX, main.mStickY,
+                   sub.mStickX, sub.mStickY, false);
+    if (label) menu->drawText(label, x, y - 15, 12, 12,
+                              color(220, 240, 255, 255));
+}
+
+void InputDisplay::drawState(Menu *menu, const PADStatus &raw,
+        float mainStickX, float mainStickY, float subStickX, float subStickY,
+        bool live) const {
     const u16 buttons = raw.mButton;
     Painter p = { menu, &mStyle, mColors };
 
@@ -410,13 +446,10 @@ void InputDisplay::draw(Menu *menu, bool force) const {
     trigger[2] = trigger[4] = (s16)p.x(170);
     menu->strokePoly(trigger, 4, triggerStroke);
 
-    // The original overlay reads JUT's clamped floats, not the raw PAD bytes.
-    const JUTGamePad::CStick &main = JUTGamePad::mPadMStick[0];
-    const JUTGamePad::CStick &sub = JUTGamePad::mPadSStick[0];
-    const int mx = clampi((int)(main.mStickX * 14.0f), -14, 14);
-    const int my = clampi((int)(main.mStickY * 14.0f), -14, 14);
-    const int cx = clampi((int)(sub.mStickX * 14.0f), -14, 14);
-    const int cy = clampi((int)(sub.mStickY * 14.0f), -14, 14);
+    const int mx = clampi((int)(mainStickX * 14.0f), -14, 14);
+    const int my = clampi((int)(mainStickY * 14.0f), -14, 14);
+    const int cx = clampi((int)(subStickX * 14.0f), -14, 14);
+    const int cy = clampi((int)(subStickY * 14.0f), -14, 14);
     const Color mainStick = p.lit(SUSAMUNE_INPUT_COLOR_MAIN_STICK, 0xef);
     p.fillCircle(32 + mx, 52 - my, 12, mainStick);
     p.strokeGate(32, 52, 19, mainStick);
@@ -446,7 +479,7 @@ void InputDisplay::draw(Menu *menu, bool force) const {
 
     int mainX, mainY, cX, cY, triggerL, triggerR;
     TMarioGamePad *pad = gpApplication.mGamePads[0];
-    if (mCfg.valueSource == SUSAMUNE_INPUT_SOURCE_PROCESSED && pad) {
+    if (live && mCfg.valueSource == SUSAMUNE_INPUT_SOURCE_PROCESSED && pad) {
         mainX = clampi((int)(pad->mControlStick.mStickX * 100.0f), -100, 100);
         mainY = clampi((int)(pad->mControlStick.mStickY * 100.0f), -100, 100);
         cX = clampi((int)(pad->mCStick.mStickX * 100.0f), -100, 100);

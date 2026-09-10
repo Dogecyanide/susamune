@@ -42,6 +42,7 @@ public:
     // Open the Ghosts tab on a save confirmation bound to this exact accepted
     // PB. The caller retains ownership of any action held behind that PB.
     bool openGhostPBSave(u32 token);
+    void openTasProject();
 
     // Menu-only C-stick repeat. This never changes the game's pad state.
     u32 navigationInput(TMarioGamePad *pad);
@@ -52,6 +53,7 @@ public:
     // internal buffer, so callers may pass scratch storage. Replaces any
     // message still on screen; expires on its own after kToastFrames.
     void toast(const char *msg);
+    bool hasToast() const { return mToastFrames > 0 && mToastBuf[0] != '\0'; }
 
     // Restore mod settings, binds and layouts, then persist them. IL PBs and
     // Records live in separate mailboxes and are deliberately untouched.

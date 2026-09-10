@@ -1,11 +1,29 @@
 #include "string.h"
 #include "global.h"
+#include "common.h"
 #include "EXI.h"
 #include "Config.h"
 #include "debug.h"
 
 //#include <ctype.h> //somehow broke in devkitARM r46
 extern int isprint(int in); //only used definition anyways
+
+const u32 SusamuneCrcNibbleTable[16] = {
+	0x00000000u, 0x1DB71064u, 0x3B6E20C8u, 0x26D930ACu,
+	0x76DC4190u, 0x6B6B51F4u, 0x4DB26158u, 0x5005713Cu,
+	0xEDB88320u, 0xF00F9344u, 0xD6D6A3E8u, 0xCB61B38Cu,
+	0x9B64C2B0u, 0x86D3D2D4u, 0xA00AE278u, 0xBDBDF21Cu
+};
+
+u32 SusamuneCrc32(const void *data, u32 size)
+{
+	const u8 *bytes = (const u8*)data;
+	u32 crc = 0xFFFFFFFFu;
+	u32 i;
+	for (i = 0; i < size; ++i)
+		crc = SusamuneCrcByte(crc, bytes[i]);
+	return crc ^ 0xFFFFFFFFu;
+}
 
 void BootStatus(s32 Value, u32 secs, u32 scnt)
 {

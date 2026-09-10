@@ -1,5 +1,10 @@
 # Moonshine — a Super Mario Sunshine practice mod
 
+**V2.3.0 — Frame By Frame** adds frame advance, free camera, editable TAS
+projects, three savestate slots and expanded layout and colour controls.
+See the [English guide](doc/guide-en.md), [日本語ガイド](doc/guide-ja.md),
+and [release notes](doc/release-notes-v2.3.0.md).
+
 It implements most of the [GCT generator](https://gct.zint.ch/) practice codes, adds emulator-like savestates to console (Wii through Nintendont), and more. It supports JP 1.0, US, and PAL versions. Vibe coded software, use at your own risk.
 
 <p align="center">
@@ -9,7 +14,8 @@ It implements most of the [GCT generator](https://gct.zint.ch/) practice codes, 
 </p>
 
 Features:
-- An emulator like savestate on Wii.
+- Three compressed savestate slots, with named SD states on Wii.
+- Frame advance, free camera and TAS projects with a Beginning and two checkpoints.
 - Virtually all gecko codes integrated into the main launcher.
     - Integrated Timer, Metadata, Input display, Level select, Warp wheel and much more.
 - In-game settings menu configuration for codes, persistent and stored on SD card (wii) / slot B memory card (emulator).
@@ -31,24 +37,47 @@ Features:
 
 ### Console (wii)
 
-Download `moonshine_launcher.zip` from the Releases page and extract it to your `apps/` folder on your SD card, so that you have `apps:/moonshine_launcher/{boot.dol,meta.xml,icon.png,mod_jp.bin,mod_us.bin,mod_pal.bin}`. It opens a GUI that lets you select which region game you want to boot from (with configurable paths for each: SD, USB, or a real disc), and configure standard Nintendont options such as progressive scan and PAL language.
+Choose the **English** or **日本語版** launcher download from the Releases
+page. Copy its `apps` folder to the SD root, so the launcher is at
+`/apps/moonshine_launcher/boot.dol`. It lets you select JP, US or PAL Sunshine
+from SD, USB or a real disc, and configure Nintendont options such as
+progressive scan and the retail PAL language.
 
-When upgrading an existing installation, rename `apps/susamune_launcher` to `apps/moonshine_launcher` before extracting the new ZIP over it. This keeps any custom launcher theme and BGM in place and avoids a duplicate Homebrew Channel entry. Do not rename the root-level `susamune.ini` or `susamune_*` data files.
+The English download keeps Moonshine menus English in every game region.
+The Japanese download provides Japanese launcher menus and Japanese Moonshine
+menus for JP Sunshine; selecting US or PAL keeps the game-side Moonshine
+menus English. Language belongs to the download, independently of the game
+region you select.
+
+Replace the app files when updating. If you still use `apps/susamune_launcher`,
+rename it to `apps/moonshine_launcher` first to avoid a duplicate Homebrew
+Channel entry. Keep root-level `susamune.ini`, records, ghosts, achievements
+and playlists. Older states and TAS projects need their matching build;
+make fresh ones for V2.3.0.
+
+Put `background.png` and optional `bgm.mp3` in `/Moonshine_Theme` at the SD
+root. The launcher creates a missing folder. The **日本語版** ZIP includes a
+default flag background; skip its `Moonshine_Theme` folder if you want to
+keep your existing theme.
 
 Settings and binds are stored per region in `susamune.ini` at the root of the SD card, in `[settings_jp]` / `[binds_jp]` sections and their `us` / `pal` counterparts.
 
 ### Emulator
 
-Download the BPS for your region from the Releases page and apply it to a clean
+Choose the **English** or **日本語版** Dolphin download. Apply its matching BPS to a clean
 ISO with a BPS patcher such as
 [Floating IPS](https://github.com/Alcaro/Flips/releases). The patch verifies
 the source image before writing the Moonshine ISO.
 
 | Region | Patch | Clean CRC32 | Clean MD5 |
 | --- | --- | --- | --- |
-| JP 1.0 (`GMSJ01`) | `moonshine_emu_jp_<version>.bps` | `C3B17583` | `3B07A4BB22DB926B177E207F9D7F0D87` |
-| US (`GMSE01`) | `moonshine_emu_us_<version>.bps` | `771AD977` | `0C6D2EDAE9FDF40DFC410FF1623E4119` |
-| PAL (`GMSP01`) | `moonshine_emu_pal_<version>.bps` | `4C1D3641` | `72C4860D8555D5E790628E348ABC244D` |
+| JP 1.0 (`GMSJ01`) | `moonshine_jp.bps` | `C3B17583` | `3B07A4BB22DB926B177E207F9D7F0D87` |
+| US (`GMSE01`) | `moonshine_us.bps` | `771AD977` | `0C6D2EDAE9FDF40DFC410FF1623E4119` |
+| PAL (`GMSP01`) | `moonshine_pal.bps` | `4C1D3641` | `72C4860D8555D5E790628E348ABC244D` |
+
+The Japanese Dolphin download contains `moonshine_jp_ja.bps` for JP Sunshine.
+The English JP patch keeps Moonshine menus English. SD state and TAS file
+menus require the Wii launcher; Dolphin still has the three memory slots.
 
 > [!IMPORTANT]
 > Saving and loading the goop with savestates is broken in Dolphin unless 'Texture Cache Accuracy' it set to Safe. You can find this option in the 'Hacks' tab of 'Graphics' in the game's config:

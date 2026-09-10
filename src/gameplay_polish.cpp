@@ -7,6 +7,7 @@
 #include "SMS/System/MarDirector.hxx"
 #include "susamune/binds.hxx"
 #include "susamune/menu.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/records.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/split_events.hxx"
@@ -25,6 +26,29 @@ bool sHudWasVisible;
 bool sPauseWasVisible;
 bool sCleanPause;
 bool sZHeld;
+bool sCinemaHidden;
+TGCConsole2 *sHiddenConsole;
+u16 sConsolePerformFlags;
+
+void restoreConsoleDraw() {
+    if (sHiddenConsole && gpMarDirector &&
+        gpMarDirector->mGCConsole == sHiddenConsole) {
+        sHiddenConsole->mPerformFlags = sConsolePerformFlags;
+    }
+    sHiddenConsole = nullptr;
+}
+
+void hideConsoleDraw() {
+    if (!gpMarDirector || !gpMarDirector->mGCConsole) return;
+    TGCConsole2 *console = gpMarDirector->mGCConsole;
+    if (sHiddenConsole != console) {
+        sHiddenConsole = console;
+        sConsolePerformFlags = console->mPerformFlags;
+    }
+    // Tank/nozzle and Yoshi juice draw outside mMainScreen. Exclude only GX
+    // submission; JDrama still dispatches its movement and animation cues.
+    console->mPerformFlags |= 8;
+}
 
 void restoreScreens() {
     if (sHiddenHud && gpMarDirector && gpMarDirector->mGCConsole &&
@@ -80,7 +104,7 @@ extern "C" void susamuneFireRideYoshi(TMarDirector *director, TYoshi *yoshi) {
 extern "C" void susamuneFireGetNozzle(TMarDirector *director,
                                       TItemNozzle *nozzle) {
     director->fireGetNozzle(nozzle);
-    SplitEvents::onNozzleCollected();
+    SplitEvents::onNozzleCollected(nozzle);
     if (gSettings.getBool(SETTING_YOSHI_NOZZLE_SAVE_PROMPT))
         requestSavePrompt(director);
 }
@@ -94,6 +118,12 @@ void beforeDirect() {
         sCleanPause = !sCleanPause;
     }
     sZHeld = zHeld;
+    sCinemaHidden = PracticeSession::hideHud();
+    if (sCinemaHidden) {
+        hideConsoleDraw();
+        hideScreens();
+        return;
+    }
     if (!pauseOpen()) {
         sCleanPause = false;
         restoreScreens();
@@ -106,6 +136,12 @@ void beforeDirect() {
 }
 
 void afterDirect() {
+    restoreConsoleDraw();
+    if (sCinemaHidden) {
+        restoreScreens();
+        sCinemaHidden = false;
+        return;
+    }
     if (!pauseOpen()) {
         sCleanPause = false;
         restoreScreens();

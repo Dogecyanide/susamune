@@ -2,6 +2,8 @@
 #define _SUSAMUNE_GHOST_HXX
 
 #include <Dolphin/types.h>
+#include "susamune/practice_input.h"
+#include "susamune/state_codec.hxx"
 
 class Menu;
 class TMarDirector;
@@ -18,6 +20,7 @@ struct PlaybackInfo {
     u8 episode;
     bool completed;
     bool pinned;
+    u32 runFlags;
 };
 
 enum RaceSource : u8 {
@@ -54,11 +57,27 @@ struct VisualState {
 
 void init();
 void onStageSetup(TMarDirector *director);
+// Report mod/native pause before lending the director its frozen state.
+void frameControl(bool frozen, bool assisted);
 void beforeDirect();
 void afterDirect(s32 appState);
 void update();
 void draw(Menu *menu);
 void onSavestateLoaded();
+enum { kSavestateSpanCount = 3 };
+struct SavestateData { u32 words[128]; };
+// Prefix bytes join the game snapshot; metadata never supplies restore addresses.
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]);
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]);
+void restoreSavestate(const SavestateData &data);
+void invalidateForAssist();
+void captureInput(const SusamunePracticeInput &input);
+void captureSplit(u16 route, u8 endpoint, s32 absoluteQf);
+bool comparisonSplit(u16 route, u8 endpoint, s32 *out);
+bool comparisonDelta(u16 route, u8 endpoint, s32 absoluteQf, s32 *out);
+void drawInputs(Menu *menu, u8 mode);
 
 // Canonical SGHF bridge used by the asynchronous ARM storage service.
 // Import validates the complete file before replacing the active playback.
@@ -85,6 +104,7 @@ int observerGhostCount();
 bool observerLoading();
 int observerVisibleCount();
 bool playbackInfo(PlaybackInfo *out);
+bool playbackIsTas(bool secondary = false);
 // A successful snapshot may still be hidden outside its matching route/QFT.
 bool visualState(VisualState *out);
 bool secondaryVisualState(VisualState *out);

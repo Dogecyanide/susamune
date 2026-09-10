@@ -139,18 +139,15 @@ static_assert(SUSAMUNE_GHOST_MODEL_HEAP_OFFSET +
                       SUSAMUNE_GHOST_MODEL_HEAP_SIZE <=
                   SUSAMUNE_GHOST_SEGMENT_TABLE_OFFSET,
               "primary model heap overlaps playback data");
-static_assert(SUSAMUNE_GHOST_STORAGE_HEADER_SIZE +
-                      SUSAMUNE_GHOST_MAX_FILE_SIZE <=
-                  SUSAMUNE_GHOST_SECONDARY_HEAP_OFFSET,
-              "secondary model heap overlaps transfer payload");
+static_assert(SUSAMUNE_GHOST_MAX_FILE_SIZE <=
+                  SUSAMUNE_GHOST_FILE_TRANSFER_SIZE,
+              "ghost file exceeds the separate transfer allocation");
 static_assert(SUSAMUNE_GHOST_SECONDARY_HEAP_OFFSET +
                       SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE ==
                   SUSAMUNE_GHOST_SLOT_SIZE,
               "secondary model heap must consume the transfer tail");
-static_assert(((SUSAMUNE_GHOST_STORAGE_HEADER_SIZE +
-                SUSAMUNE_GHOST_MAX_FILE_SIZE) &
-               31u) == 0,
-              "transfer payload end must be cache-line aligned");
+static_assert((SUSAMUNE_GHOST_FILE_TRANSFER_PPC_BASE & 31u) == 0,
+              "transfer bank must be cache-line aligned");
 static_assert(kShadowWorstCaseUsed <= kModelAllocationPreflight,
               "Shadow allocation proof exceeds the preflight bound");
 static_assert(kPiantaWorstCaseUsed <= kModelAllocationPreflight,
@@ -165,7 +162,7 @@ static_assert(SUSAMUNE_MOD_ATTACHMENT_HEAP_SIZE >=
                   kAttachmentInstanceMax * 2u + kFixedExpHeapOverhead,
               "attachment heap cannot hold two worst-case instances");
 static_assert(SUSAMUNE_MOD_ATTACHMENT_HEAP_OFFSET ==
-                  SUSAMUNE_MOD_BLOB_MAX_SIZE,
+                  SUSAMUNE_MOD_MEM1_WORKING_CAP_SIZE,
               "attachment heap must follow the mod working cap");
 static_assert(SUSAMUNE_MOD_ATTACHMENT_HEAP_OFFSET +
                       SUSAMUNE_MOD_ATTACHMENT_HEAP_SIZE <=

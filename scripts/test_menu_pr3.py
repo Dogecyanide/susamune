@@ -32,6 +32,23 @@ def function(source: str, signature: str) -> str:
 
 
 class NestedMenuContracts(unittest.TestCase):
+    def test_records_is_a_root_and_reuses_the_runs_shortcut(self) -> None:
+        menu = text("src/menu.cpp")
+        constructor = menu[menu.index("Menu::Menu()") : menu.index("bool Menu::openGhostPBSave(")]
+        release = re.sub(r"#if ENABLE_DEBUG_WARPS.*?#endif", "", constructor, flags=re.S)
+        roots = re.findall(r"mTabs\[mNumTabs\+\+\] = (.*?);", release, re.S)
+        titles = []
+        for root in roots:
+            if "NestedMenuTab" in root:
+                titles.append(re.search(r'"([^"]+)"', root).group(1))
+            else:
+                titles.append({"starred": "Quick", "records": "Records", "ghosts": "Ghosts"}[root.strip()])
+        self.assertEqual(titles, ["Quick", "Practice", "Runs", "Records", "Ghosts", "Display", "System"])
+        self.assertIn("{ iling, stageLoader, records, pbSafety, timer }", constructor)
+        self.assertEqual(constructor.count("new (sRecordsBuf) RecordsTab()"), 1)
+        capacity = int(re.search(r"kMaxTabs = (\d+)", text("include/susamune/menu.hxx")).group(1))
+        self.assertLessEqual(len(roots) + 2, capacity, "Debug roots must fit the existing fixed menu storage")
+
     def test_nested_pages_cover_every_setting_in_their_category_once(self) -> None:
         menu = text("src/menu.cpp")
         settings = re.findall(
@@ -67,6 +84,7 @@ class NestedMenuContracts(unittest.TestCase):
                 "kTimerFreezeSettings",
             ),
             "SETTING_CAT_UI": (
+                "kDisplayNativeSettings",
                 "kDisplayMovementSettings",
                 "kDisplayPracticeSettings",
                 "kDisplayOtherSettings",
@@ -84,7 +102,8 @@ class NestedMenuContracts(unittest.TestCase):
                 for setting, setting_cat in setting_category.items()
                 if setting_cat == category
             }
-            self.assertEqual(set(actual), expected, category)
+            shortcuts = {"SETTING_TIMER_SUNSHINE_VISIBILITY"} if category == "SETTING_CAT_UI" else set()
+            self.assertEqual(set(actual), expected | shortcuts, category)
 
     def test_timer_freezes_are_one_nested_page(self) -> None:
         menu = text("src/menu.cpp")
@@ -121,8 +140,8 @@ class NestedMenuContracts(unittest.TestCase):
 
     def test_settings_hub_is_grouped_coherently(self) -> None:
         menu = text("src/menu.cpp")
-        self.assertIn("gameplay, practice, rng, savestate,", menu)
-        self.assertIn("timer, display, cosmetics, creation, binds,", menu)
+        self.assertIn("{ inputReplay, camera, savestate, practice, rng, gameplay }", menu)
+        self.assertIn("{ creation, display, timer, cosmetics }", menu)
         self.assertIn('return "GAMEPLAY AND PRACTICE"', menu)
         self.assertIn('return "TIMING AND HUD"', menu)
         self.assertIn('return "LAYOUT AND CONTROLS"', menu)
@@ -276,9 +295,9 @@ class MovementStylePersistenceContracts(unittest.TestCase):
         self.assertIn("SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE 0x4000u", cfg)
         self.assertIn("sizeof(struct SusamuneMovementStyleCfg) == 88", cfg)
         self.assertIn("movementStyle) == 5056", cfg)
-        self.assertIn("sizeof(struct SusamuneCfg) == 5144", cfg)
+        self.assertIn("sizeof(struct SusamuneCfg) == 5152", cfg)
         self.assertIn("SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET 0x1420u", cfg)
-        self.assertLess(5144, 0x1420)
+        self.assertEqual(5152, 0x1420)
 
     def test_console_save_and_reload_cover_every_field(self) -> None:
         kernel = text("launcher/kernel/SusamuneCfg.c")
@@ -309,13 +328,16 @@ class MovementStylePersistenceContracts(unittest.TestCase):
         self.assertIn("gCreationExtras.stageMovementInto(&cfg->movementStyle)", settings)
         self.assertIn("DCStoreRange((void *)&cfg->movementStyle", settings)
 
-    def test_dolphin_v5_migrates_to_v6(self) -> None:
+    def test_dolphin_v5_migrates_to_v10(self) -> None:
         emulator = text("src/emulator_persistence.cpp")
-        self.assertIn("constexpr u16 kRecordVersion = 6;", emulator)
+        self.assertIn("constexpr u16 kRecordVersion = 10;", emulator)
+        self.assertIn("const bool v9 = !current && validV9(record);", emulator)
+        self.assertIn("initILEpisodes(&sState->ilEpisodes);", emulator)
         self.assertIn("struct RecordV5", emulator)
         self.assertIn("u8 cfg[5016];", emulator)
         self.assertIn("bool validV5", emulator)
-        self.assertIn("const bool v5 = !current && validV5(record);", emulator)
+        self.assertIn("const bool v5 = !current && !v7 && !v6 && validV5(record);", emulator)
+        self.assertIn("migrateRecordV6(&sState->cfg, &record->cfg)", emulator)
         self.assertIn("sizeof(((RecordV5 *)0)->cfg)", emulator)
         self.assertIn("migrateRecordCfg(&sState->cfg", emulator)
         self.assertIn("oldCfg + kMovementOffsetV5", emulator)

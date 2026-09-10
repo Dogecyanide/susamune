@@ -12,7 +12,7 @@ import zlib
 from pathlib import Path
 
 from patches import mod_blob_max_size as MOD_BLOB_MAX_SIZE
-from patches import mod_region_size as MOD_REGION_SIZE
+from patches import mod_dol_storage_size as MOD_REGION_SIZE
 
 
 BPS_MAGIC = b"BPS1"
@@ -137,17 +137,30 @@ def add_operation(operations, target_offset, kind, value, size=None):
     })
 
 
-def build_operations(layout, mod_manifest):
-    code = bytes.fromhex(mod_manifest["code"])
-    if len(code) != mod_manifest["size"] or len(code) % 4:
-        raise ValueError("mod code size is inconsistent or not word-aligned")
+def build_operations(layout, mod_manifest, ui_language="en"):
+    if ui_language not in ("en", "ja"):
+        raise ValueError("UI language must be en or ja")
+    if ui_language == "ja" and (
+            layout["region"] != "jp" or not layout.get("japanese_ui")):
+        raise ValueError("Japanese UI requires the verified JP disc asset extent")
     region_size = layout["mod_region_size"]
-    if len(code) > MOD_BLOB_MAX_SIZE:
-        raise ValueError(
-            f"mod code is {len(code):#x} bytes, over the "
-            f"{MOD_BLOB_MAX_SIZE:#x} MEM1 working cap")
-    if len(code) > region_size:
-        raise ValueError(f"mod code is {len(code):#x} bytes, over the {region_size:#x} DOL region")
+    segments = mod_manifest.get("segments")
+    if not segments or len(segments) != 2:
+        raise ValueError("FOXTROT DOL needs two image segments")
+    images = []
+    image = bytearray()
+    for segment, (expected, cap) in zip(segments, ((0, 0x58000), (0x80000, 0x40000))):
+        code = bytes.fromhex(segment["code"])
+        size = segment["memory_size"]
+        if segment["offset"] != expected or not len(code) <= size <= cap or size % 4:
+            raise ValueError("invalid DOL image span")
+        while len(image) % 32: image.append(0)
+        images.append((len(image), mod_manifest["base_addr"] + expected, size))
+        image.extend(code)
+        image.extend(bytes(size - len(code)))
+    if len(image) > region_size:
+        raise ValueError("packed DOL exceeds verified disc extent; regenerate ISO layout")
+    code = bytes(image)
 
     operations = []
     add_operation(operations, BOOT_FST_OFFSET_FIELD, "literal", struct.pack(">I", layout["fst"]["target_offset"]))
@@ -155,11 +168,14 @@ def build_operations(layout, mod_manifest):
 
     dol = layout["dol"]
     slot = dol["new_text_slot"]
-    dol_words = {
-        dol["iso_offset"] + DOL_TEXT_OFFSET_TABLE + slot * 4: dol["size"],
-        dol["iso_offset"] + DOL_TEXT_ADDRESS_TABLE + slot * 4: mod_manifest["base_addr"],
-        dol["iso_offset"] + DOL_TEXT_SIZE_TABLE + slot * 4: region_size,
-    }
+    if slot + len(images) > 7:
+        raise ValueError("retail DOL needs two free text slots")
+    dol_words = {}
+    for index, (offset, address, size) in enumerate(images):
+        target_slot = slot + index
+        dol_words[dol["iso_offset"] + DOL_TEXT_OFFSET_TABLE + target_slot * 4] = dol["size"] + offset
+        dol_words[dol["iso_offset"] + DOL_TEXT_ADDRESS_TABLE + target_slot * 4] = address
+        dol_words[dol["iso_offset"] + DOL_TEXT_SIZE_TABLE + target_slot * 4] = size
     for address, value in mod_manifest["writes"]:
         dol_words[hook_iso_offset(layout, address)] = value
     for offset, value in dol_words.items():
@@ -168,6 +184,22 @@ def build_operations(layout, mod_manifest):
     expanded_dol = dol["iso_offset"] + dol["size"]
     add_operation(operations, expanded_dol, "literal", code)
     add_operation(operations, expanded_dol + len(code), "zero", None, region_size - len(code))
+
+    japanese = layout.get("japanese_ui")
+    if japanese:
+        from gen_japanese_ui import MAX_SIZE
+        if (layout["region"] != "jp" or japanese["offset"] != 0x004AA8C0 or
+                japanese["offset"] != expanded_dol + region_size or
+                japanese["size"] != MAX_SIZE):
+            raise ValueError("JP disc asset must follow the verified DOL storage extent")
+        # Both languages overwrite the same extent, preserving source-range CRCs.
+        asset = b""
+        if ui_language == "ja":
+            from gen_japanese_ui import build
+            asset, _ = build()
+            add_operation(operations, japanese["offset"], "literal", asset)
+        add_operation(operations, japanese["offset"] + len(asset), "zero", None,
+                      japanese["size"] - len(asset))
 
     fst = layout["fst"]
     source_cursor = fst["source_offset"]
@@ -203,9 +235,9 @@ def build_operations(layout, mod_manifest):
     return operations
 
 
-def expected_source_ranges(layout, mod_manifest):
+def expected_source_ranges(layout, mod_manifest, ui_language="en"):
     cursor = 0
-    for operation in build_operations(layout, mod_manifest):
+    for operation in build_operations(layout, mod_manifest, ui_language):
         target = operation["target_offset"]
         if target > cursor:
             yield cursor, target - cursor
@@ -320,7 +352,7 @@ def validate_layout(layout, mod_manifest):
         raise ValueError("mod hook addresses changed; regenerate the ISO layout with the clean ISO")
 
 
-def build_patch(layout, mod_manifest):
+def build_patch(layout, mod_manifest, ui_language="en"):
     validate_layout(layout, mod_manifest)
     source_crcs = {
         (entry["offset"], entry["size"]): int(entry["crc32"], 16)
@@ -328,7 +360,7 @@ def build_patch(layout, mod_manifest):
     }
     builder = BpsBuilder(source_crcs)
     cursor = 0
-    for operation in build_operations(layout, mod_manifest):
+    for operation in build_operations(layout, mod_manifest, ui_language):
         target = operation["target_offset"]
         builder.source_read(cursor, target - cursor)
         if operation["kind"] == "literal":
@@ -355,6 +387,11 @@ def create_layout(iso_path, mod_manifest, region):
     nodes = list(disc.rfiles(includedOnly=True))
     dol_end = disc.bootheader.dolOffset + disc.dol.size
     expanded_dol_end = dol_end + MOD_REGION_SIZE
+    if region == "jp":
+        from gen_japanese_ui import MAX_SIZE
+        if expanded_dol_end != 0x004AA8C0:
+            raise ValueError("JP raw UI asset offset disagrees with the supported retail DOL")
+        expanded_dol_end += MAX_SIZE
 
     overlapped = [
         node for node in nodes
@@ -421,6 +458,8 @@ def create_layout(iso_path, mod_manifest, region):
     }
     if game_id != mod_manifest["game_id"]:
         raise ValueError("clean ISO and mod manifest have different game IDs")
+    if region == "jp":
+        layout["japanese_ui"] = {"offset": dol_end + MOD_REGION_SIZE, "size": MAX_SIZE}
 
     with iso_path.open("rb") as source:
         for address in hook_addresses(mod_manifest):
@@ -454,6 +493,8 @@ def main():
     build.add_argument("--layout", required=True)
     build.add_argument("--mod-manifest", required=True)
     build.add_argument("--output", required=True)
+    build.add_argument("--ui-language", choices=("en", "ja"), default="en",
+                       help="menu language; Japanese is a separate JP-only patch")
 
     layout = subparsers.add_parser("layout", help="regenerate retail layout metadata")
     layout.add_argument("--iso", required=True)
@@ -475,7 +516,7 @@ def main():
         return
 
     retail_layout = load_json(args.layout)
-    patch, builder = build_patch(retail_layout, mod_manifest)
+    patch, builder = build_patch(retail_layout, mod_manifest, args.ui_language)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(patch)

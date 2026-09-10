@@ -21,6 +21,7 @@
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/packed_text.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/raw_prompt_input.hxx"
 #include "susamune/settings.hxx"
@@ -152,7 +153,6 @@ bool           sPromptSaving;
 enum PromptAutoSave : u8 {
     PROMPT_AUTO_OFF,
     PROMPT_AUTO_PREPARE,
-    PROMPT_AUTO_WAIT_CATALOG,
     PROMPT_AUTO_SAVE_PENDING,
 };
 PromptAutoSave sPromptAutoSave;
@@ -483,63 +483,14 @@ void updateAutoSave() {
             return;
         }
         sPromptInput.begin(JUTGamePad::B);
-        if (!GhostStorage::available() || GhostStorage::busy() ||
-            !GhostStorage::refresh()) {
-            if (GhostStorage::busy()) {
-                sPromptAutoSave = PROMPT_AUTO_WAIT_CATALOG;
-            } else {
-                fallBackToPBPrompt(GhostStorage::statusText());
-            }
-            return;
-        }
-        sPromptAutoSave = PROMPT_AUTO_WAIT_CATALOG;
-        return;
-    }
-
-    if (sPromptAutoSave == PROMPT_AUTO_SAVE_PENDING) {
-        if (GhostStorage::busy()) return;
-        fallBackToPBPrompt(GhostStorage::statusText());
-        return;
-    }
-    if (sPromptAutoSave == PROMPT_AUTO_WAIT_CATALOG) {
-        if (GhostStorage::busy()) return;
-        if (!GhostStorage::available() || !GhostStorage::catalogReady()) {
-            fallBackToPBPrompt(GhostStorage::statusText());
-            return;
-        }
         sPromptAutoSave = PROMPT_AUTO_PREPARE;
     }
     if (GhostStorage::busy()) return;
-    if (!GhostStorage::available()) {
+    if (sPromptAutoSave == PROMPT_AUTO_SAVE_PENDING || !GhostStorage::available()) {
         fallBackToPBPrompt(GhostStorage::statusText());
         return;
     }
-    if (!GhostStorage::catalogReady()) {
-        if (GhostStorage::refresh()) {
-            sPromptAutoSave = PROMPT_AUTO_WAIT_CATALOG;
-        } else {
-            fallBackToPBPrompt(GhostStorage::statusText());
-        }
-        return;
-    }
-
-    int emptySlot = -1;
-    for (int slot = 0;
-         slot < static_cast<int>(SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES);
-         slot++) {
-        const SusamuneGhostSlotInfo *info = GhostStorage::slot(slot);
-        if (info &&
-            !(info->flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
-                             SUSAMUNE_GHOST_SLOT_UNSAFE))) {
-            emptySlot = slot;
-            break;
-        }
-    }
-    if (emptySlot < 0) {
-        fallBackToPBPrompt("Ghost slots full; choose save or continue");
-        return;
-    }
-    if (!GhostStorage::save(emptySlot, sPrompt.token)) {
+    if (!GhostStorage::saveNew(sPrompt.token)) {
         fallBackToPBPrompt(GhostStorage::statusText());
         return;
     }
@@ -860,6 +811,7 @@ void prepareArmedDeparture() {
 
 __attribute__((noinline)) void armWarp(const LevelWarp::Dest &dest,
                                        bool keepSpawn, bool overrideSource) {
+    PracticeSession::releaseForDeparture();
     sDest = dest;
     sArmed = true;
     sWaitForRetailDeathTail = false;

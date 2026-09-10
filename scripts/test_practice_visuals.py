@@ -27,7 +27,7 @@ class PracticeVisualContracts(unittest.TestCase):
                         rows.index("SETTING_RNG_FAVORITES"))
         self.assertLess(rows.index("SETTING_ENEMY_HURTBOXES"),
                         rows.index("SETTING_RNG_FAVORITES"))
-        self.assertEqual(rows[-3:], [
+        self.assertEqual(rows[118:121], [
             "SETTING_HIDDEN_ITEM_LABELS",
             "SETTING_HURTBOX_TARGET",
             "SETTING_RICCO_RACE_CHECKPOINTS",

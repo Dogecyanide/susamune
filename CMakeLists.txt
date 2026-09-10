@@ -88,10 +88,12 @@ if(LAUNCHER_VERSION STREQUAL "V1.2.0" OR
    LAUNCHER_VERSION MATCHES "^V2\\.1\\.0 Pre-Release [0-9]+" OR
    LAUNCHER_VERSION MATCHES "^V2\\.1\\.0 Release Candidate [0-9]+" OR
    LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Pre-Release [0-9]+" OR
-   LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Release Candidate [0-9]+")
+   LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Release Candidate [0-9]+" OR
+   LAUNCHER_VERSION MATCHES "^V2\\.3\\.0 .*FOXTROT" OR
+   LAUNCHER_VERSION MATCHES "^V2\\.3\\.0 .*Pre-release")
     unset(LAUNCHER_VERSION CACHE)
 endif()
-set(LAUNCHER_VERSION "V2.2.0 \"The House Always Wins\"" CACHE STRING
+set(LAUNCHER_VERSION "V2.3.0 Frame By Frame" CACHE STRING
     "Version shown in the packaged launcher meta.xml")
 
 option(IS_EMULATOR "Target Dolphin (ON) instead of Wii/Nintendont (OFF)" OFF)
@@ -127,6 +129,8 @@ set(MAP_FILE "${CMAKE_SOURCE_DIR}/maps/${VERS_PRIMARY}.map")
 # build directory.
 
 file(GLOB MOD_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
+# Compression holds gameplay; keep its hot loops fast in the upper code span.
+set_source_files_properties(src/state_codec.cpp src/state_crc.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 if(NOT ENABLE_MEM_DIAGNOSTICS)
     list(REMOVE_ITEM MOD_SOURCES "${CMAKE_SOURCE_DIR}/src/mem_diagnostics.cpp")
 endif()
@@ -264,6 +268,18 @@ foreach(_v IN LISTS VERS)
 endforeach()
 add_custom_target(mod_bins ALL DEPENDS ${MOD_BINS})
 
+set(JAPANESE_UI_ASSET "${CMAKE_BINARY_DIR}/ja_ui.bin")
+set(JAPANESE_UI_INPUTS
+    "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py"
+    "${CMAKE_SOURCE_DIR}/data/japanese_ui.tsv"
+    "${CMAKE_SOURCE_DIR}/data/fonts/droid-japanese.yay"
+    "${CMAKE_SOURCE_DIR}/data/fonts/droid-japanese-codepoints.json")
+add_custom_command(OUTPUT "${JAPANESE_UI_ASSET}"
+    COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py" "${JAPANESE_UI_ASSET}"
+    DEPENDS ${JAPANESE_UI_INPUTS}
+    COMMENT "Building Japanese UI catalogue and font subset" VERBATIM)
+add_custom_target(japanese_ui ALL DEPENDS "${JAPANESE_UI_ASSET}")
+
 # Release builds can emit standard BPS patches without possessing retail ISOs.
 # The checked-in layouts contain only offsets and CRCs; each mod manifest
 # supplies the newly linked code and concrete hook words.
@@ -281,13 +297,33 @@ elseif(IS_EMULATOR)
                     --layout "${_layout}"
                     --mod-manifest "${CMAKE_BINARY_DIR}/susamune_manifest_${_v}.json"
                     --output "${_bps}"
+                    --ui-language en
                 DEPENDS "${CMAKE_BINARY_DIR}/susamune_manifest_${_v}.json"
                         "${_layout}"
                         "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py"
                         "${CMAKE_SOURCE_DIR}/scripts/patches.py"
+                        "${CMAKE_SOURCE_DIR}/scripts/gen_japanese_ui.py"
                 COMMENT "Building source-free ${_v} emulator BPS"
                 VERBATIM)
             list(APPEND EMULATOR_BPS_FILES "${_bps}")
+            if(_v STREQUAL "jp")
+                set(_ja_bps "${CMAKE_BINARY_DIR}/moonshine_jp_ja.bps")
+                add_custom_command(
+                    OUTPUT "${_ja_bps}"
+                    COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py" build
+                        --layout "${_layout}"
+                        --mod-manifest "${CMAKE_BINARY_DIR}/susamune_manifest_jp.json"
+                        --output "${_ja_bps}"
+                        --ui-language ja
+                    DEPENDS "${CMAKE_BINARY_DIR}/susamune_manifest_jp.json"
+                            "${_layout}"
+                            "${CMAKE_SOURCE_DIR}/scripts/gen_iso_bps.py"
+                            "${CMAKE_SOURCE_DIR}/scripts/patches.py"
+                            ${JAPANESE_UI_INPUTS}
+                    COMMENT "Building separate Japanese-menu JP emulator BPS"
+                    VERBATIM)
+                add_custom_target(emulator_patches_japanese DEPENDS "${_ja_bps}")
+            endif()
         else()
             message(STATUS "No source-free BPS layout for ${_v}; skipping its emulator patch")
         endif()
@@ -388,15 +424,16 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_PYTHON=${VENV_PYTHON}"
         "-DLAUNCHER_SCRIPTS_DIR=${CMAKE_SOURCE_DIR}/scripts"
         "-DSUSAMUNE_MOD_BINS=${_mod_bins_arg}"
+        "-DSUSAMUNE_JAPANESE_UI=${JAPANESE_UI_ASSET}"
         "-DLAUNCHER_OUTPUT_ZIP=${LAUNCHER_ZIP}"
         "-DLAUNCHER_DEFAULT_SOURCE=${LAUNCHER_DEFAULT_SOURCE}"
         "-DLAUNCHER_VERSION=${LAUNCHER_VERSION}"
         "-DLAUNCHER_TEST_LOG="
         "-DLAUNCHER_PATTERN_TEST_LOG="
-        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/v2.2.0-changelog.md"
+        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/release-notes-v2.3.0.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
         "-DSUSAMUNE_LOADER_OPTIMIZATION:STRING=${SUSAMUNE_LOADER_OPTIMIZATION}"
-    DEPENDS mod_bins launcher_build_id
+    DEPENDS mod_bins launcher_build_id japanese_ui
     BUILD_ALWAYS ON
     INSTALL_COMMAND ""
     USES_TERMINAL_CONFIGURE ON

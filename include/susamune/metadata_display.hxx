@@ -49,7 +49,7 @@ public:
     bool dirty() const { return mDirty; }
     void clearDirty() { mDirty = false; }
 
-    static constexpr int menuRowCount() { return FIELD_COUNT + 5; }
+    static constexpr int menuRowCount() { return FIELD_COUNT + 9; }
     static const char *menuRowName(int row);
     const char        *menuRowValue(int row) const;
     void               adjustMenuRow(int row, int dir);
@@ -78,6 +78,10 @@ private:
     bool                       mDirty;
     bool                       mDirtyBeforeEdit;
     u8                         mFormatLength;
+    u8                         mFieldGap;
+    u8                         mRowGap;
+    u8                         mColumns;
+    bool                       mCompact;
 };
 
 extern MetadataDisplay &gMetadataDisplay;

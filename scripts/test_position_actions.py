@@ -16,7 +16,7 @@ class PositionActionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         rows = re.findall(r'X\((BIND_[A-Z0-9_]+),\s*"([^"]+)"\)', bind_list)
         self.assertEqual(
-            rows[-2:],
+            rows[21:23],
             [
                 ("BIND_POSITION_SAVE", "position_save"),
                 ("BIND_POSITION_LOAD", "position_load"),
@@ -24,10 +24,8 @@ class PositionActionTests(unittest.TestCase):
         )
 
         descs = (ROOT / "src/binds_descs.inc").read_text(encoding="utf-8")
-        self.assertTrue(descs.rstrip().endswith(
-            'BIND_DESC("Position: save", 0)\n'
-            'BIND_DESC("Position: load", 0)'
-        ))
+        rows = [line for line in descs.splitlines() if line.startswith("BIND_DESC(")]
+        self.assertEqual(rows[21:23], ['BIND_DESC("Position: save", 0)', 'BIND_DESC("Position: load", 0)'])
 
     def test_snapshot_matches_original_twenty_bytes(self) -> None:
         source = (ROOT / "src/actions.cpp").read_text(encoding="utf-8")

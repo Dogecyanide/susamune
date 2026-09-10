@@ -1018,6 +1018,8 @@ static bool __usbstorage_Shutdown(void)
 
 void USBStorageOGC_Deinitialize()
 {
+	if (!__inited)
+		return;
 	__usbstorage_Shutdown();
 	LWP_CloseQueue(__usbstorage_waitq);
 	__inited = false;

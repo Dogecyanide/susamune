@@ -290,7 +290,9 @@ static void DrawBitmap(FT_Bitmap *bitmap, int offset, int top, const u8 cR, cons
  * @return int 0=OK; -1=Failed
  */
 int GRRLIB_InitTTF () {
-	if (FT_Init_FreeType(&ftLibrary)) {
+	const FT_Error error = FT_Init_FreeType(&ftLibrary);
+	if (error) {
+		gprintf("Font engine init failed: %d; using built-in text\n", error);
 		return -1;
 	}
 	return 0;
@@ -312,10 +314,23 @@ void GRRLIB_ExitTTF (void) {
  */
 GRRLIB_ttfFont* GRRLIB_LoadTTF (const u8* file_base, s32 file_size) {
 	FT_Face Face;
+	FT_Error error;
 	GRRLIB_ttfFont* myFont = (GRRLIB_ttfFont*)malloc(sizeof(GRRLIB_ttfFont));
 	if(myFont == NULL)
 		return NULL;
-	if(FT_New_Memory_Face(ftLibrary, file_base, file_size, 0, &Face)) {
+	if (!ftLibrary) { free(myFont); return NULL; }
+	error = FT_New_Memory_Face(ftLibrary, file_base, file_size, 0, &Face);
+	if(error) {
+		gprintf("Font face load failed: %d; using built-in text\n", error);
+		free(myFont);
+		return NULL;
+	}
+	error = FT_Set_Pixel_Sizes(Face, 0, 16);
+	if (!error) error = FT_Load_Char(Face, 'A', FT_LOAD_RENDER);
+	if (error || !Face->glyph->bitmap.buffer || !Face->glyph->bitmap.rows ||
+	    !Face->glyph->bitmap.width) {
+		gprintf("Font render check failed: %d; using built-in text\n", error);
+		FT_Done_Face(Face);
 		free(myFont);
 		return NULL;
 	}
@@ -354,6 +369,39 @@ static bool Utf8Valid(const char *string)
 	return true;
 }
 
+extern const u8 console_font_8x16[256 * 16];
+
+static unsigned int FallbackGlyph(int x, int y, u32 codepoint,
+	unsigned int size, u32 color, bool draw)
+{
+	unsigned int row, col;
+	const unsigned int width = (size + 1u) / 2u;
+	const u8 *glyph = console_font_8x16 +
+		((codepoint >= 32 && codepoint <= 126) ? codepoint : '?') * 16;
+	if (draw)
+		for (row = 0; row < size; ++row)
+			for (col = 0; col < width; ++col)
+				if (glyph[row * 16u / size] & (0x80u >> (col * 8u / width))) {
+					GX_Begin(GX_POINTS, GX_VTXFMT0, 1);
+					GX_Position3f32(x + (int)col, y + (int)row, 0);
+					GX_Color1u32(color);
+					GX_End();
+				}
+	return width;
+}
+
+static unsigned int ProcessFallback(int x, int y, const char *string,
+	unsigned int size, u32 color, bool draw)
+{
+	unsigned int width = 0;
+	while (*string) {
+		u32 codepoint;
+		if (!ff_utf8_decode_next(&string, &codepoint)) break;
+		width += FallbackGlyph(x + width, y, codepoint, size, color, draw);
+	}
+	return width;
+}
+
 static unsigned int ProcessUtf8(int x, int y, GRRLIB_ttfFont *myFont,
 	const char *string, unsigned int fontSize, u32 color, bool draw)
 {
@@ -370,11 +418,14 @@ static unsigned int ProcessUtf8(int x, int y, GRRLIB_ttfFont *myFont,
 
 	if (*string == '\0' || !Utf8Valid(string))
 		return 0;
+	if (!fontSize || fontSize > 128) return 0;
+	if (!myFont || !myFont->face)
+		return ProcessFallback(x, y, string, fontSize, color, draw);
 	cursor = string;
 	Face = (FT_Face)myFont->face;
 	slot = Face->glyph;
 	if (FT_Set_Pixel_Sizes(Face, 0, fontSize))
-		FT_Set_Pixel_Sizes(Face, 0, 12);
+		return ProcessFallback(x, y, string, fontSize, color, draw);
 
 	while (*cursor != '\0')
 	{
@@ -391,8 +442,11 @@ static unsigned int ProcessUtf8(int x, int y, GRRLIB_ttfFont *myFont,
 				FT_KERNING_DEFAULT, &delta);
 			penX += delta.x >> 6;
 		}
-		if (FT_Load_Glyph(Face, glyphIndex, FT_LOAD_RENDER))
+		if (FT_Load_Glyph(Face, glyphIndex, FT_LOAD_RENDER)) {
+			penX += FallbackGlyph(x + penX, y, codepoint, fontSize, color, draw);
+			previousGlyph = 0;
 			continue;
+		}
 		if (draw)
 		{
 			DrawBitmap(&slot->bitmap, penX + slot->bitmap_left + x,
@@ -414,8 +468,15 @@ static unsigned int ProcessUtf8(int x, int y, GRRLIB_ttfFont *myFont,
  * @param color Text color in RGBA format.
  */
 void GRRLIB_PrintfTTF(int x, int y, GRRLIB_ttfFont *myFont, const char *string, unsigned int fontSize, const u32 color) {
-	if(myFont == NULL || string == NULL)
+	if(string == NULL)
 		return;
+	// Text uses points, independently of the preceding theme's texture state.
+	GX_SetZMode(GX_FALSE, GX_LEQUAL, GX_FALSE);
+	GX_SetPointSize(6, GX_TO_ZERO);
+	GX_SetNumTevStages(1);
+	GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GX_SetVtxDesc(GX_VA_TEX0, GX_NONE);
+	GX_LoadPosMtxImm(GXmodelView2D, GX_PNMTX0);
 	ProcessUtf8(x, y, myFont, string, fontSize, color, true);
 }
 
@@ -432,13 +493,20 @@ static void DrawBitmap(FT_Bitmap *bitmap, int offset, int top, const u8 cR, cons
 	FT_Int i, j, p, q;
 	FT_Int x_max = offset + bitmap->width;
 	FT_Int y_max = top + bitmap->rows;
+	if (!bitmap->buffer || (bitmap->pixel_mode != FT_PIXEL_MODE_GRAY &&
+	    bitmap->pixel_mode != FT_PIXEL_MODE_MONO)) return;
 
 	for ( i = offset, p = 0; i < x_max; i++, p++ ) {
 		for ( j = top, q = 0; j < y_max; j++, q++ ) {
+			const u8 *row = bitmap->buffer + (bitmap->pitch < 0
+				? (bitmap->rows - 1 - q) * -bitmap->pitch : q * bitmap->pitch);
+			const u8 alpha = bitmap->pixel_mode == FT_PIXEL_MODE_MONO
+				? ((row[p >> 3] & (0x80u >> (p & 7))) ? 255 : 0) : row[p];
+			if (!alpha) continue;
 			GX_Begin(GX_POINTS, GX_VTXFMT0, 1);
 				GX_Position3f32(i, j, 0);
 				GX_Color4u8(cR, cG, cB,
-							bitmap->buffer[ q * bitmap->width + p ]);
+							alpha);
 			GX_End();
 		}
 	}
@@ -452,7 +520,7 @@ static void DrawBitmap(FT_Bitmap *bitmap, int offset, int top, const u8 cR, cons
  * @return The width of a text in pixel.
  */
 unsigned int GRRLIB_WidthTTF(GRRLIB_ttfFont *myFont, const char *string, unsigned int fontSize) {
-	if(myFont == NULL || string == NULL)
+	if(string == NULL)
 		return 0;
 	return ProcessUtf8(0, 0, myFont, string, fontSize, 0, false);
 }
@@ -1262,7 +1330,6 @@ void  GRRLIB_DrawTileQuad (const guVector pos[4], GRRLIB_texImg *tex, const u32 
  * Call this function after drawing.
  */
 static void GRRLIB_RenderMode(bool clear) {
-	GX_DrawDone();          // Tell the GX engine we are done drawing
 	GX_InvalidateTexAll();
 
 	fb ^= 1;  // Toggle framebuffer index
@@ -1270,15 +1337,18 @@ static void GRRLIB_RenderMode(bool clear) {
 	GX_SetZMode      (GX_TRUE, GX_LEQUAL, GX_TRUE);
 	GX_SetColorUpdate(GX_TRUE);
 	GX_CopyDisp      (xfb[fb], clear ? GX_TRUE : GX_FALSE);
+	// Copy clearing needs depth writes; the next 2D frame does not.
+	GX_SetZMode      (GX_FALSE, GX_LEQUAL, GX_FALSE);
+	// Finish the copy before VI can scan out this framebuffer.
+	GX_DrawDone();
 
 	VIDEO_SetNextFramebuffer(xfb[fb]);  // Select External Frame Buffer
-	VIDEO_Flush();                      // Flush video buffer to screen
-
 	if (!enable_output) // stfour: this prevent strange behavior on first frame
 	{
 		VIDEO_SetBlack(false);  // Enable video output
 		enable_output = true;
 	}
+	VIDEO_Flush();                      // Publish framebuffer and unblank together.
 
 	VIDEO_WaitVSync();                  // Wait for screen to update
 	// Interlaced screens require two frames to update

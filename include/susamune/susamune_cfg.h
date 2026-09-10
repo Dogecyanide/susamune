@@ -4,6 +4,7 @@
 #include "susamune/mem2_map.h"
 #include "susamune/settings_list.h"
 #include "susamune/binds_list.h"
+#include "susamune/iling_episodes.h"
 
 // =====================================================================
 // susamune_cfg.h
@@ -47,6 +48,8 @@
 // mod built at different times still agree on the layout, and count/bindCount
 // say how much of each is meaningful.
 #define SUSAMUNE_CFG_MAX_SETTINGS 128
+#define SUSAMUNE_CFG_MAX_EXTRA_SETTINGS 14
+#define SUSAMUNE_CFG_TOTAL_SETTINGS (SUSAMUNE_CFG_MAX_SETTINGS + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS)
 #define SUSAMUNE_CFG_MAX_BINDS    64
 
 // Value meaning "the ini had no entry for this setting" -- the mod leaves the
@@ -153,6 +156,9 @@ struct SusamuneInputStyleCfg {
 #define SUSAMUNE_CREATION_TIMER_LABEL      22u
 #define SUSAMUNE_CREATION_LEGACY_MARIO_HAT  23u
 #define SUSAMUNE_CREATION_MENU_BG           24u
+#define SUSAMUNE_CREATION_HEALTH_COLOR      25u
+#define SUSAMUNE_CREATION_AIR_COLOR         26u
+#define SUSAMUNE_CREATION_HEALTH_STYLE_MAGIC 0x48u
 #define SUSAMUNE_CREATION_RECENT_STYLE_MAGIC 0x5249u  // 'RI'
 #define SUSAMUNE_CREATION_SAVESTATE_STYLE_MAGIC 0x5353u  // 'SS'
 #define SUSAMUNE_CREATION_ACHIEVEMENT_STYLE_MAGIC 0x4150u  // 'AP'
@@ -162,6 +168,8 @@ struct SusamuneInputStyleCfg {
 #define SUSAMUNE_WALLKICK_STYLE_VERSION     2u
 #define SUSAMUNE_WALLKICK_STYLE_COLOR_COUNT 7u
 #define SUSAMUNE_NOTIFICATION_STYLE_MAGIC   0x4Eu  // 'N'
+#define SUSAMUNE_NATIVE_TIMER_MODES_MAGIC   0x54u  // 'T'
+#define SUSAMUNE_NATIVE_TIMER_CUSTOM_MASK   0x7FFFu
 
 #define SUSAMUNE_MOVEMENT_STYLE_MAGIC        0x534D5653u  // 'SMVS'
 #define SUSAMUNE_MOVEMENT_STYLE_VERSION      1u
@@ -200,7 +208,7 @@ struct SusamuneCreationCfg {
     unsigned char  recentIlPositionPresent;
     unsigned char  timerLabelVisible;
     unsigned char  timerLabelVisiblePresent;
-    unsigned char  reserved1;
+    unsigned char  healthStyleMagic;
     struct SusamuneCreationWordCfg words[SUSAMUNE_CREATION_WORD_COUNT];
     // Optional V1 tail. reserved0 carries RECENT_STYLE_MAGIC, so a new mod can
     // safely ignore uninitialised tail bytes from an older launcher.
@@ -212,7 +220,7 @@ struct SusamuneCreationCfg {
     unsigned char  recentIlBgA;
     unsigned char  recentIlTextBrightness;
     unsigned char  recentIlPadding;
-    unsigned char  reserved2[6];
+    unsigned char  healthRgb[2][3];
     // Optional cache-line-sized tail for the savestate feedback overlay.
     unsigned short savestateStyleMagic;
     unsigned short savestateX;
@@ -265,7 +273,10 @@ struct SusamuneWallkickStyleCfg {
     unsigned short pbPopupX;
     unsigned short pbPopupY;
     unsigned char  pbPopupScale;
-    unsigned char  reserved1[11];
+    // The native timer's fixed 8-byte style has no room before playlists.
+    unsigned char  nativeTimerModesMagic;
+    unsigned char  nativeTimerCustomMask[2];
+    unsigned char  reserved1[8];
 };
 
 struct SusamuneMovementOverlayStyleCfg {
@@ -289,6 +300,49 @@ struct SusamuneMovementStyleCfg {
     unsigned short reserved0;
     struct SusamuneMovementOverlayStyleCfg rollout;
     struct SusamuneMovementOverlayStyleCfg dust;
+};
+
+#define SUSAMUNE_NATIVE_TIMER_X_BIAS 640u
+#define SUSAMUNE_NATIVE_TIMER_Y_BIAS 480u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_X 1u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_Y 2u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_SCALE 4u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_ALPHA 8u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_BRIGHTNESS 16u
+#define SUSAMUNE_NATIVE_TIMER_PRESENT_ALL 31u
+
+struct SusamuneNativeTimerStyleCfg {
+    unsigned short x;
+    unsigned short y;
+    unsigned char scale;
+    unsigned char textA;
+    unsigned char textBrightness;
+    unsigned char present;
+};
+
+#define SUSAMUNE_MARIO_COLORS_MAGIC 0x4D434F4Cu
+#define SUSAMUNE_MARIO_COLORS_VERSION 1u
+#define SUSAMUNE_MARIO_COLORS_COUNT 7u
+#define SUSAMUNE_MARIO_COLORS_MASK 0x7Fu
+struct SusamuneMarioColorsCfg {
+    unsigned int magic;
+    unsigned short version;
+    unsigned char enabled;
+    unsigned char reserved0;
+    unsigned char rgb[SUSAMUNE_MARIO_COLORS_COUNT][3];
+    unsigned char reserved[3];
+};
+
+#define SUSAMUNE_FLUDD_COLORS_MAGIC 0x464C434Cu
+#define SUSAMUNE_FLUDD_COLORS_VERSION 1u
+#define SUSAMUNE_FLUDD_COLORS_COUNT 10u
+#define SUSAMUNE_FLUDD_COLORS_MASK 0x3FFu
+struct SusamuneFluddColorsCfg {
+    unsigned int magic;
+    unsigned short version;
+    unsigned short enabled;
+    unsigned char rgb[SUSAMUNE_FLUDD_COLORS_COUNT][3];
+    unsigned char reserved[26];
 };
 
 // Metadata Display keeps a compact in-game configuration plus an optional
@@ -396,7 +450,11 @@ struct SusamuneQftDisplayCfg {
 #define SUSAMUNE_METADATA_STYLE_BG_A        (1u << 7)
 #define SUSAMUNE_METADATA_STYLE_BRIGHTNESS  (1u << 8)
 #define SUSAMUNE_METADATA_STYLE_PADDING     (1u << 9)
-#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 10) - 1u)
+#define SUSAMUNE_METADATA_STYLE_FIELD_GAP   (1u << 10)
+#define SUSAMUNE_METADATA_STYLE_ROW_GAP     (1u << 11)
+#define SUSAMUNE_METADATA_STYLE_COLUMNS     (1u << 12)
+#define SUSAMUNE_METADATA_STYLE_COMPACT     (1u << 13)
+#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 14) - 1u)
 
 struct SusamuneMetadataStyleCfg {
     unsigned int   magic;
@@ -450,10 +508,18 @@ struct SusamuneMetadataStyleCfg {
 #define SUSAMUNE_CFG_FLAG_STAGE_PLAYLISTS 0x800u
 // Kernel/backend exposes the regional IL split/statistics journal.
 #define SUSAMUNE_CFG_FLAG_SPLIT_STATS 0x1000u
+// Expanded checkpoint journal in the relocated shared mailbox.
+#define SUSAMUNE_CFG_FLAG_SPLIT_STATS_V9 0x200000u
 // Kernel/backend exposes per-region Stage Loader target times.
 #define SUSAMUNE_CFG_FLAG_STAGE_TARGETS 0x2000u
 // Kernel/backend understands Rollout and Dust Creation styles.
 #define SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE 0x4000u
+#define SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE 0x10000u
+#define SUSAMUNE_CFG_FLAG_MARIO_COLORS 0x20000u
+#define SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION 0x40000u
+#define SUSAMUNE_CFG_FLAG_FLUDD_COLORS 0x80000u
+// Kernel reserves the former ghost-transfer gap for PPC codec scratch.
+#define SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED 0x100000u
 // The ini existed (or storage recovery was attempted), but it could not be
 // read completely and safely. The mod must keep this boot's defaults
 // read-only rather than regenerating a possibly valid file from them.
@@ -803,12 +869,16 @@ struct SusamuneStageTargetsFileV1 {
 #define SUSAMUNE_SPLIT_STATS_VERSION_V5     5u
 #define SUSAMUNE_SPLIT_STATS_VERSION_V6     6u
 #define SUSAMUNE_SPLIT_STATS_VERSION_V7     7u
-#define SUSAMUNE_SPLIT_STATS_VERSION        8u
+#define SUSAMUNE_SPLIT_STATS_VERSION_V8     8u
+#define SUSAMUNE_SPLIT_STATS_VERSION        9u
 #define SUSAMUNE_SPLIT_STATS_ROUTE_COUNT    132u
-#define SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT  285u
+#define SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT  495u
 #define SUSAMUNE_SPLIT_STATS_REGION_COUNT   3u
 #define SUSAMUNE_SPLIT_STATS_PROFILE_COUNT  4u
-#define SUSAMUNE_SPLIT_STATS_SCHEMA_HASH    0x1AF7E430u
+#define SUSAMUNE_SPLIT_STATS_SCHEMA_HASH    0x783A6D0Fu
+#define SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT 132u
+#define SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT 285u
+#define SUSAMUNE_SPLIT_STATS_V8_SCHEMA_HASH 0x1AF7E430u
 #define SUSAMUNE_SPLIT_STATS_V8_PREVIOUS_SCHEMA_HASH 0xD0AAE2E5u
 #define SUSAMUNE_SPLIT_STATS_V7_ROUTE_COUNT   122u
 #define SUSAMUNE_SPLIT_STATS_V7_SEGMENT_COUNT 275u
@@ -1065,6 +1135,66 @@ struct SusamuneSplitStatsFileV7 {
     unsigned char tailPad[380];
 };
 
+struct SusamuneSplitStatsPayloadV8 {
+    struct SusamuneSplitRouteStats routeStats[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                                                [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    // Region-wide and PB-profile-independent. QF saturates after roughly
+    // 414 days per IL while retaining the timer's native precision.
+    unsigned int playedQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                         [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    unsigned int bestQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                       [SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT];
+    unsigned int pbIdentityQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                             [SUSAMUNE_SPLIT_STATS_PROFILE_COUNT]
+                             [SUSAMUNE_SPLIT_STATS_V8_ROUTE_COUNT];
+    unsigned int pbQf[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
+                     [SUSAMUNE_SPLIT_STATS_PROFILE_COUNT]
+                     [SUSAMUNE_SPLIT_STATS_V8_SEGMENT_COUNT];
+};
+
+struct SusamuneSplitStatsCfgV8 {
+    // --- cache line 0: written by the kernel at boot, by the mod on save ---
+    unsigned int   magic;
+    unsigned short version;
+    unsigned char  routeCount;
+    unsigned char  regionCount;
+    unsigned short segmentCount;
+    unsigned char  profileCount;
+    unsigned char  headerReserved;
+    unsigned int   payloadBytes;
+    unsigned int   schemaHash;
+    unsigned int   saveSeq;
+    unsigned int   flags;
+    unsigned char  pad0[4];
+
+    // --- cache line 1: written ONLY by the kernel ---
+    unsigned int   ackSeq;
+    unsigned int   status;
+    unsigned char  pad1[24];
+
+    struct SusamuneSplitStatsPayloadV8 payload;
+    unsigned char reserved[16];
+    unsigned char tailPad[100];
+};
+
+struct SusamuneSplitStatsFileV8 {
+    unsigned int   magic;
+    unsigned short version;
+    unsigned char  routeCount;
+    unsigned char  regionCount;
+    unsigned short segmentCount;
+    unsigned char  profileCount;
+    unsigned char  headerReserved;
+    unsigned int   payloadBytes;
+    unsigned int   schemaHash;
+    unsigned int   generation;
+    unsigned int   checksum;
+    unsigned char  reserved0[4];
+    struct SusamuneSplitStatsPayloadV8 payload;
+    unsigned char reserved1[16];
+    unsigned char tailPad[36];
+};
+
 struct SusamuneSplitStatsPayload {
     struct SusamuneSplitRouteStats routeStats[SUSAMUNE_SPLIT_STATS_REGION_COUNT]
                                                 [SUSAMUNE_SPLIT_STATS_ROUTE_COUNT];
@@ -1104,7 +1234,7 @@ struct SusamuneSplitStatsCfg {
 
     struct SusamuneSplitStatsPayload payload;
     unsigned char reserved[16];
-    unsigned char tailPad[100];
+    unsigned char tailPad[12];
 };
 
 struct SusamuneSplitStatsFile {
@@ -1122,21 +1252,23 @@ struct SusamuneSplitStatsFile {
     unsigned char  reserved0[4];
     struct SusamuneSplitStatsPayload payload;
     unsigned char reserved1[16];
-    unsigned char tailPad[36];
+    unsigned char tailPad[12];
 };
 
 struct SusamuneCfg {
     // --- cache line 0: written by the kernel at boot, by the mod on save ---
     unsigned int   magic;
     unsigned short version;
-    unsigned short count;    // entries of values[] the writer filled in
+    unsigned short count;    // settings filled across values[] and extraValues[]
     unsigned int   saveSeq;  // mod -> kernel: bump to request an ini write
     unsigned int   flags;    // SUSAMUNE_CFG_FLAG_*
     // Entries of binds[] the writer filled in. Zero from a kernel built before
     // binds existed (it memsets only as much of the block as it knows about),
     // which is exactly the "no persisted binds -- keep the defaults" answer.
     unsigned short bindCount;
-    unsigned char  pad0[14];
+    // Append-only settings 128..141 reuse padding in the PPC-owned line.
+    // Older writers publish count <= 128, so these bytes remain ignored.
+    unsigned char  extraValues[SUSAMUNE_CFG_MAX_EXTRA_SETTINGS];
 
     // --- cache line 1: written ONLY by the kernel ---
     unsigned int   ackSeq;   // kernel -> mod: echoes saveSeq once written
@@ -1159,7 +1291,28 @@ struct SusamuneCfg {
     struct SusamuneILingProfilesCfg ilingProfiles;
     // Optional tail: older launchers stop at ilingProfiles.
     struct SusamuneMovementStyleCfg movementStyle;
+    struct SusamuneNativeTimerStyleCfg nativeTimerStyle;
 };
+
+static inline unsigned char SusamuneCfgGetSetting(const volatile struct SusamuneCfg *cfg,
+                                                  unsigned int index)
+{
+    if (index < SUSAMUNE_CFG_MAX_SETTINGS) return cfg->values[index];
+    index -= SUSAMUNE_CFG_MAX_SETTINGS;
+    return index < SUSAMUNE_CFG_MAX_EXTRA_SETTINGS ? cfg->extraValues[index] : SUSAMUNE_CFG_UNSET;
+}
+
+static inline int SusamuneCfgSetSetting(volatile struct SusamuneCfg *cfg,
+                                       unsigned int index, unsigned char value)
+{
+    if (index < SUSAMUNE_CFG_MAX_SETTINGS) cfg->values[index] = value;
+    else {
+        index -= SUSAMUNE_CFG_MAX_SETTINGS;
+        if (index >= SUSAMUNE_CFG_MAX_EXTRA_SETTINGS) return 0;
+        cfg->extraValues[index] = value;
+    }
+    return 1;
+}
 
 #define SUSAMUNE_CFG_PPC_PTR  ((struct SusamuneCfg *)SUSAMUNE_MEM2_CFG_PPC_BASE)
 #define SUSAMUNE_CFG_PHYS_PTR ((struct SusamuneCfg *)SUSAMUNE_MEM2_CFG_PHYS_BASE)
@@ -1186,21 +1339,53 @@ struct SusamuneCfg {
     ((struct SusamuneStagePlaylistsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
                                           SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET))
 
+#define SUSAMUNE_MARIO_COLORS_CFG_OFFSET 0x18E0u
+#define SUSAMUNE_MARIO_COLORS_PPC_PTR \
+    ((struct SusamuneMarioColorsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_MARIO_COLORS_CFG_OFFSET))
+#define SUSAMUNE_MARIO_COLORS_PHYS_PTR \
+    ((struct SusamuneMarioColorsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_MARIO_COLORS_CFG_OFFSET))
+#define SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE 0x71900000u
+#if defined(IS_EMULATOR) && IS_EMULATOR
+#define SUSAMUNE_MARIO_COLORS_LIVE_PTR \
+    ((struct SusamuneMarioColorsCfg *)SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE)
+#else
+#define SUSAMUNE_MARIO_COLORS_LIVE_PTR SUSAMUNE_MARIO_COLORS_PPC_PTR
+#endif
+typedef char susamune_mario_colors_size_check[(sizeof(struct SusamuneMarioColorsCfg) == 32) ? 1 : -1];
+typedef char susamune_mario_colors_gap_check[(SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET + sizeof(struct SusamuneStagePlaylistsCfg) == SUSAMUNE_MARIO_COLORS_CFG_OFFSET && SUSAMUNE_MARIO_COLORS_CFG_OFFSET + 32 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_mario_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE == SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE + SUSAMUNE_STATE_STAGING_SIZE && SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 <= 0x72000000u) ? 1 : -1];
+
+#define SUSAMUNE_FLUDD_COLORS_CFG_OFFSET 0x1900u
+#define SUSAMUNE_FLUDD_COLORS_PPC_PTR \
+    ((struct SusamuneFluddColorsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_FLUDD_COLORS_CFG_OFFSET))
+#define SUSAMUNE_FLUDD_COLORS_PHYS_PTR \
+    ((struct SusamuneFluddColorsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_FLUDD_COLORS_CFG_OFFSET))
+#define SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE 0x71900020u
+#if defined(IS_EMULATOR) && IS_EMULATOR
+#define SUSAMUNE_FLUDD_COLORS_LIVE_PTR \
+    ((struct SusamuneFluddColorsCfg *)SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE)
+#else
+#define SUSAMUNE_FLUDD_COLORS_LIVE_PTR SUSAMUNE_FLUDD_COLORS_PPC_PTR
+#endif
+typedef char susamune_fludd_colors_size_check[(sizeof(struct SusamuneFluddColorsCfg) == 64) ? 1 : -1];
+typedef char susamune_il_episodes_gap_check[(SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + sizeof(struct SusamuneFluddColorsCfg) == SUSAMUNE_IL_EPISODES_CFG_OFFSET && SUSAMUNE_IL_EPISODES_CFG_OFFSET + sizeof(struct SusamuneILEpisodesCfg) <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_fludd_colors_gap_check[(SUSAMUNE_MARIO_COLORS_CFG_OFFSET + sizeof(struct SusamuneMarioColorsCfg) == SUSAMUNE_FLUDD_COLORS_CFG_OFFSET && SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + 64 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 == SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE && SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE + 64 <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
+
 #define SUSAMUNE_STAGE_TARGETS_PPC_PTR \
     ((struct SusamuneStageTargetsCfg *)SUSAMUNE_MEM2_STAGE_TARGETS_PPC_BASE)
 #define SUSAMUNE_STAGE_TARGETS_PHYS_PTR \
     ((struct SusamuneStageTargetsCfg *)SUSAMUNE_CONSOLE_STAGE_TARGETS_PHYS_BASE)
 
-// The mailbox ends immediately before the live PB mirror. SplitStats keeps its
-// mutable copy in mod BSS so the larger all-IL schema does not need two copies
-// in this 64 KiB handoff window.
+// V8's handoff range remains reserved for one-time journal migration.
 #define SUSAMUNE_SPLIT_STATS_CFG_OFFSET 0x8280u
+#define SUSAMUNE_SPLIT_STATS_V8_PHYS_PTR \
+    ((struct SusamuneSplitStatsCfgV8 *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
+                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
 #define SUSAMUNE_SPLIT_STATS_PPC_PTR \
-    ((struct SusamuneSplitStatsCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + \
-                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
+    ((struct SusamuneSplitStatsCfg *)SUSAMUNE_CONSOLE_SPLIT_STATS_PPC_BASE)
 #define SUSAMUNE_SPLIT_STATS_PHYS_PTR \
-    ((struct SusamuneSplitStatsCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + \
-                                      SUSAMUNE_SPLIT_STATS_CFG_OFFSET))
+    ((struct SusamuneSplitStatsCfg *)SUSAMUNE_CONSOLE_SPLIT_STATS_PHYS_BASE)
 
 // Path of the ini, at the root of whichever device holds it. That is the device
 // the launcher was run from, which the kernel may have had to mount as a second
@@ -1238,6 +1423,8 @@ struct SusamuneCfg {
 
 // Portable compile-time checks (no C11 dependency): a negative array size
 // fails the build if the layout the three toolchains agree on ever drifts.
+typedef char susamune_cfg_extra_values_check[(__builtin_offsetof(struct SusamuneCfg, extraValues) == 18 &&
+    __builtin_offsetof(struct SusamuneCfg, extraValues) + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS == 32) ? 1 : -1];
 typedef char susamune_cfg_line0_check[(__builtin_offsetof(struct SusamuneCfg, ackSeq) == 32) ? 1 : -1];
 typedef char susamune_cfg_line2_check[(__builtin_offsetof(struct SusamuneCfg, values) == 64) ? 1 : -1];
 typedef char susamune_cfg_binds_check[(__builtin_offsetof(struct SusamuneCfg, binds) == 192) ? 1 : -1];
@@ -1252,6 +1439,8 @@ typedef char susamune_metadata_style_slots_check[(__builtin_offsetof(struct Susa
 typedef char susamune_input_style_cfg_size_check[(sizeof(struct SusamuneInputStyleCfg) == 64) ? 1 : -1];
 typedef char susamune_creation_word_cfg_size_check[(sizeof(struct SusamuneCreationWordCfg) == 144) ? 1 : -1];
 typedef char susamune_creation_cfg_size_check[(sizeof(struct SusamuneCreationCfg) == 576) ? 1 : -1];
+typedef char susamune_timer_modes_magic_offset_check[(__builtin_offsetof(struct SusamuneWallkickStyleCfg, nativeTimerModesMagic) == 53) ? 1 : -1];
+typedef char susamune_timer_modes_mask_offset_check[(__builtin_offsetof(struct SusamuneWallkickStyleCfg, nativeTimerCustomMask) == 54) ? 1 : -1];
 typedef char susamune_achievement_style_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, achievementStyleMagic) == 562) ? 1 : -1];
 typedef char susamune_achievement_x_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, achievementX) == 564) ? 1 : -1];
 typedef char susamune_stage_session_magic_offset_check[(__builtin_offsetof(struct SusamuneCreationCfg, stageSessionStyleMagic) == 569) ? 1 : -1];
@@ -1288,7 +1477,9 @@ typedef char susamune_iling_profiles_v1_file_names_check[(__builtin_offsetof(str
 typedef char susamune_iling_profiles_v1_file_size_check[(sizeof(struct SusamuneILingProfilesFileV1) == 2112) ? 1 : -1];
 typedef char susamune_cfg_iling_profiles_check[(__builtin_offsetof(struct SusamuneCfg, ilingProfiles) == 2784) ? 1 : -1];
 typedef char susamune_cfg_movement_style_check[(__builtin_offsetof(struct SusamuneCfg, movementStyle) == 5056) ? 1 : -1];
-typedef char susamune_cfg_expanded_size_check[(sizeof(struct SusamuneCfg) == 5144) ? 1 : -1];
+typedef char susamune_native_timer_style_size_check[(sizeof(struct SusamuneNativeTimerStyleCfg) == 8) ? 1 : -1];
+typedef char susamune_cfg_native_timer_style_check[(__builtin_offsetof(struct SusamuneCfg, nativeTimerStyle) == 5144) ? 1 : -1];
+typedef char susamune_cfg_expanded_size_check[(sizeof(struct SusamuneCfg) == 5152) ? 1 : -1];
 typedef char susamune_progress_cfg_ack_check[(__builtin_offsetof(struct SusamuneProgressCfg, ackSeq) == 32) ? 1 : -1];
 typedef char susamune_progress_cfg_achievements_check[(__builtin_offsetof(struct SusamuneProgressCfg, achievements) == 64) ? 1 : -1];
 typedef char susamune_progress_cfg_stats_check[(__builtin_offsetof(struct SusamuneProgressCfg, stats) == 128) ? 1 : -1];
@@ -1358,18 +1549,26 @@ typedef char susamune_split_v7_payload_size_check[
     (sizeof(struct SusamuneSplitStatsPayloadV7) == 0x6E34) ? 1 : -1];
 typedef char susamune_split_v7_file_size_check[
     (sizeof(struct SusamuneSplitStatsFileV7) == 0x6FE0) ? 1 : -1];
+typedef char susamune_split_v8_payload_size_check[
+    (sizeof(struct SusamuneSplitStatsPayloadV8) == 0x744C) ? 1 : -1];
+typedef char susamune_split_v8_cfg_size_check[
+    (sizeof(struct SusamuneSplitStatsCfgV8) == 0x7500) ? 1 : -1];
+typedef char susamune_split_v8_file_size_check[
+    (sizeof(struct SusamuneSplitStatsFileV8) == 0x74A0) ? 1 : -1];
+typedef char susamune_split_relocated_size_check[
+    (sizeof(struct SusamuneSplitStatsCfg) <= SUSAMUNE_SPLIT_STATS_MAILBOX_SIZE) ? 1 : -1];
 typedef char susamune_split_payload_size_check[
-    (sizeof(struct SusamuneSplitStatsPayload) == 0x744C) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsPayload) == 0xA584) ? 1 : -1];
 typedef char susamune_split_cfg_ack_check[
     (__builtin_offsetof(struct SusamuneSplitStatsCfg, ackSeq) == 0x20) ? 1 : -1];
 typedef char susamune_split_cfg_payload_check[
     (__builtin_offsetof(struct SusamuneSplitStatsCfg, payload) == 0x40) ? 1 : -1];
 typedef char susamune_split_cfg_size_check[
-    (sizeof(struct SusamuneSplitStatsCfg) == 0x7500) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsCfg) == 0xA5E0) ? 1 : -1];
 typedef char susamune_split_file_payload_check[
     (__builtin_offsetof(struct SusamuneSplitStatsFile, payload) == 0x20) ? 1 : -1];
 typedef char susamune_split_file_size_check[
-    (sizeof(struct SusamuneSplitStatsFile) == 0x74A0) ? 1 : -1];
+    (sizeof(struct SusamuneSplitStatsFile) == 0xA5C0) ? 1 : -1];
 typedef char susamune_progress_alignment_check[(SUSAMUNE_PROGRESS_CFG_OFFSET % 32 == 0) ? 1 : -1];
 typedef char susamune_stage_playlist_alignment_check[(SUSAMUNE_STAGE_PLAYLIST_CFG_OFFSET % 32 == 0) ? 1 : -1];
 typedef char susamune_split_stats_alignment_check[(SUSAMUNE_SPLIT_STATS_CFG_OFFSET % 32 == 0) ? 1 : -1];
@@ -1380,10 +1579,10 @@ typedef char susamune_stage_playlist_cfg_gap_check[
              sizeof(struct SusamuneStagePlaylistsCfg) <=
          SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_split_stats_console_gap_check[
-    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfg) ==
+    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfgV8) ==
           SUSAMUNE_MEM2_PB_LIVE_PPC_BASE - SUSAMUNE_MEM2_CFG_PPC_BASE) ? 1 : -1];
 typedef char susamune_split_stats_dolphin_gap_check[
-    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfg) ==
+    (SUSAMUNE_SPLIT_STATS_CFG_OFFSET + sizeof(struct SusamuneSplitStatsCfgV8) ==
      SUSAMUNE_DOLPHIN_PB_LIVE_PPC_BASE - SUSAMUNE_DOLPHIN_RUNTIME_PPC_BASE) ? 1 : -1];
 typedef char susamune_split_stats_stage_target_gap_check[
     (SUSAMUNE_CONSOLE_STAGE_TARGETS_PPC_BASE +

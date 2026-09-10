@@ -3,6 +3,7 @@
 #include "Dolphin/OS.h"
 #include "Dolphin/mem.h"
 #include "susamune/ghost.hxx"
+#include "susamune/crash_report.hxx"
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
@@ -12,10 +13,7 @@ namespace GhostStorage {
 namespace {
 
 const u32 kTimeoutFrames = 30u * 60u;
-const u32 kCatalogBytes =
-    sizeof(SusamuneGhostSlotInfo) * SUSAMUNE_GHOST_SLOT_COUNT;
-const u32 kImportedCatalogBytes =
-    sizeof(SusamuneGhostSlotInfo) * SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES;
+const u32 kCatalogBytes = sizeof(SusamuneGhostCatalogPage);
 
 const char kUnavailable[] = "Ghost storage unavailable";
 const char kDolphinUnavailable[] = "Ghost storage unavailable in Dolphin";
@@ -33,7 +31,6 @@ const char kDeleted[] = "Ghost deleted";
 const char kExportedShare[] = "Ghost exported to share folder";
 const char kExportExists[] = "Export filename already exists";
 const char kImportedShare[] = "Imported ghosts refreshed";
-const char kImportedOverflow[] = "12 imported ghosts shown; more found";
 const char kSaveChanged[] = "Ghost changed; confirm save again";
 const char kLoadIgnored[] = "Stale ghost load ignored";
 const char kNoRecording[] = "No ghost ready to save";
@@ -51,7 +48,7 @@ const char kInvalidRequest[] = "Ghost storage request rejected";
 const char kFileTooLarge[] = "Ghost file is too large";
 const char kInvalidFile[] = "Ghost file is corrupt";
 const char kForwardVersion[] = "Ghost version is unsupported";
-const char kQuota[] = "Ghost profile quota reached";
+const char kQuota[] = "Ghost storage is full";
 const char kNotFound[] = "Ghost slot was not found";
 const char kIoError[] = "Ghost storage I/O error";
 const char kCatalogInvalid[] = "Ghost catalog failed validation";
@@ -65,39 +62,20 @@ enum LoadDestination {
     LOAD_DESTINATION_OBSERVER_SECONDARY,
 };
 
-SusamuneGhostSlotInfo *const sCatalog =
-    reinterpret_cast<SusamuneGhostSlotInfo *>(
+SusamuneGhostCatalogPage *const sPages =
+    reinterpret_cast<SusamuneGhostCatalogPage *>(
         SUSAMUNE_GHOST_CATALOG_CACHE_PPC_BASE);
-SusamuneGhostSlotInfo *const sImportedCatalog =
-    sCatalog + SUSAMUNE_GHOST_SLOT_COUNT;
-static_assert(kCatalogBytes + kImportedCatalogBytes ==
-                  SUSAMUNE_GHOST_CATALOG_CACHE_SIZE,
-              "ghost catalog cache layout changed");
+static_assert(2 * kCatalogBytes <= SUSAMUNE_GHOST_CATALOG_CACHE_SIZE,
+              "ghost pages exceed the fixed cache");
 const char *sStatus = kUnavailable;
-u32 sSequence;
-u32 sPendingSequence;
-u32 sPendingRecordToken;
-u32 sPendingDurationQf;
-u32 sPendingExpectedGeneration;
-u32 sWaitFrames;
-u32 sEpoch;
-u32 sPendingEpoch;
-u32 sTotalDuration;
-u32 sImportedTotalDuration;
-u32 sImportedOverflow;
-u16 sPendingCommand;
-u16 sPendingProfile;
-u16 sPendingSlot;
-u8 sPendingLoadDestination;
-u8 sProfile;
-s8 sLoadedSlot;
-u8 sLoadedProfile;
-bool sAvailable;
-bool sCatalogReady;
-bool sImportedCatalogReady;
-bool sRefreshQueued;
-bool sImportedRefreshQueued;
-bool sTimedOut;
+u32 sSequence, sPendingSequence, sPendingRecordToken, sPendingDurationQf;
+u32 sWaitFrames, sEpoch, sPendingEpoch, sPendingSlot;
+u32 sOffsets[2];
+u16 sPendingCommand, sPendingProfile;
+u8 sPendingLoadDestination, sProfile;
+Identity sPendingIdentity, sLoadedIdentity;
+bool sLoadedValid, sAvailable, sReady[2], sRefreshQueued[2];
+bool sImportScanQueued, sTimedOut;
 
 void notify(const char *status) {
     sStatus = status;
@@ -105,17 +83,7 @@ void notify(const char *status) {
 }
 
 void observeLoadedPlayback() {
-    if (sLoadedSlot < 0 || Ghost::playbackPinned()) return;
-    sLoadedSlot = -1;
-    sLoadedProfile = 0xff;
-}
-
-void detachImportedAssociation(bool clearPlayback) {
-    // Imported row numbers are lexical positions and can change after a scan.
-    if (sLoadedProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE) return;
-    if (clearPlayback && Ghost::playbackPinned()) Ghost::clearPlayback();
-    sLoadedSlot = -1;
-    sLoadedProfile = 0xff;
+    if (!Ghost::playbackPinned()) sLoadedValid = false;
 }
 
 u8 activeProfile() {
@@ -124,30 +92,21 @@ u8 activeProfile() {
         ? static_cast<u8>(profile) : 0;
 }
 
-void clearCatalog() {
-    memset(sCatalog, 0, kCatalogBytes);
-    sCatalogReady = false;
-    sTotalDuration = 0;
-}
-
-void clearImportedCatalog() {
-    memset(sImportedCatalog, 0, kImportedCatalogBytes);
-    sImportedCatalogReady = false;
-    sImportedTotalDuration = 0;
-    sImportedOverflow = 0;
+void clearCatalog(bool imported) {
+    memset(&sPages[imported], 0, kCatalogBytes);
+    sReady[imported] = false;
 }
 
 void observeProfile() {
     const u8 profile = activeProfile();
     if (profile == sProfile) return;
     if (sPendingCommand == SUSAMUNE_GHOST_CMD_LOAD &&
-        (sPendingLoadDestination == LOAD_DESTINATION_OBSERVER_PRIMARY ||
-         sPendingLoadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY)) {
-        Ghost::stopObserver();
-    }
+        sPendingProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE &&
+        sPendingLoadDestination != LOAD_DESTINATION_RACE) Ghost::stopObserver();
     sProfile = profile;
-    clearCatalog();
-    sRefreshQueued = sAvailable;
+    sOffsets[0] = 0;
+    clearCatalog(false);
+    sRefreshQueued[0] = sAvailable;
 }
 
 const char *statusForCode(s32 status) {
@@ -286,6 +245,10 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
         raw.requiredFeatures ==
             SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4 &&
         raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
+    const bool canonicalV5 =
+        raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
+        raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5 &&
+        raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
     const bool foreign = raw.gameId != kGameId;
     const bool namespaceSane = imported
         ? (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) != 0 &&
@@ -295,17 +258,19 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
                   raw.routeFlags, raw.routeVariant))
         : (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) == 0 &&
               raw.gameId == kGameId && raw.region == kRegion;
-    const bool sane = raw.generation != 0 && raw.status == 0 &&
+    const bool sane = raw.status == 0 &&
         namespaceSane &&
         raw.discRevision == SUSAMUNE_GHOST_DISC_REVISION &&
-        (canonicalV3 || canonicalV4) &&
+        (canonicalV3 || canonicalV4 || canonicalV5) &&
         raw.recordingMode == SUSAMUNE_GHOST_RECORDING_POSE_QF &&
         raw.sampleIntervalQf == SUSAMUNE_GHOST_TRANSFORM_INTERVAL_QF &&
         raw.sampleCount >= SUSAMUNE_GHOST_MIN_SAMPLE_COUNT &&
         raw.sampleCount <= SUSAMUNE_GHOST_MAX_SAMPLE_COUNT &&
         raw.durationQf > 0 &&
         raw.durationQf <= SUSAMUNE_GHOST_MAX_DURATION_QF &&
-        raw.payloadSize == expectedCanonicalSize &&
+        (canonicalV5 ? raw.payloadSize >= expectedCanonicalSize +
+                                          SUSAMUNE_GHOST_TEACHING_HEADER_SIZE
+                     : raw.payloadSize == expectedCanonicalSize) &&
         raw.payloadSize <= SUSAMUNE_GHOST_MAX_FILE_SIZE &&
         (raw.resultQf == SUSAMUNE_GHOST_RESULT_QF_NONE ||
          raw.resultQf <= SUSAMUNE_GHOST_QF_MAX) &&
@@ -327,75 +292,91 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
     return true;
 }
 
+bool validLeaf(const char *leaf) {
+    u32 length = 0;
+    while (length < SUSAMUNE_GHOST_IMPORT_LEAF_SIZE && leaf[length]) {
+        const u8 ch = static_cast<u8>(leaf[length]);
+        if (ch < 0x20 || ch > 0x7e || ch == '/' || ch == '\\' ||
+            ch == ':' || ch == '*' || ch == '?' || ch == '"' ||
+            ch == '<' || ch == '>' || ch == '|') return false;
+        length++;
+    }
+    if (length <= 9 || length >= SUSAMUNE_GHOST_IMPORT_LEAF_SIZE) return false;
+    const char suffix[] = ".smsghost";
+    for (u32 i = 0; i < 9; i++) {
+        u8 ch = static_cast<u8>(leaf[length - 9 + i]);
+        if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+        if (ch != suffix[i]) return false;
+    }
+    for (u32 i = length; i < SUSAMUNE_GHOST_IMPORT_LEAF_SIZE; i++)
+        if (leaf[i]) return false;
+    return true;
+}
+
+bool zeroBytes(const void *data, u32 size) {
+    const u8 *bytes = static_cast<const u8 *>(data);
+    for (u32 i = 0; i < size; i++) if (bytes[i]) return false;
+    return true;
+}
+
 bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
 #if IS_EMULATOR
     (void)response;
     return false;
 #else
-    volatile SusamuneGhostStorageMailbox *mailbox =
-        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
     const bool imported = response.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
-    const u32 capacity = imported ? SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES
-                                  : SUSAMUNE_GHOST_SLOT_COUNT;
-    const u32 catalogBytes = imported ? kImportedCatalogBytes : kCatalogBytes;
-    const u32 durationLimit = imported
-        ? SUSAMUNE_GHOST_IMPORTED_MAX_DURATION_QF
-        : SUSAMUNE_GHOST_PROFILE_MAX_DURATION_QF;
-    SusamuneGhostSlotInfo *catalog = imported
-        ? sImportedCatalog : sCatalog;
-    DCInvalidateRange((void *)mailbox->payload, catalogBytes);
-
-    if (imported) {
-        // Never carry a lexical row identity across catalog adoption.
-        detachImportedAssociation(false);
-        clearImportedCatalog();
-    }
-    else clearCatalog();
-    u32 duration = 0;
-    u16 count = 0;
-    for (u32 i = 0; i < capacity; i++) {
-        SusamuneGhostSlotInfo raw;
-        memcpy(&raw, (const void *)(mailbox->payload +
-                   i * sizeof(SusamuneGhostSlotInfo)), sizeof(raw));
-        if (!imported &&
-            i >= SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES) {
-            const u8 *bytes = reinterpret_cast<const u8 *>(&raw);
-            for (u32 j = 0; j < sizeof(raw); j++) {
-                if (bytes[j] != 0) {
-                    clearCatalog();
-                    return false;
-                }
-            }
+    SusamuneGhostCatalogPage *page = &sPages[imported];
+    clearCatalog(imported);
+    DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, kCatalogBytes);
+    memcpy(page, (const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, kCatalogBytes);
+    const u64 totalDuration = (static_cast<u64>(page->totalDurationQfHi) << 32) |
+                              page->totalDurationQfLo;
+    const u32 remaining = page->first < page->totalCount
+        ? page->totalCount - page->first : 0;
+    const u32 expectedCount = remaining < SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES
+        ? remaining : SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES;
+    bool valid = response.payloadSize == kCatalogBytes &&
+        page->magic == SUSAMUNE_GHOST_CATALOG_PAGE_MAGIC &&
+        page->version == SUSAMUNE_GHOST_CATALOG_PAGE_VERSION &&
+        page->first == sPendingSlot && page->flags == 0 &&
+        page->count == expectedCount && response.slotCount == page->count &&
+        totalDuration <= static_cast<u64>(page->totalCount) *
+                         SUSAMUNE_GHOST_MAX_DURATION_QF;
+    u64 pageDuration = 0;
+    for (u32 i = 0; valid && i < SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES; i++) {
+        SusamuneGhostCatalogEntry &entry = page->entries[i];
+        if (i >= page->count) {
+            valid = zeroBytes(&entry, sizeof(entry));
             continue;
         }
-        sanitizeSlot(raw, &catalog[i], imported);
-        if ((catalog[i].flags & SUSAMUNE_GHOST_SLOT_PRESENT) == 0) continue;
-        if (catalog[i].durationQf > durationLimit - duration) {
-            if (imported) clearImportedCatalog();
-            else clearCatalog();
-            return false;
+        SusamuneGhostSlotInfo raw = entry.info;
+        valid = entry.id != SUSAMUNE_GHOST_SLOT_AUTO &&
+            (imported ? validLeaf(entry.leaf) :
+                        zeroBytes(entry.leaf, sizeof(entry.leaf))) &&
+            sanitizeSlot(raw, &entry.info, imported) &&
+            (entry.info.flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
+                                 SUSAMUNE_GHOST_SLOT_UNSAFE)) != 0;
+        for (u32 previous = 0; valid && previous < i; previous++) {
+            valid = imported
+                ? memcmp(entry.leaf, page->entries[previous].leaf,
+                         sizeof(entry.leaf)) != 0
+                : entry.id != page->entries[previous].id;
         }
-        duration += catalog[i].durationQf;
-        count++;
+        pageDuration += entry.info.durationQf;
     }
-    if (response.payloadSize != catalogBytes ||
-        response.slotCount != count || response.totalDurationQf != duration ||
-        duration > durationLimit) {
-        if (imported) clearImportedCatalog();
-        else clearCatalog();
+    if (!valid || pageDuration > totalDuration) {
+        clearCatalog(imported);
         return false;
     }
-    if (imported) {
-        sImportedTotalDuration = duration;
-        sImportedOverflow = response.generation;
-        sImportedCatalogReady = true;
-    } else {
-        if (response.generation != 0) {
-            clearCatalog();
-            return false;
-        }
-        sTotalDuration = duration;
-        sCatalogReady = true;
+    sReady[imported] = true;
+    // Deleting the final row of the final page should return to existing rows.
+    if (!page->count && page->first && page->totalCount) {
+        sOffsets[imported] = ((page->totalCount - 1) /
+            SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES) * SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES;
+        sRefreshQueued[imported] = sAvailable;
+    } else if (!page->totalCount && page->first) {
+        sOffsets[imported] = 0;
+        sRefreshQueued[imported] = sAvailable;
     }
     return true;
 #endif
@@ -403,31 +384,22 @@ bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
 
 bool responseShapeIsValid(const SusamuneGhostStorageResponse &response,
                           u16 command) {
-    const bool imported = sPendingProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
-    const u16 slotLimit = imported ? SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES
-        : SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES;
-    const u32 durationLimit = imported
-        ? SUSAMUNE_GHOST_IMPORTED_MAX_DURATION_QF
-        : SUSAMUNE_GHOST_PROFILE_MAX_DURATION_QF;
     if (response.profile != sPendingProfile ||
         (response.flags & ~(SUSAMUNE_GHOST_RESPONSE_READY |
                             SUSAMUNE_GHOST_RESPONSE_BUSY)) != 0 ||
-        (response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY) != 0 ||
-        response.slotCount > slotLimit ||
-        response.totalDurationQf > durationLimit) {
-        return false;
-    }
-    if (response.status == SUSAMUNE_GHOST_STATUS_OK &&
-        (response.flags & SUSAMUNE_GHOST_RESPONSE_READY) == 0) {
-        return false;
-    }
+        (response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY) != 0) return false;
     if (response.status != SUSAMUNE_GHOST_STATUS_OK)
-        return response.payloadSize == 0;
+        return response.payloadSize == 0 && response.slotCount == 0;
+    if (!(response.flags & SUSAMUNE_GHOST_RESPONSE_READY)) return false;
     if (command == SUSAMUNE_GHOST_CMD_LIST ||
-        command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) {
-        return response.payloadSize ==
-            (imported ? kImportedCatalogBytes : kCatalogBytes);
-    }
+        command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
+        return response.payloadSize == kCatalogBytes &&
+               response.slotCount <= SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES &&
+               response.slot == 0;
+    if (response.slotCount != 0 ||
+        response.slot == SUSAMUNE_GHOST_SLOT_AUTO) return false;
+    if (command != SUSAMUNE_GHOST_CMD_SAVE && response.slot != sPendingSlot)
+        return false;
     if (command == SUSAMUNE_GHOST_CMD_LOAD)
         return response.payloadSize >= SUSAMUNE_GHOST_FILE_HEADER_SIZE &&
                response.payloadSize <= SUSAMUNE_GHOST_MAX_FILE_SIZE;
@@ -435,32 +407,27 @@ bool responseShapeIsValid(const SusamuneGhostStorageResponse &response,
 }
 
 #if !IS_EMULATOR
-void beginRequest(u16 command, u16 profile, u16 slot, u32 payloadSize,
-                  u32 recordToken, const char *status,
-                  u32 durationQf = 0) {
-    volatile SusamuneGhostStorageMailbox *mailbox =
-        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
-    sSequence++;
-    if (sSequence == 0) sSequence++;
-
+void beginRequest(u16 command, u16 profile, u32 slot, u32 payloadSize,
+                  u32 recordToken, const char *status, u32 durationQf = 0,
+                  u32 expectedGeneration = 0) {
+    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    if (++sSequence == 0) sSequence++;
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_STORAGE, command, slot);
     mailbox->request.requestMagic = SUSAMUNE_GHOST_STORAGE_MAGIC;
     mailbox->request.protocolVersion = SUSAMUNE_GHOST_STORAGE_VERSION;
     mailbox->request.command = command;
     mailbox->request.requestSeq = sSequence;
     mailbox->request.profile = profile;
+    mailbox->request.reserved = 0;
     mailbox->request.slot = slot;
     mailbox->request.payloadSize = payloadSize;
     mailbox->request.flags = 0;
-    mailbox->request.reserved[0] = 0;
-    mailbox->request.reserved[1] = 0;
+    mailbox->request.expectedGeneration = expectedGeneration;
     DCFlushRange((void *)&mailbox->request, sizeof(mailbox->request));
-
     sPendingCommand = command;
     sPendingSequence = sSequence;
-    sPendingRecordToken = command == SUSAMUNE_GHOST_CMD_SAVE
-        ? recordToken : 0;
-    sPendingDurationQf = command == SUSAMUNE_GHOST_CMD_SAVE
-        ? durationQf : 0;
+    sPendingRecordToken = recordToken;
+    sPendingDurationQf = durationQf;
     sPendingProfile = profile;
     sPendingSlot = slot;
     sPendingEpoch = sEpoch;
@@ -470,26 +437,13 @@ void beginRequest(u16 command, u16 profile, u16 slot, u32 payloadSize,
 }
 #endif
 
-bool beginRefresh() {
+bool beginRefresh(bool imported, u16 command = SUSAMUNE_GHOST_CMD_LIST) {
     if (!sAvailable || sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) return false;
-    clearCatalog();
+    clearCatalog(imported);
 #if !IS_EMULATOR
-    beginRequest(SUSAMUNE_GHOST_CMD_LIST, sProfile, 0, 0, 0, kRefreshing);
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool beginImportedRefresh(u16 command) {
-    if (!sAvailable || sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) return false;
-    clearImportedCatalog();
-#if !IS_EMULATOR
-    if (command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
-        detachImportedAssociation(false);
-    beginRequest(command, SUSAMUNE_GHOST_IMPORTED_PROFILE, 0, 0, 0,
-                 command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN
-                     ? kImportingShare : kRefreshing);
+    beginRequest(command, imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile,
+                 sOffsets[imported], 0, 0,
+                 command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ? kImportingShare : kRefreshing);
     return true;
 #else
     (void)command;
@@ -497,24 +451,27 @@ bool beginImportedRefresh(u16 command) {
 #endif
 }
 
-void queueRefresh() {
-    clearCatalog();
-    sRefreshQueued = sAvailable;
-}
-
-void queueImportedRefresh() {
-    clearImportedCatalog();
-    sImportedRefreshQueued = sAvailable;
+__attribute__((noinline)) bool requestImportedRefresh(u16 command) {
+    observeProfile();
+    if (!sAvailable) {
+        sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
+        return false;
+    }
+    if (command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) sOffsets[1] = 0;
+    clearCatalog(true);
+    sRefreshQueued[1] = true;
+    sImportScanQueued = command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN;
+    if (busy()) return true;
+    sRefreshQueued[1] = false;
+    sImportScanQueued = false;
+    return beginRefresh(true, command);
 }
 
 void queueNamespaceRefresh(u16 profile) {
-    if (profile == SUSAMUNE_GHOST_IMPORTED_PROFILE) queueImportedRefresh();
-    else queueRefresh();
-}
-
-void clearNamespaceCatalog(u16 profile) {
-    if (profile == SUSAMUNE_GHOST_IMPORTED_PROFILE) clearImportedCatalog();
-    else clearCatalog();
+    const bool imported = profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
+    if (!imported && profile != sProfile) return;
+    clearCatalog(imported);
+    sRefreshQueued[imported] = sAvailable;
 }
 
 bool observerLoadDestination(u8 destination) {
@@ -529,16 +486,14 @@ void cancelFailedObserverLoad(u8 destination) {
 void completeRequest(const SusamuneGhostStorageResponse &response) {
     const u16 command = sPendingCommand;
     const u16 requestProfile = sPendingProfile;
-    const u16 requestSlot = sPendingSlot;
+    const u32 requestSlot = sPendingSlot;
     const u32 requestEpoch = sPendingEpoch;
     const u32 recordToken = sPendingRecordToken;
     const u32 durationQf = sPendingDurationQf;
-    const u32 expectedGeneration = sPendingExpectedGeneration;
     const u8 loadDestination = sPendingLoadDestination;
     sPendingCommand = SUSAMUNE_GHOST_CMD_NONE;
     sPendingRecordToken = 0;
     sPendingDurationQf = 0;
-    sPendingExpectedGeneration = 0;
     sPendingLoadDestination = LOAD_DESTINATION_RACE;
     sWaitFrames = 0;
     sTimedOut = false;
@@ -548,49 +503,33 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
         sAvailable = false;
         cancelFailedObserverLoad(loadDestination);
         notify(kProtocol);
-        if (command == SUSAMUNE_GHOST_CMD_SAVE ||
-            command == SUSAMUNE_GHOST_CMD_DELETE ||
-            command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ||
-            command == SUSAMUNE_GHOST_CMD_LOAD ||
-            command == SUSAMUNE_GHOST_CMD_EXPORT) {
-            clearNamespaceCatalog(requestProfile);
-        }
+        clearCatalog(requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE);
         return;
     }
     if (response.status != SUSAMUNE_GHOST_STATUS_OK) {
         cancelFailedObserverLoad(loadDestination);
         const char *status = command == SUSAMUNE_GHOST_CMD_EXPORT &&
-                                     response.status ==
-                                         SUSAMUNE_GHOST_STATUS_SLOT_OCCUPIED
-            ? kExportExists : statusForCode(response.status);
+            response.status == SUSAMUNE_GHOST_STATUS_SLOT_OCCUPIED
+                ? kExportExists : statusForCode(response.status);
         if (command == SUSAMUNE_GHOST_CMD_LIST) sStatus = status;
         else notify(status);
-        if (command == SUSAMUNE_GHOST_CMD_SAVE ||
-            command == SUSAMUNE_GHOST_CMD_DELETE ||
-            command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ||
-            command == SUSAMUNE_GHOST_CMD_LOAD ||
-            command == SUSAMUNE_GHOST_CMD_EXPORT) {
+        if (command != SUSAMUNE_GHOST_CMD_LIST)
             queueNamespaceRefresh(requestProfile);
-        }
         return;
     }
-
     if (command == SUSAMUNE_GHOST_CMD_LIST ||
         command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) {
-        const bool stalePersonal =
-            requestProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-            requestProfile != sProfile;
-        if (stalePersonal || !adoptCatalog(response)) {
-            sStatus = stalePersonal ? kReady : kCatalogInvalid;
-            if (stalePersonal) sRefreshQueued = sAvailable;
-        } else {
-            sStatus = requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-                              sImportedOverflow != 0
-                ? kImportedOverflow
-                : command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN
-                    ? kImportedShare : kReady;
-            if (command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) notify(sStatus);
+        const bool imported = requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
+        const bool stale = (!imported && requestProfile != sProfile) ||
+                           requestSlot != sOffsets[imported];
+        if (stale) {
+            sRefreshQueued[imported] = sAvailable;
+            return;
         }
+        sStatus = adoptCatalog(response)
+            ? command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ? kImportedShare : kReady
+            : kCatalogInvalid;
+        if (command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) notify(sStatus);
         return;
     }
     if (command == SUSAMUNE_GHOST_CMD_SAVE) {
@@ -598,15 +537,13 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
         RecordsPersistence::checkpoint();
         Ghost::releaseSavedRecording(recordToken);
         notify(kSaved);
-        queueRefresh();
+        queueNamespaceRefresh(requestProfile);
         return;
     }
     if (command == SUSAMUNE_GHOST_CMD_DELETE) {
-        if (requestProfile == sLoadedProfile &&
-            requestSlot == static_cast<u16>(sLoadedSlot)) {
+        if (sLoadedValid && sameIdentity(sLoadedIdentity, sPendingIdentity)) {
             if (Ghost::playbackPinned()) Ghost::clearPlayback();
-            sLoadedSlot = -1;
-            sLoadedProfile = 0xff;
+            sLoadedValid = false;
         }
         notify(kDeleted);
         queueNamespaceRefresh(requestProfile);
@@ -614,34 +551,25 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
     }
     if (command == SUSAMUNE_GHOST_CMD_EXPORT) {
         notify(kExportedShare);
-        queueRefresh();
         return;
     }
     if (command == SUSAMUNE_GHOST_CMD_LOAD) {
-        if (requestEpoch != sEpoch ||
-            (requestProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-             requestProfile != sProfile) ||
-            (requestProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-             expectedGeneration != 0 &&
-             response.generation != expectedGeneration)) {
+        if (requestEpoch != sEpoch || !identityValid(sPendingIdentity) ||
+            response.generation != sPendingIdentity.generation) {
             cancelFailedObserverLoad(loadDestination);
             notify(kLoadIgnored);
             queueNamespaceRefresh(requestProfile);
             return;
         }
 #if !IS_EMULATOR
-        volatile SusamuneGhostStorageMailbox *mailbox =
-            SUSAMUNE_GHOST_STORAGE_PPC_PTR;
-        DCInvalidateRange((void *)mailbox->payload, response.payloadSize);
-        const bool imported = loadDestination == LOAD_DESTINATION_RACE
-            ? Ghost::importPlayback((const void *)mailbox->payload,
+        DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, response.payloadSize);
+        const bool accepted = loadDestination == LOAD_DESTINATION_RACE
+            ? Ghost::importPlayback((const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
                                     response.payloadSize,
-                                    requestProfile ==
-                                        SUSAMUNE_GHOST_IMPORTED_PROFILE)
-            : Ghost::importObserverTrack(
-                  (const void *)mailbox->payload, response.payloadSize,
-                  loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY);
-        if (!imported) {
+                                    requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
+            : Ghost::importObserverTrack((const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
+                  response.payloadSize, loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY);
+        if (!accepted) {
             cancelFailedObserverLoad(loadDestination);
             notify(kImportFailed);
             queueNamespaceRefresh(requestProfile);
@@ -650,23 +578,20 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
 #endif
         if (observerLoadDestination(loadDestination)) {
             notify(kLoaded);
-            return;
+        } else {
+            sLoadedIdentity = sPendingIdentity;
+            sLoadedValid = true;
+            notify(kRaceLoaded);
         }
-        sLoadedProfile = static_cast<u8>(requestProfile);
-        sLoadedSlot = static_cast<s8>(requestSlot);
-        notify(kRaceLoaded);
-        if (requestProfile != SUSAMUNE_GHOST_IMPORTED_PROFILE) queueRefresh();
     }
 }
 
 #if !IS_EMULATOR
 void pollResponse() {
-    volatile SusamuneGhostStorageMailbox *mailbox =
-        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
     DCInvalidateRange((void *)&mailbox->response, sizeof(mailbox->response));
     SusamuneGhostStorageResponse response;
     memcpy(&response, (const void *)&mailbox->response, sizeof(response));
-
     if (response.responseMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
         response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION &&
         response.ackSeq == sPendingSequence) {
@@ -694,104 +619,24 @@ __attribute__((noinline)) bool requestIdle() {
     return true;
 }
 
-bool requestAllowed(u16 profile, int slot, bool requirePresent,
-                    bool allowUnsafe = false) {
-    observeProfile();
-    if (!requestIdle()) return false;
-    const bool imported = profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
-    const int slotLimit = imported
-        ? static_cast<int>(SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES)
-        : static_cast<int>(SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES);
-    if (slot < 0 || slot >= slotLimit) {
-        sStatus = kBadSlot;
-        return false;
-    }
-    if (imported ? !sImportedCatalogReady : !sCatalogReady) {
-        sStatus = kCatalogNeeded;
-        return false;
-    }
-    const SusamuneGhostSlotInfo &info = imported
-        ? sImportedCatalog[slot] : sCatalog[slot];
-    if ((info.flags & SUSAMUNE_GHOST_SLOT_UNSAFE) != 0 && !allowUnsafe) {
-        sStatus = kUnsafe;
-        return false;
-    }
-    const bool present = (info.flags & SUSAMUNE_GHOST_SLOT_PRESENT) != 0;
-    if (requirePresent && !present) {
-        sStatus = kEmpty;
-        return false;
-    }
-    if (!requirePresent && present) {
-        sStatus = kOccupied;
-        return false;
-    }
-    return true;
-}
-
-__attribute__((noinline)) bool requestImportedRefresh(u16 command) {
-    if (!requestIdle()) return false;
-    sImportedRefreshQueued = false;
-    return beginImportedRefresh(command);
-}
-
-__attribute__((noinline)) bool loadTrack(bool imported, int slot,
-                                         u8 destination) {
-    if (!imported) observeProfile();
-    const u16 profile = imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile;
-    if (!requestAllowed(profile, slot, true)) return false;
-#if !IS_EMULATOR
-    sPendingLoadDestination = destination;
-    beginRequest(SUSAMUNE_GHOST_CMD_LOAD, profile,
-                 static_cast<u16>(slot), 0, 0, kLoading);
-    sPendingExpectedGeneration =
-        imported ? 0 : sCatalog[slot].generation;
-    return true;
-#else
-    (void)destination;
-    return false;
-#endif
-}
-
-__attribute__((noinline)) bool requestPersonalCommand(int slot, u16 command,
-                                                       const char *status) {
-    if (!requestAllowed(sProfile, slot, true)) return false;
-#if !IS_EMULATOR
-    beginRequest(command, sProfile, static_cast<u16>(slot), 0, 0, status);
-    return true;
-#else
-    (void)command;
-    (void)status;
-    return false;
-#endif
-}
-
 __attribute__((noinline)) const SusamuneGhostSlotInfo *catalogEntry(
     bool imported, int slot) {
-    if (slot < 0 ||
-        slot >= (imported
-                     ? static_cast<int>(SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES)
-                     : static_cast<int>(
-                           SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)) ||
-        (imported ? !sImportedCatalogReady : !sCatalogReady)) {
-        return nullptr;
-    }
-    return imported ? &sImportedCatalog[slot] : &sCatalog[slot];
+    if (!sReady[imported] || slot < 0 ||
+        static_cast<u32>(slot) >= sPages[imported].count) return nullptr;
+    return &sPages[imported].entries[slot].info;
 }
 
 bool copyLiteral(char *out, u32 size, const char *text, u32 length) {
     if (!out || size == 0) return false;
-    u32 count = length;
-    if (count >= size) count = size - 1;
-    if (count != 0) memcpy(out, text, count);
+    const u32 count = length < size ? length : size - 1;
+    if (count) memcpy(out, text, count);
     out[count] = '\0';
     return true;
 }
 
 bool copyVisibleName(char *out, u32 size, const char *text, u32 length) {
-    for (u32 i = 0; i < length; i++) {
+    for (u32 i = 0; i < length; i++)
         if (text[i] != ' ') return copyLiteral(out, size, text, length);
-    }
-    // Printable catalog validation admits spaces; never show a live row blank.
     return copyLiteral(out, size, kUnnamedName, sizeof(kUnnamedName) - 1);
 }
 
@@ -801,47 +646,87 @@ __attribute__((noinline)) bool copyCatalogName(bool imported, int slot,
     out[0] = '\0';
     const SusamuneGhostSlotInfo *info = catalogEntry(imported, slot);
     if (!info) return false;
-    if ((info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE) != 0)
+    if (info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)
         return copyLiteral(out, size, kUnsafeName, sizeof(kUnsafeName) - 1);
-    if ((info->flags & SUSAMUNE_GHOST_SLOT_PRESENT) == 0)
+    if (!(info->flags & SUSAMUNE_GHOST_SLOT_PRESENT))
         return copyLiteral(out, size, kEmptyName, sizeof(kEmptyName) - 1);
     return copyVisibleName(out, size, info->name, info->nameLength);
+}
+
+__attribute__((noinline)) bool requestIdentity(const Identity &identity,
+    u16 command, const char *status, u8 destination = LOAD_DESTINATION_RACE) {
+    observeProfile();
+    if (!requestIdle()) return false;
+    if (!identityValid(identity)) {
+        sStatus = kBadSlot;
+        return false;
+    }
+    if ((identity.flags & SUSAMUNE_GHOST_SLOT_UNSAFE) &&
+        command != SUSAMUNE_GHOST_CMD_DELETE) {
+        sStatus = kUnsafe;
+        return false;
+    }
+    const bool imported = identity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
+    if (imported && command == SUSAMUNE_GHOST_CMD_EXPORT) {
+        sStatus = kInvalidRequest;
+        return false;
+    }
+#if !IS_EMULATOR
+    const u32 payloadSize = imported ? sizeof(identity.leaf) : 0;
+    if (imported) {
+        memcpy((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, identity.leaf, payloadSize);
+        DCFlushRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, payloadSize);
+    }
+    sPendingIdentity = identity;
+    sPendingLoadDestination = destination;
+    beginRequest(command, identity.profile, identity.id, payloadSize, 0,
+                 status, 0, identity.generation);
+    return true;
+#else
+    (void)status;
+    (void)destination;
+    return false;
+#endif
+}
+
+__attribute__((noinline)) bool loadTrack(bool imported, int slot, u8 destination) {
+    Identity identity;
+    if (!copyIdentity(imported, slot, &identity)) {
+        sStatus = kCatalogNeeded;
+        return false;
+    }
+    return requestIdentity(identity, SUSAMUNE_GHOST_CMD_LOAD, kLoading, destination);
+}
+
+__attribute__((noinline)) bool requestPersonalCommand(int slot, u16 command,
+                                                       const char *status) {
+    Identity identity;
+    if (!copyIdentity(false, slot, &identity)) {
+        sStatus = kCatalogNeeded;
+        return false;
+    }
+    return requestIdentity(identity, command, status);
 }
 
 }  // namespace
 
 void init() {
-    memset(sCatalog, 0, kCatalogBytes);
-    memset(sImportedCatalog, 0, kImportedCatalogBytes);
-    sSequence = 0;
-    sPendingSequence = 0;
-    sPendingRecordToken = 0;
-    sPendingDurationQf = 0;
-    sPendingExpectedGeneration = 0;
-    sWaitFrames = 0;
+    memset(sPages, 0, 2 * kCatalogBytes);
+    memset(&sPendingIdentity, 0, sizeof(sPendingIdentity));
+    memset(&sLoadedIdentity, 0, sizeof(sLoadedIdentity));
+    sSequence = sPendingSequence = sPendingRecordToken = sPendingDurationQf = 0;
+    sWaitFrames = sPendingEpoch = sPendingSlot = 0;
     sEpoch = 1;
-    sPendingEpoch = 0;
-    sTotalDuration = 0;
-    sImportedTotalDuration = 0;
-    sImportedOverflow = 0;
     sPendingCommand = SUSAMUNE_GHOST_CMD_NONE;
     sPendingProfile = 0;
-    sPendingSlot = 0;
     sPendingLoadDestination = LOAD_DESTINATION_RACE;
     sProfile = activeProfile();
-    sLoadedSlot = -1;
-    sLoadedProfile = 0xff;
-    sAvailable = false;
-    sCatalogReady = false;
-    sImportedCatalogReady = false;
-    sRefreshQueued = false;
-    sImportedRefreshQueued = false;
-    sTimedOut = false;
+    sOffsets[0] = sOffsets[1] = 0;
+    sReady[0] = sReady[1] = sRefreshQueued[0] = sRefreshQueued[1] = false;
+    sLoadedValid = sAvailable = sImportScanQueued = sTimedOut = false;
     sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
-
 #if !IS_EMULATOR
-    volatile SusamuneGhostStorageMailbox *mailbox =
-        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
     DCInvalidateRange((void *)&mailbox->response, sizeof(mailbox->response));
     SusamuneGhostStorageResponse response;
     memcpy(&response, (const void *)&mailbox->response, sizeof(response));
@@ -849,13 +734,11 @@ void init() {
         response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION &&
         (response.flags & ~(SUSAMUNE_GHOST_RESPONSE_READY |
                             SUSAMUNE_GHOST_RESPONSE_BUSY)) == 0 &&
-        (response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY) == 0) {
+        !(response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY)) {
         sSequence = response.ackSeq;
-        sAvailable =
-            (response.flags & SUSAMUNE_GHOST_RESPONSE_READY) != 0;
+        sAvailable = (response.flags & SUSAMUNE_GHOST_RESPONSE_READY) != 0;
         sStatus = sAvailable ? kReady : statusForCode(response.status);
-        sRefreshQueued = sAvailable;
-        sImportedRefreshQueued = sAvailable;
+        sRefreshQueued[0] = sRefreshQueued[1] = sAvailable;
     }
 #endif
 }
@@ -867,28 +750,26 @@ void update() {
         if (sPendingCommand == SUSAMUNE_GHOST_CMD_LOAD &&
             observerLoadDestination(sPendingLoadDestination) &&
             !Ghost::observerPreparing() && sPendingEpoch == sEpoch) {
-            sEpoch++;
-            if (sEpoch == 0) sEpoch++;
+            if (++sEpoch == 0) sEpoch++;
         }
 #if !IS_EMULATOR
         pollResponse();
 #endif
         return;
     }
-    if (sRefreshQueued) {
-        sRefreshQueued = false;
-        beginRefresh();
+    for (int imported = 0; imported < 2; imported++) {
+        if (!sRefreshQueued[imported]) continue;
+        sRefreshQueued[imported] = false;
+        const u16 command = imported && sImportScanQueued
+            ? SUSAMUNE_GHOST_CMD_IMPORT_SCAN : SUSAMUNE_GHOST_CMD_LIST;
+        if (imported) sImportScanQueued = false;
+        beginRefresh(imported != 0, command);
         return;
-    }
-    if (sImportedRefreshQueued) {
-        sImportedRefreshQueued = false;
-        beginImportedRefresh(SUSAMUNE_GHOST_CMD_LIST);
     }
 }
 
 void onSavestateLoaded() {
-    sEpoch++;
-    if (sEpoch == 0) sEpoch++;
+    if (++sEpoch == 0) sEpoch++;
     observeLoadedPlayback();
     if (sPendingCommand == SUSAMUNE_GHOST_CMD_LOAD) {
         cancelFailedObserverLoad(sPendingLoadDestination);
@@ -896,176 +777,201 @@ void onSavestateLoaded() {
     }
 }
 
-bool refresh() {
+bool refreshPage(bool imported, u32 offset) {
     observeProfile();
-    if (!requestIdle()) return false;
-    sRefreshQueued = false;
-    return beginRefresh();
-}
-
-bool refreshImported() {
-    return requestImportedRefresh(SUSAMUNE_GHOST_CMD_LIST);
-}
-
-bool scanImports() {
-    return requestImportedRefresh(SUSAMUNE_GHOST_CMD_IMPORT_SCAN);
-}
-
-bool save(int slot) { return save(slot, 0); }
-
-bool save(int slot, u32 expectedSelectionToken) {
-    if (slot < 0 ||
-        slot >= static_cast<int>(SUSAMUNE_GHOST_PROFILE_WRITABLE_ENTRIES)) {
+    if (!sAvailable) {
+        sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
+        return false;
+    }
+    if (offset % SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES != 0) {
         sStatus = kBadSlot;
         return false;
     }
-    if (!requestAllowed(sProfile, slot, false)) return false;
-    if (!Ghost::hasSaveableTrack()) {
-        sStatus = kNoRecording;
+    sOffsets[imported] = offset;
+    if (imported) sImportScanQueued = false;
+    clearCatalog(imported);
+    sRefreshQueued[imported] = true;
+    if (busy()) return true;
+    sRefreshQueued[imported] = false;
+    return beginRefresh(imported);
+}
+
+bool refresh() { return refreshPage(false, sOffsets[0]); }
+bool refreshImported() { return requestImportedRefresh(SUSAMUNE_GHOST_CMD_LIST); }
+bool scanImports() { return requestImportedRefresh(SUSAMUNE_GHOST_CMD_IMPORT_SCAN); }
+
+bool identityValid(const Identity &identity) {
+    const bool imported = identity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
+    const u16 knownFlags = SUSAMUNE_GHOST_SLOT_PRESENT |
+        SUSAMUNE_GHOST_SLOT_UNSAFE | SUSAMUNE_GHOST_SLOT_IMPORTED;
+    if (identity.id == SUSAMUNE_GHOST_SLOT_AUTO ||
+        identity.region >= SUSAMUNE_GHOST_REGION_COUNT ||
+        (identity.flags & ~knownFlags) != 0 ||
+        !(identity.flags & (SUSAMUNE_GHOST_SLOT_PRESENT | SUSAMUNE_GHOST_SLOT_UNSAFE)) ||
+        !zeroBytes(identity.reserved, sizeof(identity.reserved)) ||
+        !safeText(identity.name, sizeof(identity.name), identity.nameLength, false))
         return false;
-    }
+    if (imported)
+        return (identity.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) && validLeaf(identity.leaf);
+    return identity.profile == activeProfile() && identity.region == kRegion &&
+        !(identity.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) &&
+        zeroBytes(identity.leaf, sizeof(identity.leaf));
+}
+
+bool sameIdentity(const Identity &a, const Identity &b) {
+    if (a.profile != b.profile || a.region != b.region) return false;
+    return a.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE
+        ? memcmp(a.leaf, b.leaf, sizeof(a.leaf)) == 0 : a.id == b.id;
+}
+
+bool copyIdentity(bool imported, int row, Identity *out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    out->id = SUSAMUNE_GHOST_SLOT_AUTO;
+    observeProfile();
+    const SusamuneGhostSlotInfo *info = catalogEntry(imported, row);
+    if (!info) return false;
+    const SusamuneGhostCatalogEntry &entry = sPages[imported].entries[row];
+    out->id = entry.id;
+    out->generation = info->generation;
+    out->flags = info->flags;
+    out->profile = imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile;
+    out->region = imported && !(info->flags & SUSAMUNE_GHOST_SLOT_UNSAFE)
+        ? info->region : kRegion;
+    out->nameLength = info->nameLength;
+    memcpy(out->name, info->name, sizeof(out->name));
+    memcpy(out->leaf, entry.leaf, sizeof(out->leaf));
+    return identityValid(*out);
+}
+
+bool copyIdentityName(const Identity &identity, char *out, u32 size) {
+    if (!out || !size) return false;
+    out[0] = '\0';
+    if (!identityValid(identity)) return false;
+    if (identity.flags & SUSAMUNE_GHOST_SLOT_UNSAFE)
+        return copyLiteral(out, size, kUnsafeName, sizeof(kUnsafeName) - 1);
+    return copyVisibleName(out, size, identity.name, identity.nameLength);
+}
+
+bool isLoaded(const Identity &identity) {
+    return sLoadedValid && Ghost::playbackPinned() &&
+           sameIdentity(identity, sLoadedIdentity) &&
+           identity.generation == sLoadedIdentity.generation;
+}
+
+bool saveNew(u32 expectedSelectionToken) {
+    observeProfile();
+    if (!requestIdle()) return false;
+    if (!Ghost::hasSaveableTrack()) { sStatus = kNoRecording; return false; }
 #if !IS_EMULATOR
-    if (expectedSelectionToken != 0) {
+    if (expectedSelectionToken) {
         char currentName[SUSAMUNE_GHOST_NAME_SIZE];
-        u32 currentSelectionToken = 0;
-        if (!Ghost::copySaveableName(currentName, sizeof(currentName),
-                                     &currentSelectionToken) ||
-            currentSelectionToken != expectedSelectionToken) {
+        u32 currentToken = 0;
+        if (!Ghost::copySaveableName(currentName, sizeof(currentName), &currentToken) ||
+            currentToken != expectedSelectionToken) {
             sStatus = kSaveChanged;
             return false;
         }
     }
-    volatile SusamuneGhostStorageMailbox *mailbox =
-        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
-    u32 size = 0;
-    u32 recordToken = 0;
-    if (!Ghost::exportLatest((void *)mailbox->payload,
-                             SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile,
-                             ILing::pbProfileName(sProfile), &size,
-                             &recordToken) ||
-        size < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
-        size > SUSAMUNE_GHOST_MAX_FILE_SIZE) {
+    u32 size = 0, recordToken = 0;
+    if (!Ghost::exportLatest((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
+            SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile, ILing::pbProfileName(sProfile),
+            &size, &recordToken) || size < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
+            size > SUSAMUNE_GHOST_MAX_FILE_SIZE) {
         sStatus = kExportFailed;
         return false;
     }
-    DCFlushRange((void *)mailbox->payload, size);
-    const SusamuneGhostFileHeader *header =
-        (const SusamuneGhostFileHeader *)(const void *)mailbox->payload;
-    beginRequest(SUSAMUNE_GHOST_CMD_SAVE, sProfile,
-                 static_cast<u16>(slot), size, recordToken, kSaving,
-                 header->durationQf);
+    DCFlushRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, size);
+    const SusamuneGhostFileHeader *header = reinterpret_cast<const SusamuneGhostFileHeader *>(
+        (const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR);
+    beginRequest(SUSAMUNE_GHOST_CMD_SAVE, sProfile, SUSAMUNE_GHOST_SLOT_AUTO,
+                 size, recordToken, kSaving, header->durationQf);
     return true;
 #else
-    (void)slot;
     (void)expectedSelectionToken;
     return false;
 #endif
 }
 
-bool load(int slot) {
-    return loadTrack(false, slot, LOAD_DESTINATION_RACE);
+// Occupied page rows must never become overwrite requests.
+bool save(int slot) { return save(slot, 0); }
+bool save(int slot, u32 token) {
+    if (slot != -1) { sStatus = kOccupied; return false; }
+    return saveNew(token);
 }
-
+bool load(const Identity &identity) {
+    return requestIdentity(identity, SUSAMUNE_GHOST_CMD_LOAD, kLoading);
+}
+bool loadObserver(const Identity &identity, bool secondary) {
+    return requestIdentity(identity, SUSAMUNE_GHOST_CMD_LOAD, kLoading,
+        secondary ? LOAD_DESTINATION_OBSERVER_SECONDARY : LOAD_DESTINATION_OBSERVER_PRIMARY);
+}
+bool remove(const Identity &identity) {
+    return requestIdentity(identity, SUSAMUNE_GHOST_CMD_DELETE, kDeleting);
+}
+bool exportShare(const Identity &identity) {
+    return requestIdentity(identity, SUSAMUNE_GHOST_CMD_EXPORT, kExportingShare);
+}
+bool load(int slot) { return loadTrack(false, slot, LOAD_DESTINATION_RACE); }
 bool loadObserver(int slot, bool secondary) {
     return loadTrack(false, slot,
-                     secondary ? LOAD_DESTINATION_OBSERVER_SECONDARY
-                               : LOAD_DESTINATION_OBSERVER_PRIMARY);
+        secondary ? LOAD_DESTINATION_OBSERVER_SECONDARY : LOAD_DESTINATION_OBSERVER_PRIMARY);
 }
-
 bool remove(int slot) {
     return requestPersonalCommand(slot, SUSAMUNE_GHOST_CMD_DELETE, kDeleting);
 }
-
 bool exportShare(int slot) {
-    return requestPersonalCommand(slot, SUSAMUNE_GHOST_CMD_EXPORT,
-                                  kExportingShare);
+    return requestPersonalCommand(slot, SUSAMUNE_GHOST_CMD_EXPORT, kExportingShare);
 }
-
-bool importShare(int slot) {
-    (void)slot;
-    return scanImports();
-}
-
-bool loadImported(int slot) {
-    return loadTrack(true, slot,
-                     LOAD_DESTINATION_RACE);
-}
-
+bool importShare(int slot) { (void)slot; return scanImports(); }
+bool loadImported(int slot) { return loadTrack(true, slot, LOAD_DESTINATION_RACE); }
 bool loadImportedObserver(int slot, bool secondary) {
     return loadTrack(true, slot,
-                     secondary ? LOAD_DESTINATION_OBSERVER_SECONDARY
-                               : LOAD_DESTINATION_OBSERVER_PRIMARY);
+        secondary ? LOAD_DESTINATION_OBSERVER_SECONDARY : LOAD_DESTINATION_OBSERVER_PRIMARY);
 }
-
 bool removeImported(int slot) {
-    if (!requestAllowed(SUSAMUNE_GHOST_IMPORTED_PROFILE, slot, true, true))
-        return false;
-#if !IS_EMULATOR
-    const bool removesLoaded = sLoadedProfile ==
-            SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-        sLoadedSlot == slot;
-    beginRequest(SUSAMUNE_GHOST_CMD_DELETE,
-                 SUSAMUNE_GHOST_IMPORTED_PROFILE,
-                 static_cast<u16>(slot), 0, 0, kDeleting);
-    // Deleting any leaf can renumber every later imported row.
-    detachImportedAssociation(removesLoaded);
-    return true;
-#else
-    (void)slot;
-    return false;
-#endif
+    Identity identity;
+    if (!copyIdentity(true, slot, &identity)) { sStatus = kCatalogNeeded; return false; }
+    return remove(identity);
 }
-
 bool busy() { return sPendingCommand != SUSAMUNE_GHOST_CMD_NONE; }
-
-bool timedOut() {
-    return sPendingCommand != SUSAMUNE_GHOST_CMD_NONE && sTimedOut;
-}
-
+bool timedOut() { return busy() && sTimedOut; }
 bool available() { return sAvailable; }
-
-bool catalogReady() { return sCatalogReady; }
-
-bool importedCatalogReady() { return sImportedCatalogReady; }
-
+bool catalogReady() { return sReady[0]; }
+bool importedCatalogReady() { return sReady[1]; }
 int profile() { return sProfile; }
-
+u32 pageOffset(bool imported) { return sOffsets[imported]; }
+u32 pageCount(bool imported) { return sReady[imported] ? sPages[imported].count : 0; }
+u32 totalCount(bool imported) { return sReady[imported] ? sPages[imported].totalCount : 0; }
 int loadedSlot() {
-    return sLoadedProfile == sProfile && Ghost::playbackPinned()
-        ? static_cast<int>(sLoadedSlot) : -1;
+    return sLoadedValid && sLoadedIdentity.profile == sProfile && Ghost::playbackPinned() &&
+        sLoadedIdentity.id <= 0x7fffffffu ? static_cast<int>(sLoadedIdentity.id) : -1;
 }
-
 bool loadedImported() {
-    return sLoadedProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE &&
-           sLoadedSlot >= 0 && Ghost::playbackPinned();
+    return sLoadedValid && sLoadedIdentity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE &&
+        Ghost::playbackPinned();
 }
-
 int loadedImportedSlot() {
-    return loadedImported() ? static_cast<int>(sLoadedSlot) : -1;
+    return loadedImported() && sLoadedIdentity.id <= 0x7fffffffu
+        ? static_cast<int>(sLoadedIdentity.id) : -1;
 }
-
-u32 totalDurationQf() { return sTotalDuration; }
-
-u32 importedTotalDurationQf() { return sImportedTotalDuration; }
-
-u32 importedOverflowCount() { return sImportedOverflow; }
-
+u64 totalDurationQf() {
+    return sReady[0] ? (static_cast<u64>(sPages[0].totalDurationQfHi) << 32) |
+        sPages[0].totalDurationQfLo : 0;
+}
+u64 importedTotalDurationQf() {
+    return sReady[1] ? (static_cast<u64>(sPages[1].totalDurationQfHi) << 32) |
+        sPages[1].totalDurationQfLo : 0;
+}
+u32 importedOverflowCount() { return 0; }
 const char *statusText() { return sStatus; }
-
 bool copySlotName(int slot, char *out, u32 size) {
     return copyCatalogName(false, slot, out, size);
 }
-
 bool copyImportedSlotName(int slot, char *out, u32 size) {
     return copyCatalogName(true, slot, out, size);
 }
-
-const SusamuneGhostSlotInfo *slot(int slot) {
-    return catalogEntry(false, slot);
-}
-
-const SusamuneGhostSlotInfo *importedSlot(int slot) {
-    return catalogEntry(true, slot);
-}
+const SusamuneGhostSlotInfo *slot(int slot) { return catalogEntry(false, slot); }
+const SusamuneGhostSlotInfo *importedSlot(int slot) { return catalogEntry(true, slot); }
 
 }  // namespace GhostStorage

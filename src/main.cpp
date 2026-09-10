@@ -17,6 +17,9 @@
 #include "susamune/features.hxx"
 #include "susamune/actions.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/fludd_colors.hxx"
+#include "susamune/water_colors.hxx"
 #include "susamune/crash_report.hxx"
 #include "susamune/binds.hxx"
 #include "susamune/input_display.hxx"
@@ -28,9 +31,13 @@
 #include "susamune/ghost.hxx"
 #include "susamune/ghost_model.hxx"
 #include "susamune/ghost_storage.hxx"
+#include "susamune/state_storage.hxx"
 #include "susamune/qft_display.hxx"
 #include "susamune/records.hxx"
 #include "susamune/practice_visuals.hxx"
+#include "susamune/practice_session.hxx"
+#include "susamune/retail_input.hxx"
+#include "susamune/tas_project.hxx"
 #include "susamune/records_persistence.hxx"
 #include "susamune/ricco_fruit.hxx"
 #include "susamune/rng_control.hxx"
@@ -106,7 +113,7 @@ SavestateManager* gSavestateMgr = nullptr;
 //
 // The reserve is SUSAMUNE_ARENA_RESERVE_SIZE, not the region size: __OSArenaLo
 // sits a debug stack below the __ArenaLo the blob links at. Adding only the
-// region size puts the heap floor at MOD_BASE + 0x1E000, inside the blob.
+// region size leaves the top 8 KiB exposed to heap allocations.
 // SUSAMUNE_ARENA_RESERVE_SIZE must match arena_reserve in scripts/patches.py.
 extern "C" void* getArenaLo() {
     return (void*)(*(volatile u32*)SUSAMUNE_ADDR_OS_ARENA_LO +
@@ -122,6 +129,8 @@ extern "C" void onAppInit(TApplication* app) {
     app->initialize();
     CrashReport::init();
     gSettings.init();
+    StateStorage::init();
+    PracticeSession::init();
     rngControlInit();
     riccoFruitControlInit();
     gQFTTimer.init();
@@ -159,6 +168,7 @@ extern "C" void onAppInit(TApplication* app) {
 }
 
 extern "C" u8 onUpdateGameMode(TMarDirector* director) {
+    if (SavestateManager::diskBusy()) return director->mCurState;
     if (StageLoader::holdGameModeBeforeUpdate(director)) {
         return director->mCurState;
     }
@@ -224,6 +234,7 @@ extern "C" void onSetup(TMarDirector* director) {
     // destructor never clears that global. Stages without a pollution manager
     // would otherwise inherit a pointer into the previous stage's freed heap.
     gpPollution = nullptr;
+    PracticeSession::beforeStageSetup();
     GhostModel::beforeStageSetup();
     SplitEvents::beforeStageSetup();
     if (Ghost::observerCleanupPending())
@@ -259,6 +270,9 @@ extern "C" void onSetup(TMarDirector* director) {
     if (!observerStage)
         gAttemptCounter.onStageSetup(director);
     gCreationExtras.onStageSetup();
+    MarioColors::onStageSetup();
+    FluddColors::onStageSetup();
+    WaterColors::onStageSetup();
     if (observerStage)
         Records::invalidateAttempt();
     Records::onStageSetup(director->mAreaID, director->mEpisodeID);
@@ -273,6 +287,7 @@ extern "C" void onSetup(TMarDirector* director) {
 #if ENABLE_MEM_DIAGNOSTICS
     memDiagnosticsOnStageSetup();
 #endif
+    PracticeSession::afterStageSetup();
 
     if (inited) return; else inited = true;
 
@@ -293,8 +308,8 @@ extern "C" void onSetup(TMarDirector* director) {
 extern "C" s32 onUpdate(JDrama::TDirector* director) {
     CrashReport::observeContext(gpApplication.mContext);
     static bool recordsStageContext = false;
-    const bool stageContext =
-        gpApplication.mContext == TApplication::CONTEXT_DIRECT_STAGE;
+    TMarDirector *const stageDirector = RetailInput::stageDirector();
+    const bool stageContext = stageDirector != nullptr;
     if (recordsStageContext && !stageContext) {
         Records::onStageExit();
         RecordsPersistence::checkpoint();
@@ -312,6 +327,11 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     }
 #endif
 
+    if (gSavestateMgr) gSavestateMgr->updateDisk();
+    else StateStorage::update();
+    TasProject::update();
+    bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+
     // Sample the pad before direct(), not after: onUpdateGameMode runs inside
     // it and asks whether the menu bind was pressed this frame, which would
     // otherwise be answered from the previous frame's sample.
@@ -319,18 +339,43 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     if (gMenu && gMenu->suppressesBinds()) {
         gBinds.suppressUntilRelease();
     }
+    if (!stageDirector) {
+        // Movie skips belong to the movie, even when they resemble a menu bind.
+        if (!gBinds.recording()) {
+            if (gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP)) PracticeSession::requestStep();
+            else if (gBinds.wasPressedPracticeRaw(BIND_PRACTICE_PAUSE)) PracticeSession::requestPauseToggle();
+            if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
+        }
+        PracticeSession::beforeDirect(false);
+        featuresApply();
+        Ghost::beforeDirect();
+        const s32 state = director->direct();
+        PracticeSession::afterDirect(state, true);
+        Ghost::update();
+        return state;
+    }
     const bool creationEditing = gQftDisplay.editing() ||
                                  gInputDisplay.editing() ||
                                  gMetadataDisplay.editing() ||
-                                 gCreationExtras.editing();
+                                 gCreationExtras.editing() || MarioColors::editing() || FluddColors::editing();
     const bool sessionModalBeforeDirect = StageLoader::modal();
     const bool sessionResultBeforeDirect = StageLoader::resultOwnsInput();
     const bool menuOpenBeforeDirect = gMenu && gMenu->shown();
-    const bool menuOwnsRetailPad = menuOpenBeforeDirect ||
-        (gMenu && gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
+    const bool tasCinematic = (PracticeSession::recording() || PracticeSession::replaying()) &&
+        stageDirector->mCurState != TMarDirector::STATE_NORMAL &&
+        stageDirector->mCurState != TMarDirector::STATE_PAUSE_MENU;
+    const bool stepOverridesShortcut = !gBinds.recording() &&
+        PracticeSession::paused() && gBinds.wasPressedSubsetRaw(BIND_PRACTICE_STEP);
+    bool menuOwnsRetailPad = menuOpenBeforeDirect ||
+        (gMenu && !tasCinematic && !stepOverridesShortcut && gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
     const bool wheelOpenBeforeDirect = WarpWheel::shown();
+    const bool wheelToggleBeforeDirect = stageDirector->_260 &&
+        stageDirector->mCurState == TMarDirector::STATE_NORMAL && !creationEditing && !stateDiskBusy &&
+        !sessionResultBeforeDirect && !menuOwnsRetailPad && !stepOverridesShortcut &&
+        !gSettings.getBool(SETTING_DISABLE_WARPS) &&
+        gBinds.wasPressed(BIND_WARP_WHEEL);
     const bool wheelOwnsInputBeforeDirect =
-        wheelOpenBeforeDirect || WarpWheel::promptPending();
+        wheelOpenBeforeDirect || WarpWheel::promptPending() || wheelToggleBeforeDirect;
     // A pending result must block new consumers without trapping an overlay
     // that was already open before the finish was recorded.
     const bool sessionBlocksNewInput = sessionModalBeforeDirect ||
@@ -347,19 +392,59 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         gpApplication.mGamePads[0]->mButtons.mFrameInput = 0;
         gpApplication.mGamePads[0]->mButtons.mRapidInput = 0;
     }
+    bool practiceModal = creationEditing || sessionBlocksNewInput ||
+        menuOwnsRetailPad || wheelOwnsInputBeforeDirect || stateDiskBusy;
+    bool practiceStepConsumed = false;
+    if (!practiceModal) {
+        const bool pausePressed = !gBinds.recording() &&
+            gBinds.wasPressedPracticeRaw(BIND_PRACTICE_PAUSE);
+        const bool stepPressed = !gBinds.recording() &&
+            (stepOverridesShortcut || gBinds.wasPressedPracticeRaw(BIND_PRACTICE_STEP));
+        if (stepPressed) {
+            practiceStepConsumed = PracticeSession::requestStep();
+            if (practiceStepConsumed) {
+                gBinds.suppressUntilRelease();
+                WarpWheel::suppressClassicInstantUntilRelease();
+            }
+        } else if (pausePressed) PracticeSession::requestPauseToggle();
+        if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
+        if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
+        if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
+        if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
+        for (int id = BIND_TAS_BEGINNING; id <= BIND_TAS_REPLAY; ++id) {
+            const BindId bind = static_cast<BindId>(id);
+            if (!gBinds.wasPressed(bind) || !TasProject::dispatchShortcut(bind)) continue;
+            PracticeSession::stripShortcutButtons(gBinds.get(bind));
+            gBinds.suppressUntilRelease();
+            WarpWheel::suppressClassicInstantUntilRelease();
+            if (gMenu) {
+                if (TasProject::promptPending()) gMenu->openTasProject();
+                else gMenu->toast(TasProject::status());
+            }
+            break;
+        }
+    }
+    // A shortcut can queue a state operation or open its confirmation now.
+    stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+    menuOwnsRetailPad = menuOwnsRetailPad || (gMenu && gMenu->shown());
+    practiceModal = practiceModal || stateDiskBusy || menuOwnsRetailPad;
+    PracticeSession::beforeDirect(practiceModal);
     gQFTTimer.beginFrame();
+    if (PracticeSession::freezeRequested()) gQFTTimer.beginPracticePause();
     SplitStats::beginFrame();
     gQFTTimer.update();
     GhostModel::beginFrame();
+    MarioColors::update();
+    FluddColors::update();
     // Before direct(): while the wheel is open it takes the pad away from
     // the game. A PB save can hide the prompt behind the Ghosts tab, but its
     // held action still needs storage ACK polling when warps are disabled.
-    if (!creationEditing &&
+    if (!creationEditing && !stateDiskBusy &&
         (!sessionResultBeforeDirect || wheelOwnsInputBeforeDirect) &&
         (!gSettings.getBool(SETTING_DISABLE_WARPS) ||
          wheelOpenBeforeDirect || WarpWheel::promptPending()))
         WarpWheel::update(gpApplication.mGamePads[0]);
-    PatternSelector::update(!creationEditing && !sessionResultBeforeDirect);
+    PatternSelector::update(!creationEditing && !sessionResultBeforeDirect && !stateDiskBusy);
     PracticeVisuals::update();
     rngControlApply();
 
@@ -368,13 +453,16 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     // lending it one of those for the call is the entire pause; state 12 is the
     // one whose own branch does nothing while the fader is up. Any app state it
     // did produce would be a state change we never asked for, so drop it.
-    const bool freeze = gpMarDirector &&
-                        gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
-                        ((gMenu && gMenu->shown()) || WarpWheel::shown() ||
-                         sessionModalBeforeDirect);
+    const bool freeze = stageDirector && stageDirector->_260 &&
+                        stageDirector->mCurState == TMarDirector::STATE_NORMAL &&
+                        (menuOwnsRetailPad || WarpWheel::shown() ||
+                         sessionModalBeforeDirect || PracticeSession::freezeRequested() || stateDiskBusy);
     const bool marioActive = gpMarDirector &&
                              gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
                              !freeze;
+    Ghost::frameControl(freeze || (gpMarDirector &&
+        gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU),
+        PracticeSession::assisted());
     WallkickDisplay::beforeDirect(marioActive);
     MovementDisplay::beforeDirect(marioActive);
     GameplayPolish::beforeDirect();
@@ -385,15 +473,17 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     SplitEvents::beginFrame();
     TMarioGamePad *const retailPad = gpApplication.mGamePads[0];
     RetailPadInputSnapshot retailInput;
-    if (menuOwnsRetailPad && retailPad)
+    const bool suppressPad = menuOwnsRetailPad || PracticeSession::freeCamera() || stateDiskBusy;
+    if (suppressPad && retailPad)
         suppressRetailPad(retailPad, retailInput);
     int state = director->direct();
-    if (menuOwnsRetailPad && retailPad)
+    if (suppressPad && retailPad)
         restoreRetailPad(retailPad, retailInput);
     if (freeze) {
         gpMarDirector->mCurState = TMarDirector::STATE_NORMAL;
         state = 0;
     }
+    PracticeSession::afterDirect(state, !freeze && !suppressPad);
     Ghost::afterDirect(state);
     WallkickDisplay::afterDirect(marioActive);
     MovementDisplay::afterDirect(marioActive);
@@ -419,6 +509,10 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     SplitEvents::update();
     const bool observerFrame = Ghost::observerStatsSuppressed();
     Ghost::update();
+    if (PracticeSession::assisted()) Ghost::invalidateForAssist();
+    SusamunePracticeInput consumedInput;
+    if (PracticeSession::consumedInput(&consumedInput))
+        Ghost::captureInput(consumedInput);
     Records::update(creationEditing, observerFrame);
     ILing::update();
     StageLoader::update();
@@ -436,16 +530,18 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     // Runs every frame like the gecko handler; no-ops when nothing changed.
     featuresApply();
 
-    actionsApply(!creationEditing && !sessionOwnsInput);
+    actionsApply(!observerFrame && !creationEditing && !sessionOwnsInput && !stateDiskBusy &&
+                 !PracticeSession::ownsGameplayInput());
     gCreationExtras.update();
 
-    if (gSavestateMgr && !creationEditing && !sessionOwnsInput) {
+    if (gSavestateMgr && !observerFrame && !creationEditing && !sessionOwnsInput && !stateDiskBusy) {
         gSavestateMgr->updateHook();
     }
     const bool allowExistingMenuToClose =
         StageLoader::resultOwnsInput() && !StageLoader::modal() &&
         menuOpenBeforeDirect;
-    if (gMenu && (!sessionOwnsInput || allowExistingMenuToClose)) {
+    if (gMenu && (!tasCinematic || menuOpenBeforeDirect) &&
+        !practiceStepConsumed && (!sessionOwnsInput || allowExistingMenuToClose)) {
         gMenu->update(gpApplication.mGamePads[0]);
     }
 #if ENABLE_MEM_DIAGNOSTICS
@@ -460,15 +556,20 @@ extern "C" void afterDraw() {
     // immediately afterward: director, fader, audio, and the current frame's
     // GPU work are all complete, while the next game frame has not begun.
     THPPlayerDrawDone();
-    if (gSavestateMgr && !gQftDisplay.editing() && !gInputDisplay.editing() &&
-        !gMetadataDisplay.editing() && !gCreationExtras.editing() &&
-        !StageLoader::resultOwnsInput())
+    TMarDirector *const stageDirector = RetailInput::stageDirector();
+    if (stageDirector && stageDirector->_260 && gSavestateMgr && !gQftDisplay.editing() && !gInputDisplay.editing() &&
+        !gMetadataDisplay.editing() && !gCreationExtras.editing() && !MarioColors::editing() && !FluddColors::editing() &&
+        !StageLoader::resultOwnsInput() && !Ghost::observerStatsSuppressed())
         gSavestateMgr->processPendingLoad();
+    PracticeSession::afterDraw();
+    TasProject::afterDraw();
     // gpPollution is stale until the async setup thread reaches onSetup.
-    if (gpMarDirector && gpMarDirector->_260 != 0 &&
-        gpMarDirector->mCurState >= TMarDirector::STATE_GAME_STARTING) {
+    if (stageDirector && stageDirector->_260 != 0 &&
+        stageDirector->mCurState >= TMarDirector::STATE_GAME_STARTING) {
         visibleGoopUpdate();
     }
+
+    if (!stageDirector || !stageDirector->_260) return;
 
     {
         J2DOrthoGraph ortho(0, 0, 640, 480);
@@ -483,7 +584,16 @@ extern "C" void afterDraw() {
         
         if (gMenu)
             gMenu->draw(&ortho);
+        if (PracticeSession::hideHud()) {
+            if (StageLoader::modal()) StageLoader::draw(gMenu);
+            if (WarpWheel::shown() || WarpWheel::promptPending())
+                WarpWheel::draw();
+            return;
+        }
         GameplayPolish::draw(gMenu);
+        PracticeSession::draw(gMenu);
+        if (gMenu && !gMenu->shown())
+            Ghost::drawInputs(gMenu, gSettings.get(SETTING_GHOST_INPUTS));
         if (gSavestateMgr)
             gSavestateMgr->draw(gMenu);
 #if ENABLE_MEM_DIAGNOSTICS

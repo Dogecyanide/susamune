@@ -12,18 +12,23 @@
 #include "SMS/Player/MarioDraw.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/MarDirector.hxx"
+#include "SMS/System/MovieDirector.hxx"
 #include "susamune/addresses.hxx"
 #include "susamune/actions.hxx"
 #include "susamune/binds.hxx"
 #include "susamune/checksum.hxx"
 #include "susamune/ghost_format.h"
+#include "susamune/ghost_clock.h"
 #include "susamune/ghost_model.hxx"
+#include "susamune/ghost_storage.h"
 #include "susamune/iling.hxx"
+#include "susamune/input_display.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/menu.hxx"
 #include "susamune/features.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/records.hxx"
+#include "susamune/retail_input.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/stage_loader.hxx"
 #include "susamune/warp_wheel.hxx"
@@ -40,6 +45,10 @@ const u16 kMaxSegments = SUSAMUNE_GHOST_V4_MAX_SEGMENTS;
 const u32 kPlaybackTokenBit = 0x80000000u;
 const u16 kCueMove = 0x0001u;
 const u16 kCueEntry = 0x0200u;
+u8 runningRegion();
+static_assert(SUSAMUNE_GHOST_INPUT_MAX_COUNT *
+                  sizeof(SusamuneGhostInputSample) <=
+              SUSAMUNE_GHOST_INPUT_BANK_SIZE, "ghost input bank too small");
 
 enum RecordFailure {
     RECORD_FAILURE_NONE,
@@ -105,6 +114,12 @@ static_assert(kSegmentTableOffset + kMaxSegments * sizeof(Segment) <=
 struct Track {
     Sample *samples;
     Segment *segments;
+    SusamuneGhostInputSample *inputs;
+    u32 inputCount;
+    SusamuneGhostSplitSample splits[SUSAMUNE_GHOST_SPLIT_MAX_COUNT];
+    u8 splitCount;
+    u8 sourceRegion;
+    u8 teachingFlags;
     u32 count;
     u32 startQf;
     u32 endQf;
@@ -134,12 +149,50 @@ Track sPlayback;
 // Watch 2 borrows the record slot's MEM2 payload, but its metadata must not
 // participate in recording, PB, or storage-ack ownership.
 Track sObserverSecondary;
+const u32 kSavedPrefixMagic = 0x53475046u; // SGPF
+struct SavedPrefix {
+    u32 magic;
+    u32 capturedQf;
+    Track track;
+    SusamuneGhostClock clock;
+    u32 serial;
+    s32 lastSampleQf;
+    s32 clockLastQf;
+    s32 clockEpochStartQf;
+    s32 pendingPreviousClockQf;
+    s32 boundaryPriorQf;
+    s32 liveParentEpisode;
+    u16 clockObservations;
+    u16 boundaryBaseSegmentCount;
+    u8 phase;
+    u8 flags;
+    u8 liveArea;
+    u8 liveEpisode;
+    u8 liveRouteParentArea;
+    u8 liveRouteFlags;
+    u8 endpoint;
+};
+enum SavedPrefixFlags {
+    PREFIX_RECORDING = 1,
+    PREFIX_STAGE_PENDING = 2,
+    PREFIX_HAD_ROUTE = 4,
+    PREFIX_CONTINUE = 8,
+    PREFIX_BOUNDARY = 16,
+    PREFIX_LIVE_ROUTE = 32,
+};
+static_assert(sizeof(SavedPrefix) <= sizeof(SavestateData),
+              "ghost prefix metadata exceeded its snapshot sidecar");
 u32 sAttemptSerial;
 s32 sLastSampleQf;
+SusamuneGhostClock sRecordClock;
+bool sFrameFrozen;
+bool sFrameAssisted;
 u32 sPlaybackCursor;
 s32 sPlaybackCursorQf;
 u16 sPlaybackSegment;
 bool sRecording;
+bool sRestoredPrefix;
+u8 sRestoredEndpoint;
 bool sGhostVisible;
 bool sStageRoutePending;
 bool sPendingHadLiveRoute;
@@ -153,6 +206,11 @@ u32 sPlaybackRaceToken;
 RaceContext sRaceContext;
 u32 sRaceContextPlaybackToken;
 bool sRaceContextValid;
+SusamuneGhostSplitSample sRaceSplits[SUSAMUNE_GHOST_SPLIT_MAX_COUNT];
+u8 sRaceSplitCount;
+u32 sRaceSplitSerial;
+u32 sRaceSplitPlaybackToken;
+s32 sVisualQf;
 ClockPhase sClockPhase;
 u16 sClockObservations;
 u8 sLiveArea;
@@ -188,6 +246,7 @@ s32 sObserverSecondaryCursorQf;
 s32 sObserverBaseQf;
 s32 sObserverEndQf;
 s32 sObserverLastQf;
+s32 sObserverLastLiveQf;
 s32 sObserverQfOffset;
 s32 sObserverStageAnchorQf;
 bool sObserverClockReady;
@@ -318,9 +377,25 @@ bool pinSurvivesRoute(u8 area, u8 episode, s32 parent, u8 parentArea) {
 void clearRaceContext() {
     sRaceContextValid = false;
     sRaceContext.source = RACE_SOURCE_NONE;
+    if (sRaceSplitSerial != gQFTTimer.attemptSerial()) sRaceSplitCount = 0;
+}
+
+void captureComparisonSplits() {
+    sRaceSplitCount = 0;
+    sRaceSplitSerial = sAttemptSerial;
+    sRaceSplitPlaybackToken = sPlaybackToken;
+    if (!sPlayback.valid ||
+        sPlayback.splitCount > SUSAMUNE_GHOST_SPLIT_MAX_COUNT ||
+        !playbackOwnsCourse(sLiveArea, sLiveEpisode, sLiveParentEpisode,
+                            sLiveRouteParentArea)) return;
+    sRaceSplitCount = sPlayback.splitCount;
+    memcpy(sRaceSplits, sPlayback.splits,
+           sRaceSplitCount * sizeof(sRaceSplits[0]));
 }
 
 void captureRaceContext() {
+    // Automatic last-run ghosts also supply checkpoints, without race awards.
+    captureComparisonSplits();
     if (!sPlaybackPinned || !sPlayback.valid || !sPlayback.completed ||
         sPlaybackRaceSource == RACE_SOURCE_NONE ||
         sPlaybackRaceToken != sPlaybackToken ||
@@ -421,6 +496,10 @@ bool liveRouteStorable() {
 }
 
 void clearTrack(Track &track) {
+    track.inputCount = 0;
+    track.splitCount = 0;
+    track.teachingFlags = 0;
+    track.sourceRegion = runningRegion();
     track.count = 0;
     track.startQf = 0;
     track.endQf = 0;
@@ -464,6 +543,8 @@ u32 nextPBToken() {
 
 void clearRecord() {
     clearTrack(sRecord);
+    sRestoredPrefix = false;
+    sRestoredEndpoint = ILing::SAVED_GHOST_END_NONE;
     bumpRecordToken();
     sRecordIdentityToken = sRecordToken;
 }
@@ -479,6 +560,26 @@ bool observerRunning() {
            sObserverPhase == OBSERVER_WARPING_TWO ||
            sObserverPhase == OBSERVER_ACTIVE_ONE ||
            sObserverPhase == OBSERVER_ACTIVE_TWO;
+}
+
+s32 recordQf(s32 liveQf) {
+    const bool tas = sFrameAssisted ||
+        (sAttemptSerial == gQFTTimer.attemptSerial() &&
+         (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS));
+    SusamuneGhostClockObserve(&sRecordClock, gQFTTimer.attemptSerial(),
+                             liveQf, sFrameFrozen && tas);
+    return SusamuneGhostClockMap(&sRecordClock, liveQf);
+}
+
+void updateRestoredRecorder() {
+    // The departing prefix may still belong to an attempt being restarted.
+    if (sStageRoutePending || sBoundaryPending ||
+        sAttemptSerial != gQFTTimer.attemptSerial() ||
+        (!sRecording && !sPendingContinueRecording)) return;
+    if (sRestoredPrefix) ILing::updateSavestateGhostEndpoint(sRestoredEndpoint);
+    // A child scene can arm a new IL while this assisted full-route prefix carries on.
+    if (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS)
+        ILing::invalidateForAssist();
 }
 
 void releaseObserverMario(bool restore) {
@@ -661,7 +762,7 @@ u16 sampleAnimationId(const Sample &sample) {
 
 u16 sampleAnimationPhase(const Sample &sample, u16 version) {
     const u32 packed = readU24(sample.animation);
-    if (version == SUSAMUNE_GHOST_FILE_VERSION_V4) {
+    if (version >= SUSAMUNE_GHOST_FILE_VERSION_V4) {
         const u32 phase = (packed >> SUSAMUNE_GHOST_V4_ANIMATION_PHASE_SHIFT) &
                           SUSAMUNE_GHOST_V4_ANIMATION_PHASE_MAX;
         return static_cast<u16>(phase * SUSAMUNE_GHOST_ANIMATION_PHASE_MAX /
@@ -672,7 +773,7 @@ u16 sampleAnimationPhase(const Sample &sample, u16 version) {
 }
 
 u8 sampleYoshi(const Sample &sample, u16 version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V4
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V4
         ? static_cast<u8>((readU24(sample.animation) >>
                            SUSAMUNE_GHOST_V4_YOSHI_SHIFT) &
                           SUSAMUNE_GHOST_V4_YOSHI_MASK)
@@ -680,7 +781,7 @@ u8 sampleYoshi(const Sample &sample, u16 version) {
 }
 
 u8 sampleHeld(const Sample &sample, u16 version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V4
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V4
         ? static_cast<u8>(readU24(sample.animation) &
                           SUSAMUNE_GHOST_V4_HELD_INDEX_MASK)
         : 0;
@@ -892,6 +993,7 @@ void dropLastEmptySegment() {
 }
 
 bool appendSample(s32 qf) {
+    qf = SusamuneGhostClockMap(&sRecordClock, qf);
     if (!gpMarioOriginal) {
         failRecording(RECORD_FAILURE_MARIO,
                       "Ghost: Mario disappeared");
@@ -991,6 +1093,9 @@ void clearEpochSamples() {
     segment->startQf = 0;
     segment->endQf = 0;
     if (sRecord.segmentCount == 1) {
+        sRecord.inputCount = 0;
+        sRecord.splitCount = 0;
+        sRecord.teachingFlags = 0;
         sRecord.startQf = 0;
         sRecord.endQf = 0;
         sRecord.valid = false;
@@ -1134,14 +1239,15 @@ bool finishTrackAt(s32 qf) {
 }
 
 void finishRecording(s32 qf, bool completed) {
+    const s32 storedQf = SusamuneGhostClockMap(&sRecordClock, qf);
     const bool clockWasActive = sClockPhase == CLOCK_ACTIVE;
     if (sRecording && sRecord.count != 0) {
         bool bounded = clockWasActive;
-        if (bounded && completed) bounded = finishTrackAt(qf);
+        if (bounded && completed) bounded = finishTrackAt(storedQf);
         sRecord.valid = bounded && sRecord.count >= 2;
         sRecord.completed = completed && sRecord.valid;
         if (sRecord.completed) {
-            sRecord.resultQf = static_cast<u32>(qf);
+            sRecord.resultQf = static_cast<u32>(storedQf);
             sRecord.runFlags &= ~SUSAMUNE_GHOST_RUN_INCOMPLETE;
         } else {
             sRecord.resultQf = SUSAMUNE_GHOST_RESULT_QF_NONE;
@@ -1212,9 +1318,11 @@ void beginAttempt(s32 qf, bool boundaryReset = false) {
         // route. Route matching controls racing, not ownership/exportability.
         Sample *oldPlayback = sPlayback.samples;
         Segment *oldPlaybackSegments = sPlayback.segments;
+        SusamuneGhostInputSample *oldInputs = sPlayback.inputs;
         sPlayback = sRecord;
         sRecord.samples = oldPlayback;
         sRecord.segments = oldPlaybackSegments;
+        sRecord.inputs = oldInputs;
         bumpPlaybackToken();
         sPlaybackOriginRecordToken = sRecordToken;
     }
@@ -1267,6 +1375,8 @@ void selectPlaybackSegment(u16 index) {
 }
 
 void updatePlayback(s32 qf) {
+    qf = recordQf(qf);
+    sVisualQf = qf;
     sGhostVisible = false;
     sGhostHeldObjectId = 0;
     sGhostHeldNameKey = 0;
@@ -1421,6 +1531,9 @@ s32 observerQf(bool *pastEnd = nullptr) {
         return sObserverLastQf;
     }
 
+    if (liveQf >= sObserverLastLiveQf && sFrameFrozen)
+        sObserverQfOffset -= liveQf - sObserverLastLiveQf;
+    sObserverLastLiveQf = liveQf;
     s64 absoluteQf = static_cast<s64>(liveQf) + sObserverQfOffset;
     if (pastEnd) {
         // A stopped shared clock cannot reach a later Watch 2 endpoint.
@@ -1433,6 +1546,7 @@ s32 observerQf(bool *pastEnd = nullptr) {
 }
 
 void updateObserverVisual(s32 qf) {
+    sVisualQf = qf;
     sGhostVisible = sampleObserverTrack(
         sPlayback, sObserverPrimarySegment, qf, &sPlaybackCursor,
         &sPlaybackCursorQf, &sGhostPosition, &sGhostYaw,
@@ -1580,6 +1694,7 @@ void startObserverClock(s32 liveQf) {
     }
     sObserverContinuousClock = false;
     sObserverClockReady = true;
+    sObserverLastLiveQf = liveQf;
     sObserverPastEnd = false;
     // Intro-skip presses are viewer input, not exit requests. An active-state
     // release must be observed before B or Start can end this segment.
@@ -1854,11 +1969,13 @@ void formatTrackName(const Track &track, char *out, u32 size) {
     }
 
     if (route[0]) {
-        snprintf(out, size, "%s - %lu:%02lu.%03lu", route,
+        snprintf(out, size, "%s%s - %lu:%02lu.%03lu",
+                 (track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : "", route,
                  millis / 60000u, (millis / 1000u) % 60u,
                  millis % 1000u);
     } else {
-        snprintf(out, size, "Area %u Episode %u - %lu:%02lu.%03lu",
+        snprintf(out, size, "%sArea %u Episode %u - %lu:%02lu.%03lu",
+                 (track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : "",
                  static_cast<unsigned>(track.area),
                  static_cast<unsigned>(track.episode) + 1u,
                  millis / 60000u, (millis / 1000u) % 60u,
@@ -1985,7 +2102,8 @@ bool validSampleAnimation(const Sample &sample, u16 version,
     if (version == SUSAMUNE_GHOST_FILE_VERSION_V3) {
         return !(packed & SUSAMUNE_GHOST_ANIMATION_RESERVED_MASK);
     }
-    if (version != SUSAMUNE_GHOST_FILE_VERSION_V4) return false;
+    if (version != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+        version != SUSAMUNE_GHOST_FILE_VERSION_V5) return false;
     const u8 yoshi = static_cast<u8>(
         (packed >> SUSAMUNE_GHOST_V4_YOSHI_SHIFT) &
         SUSAMUNE_GHOST_V4_YOSHI_MASK);
@@ -2008,9 +2126,11 @@ bool validCanonicalFile(const void *data, u32 size,
     SusamuneGhostFileHeader header;
     memcpy(&header, data, sizeof(header));
     const bool v3 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V3;
-    const bool v4 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V4;
+    const bool v5 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V5;
+    const bool v4 = header.version == SUSAMUNE_GHOST_FILE_VERSION_V4 || v5;
     if (!v3 && !v4) return false;
-    const u32 supportedFeatures = v4
+    const u32 supportedFeatures = v5
+        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5 : v4
         ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4
         : SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V3;
     const bool foreign = header.gameId != runningGameId() ||
@@ -2018,11 +2138,12 @@ bool validCanonicalFile(const void *data, u32 size,
     if (header.magic != SUSAMUNE_GHOST_FILE_MAGIC ||
         header.headerSize != SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
         header.fileSize != size ||
-        size > SUSAMUNE_GHOST_V4_MAX_FILE_SIZE ||
+        size > (v5 ? SUSAMUNE_GHOST_V5_MAX_FILE_SIZE
+                   : SUSAMUNE_GHOST_V4_MAX_FILE_SIZE) ||
         header.checksumKind != SUSAMUNE_GHOST_CHECKSUM_CRC32 ||
+        !SusamuneGhostRunFlagsValid(header.runFlags) ||
         (header.requiredFeatures & ~supportedFeatures) ||
-        (v4 && header.requiredFeatures !=
-                   SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC) ||
+        (v4 && header.requiredFeatures != supportedFeatures) ||
         !validGameRegionPair(header.gameId, header.region) ||
         header.discRevision != SUSAMUNE_GHOST_DISC_REVISION ||
         header.sourceProfile >= SUSAMUNE_GHOST_PROFILE_COUNT ||
@@ -2073,9 +2194,10 @@ bool validCanonicalFile(const void *data, u32 size,
         extension.sampleDataOffset !=
             SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET ||
         extension.sampleDataSize != sampleDataSize ||
-        header.payloadSize !=
-            SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE + sampleDataSize ||
-        header.fileSize != extension.sampleDataOffset + sampleDataSize) {
+        header.payloadSize != size - header.headerSize ||
+        (v5 ? header.fileSize < extension.sampleDataOffset + sampleDataSize +
+                                  SUSAMUNE_GHOST_TEACHING_HEADER_SIZE
+            : header.fileSize != extension.sampleDataOffset + sampleDataSize)) {
         return false;
     }
     if (v3) {
@@ -2217,6 +2339,34 @@ bool validCanonicalFile(const void *data, u32 size,
         return false;
     }
 
+    if (v5) {
+        const u32 offset = extension.sampleDataOffset + sampleDataSize;
+        const u8 *teaching = bytes + offset;
+        const u32 teachingSize = size - offset;
+        if (!SusamuneGhostTeachingHeaderValid(teaching, teachingSize))
+            return false;
+        const u32 inputs = SusamuneGhostReadBe32(teaching + 8);
+        const u32 splits = SusamuneGhostReadBe32(teaching + 12);
+        const u8 *input = teaching + SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        if (SusamuneGhostReadBe32(teaching + 20) != Checksum::crc32(
+                input, teachingSize - SUSAMUNE_GHOST_TEACHING_HEADER_SIZE))
+            return false;
+        u32 previous = 0;
+        for (u32 i = 0; i < inputs; ++i, input += 16) {
+            if (!SusamuneGhostTeachingInputValid(input, header.startQf,
+                    header.endQf, previous, i == 0)) return false;
+            previous = SusamuneGhostReadBe32(input);
+        }
+        const u32 route = splits ? ((u32)input[8] << 8) | input[9] : 0;
+        const u32 schema = splits ? SusamuneGhostReadBe32(input + 4) : 0;
+        previous = 0;
+        for (u32 i = 0; i < splits; ++i, input += 12) {
+            if (!SusamuneGhostTeachingSplitValid(input, header.startQf,
+                    header.endQf, previous, route, schema, i)) return false;
+            previous = SusamuneGhostReadBe32(input);
+        }
+    }
+
     *headerOut = header;
     return true;
 }
@@ -2243,11 +2393,25 @@ void installCanonicalTrack(Track &track, const void *data,
     track.routeParentArea = header.routeParentArea;
     track.routeFlags = header.routeFlags;
     track.formatVersion = header.version;
-    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V4) {
+    track.sourceRegion = header.region;
+    if (header.version >= SUSAMUNE_GHOST_FILE_VERSION_V4) {
         track.attachmentFlags = extension.attachmentFlags;
         track.attachmentCount = extension.attachmentCount;
         memcpy(track.attachments, extension.attachments,
                sizeof(track.attachments));
+    }
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5) {
+        const u8 *teaching = bytes + extension.sampleDataOffset +
+                            extension.sampleDataSize;
+        track.inputCount = SusamuneGhostReadBe32(teaching + 8);
+        track.splitCount = (u8)SusamuneGhostReadBe32(teaching + 12);
+        track.teachingFlags = (u8)SusamuneGhostReadBe32(teaching + 16);
+        const u8 *inputs = teaching + SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        memcpy(track.inputs, inputs, track.inputCount *
+                                      sizeof(SusamuneGhostInputSample));
+        memcpy(track.splits, inputs + track.inputCount *
+                                     sizeof(SusamuneGhostInputSample),
+               track.splitCount * sizeof(SusamuneGhostSplitSample));
     }
     track.valid = true;
     track.completed =
@@ -2344,6 +2508,29 @@ void init() {
     sPlayback.segments = reinterpret_cast<Segment *>(
         SUSAMUNE_GHOST_PLAY_PPC_BASE + kSegmentTableOffset);
     sObserverSecondary.segments = sRecord.segments;
+#if IS_EMULATOR
+    sRecord.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_DOLPHIN_GHOST_INPUT_RECORD_PPC_BASE);
+    sPlayback.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_DOLPHIN_GHOST_INPUT_PLAY_PPC_BASE);
+#else
+    sRecord.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_GHOST_INPUT_RECORD_PPC_BASE);
+    sPlayback.inputs = reinterpret_cast<SusamuneGhostInputSample *>(
+        SUSAMUNE_GHOST_INPUT_PLAY_PPC_BASE);
+#endif
+    sObserverSecondary.inputs = sRecord.inputs;
+#if !IS_EMULATOR
+    volatile SusamuneGhostStorageMailbox *mailbox =
+        SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    DCInvalidateRange((void *)&mailbox->response, 32);
+    if (mailbox->response.responseMagic != SUSAMUNE_GHOST_STORAGE_MAGIC ||
+        mailbox->response.protocolVersion != SUSAMUNE_GHOST_STORAGE_VERSION) {
+        sRecord.inputs = nullptr;
+        sPlayback.inputs = nullptr;
+        sObserverSecondary.inputs = nullptr;
+    }
+#endif
     sRecordToken = 0;
     sRecordIdentityToken = 0;
     sPlaybackToken = 0;
@@ -2355,6 +2542,9 @@ void init() {
     bumpPlaybackToken();
     sAttemptSerial = gQFTTimer.attemptSerial();
     sLastSampleQf = 0;
+    memset(&sRecordClock, 0, sizeof(sRecordClock));
+    sFrameFrozen = false;
+    sFrameAssisted = false;
     sPlaybackCursor = 0;
     sPlaybackCursorQf = 0;
     sPlaybackSegment = 0xffff;
@@ -2484,9 +2674,27 @@ void onStageSetup(TMarDirector *director) {
     sClockPhase = CLOCK_WAIT_STAGE;
 }
 
+void frameControl(bool frozen, bool assisted) {
+    sFrameFrozen = frozen;
+    sFrameAssisted = assisted;
+    s32 qf;
+    if (!observerRunning() && gQFTTimer.currentQf(&qf)) recordQf(qf);
+}
+
 void beforeDirect() {
+    if (TMovieDirector *movie = RetailInput::movieDirector()) {
+        // Watch is pose playback. Skip movies without feeding its raw exit bind
+        // or accepting the movie's later dialogs.
+        if (observerRunning() && (movie->mFlags & 1) &&
+            movie->mState >= 0 && movie->mState <= 1 &&
+            movie->mGamePad == gpApplication.mGamePads[0] && movie->mGamePad)
+            movie->mGamePad->mFrameMeaning |= 0x20;
+        return;
+    }
+    TMarDirector *const stage = RetailInput::stageDirector();
+    if (!stage || !stage->_260) return;
     if (!observerRunning() || !sObserverStageReady) return;
-    if (sObserverMarioBaselineFinalized && gpMarDirector &&
+    if (!sFrameFrozen && sObserverMarioBaselineFinalized && gpMarDirector &&
         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
         // Restore the actor while its stage heap is still alive. A replacement
         // Mario can reuse the same address without reinitialising every flag.
@@ -2506,8 +2714,13 @@ void afterDirect(s32 appState) {
         !sObserverMarioBaselineFinalized || !sObserverMarioOwned) {
         return;
     }
-    if (appState != 0 || !gpMarDirector ||
-        gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
+    // Attribute a Step's elapsed time before the next held frame begins.
+    if (appState <= TApplication::CONTEXT_DIRECT_MAIN_LOOP && gpMarDirector &&
+        (sFrameFrozen || gpMarDirector->mCurState == TMarDirector::STATE_NORMAL))
+        observerQf();
+    if (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP || !gpMarDirector ||
+        (!sFrameFrozen &&
+         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL)) {
         // direct() can begin teardown on the same frame as the loading-zone
         // hit. Restore before the next director reuses this stage heap.
         releaseObserverMario(true);
@@ -2521,8 +2734,7 @@ void update() {
     }
     // A freshly allocated director can reuse the previous director's address
     // before setupObjects() replaces the stage-owned Mario and camera globals.
-    if (gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE ||
-        !gpMarDirector || gpMarDirector->_260 == 0) {
+    if (!RetailInput::stageDirector() || gpMarDirector->_260 == 0) {
         sGhostVisible = false;
         sSecondaryGhostVisible = false;
         return;
@@ -2576,13 +2788,14 @@ void update() {
     }
     if (sObserverPhase == OBSERVER_ACTIVE_ONE ||
         sObserverPhase == OBSERVER_ACTIVE_TWO) {
-        gBinds.suppressUntilRelease();
         if (gSettings.getBool(SETTING_DISABLE_WARPS) ||
             !gSettings.getBool(SETTING_GHOST_DISPLAY)) {
             endObserver(false, "Ghost watch ended");
             return;
         }
-        const u16 exitHeld = static_cast<u16>(
+        const bool menuOwnsExit = gMenu && (gMenu->shown() ||
+            gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
+        const u16 exitHeld = menuOwnsExit ? 0 : static_cast<u16>(
             JUTGamePad::mPadStatus[0].mButton &
             (JUTGamePad::B | JUTGamePad::START));
         if (!sObserverExitArmed) {
@@ -2611,12 +2824,15 @@ void update() {
         return;
     }
 
+    updateRestoredRecorder();
     s32 qf;
     bool stopped;
     if (!gQFTTimer.currentQf(&qf, &stopped) || !gpMarDirector) {
         sGhostVisible = false;
         return;
     }
+
+    recordQf(qf);
 
     const u32 serial = gQFTTimer.attemptSerial();
     if (serial != sAttemptSerial) {
@@ -2818,6 +3034,122 @@ void draw(Menu *menu) {
     if (sSecondaryGhostVisible && !GhostModel::submitted(true)) {
         drawMarker(menu, sSecondaryGhostPosition, true, alpha);
     }
+    if ((sGhostVisible && playbackIsTas()) ||
+        (sSecondaryGhostVisible && playbackIsTas(true))) {
+        menu->drawText("TAS ghost", 460, 198, 12, 12,
+                       JUtility::TColor(255, 210, 120, 255));
+    }
+}
+
+void invalidateForAssist() {
+    if (!sRecording || sAttemptSerial != gQFTTimer.attemptSerial() ||
+        (sRecord.runFlags & SUSAMUNE_GHOST_RUN_TAS)) return;
+    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED | SUSAMUNE_GHOST_RUN_TAS;
+    bumpRecordToken();
+}
+
+void captureInput(const SusamunePracticeInput &input) {
+    s32 qf;
+    if (observerStatsSuppressed() || !sRecord.inputs ||
+        (!sRecording && !sRecord.completed) ||
+        sAttemptSerial != gQFTTimer.attemptSerial() ||
+        input.flags != 0 || !gQFTTimer.currentQf(&qf) || qf < 0 ||
+        sRecord.segmentCount == 0) return;
+    qf = SusamuneGhostClockMap(&sRecordClock, qf);
+    if (sRecord.inputCount &&
+        sRecord.inputs[sRecord.inputCount - 1].qf >= (u32)qf) return;
+    if (!sRecording && (u32)qf != sRecord.endQf) return;
+    if (sRecord.inputCount == SUSAMUNE_GHOST_INPUT_MAX_COUNT) {
+        sRecord.teachingFlags |= SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED;
+        return;
+    }
+    SusamuneGhostInputSample &sample = sRecord.inputs[sRecord.inputCount++];
+    sample.qf = (u32)qf;
+    sample.input = input;
+}
+
+void captureSplit(u16 route, u8 endpoint, s32 absoluteQf) {
+    if (observerStatsSuppressed() || (!sRecording && !sRecord.completed) ||
+        sAttemptSerial != gQFTTimer.attemptSerial() || absoluteQf < 0 ||
+        route >= SUSAMUNE_SPLIT_STATS_ROUTE_COUNT ||
+        endpoint != sRecord.splitCount ||
+        endpoint >= SUSAMUNE_GHOST_SPLIT_MAX_COUNT) return;
+    absoluteQf = SusamuneGhostClockMap(&sRecordClock, absoluteQf);
+    if (sRecord.splitCount &&
+        (sRecord.splits[0].route != route ||
+         sRecord.splits[sRecord.splitCount - 1].qf > (u32)absoluteQf)) return;
+    SusamuneGhostSplitSample &split = sRecord.splits[sRecord.splitCount++];
+    split.qf = (u32)absoluteQf;
+    split.schema = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
+    split.route = route;
+    split.endpoint = endpoint;
+    split.reserved = 0;
+}
+
+bool comparisonSplit(u16 route, u8 endpoint, s32 *out) {
+    if (!out || sRaceSplitSerial != gQFTTimer.attemptSerial() ||
+        sRaceSplitPlaybackToken != sPlaybackToken) return false;
+    // A stage's route flags can settle after the first QFT observation.
+    if (!sRaceSplitCount) captureComparisonSplits();
+    if (endpoint >= sRaceSplitCount) return false;
+    const SusamuneGhostSplitSample &split = sRaceSplits[endpoint];
+    if (split.route != route || split.endpoint != endpoint ||
+        split.schema != SUSAMUNE_SPLIT_STATS_SCHEMA_HASH) return false;
+    *out = (s32)split.qf;
+    return true;
+}
+
+static bool playbackInput(const Track &track, u16 segmentIndex,
+                          SusamunePracticeInput *out) {
+    if (!out || !track.inputs || !track.inputCount || sVisualQf < 0 ||
+        segmentIndex >= track.segmentCount) return false;
+    u32 lo = 0, hi = track.inputCount;
+    while (lo < hi) {
+        const u32 mid = lo + (hi - lo) / 2;
+        if (track.inputs[mid].qf <= (u32)sVisualQf) lo = mid + 1;
+        else hi = mid;
+    }
+    if (!lo || track.inputs[lo - 1].qf <
+                    track.segments[segmentIndex].startQf) return false;
+    if ((track.teachingFlags & SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED) &&
+        (u32)sVisualQf > track.inputs[track.inputCount - 1].qf) return false;
+    *out = track.inputs[lo - 1].input;
+    return true;
+}
+
+void drawInputs(Menu *menu, u8 mode) {
+    if (!menu || menu->shown() || !mode || !sGhostVisible ||
+        !gSettings.getBool(SETTING_GHOST_DISPLAY)) return;
+    const int panelY = 218;
+    SusamunePracticeInput input;
+    if (playbackInput(sPlayback, sPlaybackSegment, &input)) {
+        gInputDisplay.drawSnapshot(menu, input, 460, panelY, 65,
+                                   playbackIsTas() ? "TAS 1" : "Ghost 1");
+    } else {
+        menu->drawText("Inputs not recorded", 438, panelY, 12, 12,
+                       JUtility::TColor(220, 240, 255, 255));
+    }
+    if (mode < 2) return;
+    if (observerHasTwo()) {
+        if (sSecondaryGhostVisible &&
+            playbackInput(sObserverSecondary, sObserverSecondarySegment, &input))
+            gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65,
+                                       playbackIsTas(true) ? "TAS 2" : "Ghost 2");
+    } else if (!observerActive()) {
+        const PADStatus &raw = JUTGamePad::mPadStatus[0];
+        input.buttons = raw.mButton;
+        input.stickX = (s8)raw.mStickX;
+        input.stickY = (s8)raw.mStickY;
+        input.substickX = (s8)raw.mSubStickX;
+        input.substickY = (s8)raw.mSubStickY;
+        input.triggerL = raw.mTriggerLeft;
+        input.triggerR = raw.mTriggerRight;
+        input.analogA = raw.mAnalogA;
+        input.analogB = raw.mAnalogB;
+        input.error = (s8)raw.mCurError;
+        input.flags = 0;
+        gInputDisplay.drawSnapshot(menu, input, 330, panelY, 65, "You");
+    }
 }
 
 bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
@@ -2837,7 +3169,8 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
         track->parentEpisode > SUSAMUNE_GHOST_ROUTE_VARIANT_MAX ||
         track->segmentCount == 0 || track->segmentCount > kMaxSegments ||
         track->endQf < track->startQf ||
-        track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 ||
+        (track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+         track->formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V5) ||
         track->attachmentCount >
             SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT ||
         (track->attachmentFlags &
@@ -2848,12 +3181,26 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
     const u32 duration = track->endQf - track->startQf;
     const u32 sampleDataSize = track->count * sizeof(Sample);
     const u32 sampleDataOffset = SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET;
+    u32 firstInput = 0, inputCount = track->inputCount;
+    while (inputCount && track->inputs[inputCount - 1].qf > track->endQf)
+        --inputCount;
+    while (firstInput < inputCount &&
+           track->inputs[firstInput].qf < track->startQf) ++firstInput;
+    inputCount -= firstInput;
+    u8 splitCount = track->splitCount;
+    while (splitCount && track->splits[splitCount - 1].qf > track->endQf)
+        --splitCount;
+    if (splitCount && track->splits[0].qf < track->startQf) splitCount = 0;
+    const bool teaching = inputCount != 0 || splitCount != 0;
+    const u32 teachingSize = teaching
+        ? SUSAMUNE_GHOST_TEACHING_HEADER_SIZE + inputCount * 16u +
+              splitCount * 12u : 0;
     const u32 payloadSize = sampleDataSize +
-        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE;
-    const u32 fileSize = sampleDataOffset + sampleDataSize;
+        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE + teachingSize;
+    const u32 fileSize = sampleDataOffset + sampleDataSize + teachingSize;
     if (duration > SUSAMUNE_GHOST_MAX_DURATION_QF ||
         sampleDataSize > SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE ||
-        payloadSize > SUSAMUNE_GHOST_V4_MAX_PAYLOAD_SIZE ||
+        payloadSize > SUSAMUNE_GHOST_MAX_PAYLOAD_SIZE ||
         fileSize > capacity) {
         return false;
     }
@@ -2863,14 +3210,34 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
     memcpy(bytes + sampleDataOffset, track->samples, sampleDataSize);
     memcpy(bytes + SUSAMUNE_GHOST_V4_SEGMENT_TABLE_OFFSET,
            track->segments, track->segmentCount * sizeof(Segment));
+    if (teaching) {
+        u8 *section = bytes + sampleDataOffset + sampleDataSize;
+        SusamuneGhostTeachingHeader info = {};
+        info.magic = SUSAMUNE_GHOST_TEACHING_MAGIC;
+        info.version = SUSAMUNE_GHOST_TEACHING_VERSION;
+        info.headerSize = SUSAMUNE_GHOST_TEACHING_HEADER_SIZE;
+        info.inputCount = inputCount;
+        info.splitCount = splitCount;
+        info.flags = track->teachingFlags;
+        if (inputCount) memcpy(section + sizeof(info),
+                               track->inputs + firstInput, inputCount * 16u);
+        memcpy(section + sizeof(info) + inputCount * 16u, track->splits,
+               splitCount * 12u);
+        info.dataChecksum = Checksum::crc32(section + sizeof(info),
+                                            teachingSize - sizeof(info));
+        memcpy(section, &info, sizeof(info));
+    }
 
     SusamuneGhostFileHeader header;
     memset(&header, 0, sizeof(header));
     header.magic = SUSAMUNE_GHOST_FILE_MAGIC;
-    header.version = SUSAMUNE_GHOST_FILE_VERSION_V4;
+    header.version = teaching ? SUSAMUNE_GHOST_FILE_VERSION_V5
+                              : SUSAMUNE_GHOST_FILE_VERSION_V4;
     header.headerSize = SUSAMUNE_GHOST_FILE_HEADER_SIZE;
     header.fileSize = fileSize;
-    header.requiredFeatures = SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC;
+    header.requiredFeatures = teaching
+        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5
+        : SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC;
     header.runFlags = track->runFlags;
     header.gameId = runningGameId();
     header.discRevision = SUSAMUNE_GHOST_DISC_REVISION;
@@ -2951,6 +3318,8 @@ bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
 bool importPlayback(const void *data, u32 size, bool imported) {
     SusamuneGhostFileHeader header;
     if (!validCanonicalFile(data, size, &header)) return false;
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5 && !sPlayback.inputs)
+        return false;
     if (sPlayback.valid && sPlayback.pb && !sPlayback.saved &&
         sPlayback.pbToken != 0) {
         return false;
@@ -3025,6 +3394,8 @@ bool importObserverTrack(const void *data, u32 size, bool secondary) {
           !sObserverPrimaryReady))) {
         return false;
     }
+    if (header.version == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
+        !(secondary ? sRecord.inputs : sPlayback.inputs)) return false;
 
     if (secondary) {
         if (sRecord.samples == sPlayback.samples ||
@@ -3035,6 +3406,7 @@ bool importObserverTrack(const void *data, u32 size, bool secondary) {
         // record slot selected by that swap, not its boot-time address.
         sObserverSecondary.samples = sRecord.samples;
         sObserverSecondary.segments = sRecord.segments;
+        sObserverSecondary.inputs = sRecord.inputs;
         clearTrack(sObserverSecondary);
         installCanonicalTrack(sObserverSecondary, data, header);
         sObserverSecondaryReady = true;
@@ -3129,7 +3501,21 @@ bool playbackInfo(PlaybackInfo *out) {
     out->episode = sPlayback.episode;
     out->completed = sPlayback.completed;
     out->pinned = sPlaybackPinned;
+    out->runFlags = sPlayback.runFlags;
     return true;
+}
+
+bool comparisonDelta(u16 route, u8 endpoint, s32 absoluteQf, s32 *out) {
+    s32 target;
+    if (!out || absoluteQf < 0 || !comparisonSplit(route, endpoint, &target))
+        return false;
+    *out = SusamuneGhostClockMap(&sRecordClock, absoluteQf) - target;
+    return true;
+}
+
+bool playbackIsTas(bool secondary) {
+    const Track &track = secondary ? sObserverSecondary : sPlayback;
+    return track.valid && (track.runFlags & SUSAMUNE_GHOST_RUN_TAS);
 }
 
 bool raceContext(RaceContext *out) {
@@ -3336,6 +3722,8 @@ bool discardUnsavedPB(u32 token) {
 
 bool markCurrentRecordingPB(s32 resultQf) {
     if (resultQf < 0 || !sRecord.valid || !sRecord.completed ||
+        (sRecord.runFlags & (SUSAMUNE_GHOST_RUN_ASSISTED |
+                             SUSAMUNE_GHOST_RUN_TAS)) ||
         sRecord.resultQf != static_cast<u32>(resultQf)) {
         return false;
     }
@@ -3398,7 +3786,177 @@ void releaseSavedRecording(u32 recordToken) {
     }
 }
 
+namespace {
+
+bool recorderBanksValid() {
+    const __UINTPTR_TYPE__ record = reinterpret_cast<__UINTPTR_TYPE__>(sRecord.samples);
+    const __UINTPTR_TYPE__ play = reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.samples);
+    const bool first = record == SUSAMUNE_GHOST_RECORD_PPC_BASE;
+    if ((!first && record != SUSAMUNE_GHOST_PLAY_PPC_BASE) ||
+        play != (first ? SUSAMUNE_GHOST_PLAY_PPC_BASE : SUSAMUNE_GHOST_RECORD_PPC_BASE) ||
+        reinterpret_cast<__UINTPTR_TYPE__>(sRecord.segments) != record + kSegmentTableOffset ||
+        reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.segments) != play + kSegmentTableOffset)
+        return false;
+    if (!sRecord.inputs && !sPlayback.inputs) return true;
+#if IS_EMULATOR
+    const __UINTPTR_TYPE__ inputRecord = SUSAMUNE_DOLPHIN_GHOST_INPUT_RECORD_PPC_BASE;
+    const __UINTPTR_TYPE__ inputPlay = SUSAMUNE_DOLPHIN_GHOST_INPUT_PLAY_PPC_BASE;
+#else
+    const __UINTPTR_TYPE__ inputRecord = SUSAMUNE_GHOST_INPUT_RECORD_PPC_BASE;
+    const __UINTPTR_TYPE__ inputPlay = SUSAMUNE_GHOST_INPUT_PLAY_PPC_BASE;
+#endif
+    return reinterpret_cast<__UINTPTR_TYPE__>(sRecord.inputs) == (first ? inputRecord : inputPlay) &&
+           reinterpret_cast<__UINTPTR_TYPE__>(sPlayback.inputs) == (first ? inputPlay : inputRecord);
+}
+
+bool decodeSavedPrefix(const SavestateData &data, SavedPrefix *saved) {
+    memcpy(saved, &data, sizeof(*saved));
+    if (!saved->magic) {
+        for (u32 i = 0; i < sizeof(data.words) / sizeof(data.words[0]); ++i)
+            if (data.words[i]) return false;
+        return true;
+    }
+    const Track &track = saved->track;
+    if (saved->magic != kSavedPrefixMagic ||
+        track.samples || track.segments || track.inputs ||
+        !track.count || track.count > kMaxSamples ||
+        !track.segmentCount || track.segmentCount > kMaxSegments ||
+        track.inputCount > SUSAMUNE_GHOST_INPUT_MAX_COUNT ||
+        track.splitCount > SUSAMUNE_GHOST_SPLIT_MAX_COUNT ||
+        track.attachmentCount > SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT ||
+        (track.attachmentFlags & ~SUSAMUNE_GHOST_V4_ATTACHMENT_FLAGS) ||
+        (track.teachingFlags & ~SUSAMUNE_GHOST_TEACHING_INPUT_TRUNCATED) ||
+        (track.formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
+         track.formatVersion != SUSAMUNE_GHOST_FILE_VERSION_V5) ||
+        !validRouteTuple(track.area, track.episode, track.routeParentArea,
+                         track.routeFlags, track.parentEpisode) ||
+        track.endQf < track.startQf || track.endQf > 0x7fffffffu ||
+        track.endQf - track.startQf > static_cast<u32>(kMaxDurationQf) ||
+        saved->lastSampleQf != static_cast<s32>(track.endQf) ||
+        saved->capturedQf > 0x7fffffffu ||
+        saved->phase > CLOCK_WAIT_STAGE ||
+        saved->endpoint > ILing::SAVED_GHOST_END_DEATH ||
+        (saved->flags & ~63u) ||
+        !(saved->flags & (PREFIX_RECORDING | PREFIX_CONTINUE)) ||
+        ((saved->flags & PREFIX_BOUNDARY) &&
+         saved->boundaryBaseSegmentCount > track.segmentCount) ||
+        track.failure != RECORD_FAILURE_NONE || track.completed ||
+        (saved->clock.ready && (saved->clock.serial != saved->serial ||
+             saved->clock.liveQf < 0 ||
+             saved->clock.omittedQf > static_cast<u32>(saved->clock.liveQf) ||
+             saved->clock.liveQf > static_cast<s32>(saved->capturedQf))) ||
+        track.endQf > static_cast<u32>(SusamuneGhostClockMap(
+            &saved->clock, static_cast<s32>(saved->capturedQf)))) return false;
+    return true;
+}
+
+} // namespace
+
+bool captureSavestate(SavestateData &out,
+                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount]) {
+    memset(&out, 0, sizeof(out));
+    memset(spans, 0, sizeof(spans));
+    if (observerStatsSuppressed() ||
+        (!sRecording && !sPendingContinueRecording) || !sRecord.count) return true;
+    if (!recorderBanksValid() || (sRecord.inputCount && !sRecord.inputs)) return false;
+    s32 qf;
+    if (!gQFTTimer.currentQf(&qf) || qf < 0 ||
+        sAttemptSerial != gQFTTimer.attemptSerial()) return false;
+    SavedPrefix saved = {};
+    saved.magic = kSavedPrefixMagic;
+    saved.capturedQf = static_cast<u32>(qf);
+    saved.track = sRecord;
+    saved.track.samples = nullptr;
+    saved.track.segments = nullptr;
+    saved.track.inputs = nullptr;
+    saved.clock = sRecordClock;
+    saved.serial = sAttemptSerial;
+    saved.lastSampleQf = sLastSampleQf;
+    saved.clockLastQf = sClockLastQf;
+    saved.clockEpochStartQf = sClockEpochStartQf;
+    saved.pendingPreviousClockQf = sPendingPreviousClockQf;
+    saved.boundaryPriorQf = sBoundaryPriorQf;
+    saved.liveParentEpisode = sLiveParentEpisode;
+    saved.clockObservations = sClockObservations;
+    saved.boundaryBaseSegmentCount = sBoundaryBaseSegmentCount;
+    saved.phase = sClockPhase;
+    saved.flags = (sRecording ? PREFIX_RECORDING : 0) |
+        (sStageRoutePending ? PREFIX_STAGE_PENDING : 0) |
+        (sPendingHadLiveRoute ? PREFIX_HAD_ROUTE : 0) |
+        (sPendingContinueRecording ? PREFIX_CONTINUE : 0) |
+        (sBoundaryPending ? PREFIX_BOUNDARY : 0) |
+        (sLiveRouteValid ? PREFIX_LIVE_ROUTE : 0);
+    saved.liveArea = sLiveArea;
+    saved.liveEpisode = sLiveEpisode;
+    saved.liveRouteParentArea = sLiveRouteParentArea;
+    saved.liveRouteFlags = sLiveRouteFlags;
+    saved.endpoint = sRestoredPrefix ? sRestoredEndpoint : ILing::savestateGhostEndpoint();
+    memcpy(&out, &saved, sizeof(saved));
+    if (!decodeSavedPrefix(out, &saved)) return false;
+    spans[0] = {sRecord.samples, sRecord.count * static_cast<u32>(sizeof(Sample))};
+    spans[1] = {sRecord.segments, sRecord.segmentCount * static_cast<u32>(sizeof(Segment))};
+    spans[2] = {sRecord.inputs, sRecord.inputCount * static_cast<u32>(sizeof(SusamuneGhostInputSample))};
+    return true;
+}
+
+bool savestateRestoreSpans(const SavestateData &data,
+                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount]) {
+    memset(spans, 0, sizeof(spans));
+    SavedPrefix saved;
+    if (!decodeSavedPrefix(data, &saved)) return false;
+    if (!saved.magic) return true;
+    if (!recorderBanksValid() || (saved.track.inputCount && !sRecord.inputs)) return false;
+    spans[0] = {sRecord.samples, saved.track.count * static_cast<u32>(sizeof(Sample))};
+    spans[1] = {sRecord.segments, saved.track.segmentCount * static_cast<u32>(sizeof(Segment))};
+    spans[2] = {sRecord.inputs, saved.track.inputCount * static_cast<u32>(sizeof(SusamuneGhostInputSample))};
+    return true;
+}
+
+void restoreSavestate(const SavestateData &data) {
+    SavedPrefix saved;
+    if (!decodeSavedPrefix(data, &saved)) __builtin_trap();
+    onSavestateLoaded();
+    if (!saved.magic) return;
+    Sample *samples = sRecord.samples;
+    Segment *segments = sRecord.segments;
+    SusamuneGhostInputSample *inputs = sRecord.inputs;
+    sRecord = saved.track;
+    sRecord.samples = samples;
+    sRecord.segments = segments;
+    sRecord.inputs = inputs;
+    sRecord.runFlags |= SUSAMUNE_GHOST_RUN_ASSISTED | SUSAMUNE_GHOST_RUN_TAS;
+    sRestoredPrefix = true;
+    sRestoredEndpoint = saved.endpoint;
+    sRecord.pb = false;
+    sRecord.pbToken = 0;
+    bumpRecordToken();
+    sRecordIdentityToken = sRecordToken;
+    sRecordClock = saved.clock;
+    sAttemptSerial = saved.serial;
+    sLastSampleQf = saved.lastSampleQf;
+    sClockLastQf = saved.clockLastQf;
+    sClockEpochStartQf = saved.clockEpochStartQf;
+    sPendingPreviousClockQf = saved.pendingPreviousClockQf;
+    sBoundaryPriorQf = saved.boundaryPriorQf;
+    sLiveParentEpisode = saved.liveParentEpisode;
+    sClockObservations = saved.clockObservations;
+    sBoundaryBaseSegmentCount = saved.boundaryBaseSegmentCount;
+    sClockPhase = static_cast<ClockPhase>(saved.phase);
+    sRecording = (saved.flags & PREFIX_RECORDING) != 0;
+    sStageRoutePending = (saved.flags & PREFIX_STAGE_PENDING) != 0;
+    sPendingHadLiveRoute = (saved.flags & PREFIX_HAD_ROUTE) != 0;
+    sPendingContinueRecording = (saved.flags & PREFIX_CONTINUE) != 0;
+    sBoundaryPending = (saved.flags & PREFIX_BOUNDARY) != 0;
+    sLiveRouteValid = (saved.flags & PREFIX_LIVE_ROUTE) != 0;
+    sLiveArea = saved.liveArea;
+    sLiveEpisode = saved.liveEpisode;
+    sLiveRouteParentArea = saved.liveRouteParentArea;
+    sLiveRouteFlags = saved.liveRouteFlags;
+}
+
 void onSavestateLoaded() {
+    memset(&sRecordClock, 0, sizeof(sRecordClock));
+    sRaceSplitCount = 0;
     clearRaceContext();
     if (sObserverPhase != OBSERVER_OFF) {
         releaseObserverMario(false);

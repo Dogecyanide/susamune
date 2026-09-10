@@ -80,12 +80,12 @@ class PbSafetyMenuContracts(unittest.TestCase):
         cls.menu = text("src/menu.cpp")
         cls.page = braced_block(cls.menu, "class PBSafetyTab final")
 
-    def test_page_is_first_and_reports_ready_or_blocked(self) -> None:
+    def test_page_is_in_runs_and_reports_ready_or_blocked(self) -> None:
         self.assertIn('return "PB Safety";', self.page)
         self.assertIn("return gSettings.ilPbBlockerCount();", self.page)
 
-        children = braced_block(self.menu, "MenuTab *settingsChildren[] =")
-        self.assertRegex(children, r"\{\s*pbSafety\s*,")
+        children = braced_block(self.menu, "MenuTab *runChildren[] =")
+        self.assertEqual(children.count("pbSafety"), 1)
         self.assertIn('if (child == 0) return "PB STATUS";', self.menu)
 
         root_draw = braced_block(

@@ -2,13 +2,14 @@
 
 The susamune launcher GUI.
 
-Three screens, all driven from SusamuneMenuRun():
+Screens driven from SusamuneMenuRun():
 
-  main      Launch Game / Version / Path / Settings, centre justified.
+  main      Launch Game / Version / Path / Settings / Guide.
   browse    A file browser rooted at the list of devices, plus a pseudo-entry
             for the disc drive. Reached with A on Path.
   settings  The Nintendont options that moved into susamune.ini, one
             column, with help text under a rule at the bottom.
+  guide     Embedded written guide, with topics and scrolling pages.
 
 Everything the user changes here is persisted to [nintendont] in susamune.ini
 on the device the launcher was run from -- see SusamuneIni.c. NIN_CFG is
@@ -34,6 +35,8 @@ anyway, and at 60 Hz over a handful of text rows the cost is invisible.
 #include "menu.h"
 #include "SusamuneIni.h"
 #include "SusamuneMenu.h"
+#include "SusamuneGuide.h"
+#include "SusamuneText.h"
 #include "ff_utf8.h"
 #include "diskio.h"
 
@@ -51,6 +54,7 @@ enum
 	ROW_VERSION,
 	ROW_PATH,
 	ROW_SETTINGS,
+	ROW_GUIDE,
 
 	ROW_COUNT
 };
@@ -60,7 +64,8 @@ enum
 #define MAIN_Y_VERSION  (MENU_POS_Y + 20*8)
 #define MAIN_Y_PATH     (MENU_POS_Y + 20*9)
 #define MAIN_Y_SETTINGS (MENU_POS_Y + 20*10)
-#define MAIN_Y_ERROR    (MENU_POS_Y + 20*12)
+#define MAIN_Y_GUIDE    (MENU_POS_Y + 20*11)
+#define MAIN_Y_ERROR    (MENU_POS_Y + 20*13)
 
 // Blink the sentinel for about a second and a half: 8 frames lit, 8 dark.
 #define BLINK_HALF_PERIOD 8
@@ -94,8 +99,7 @@ static u32  BlinkFrames = 0;
 
 /** Shared drawing helpers **/
 
-// Centre a formatted line horizontally. The TTF is monospace at DEFAULT_SIZE,
-// 10 pixels per character, which is what makes this arithmetic work.
+// Centre using glyph advances, including full-width Japanese text.
 static void PrintCenter(u32 color, int y, const char *fmt, ...)
 	__attribute__ ((format (printf, 3, 4)));
 
@@ -104,11 +108,10 @@ static void PrintCenter(u32 color, int y, const char *fmt, ...)
 	char buf[128];
 	va_list ap;
 	int len;
-	int cols = 0;
-	int i;
+	unsigned int width;
 
 	va_start(ap, fmt);
-	len = vsnprintf(buf, sizeof(buf), fmt, ap);
+	len = vsnprintf(buf, sizeof(buf), SusamuneText(fmt), ap);
 	va_end(ap);
 
 	if (len < 0)
@@ -116,15 +119,8 @@ static void PrintCenter(u32 color, int y, const char *fmt, ...)
 	if (len > (int)sizeof(buf) - 1)
 		len = (int)sizeof(buf) - 1;
 
-	// Count characters, not bytes: the cursor arrows are three-byte UTF-8 and
-	// each still occupies one 10px cell.
-	for (i = 0; i < len; i++)
-	{
-		if ((buf[i] & 0xC0) != 0x80)
-			cols++;
-	}
-
-	PrintFormat(DEFAULT_SIZE, color, (640 - cols*10) / 2, y, "%s", buf);
+	width = GRRLIB_WidthTTF(SusamuneTextFont(), buf, DEFAULT_SIZE);
+	PrintFormat(DEFAULT_SIZE, color, (640 - (int)width) / 2, y, "%s", buf);
 }
 
 // Horizontal rule separating a list from the help text below it.
@@ -171,6 +167,8 @@ static int Repeat##Key(HeldCounters *h) \
 }
 FPAD_REPEAT(Up)
 FPAD_REPEAT(Down)
+FPAD_REPEAT(Left)
+FPAD_REPEAT(Right)
 
 /** Devices **/
 
@@ -186,6 +184,18 @@ static const char *const kDevLabel[2]     = { "SD Card", "USB Storage" };
 static bool DeviceMounted(int dev)
 {
 	return devices[dev] != NULL;
+}
+
+static bool EnsureDeviceMounted(int dev)
+{
+	char message[64];
+	if (dev < DEV_SD || dev > DEV_USB || (dev == DEV_USB && isWiiVC))
+		return false;
+	if (DeviceMounted(dev))
+		return true;
+	snprintf(message, sizeof(message), SusamuneText("Checking %s..."), SusamuneText(kDevLabel[dev]));
+	ShowMessageScreen(message);
+	return MountDevice(dev) != NULL;
 }
 
 // Which device a stored path lives on, or -1 for the disc drive / a path with
@@ -216,7 +226,7 @@ static bool SaveIfDirty(void)
 	{
 		// Non-fatal: the user's choices still apply to this boot.
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "Settings were not saved: %s:/susamune.ini is not writable",
+			 SusamuneText("Settings were not saved: %s:/susamune.ini is not writable"),
 			 LauncherDev);
 		return false;
 	}
@@ -224,7 +234,7 @@ static bool SaveIfDirty(void)
 	{
 		// Non-fatal: the user's choices still apply to this boot.
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "Could not write %s:/susamune.ini", LauncherDev);
+			 SusamuneText("Could not write %s:/susamune.ini"), LauncherDev);
 		CanSave = false;
 		return false;
 	}
@@ -385,6 +395,7 @@ static int BrowseDevices(u8 version)
 	static const int kRowCount = 3;
 	HeldCounters held;
 	int pos = 0;
+	bool failed[2] = {false, false};
 
 	memset(&held, 0, sizeof(held));
 
@@ -419,10 +430,12 @@ static int BrowseDevices(u8 version)
 				if (!IsWiiU() && !isWiiVC)
 					return -1;
 			}
-			else if (DeviceMounted(pos - 1))
+			else if (EnsureDeviceMounted(pos - 1))
 			{
 				return pos - 1;
 			}
+			else
+				failed[pos - 1] = true;
 		}
 
 		ClearScreen();
@@ -441,7 +454,7 @@ static int BrowseDevices(u8 version)
 			if (i == 0)
 				usable = (!IsWiiU() && !isWiiVC);
 			else
-				usable = DeviceMounted(i - 1);
+				usable = (i - 1 != DEV_USB || !isWiiVC);
 
 			color = usable ? BLACK : DARK_GRAY;
 
@@ -451,7 +464,7 @@ static int BrowseDevices(u8 version)
 			}
 			else
 			{
-				PrintFormat(DEFAULT_SIZE, color, MENU_POS_X + 20, y, "%s", kDevLabel[i-1]);
+				PrintFormat(DEFAULT_SIZE, color, MENU_POS_X + 20, y, "%s", SusamuneText(kDevLabel[i-1]));
 				PrintFormat(DEFAULT_SIZE, color, MENU_POS_X + 220, y,
 					    "(%s:/)", kDevName[i-1]);
 			}
@@ -470,10 +483,20 @@ static int BrowseDevices(u8 version)
 				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*14 + 6,
 					    "The disc drive cannot be used on this console.");
 		}
-		else if (!DeviceMounted(pos - 1))
+		else if (pos - 1 == DEV_USB && isWiiVC)
 		{
 			PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*14 + 6,
-				    "No %s device was detected.", kDevLabel[pos-1]);
+				    "USB storage is unavailable in Wii VC.");
+		}
+		else if (failed[pos - 1])
+		{
+			PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*14 + 6,
+				    "No %s detected. Press A to try again.", kDevLabel[pos-1]);
+		}
+		else if (!DeviceMounted(pos - 1))
+		{
+			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*14 + 6,
+				    "Press A to check %s and browse its files.", kDevLabel[pos-1]);
 		}
 		else
 		{
@@ -753,8 +776,8 @@ static const char *const kHelpAutoBoot[] =
 	"",
 	"Hold B while the launcher starts to get the menu back.",
 	"",
-	"Auto Boot also skips scanning for storage devices, so it",
-	"is noticeably faster when only the SD card is in use.",
+	"Only the selected game's storage is checked. Other",
+	"devices are checked when you choose them in Path.",
 	NULL
 };
 static const char *const kHelpNativeControls[] =
@@ -899,6 +922,100 @@ static void CycleSetting(int setting)
 	IniDirty = true;
 }
 
+static void GuideScreen(void)
+{
+	HeldCounters held;
+	int pos = 0;
+	int firstTopic = 0;
+	int firstLine = 0;
+	bool reading = false;
+	const int count = SusamuneGuideTopicCount();
+
+	memset(&held, 0, sizeof(held));
+	while (1)
+	{
+		int i;
+		int lines;
+
+		FPAD_Update();
+		if (Shutdown)
+			LoaderShutdown();
+		if (FPAD_Start(0))
+		{
+			SaveIfDirty();
+			ExitToLoader(0);
+		}
+		if (FPAD_Cancel(0))
+		{
+			if (!reading)
+				return;
+			reading = false;
+			memset(&held, 0, sizeof(held));
+		}
+		else if (reading)
+		{
+			int delta = 0;
+			if (RepeatUp(&held)) delta--;
+			if (RepeatDown(&held)) delta++;
+			if (RepeatLeft(&held)) delta -= SUSAMUNE_GUIDE_ROWS;
+			if (RepeatRight(&held)) delta += SUSAMUNE_GUIDE_ROWS;
+			firstLine = SusamuneGuideScroll(firstLine,
+				SusamuneGuideLineCount(pos), delta);
+		}
+		else
+		{
+			if (RepeatUp(&held)) pos = (pos + count - 1) % count;
+			if (RepeatDown(&held)) pos = (pos + 1) % count;
+			if (pos < firstTopic) firstTopic = pos;
+			if (pos >= firstTopic + SUSAMUNE_GUIDE_ROWS)
+				firstTopic = pos - SUSAMUNE_GUIDE_ROWS + 1;
+			if (FPAD_OK(0))
+			{
+				reading = true;
+				firstLine = 0;
+				memset(&held, 0, sizeof(held));
+			}
+		}
+
+		ClearScreen();
+		PrintCenter(BLACK, MENU_POS_Y, "Moonshine guide");
+		PrintCenter(BLACK, MENU_POS_Y + 20, "V2.3.0 Frame By Frame");
+		GRRLIB_Rectangle(MENU_POS_X, MENU_POS_Y + 92,
+			640 - MENU_POS_X*2, 286, 0xFFFFFFD8, true);
+		if (reading)
+		{
+			lines = SusamuneGuideLineCount(pos);
+			PrintCenter(BLACK, MENU_POS_Y + 60, "%s", SusamuneGuideTitle(pos));
+			for (i = 0; i < SUSAMUNE_GUIDE_ROWS && firstLine + i < lines; i++)
+				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 20,
+					MENU_POS_Y + 100 + i*20, "%s",
+					SusamuneGuideLine(pos, firstLine + i));
+			PrintCenter(BLACK, MENU_POS_Y + 380, "%d-%d of %d lines",
+				firstLine + 1, firstLine + SUSAMUNE_GUIDE_ROWS < lines
+					? firstLine + SUSAMUNE_GUIDE_ROWS : lines, lines);
+			PrintCenter(BLACK, MENU_POS_Y + 404,
+				"Up/Down: scroll  Left/Right: page  B: topics");
+		}
+		else
+		{
+			PrintCenter(BLACK, MENU_POS_Y + 60, "Choose a topic");
+			for (i = 0; i < SUSAMUNE_GUIDE_ROWS && firstTopic + i < count; i++)
+			{
+				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 20,
+					MENU_POS_Y + 100 + i*20, "%s",
+					SusamuneGuideTitle(firstTopic + i));
+				if (firstTopic + i == pos)
+					PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X,
+						MENU_POS_Y + 100 + i*20, ARROW_RIGHT);
+			}
+			PrintCenter(BLACK, MENU_POS_Y + 380, "Topic %d of %d", pos + 1, count);
+			PrintCenter(BLACK, MENU_POS_Y + 404,
+				"Up/Down: choose  A: read  B: launcher");
+		}
+		GRRLIB_Render();
+	}
+}
+
 static void SettingsScreen(void)
 {
 	HeldCounters held;
@@ -953,12 +1070,16 @@ static void SettingsScreen(void)
 			const int y = MENU_POS_Y + 20*6 + i*20;
 			const u32 color = SettingUsable(i) ? BLACK : DARK_GRAY;
 			char valBuf[16];
-			const char *value = SettingValue(i, valBuf, sizeof(valBuf));
+			const char *name = SusamuneText(kSettingNames[i]);
+			const char *value = SusamuneText(SettingValue(i, valBuf, sizeof(valBuf)));
 			char leader[64];
-			int nameLen = (int)strlen(kSettingNames[i]);
-			int valLen = (int)strlen(value);
+			GRRLIB_ttfFont *font = SusamuneTextFont();
+			int nameWidth = GRRLIB_WidthTTF(font, name, DEFAULT_SIZE);
+			int valueWidth = GRRLIB_WidthTTF(font, value, DEFAULT_SIZE);
+			int spaceWidth = GRRLIB_WidthTTF(font, " ", DEFAULT_SIZE);
+			int dotWidth = GRRLIB_WidthTTF(font, ".", DEFAULT_SIZE);
 			// Dot leader between the name and the right-justified value.
-			int dots = 50 - nameLen - valLen;
+			int dots = dotWidth > 0 ? (500 - nameWidth - valueWidth - 2*spaceWidth) / dotWidth : 2;
 			int d;
 
 			if (dots < 2)
@@ -970,7 +1091,7 @@ static void SettingsScreen(void)
 			leader[dots] = '\0';
 
 			PrintFormat(DEFAULT_SIZE, color, MENU_POS_X + 20, y,
-				    "%s %s %s", kSettingNames[i], leader, value);
+				    "%s %s %s", name, leader, value);
 
 			if (i == pos)
 				PrintFormat(DEFAULT_SIZE, color, MENU_POS_X, y, ARROW_RIGHT);
@@ -984,7 +1105,7 @@ static void SettingsScreen(void)
 			if (help[i][0] == '\0')
 				continue;
 			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X,
-				    MENU_POS_Y + 20*(7 + SET_COUNT) + i*20, "%s", help[i]);
+				    MENU_POS_Y + 20*(7 + SET_COUNT) + i*20, "%s", SusamuneText(help[i]));
 		}
 		GRRLIB_Render();
 	}
@@ -1063,26 +1184,26 @@ static bool ValidateSelection(void)
 	if (dev < 0)
 	{
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "Path has no device prefix: %s", path);
+			 SusamuneText("Path has no device prefix: %s"), path);
 		return false;
 	}
-	if (!DeviceMounted(dev))
+	if (!EnsureDeviceMounted(dev))
 	{
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "%s is not available", kDevLabel[dev]);
+			 SusamuneText("%s is not available"), SusamuneText(kDevLabel[dev]));
 		return false;
 	}
 
 	if (!ReadImageGameID(path, &gameID))
 	{
-		snprintf(ErrorLine, sizeof(ErrorLine), "Not found or not a GC disc image:");
+		snprintf(ErrorLine, sizeof(ErrorLine), SusamuneText("Not found or not a GC disc image:"));
 		return false;
 	}
 
 	if (!SusamuneCheckGameID(gameID))
 	{
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "That image is %.4s, but %s is selected",
+			 SusamuneText("That image is %.4s, but %s is selected"),
 			 (const char*)&gameID, SusaVersionName(gIni.version));
 		return false;
 	}
@@ -1161,15 +1282,6 @@ static void ApplyToNinCFG(void)
 	DCFlushRange((void*)ncfg, sizeof(NIN_CFG));
 }
 
-int SusamuneAutoBootDevice(void)
-{
-	const char *path = gIni.path[gIni.version];
-
-	if (path[0] == '\0' || IsDiscPath(path))
-		return -1;
-	return DeviceOfPath(path);
-}
-
 bool SusamuneAutoBoot(const char *launcherDev)
 {
 	LauncherDev = launcherDev;
@@ -1180,7 +1292,7 @@ bool SusamuneAutoBoot(const char *launcherDev)
 	if (gIni.path[gIni.version][0] == '\0')
 	{
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 "Auto Boot: no path configured for %s",
+			 SusamuneText("Auto Boot: no path configured for %s"),
 			 SusaVersionName(gIni.version));
 		return false;
 	}
@@ -1222,12 +1334,14 @@ static void DrawMainMenu(int pos)
 	else if (BlinkFrames == 0 || ((BlinkFrames / BLINK_HALF_PERIOD) & 1) == 0)
 	{
 		// While blinking, the dark half of the cycle draws nothing at all.
-		PrintCenter(MAROON, MAIN_Y_PATH, "Path: %s%s", kPathUnset,
+		PrintCenter(MAROON, MAIN_Y_PATH, "Path: %s%s", SusamuneText(kPathUnset),
 			    pos == ROW_PATH ? " " ARROW_LEFT : "");
 	}
 
 	PrintCenter(BLACK, MAIN_Y_SETTINGS, "Settings%s",
 		    pos == ROW_SETTINGS ? " " ARROW_LEFT : "");
+	PrintCenter(BLACK, MAIN_Y_GUIDE, "Guide%s",
+		    pos == ROW_GUIDE ? " " ARROW_LEFT : "");
 
 	if (ErrorLine[0] != '\0')
 	{
@@ -1251,6 +1365,8 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 	memset(&held, 0, sizeof(held));
 	// ErrorLine is deliberately left alone: a failed auto boot put its reason
 	// there, and that is the first thing the user needs to see.
+	if (ErrorLine[0] == '\0' && gIni.path[gIni.version][0] != '\0')
+		ValidateSelection();
 
 	while (1)
 	{
@@ -1303,6 +1419,7 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 					IniDirty = true;
 					ErrorLine[0] = '\0';
 					BlinkFrames = 0;
+					ValidateSelection();
 					break;
 
 				case ROW_PATH:
@@ -1314,6 +1431,11 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 
 				case ROW_SETTINGS:
 					SettingsScreen();
+					memset(&held, 0, sizeof(held));
+					break;
+
+				case ROW_GUIDE:
+					GuideScreen();
 					memset(&held, 0, sizeof(held));
 					break;
 

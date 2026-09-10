@@ -21,7 +21,6 @@ typedef JUtility::TColor Color;
 const int kBaseTextSize = 14;
 const int kSafeRight    = 624;
 const int kSafeBottom   = 456;
-const int kHorizontalGap = 12;
 
 constexpr u8 kTextOffsets[] = {
     // Short field labels.
@@ -91,6 +90,32 @@ inline int clampi(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+struct LayoutOptions {
+    int fieldGap;
+    int rowGap;
+    int columns;
+    bool compact;
+};
+
+LayoutOptions layoutOptions(u8 fieldGap, u8 rowGap, u8 columns, bool compact) {
+    return LayoutOptions{
+        clampi(fieldGap, 0, 32), clampi(rowGap, 0, 16),
+        clampi(columns, 0, MetadataDisplay::FIELD_COUNT), compact,
+    };
+}
+
+const char *numberLabel(u8 value) {
+    static char label[4];
+    snprintf(label, sizeof(label), "%u", value);
+    return label;
+}
+
+int lineHeight(int size, int gap, int rows) {
+    const int base = size + 3;
+    const int fitting = rows > 0 ? kSafeBottom / rows : base + gap;
+    return clampi(base + gap, base, fitting > base ? fitting : base);
 }
 
 int textGlyphBytes(const char *text) {
@@ -422,84 +447,99 @@ struct HorizontalMetrics {
     int rows;
     int width;
     int widestCell;
+    int valueWidths[MetadataDisplay::FIELD_COUNT];
 };
+
+bool horizontalWrap(int rowWidth, int rowFields, int cellWidth, int available,
+                    const LayoutOptions &layout) {
+    return rowFields &&
+           ((layout.columns && rowFields >= layout.columns) ||
+            rowWidth + layout.fieldGap + cellWidth > available);
+}
 
 HorizontalMetrics horizontalMetrics(const MetadataDisplayLiveCfg &cfg,
                                     const CreationStyle &style,
-                                    bool editing, int size) {
+                                    bool editing, int size, const Values &values,
+                                    const LayoutOptions &layout) {
     const u8 *labelOffsets = fieldLabelOffsets(cfg);
     const Values maximum = editorValues();
     const int available = kSafeRight - style.x;
     int rowWidth = 0;
-    int maxWidth = 0;
-    int widestCell = 0;
-    int rows = 0;
+    int rowFields = 0;
+    HorizontalMetrics metrics = {};
     char prefix[48], value[48];
 
     for (int field = 0; field < MetadataDisplay::FIELD_COUNT; field++) {
         if (!editing && !(cfg.fieldMask & fieldBit(field))) continue;
         snprintf(prefix, sizeof(prefix), "%s: ",
                  kMetadataText + labelOffsets[field]);
-        formatValue(value, sizeof(value), field, fieldPrecision(field), maximum);
-        const int cellWidth = Menu::textWidth(prefix, size) +
-                              Menu::textWidth(value, size);
-        if (cellWidth > widestCell) widestCell = cellWidth;
-        const int nextWidth = rowWidth ? rowWidth + kHorizontalGap + cellWidth
-                                       : cellWidth;
-        if (rowWidth && nextWidth > available) {
-            if (rowWidth > maxWidth) maxWidth = rowWidth;
-            rows++;
-            rowWidth = cellWidth;
-        } else {
-            rowWidth = nextWidth;
+        formatValue(value, sizeof(value), field, fieldPrecision(field),
+                    editing ? maximum : values);
+        int valueWidth = Menu::textWidth(value, size);
+        if (!layout.compact && !editing) {
+            formatValue(value, sizeof(value), field, fieldPrecision(field), maximum);
+            const int reserved = Menu::textWidth(value, size);
+            if (reserved > valueWidth) valueWidth = reserved;
         }
+        metrics.valueWidths[field] = valueWidth;
+        const int cellWidth = Menu::textWidth(prefix, size) + valueWidth;
+        if (cellWidth > metrics.widestCell) metrics.widestCell = cellWidth;
+        if (horizontalWrap(rowWidth, rowFields, cellWidth, available, layout)) {
+            if (rowWidth > metrics.width) metrics.width = rowWidth;
+            metrics.rows++;
+            rowWidth = 0;
+            rowFields = 0;
+        }
+        rowWidth += (rowFields ? layout.fieldGap : 0) + cellWidth;
+        rowFields++;
     }
-    if (rowWidth || rows == 0) {
-        if (rowWidth > maxWidth) maxWidth = rowWidth;
-        rows++;
+    if (rowFields || metrics.rows == 0) {
+        if (rowWidth > metrics.width) metrics.width = rowWidth;
+        metrics.rows++;
     }
-    return HorizontalMetrics{rows, maxWidth, widestCell};
+    return metrics;
 }
 
 void drawStandardHorizontal(Menu *menu, const MetadataDisplayLiveCfg &cfg,
                             const CreationStyle &style,
                             const u8 (*textRgb)[3], const Values &values,
                             bool editing, int size, int lineH,
-                            u16 selectedSlot) {
+                            u16 selectedSlot, const LayoutOptions &layout) {
     const u8 *labelOffsets = fieldLabelOffsets(cfg);
-    const Values maximum = editorValues();
-    const HorizontalMetrics metrics = horizontalMetrics(cfg, style, editing, size);
-    drawBackground(menu, style, metrics.width, metrics.rows * lineH);
+    CreationStyle placed = style;
+    HorizontalMetrics metrics = horizontalMetrics(cfg, placed, editing, size, values, layout);
+    const int maxX = clampi(kSafeRight - metrics.widestCell, 0, kSafeRight);
+    if (placed.x > maxX) {
+        placed.x = (u16)maxX;
+        metrics = horizontalMetrics(cfg, placed, editing, size, values, layout);
+    }
+    lineH = lineHeight(size, layout.rowGap, metrics.rows);
+    placed.y = (u16)clampi(placed.y, 0,
+                          clampi(kSafeBottom - metrics.rows * lineH, 0, kSafeBottom));
+    drawBackground(menu, placed, metrics.width, metrics.rows * lineH);
 
-    const int available = kSafeRight - style.x;
-    int x = style.x;
-    int y = style.y;
+    const int available = kSafeRight - placed.x;
+    int y = placed.y;
     int rowWidth = 0;
+    int rowFields = 0;
     u16 slot = 0;
-    char prefix[48], value[48], maximumValue[48];
+    char prefix[48], value[48];
 
     for (int field = 0; field < MetadataDisplay::FIELD_COUNT; field++) {
         const char *label = kMetadataText + labelOffsets[field];
         snprintf(prefix, sizeof(prefix), "%s: ", label);
         const u16 prefixSlots = (u16)Creation::glyphCount(prefix);
         const u16 valueSlots = kMaximumValueSlots[field];
-        formatValue(maximumValue, sizeof(maximumValue), field,
-                    fieldPrecision(field), maximum);
         const int prefixWidth = Menu::textWidth(prefix, size);
-        const int maximumWidth = Menu::textWidth(maximumValue, size);
-        const int cellWidth = prefixWidth + maximumWidth;
+        const int cellWidth = prefixWidth + metrics.valueWidths[field];
 
         if (editing || (cfg.fieldMask & fieldBit(field))) {
-            const int nextWidth = rowWidth
-                                      ? rowWidth + kHorizontalGap + cellWidth
-                                      : cellWidth;
-            if (rowWidth && nextWidth > available) {
-                x = style.x;
+            if (horizontalWrap(rowWidth, rowFields, cellWidth, available, layout)) {
                 y += lineH;
                 rowWidth = 0;
-            } else if (rowWidth) {
-                x += kHorizontalGap;
+                rowFields = 0;
             }
+            const int x = placed.x + rowWidth + (rowFields ? layout.fieldGap : 0);
 
             formatValue(value, sizeof(value), field, fieldPrecision(field), values);
             const u16 valueCount = (u16)Creation::glyphCount(value);
@@ -507,16 +547,16 @@ void drawStandardHorizontal(Menu *menu, const MetadataDisplayLiveCfg &cfg,
                                       ? slot + prefixSlots + valueSlots - valueCount
                                       : slot + prefixSlots;
             const int valueWidth = Menu::textWidth(value, size);
-            Creation::drawTextLine(menu, style, textRgb,
+            Creation::drawTextLine(menu, placed, textRgb,
                                    SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
                                    prefix, x, y, size, slot, true,
                                    selectedSlot);
             Creation::drawTextLine(
-                menu, style, textRgb, SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
-                value, x + prefixWidth + maximumWidth - valueWidth,
+                menu, placed, textRgb, SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
+                value, x + prefixWidth + metrics.valueWidths[field] - valueWidth,
                 y, size, valueSlot, true, selectedSlot);
-            x += cellWidth;
-            rowWidth += (rowWidth ? kHorizontalGap : 0) + cellWidth;
+            rowWidth += (rowFields ? layout.fieldGap : 0) + cellWidth;
+            rowFields++;
         }
         slot = (u16)(slot + prefixSlots + valueSlots);
     }
@@ -545,6 +585,10 @@ void MetadataDisplay::resetDefaults() {
     Creation::fillWhite(mTextRgb, SUSAMUNE_METADATA_STYLE_TEXT_SLOTS);
     mFormat            = kDefaultFormat;
     mFormatLength      = sizeof(kDefaultFormat) - 1;
+    mFieldGap = 12;
+    mRowGap = 0;
+    mColumns = 0;
+    mCompact = false;
 
     mEditor.reset();
     mEditorPreview[0] = '\0';
@@ -607,6 +651,10 @@ void MetadataDisplay::adoptStyle(const volatile SusamuneMetadataStyleCfg *src) {
     if (p & SUSAMUNE_METADATA_STYLE_BRIGHTNESS)
         mStyle.textBrightness = src->textBrightness;
     if (p & SUSAMUNE_METADATA_STYLE_PADDING) mStyle.padding = src->padding;
+    if (p & SUSAMUNE_METADATA_STYLE_FIELD_GAP) mFieldGap = src->reserved0[0];
+    if (p & SUSAMUNE_METADATA_STYLE_ROW_GAP) mRowGap = src->reserved0[1];
+    if (p & SUSAMUNE_METADATA_STYLE_COLUMNS) mColumns = src->reserved0[2];
+    if (p & SUSAMUNE_METADATA_STYLE_COMPACT) mCompact = src->reserved0[3] != 0;
 
     for (int i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++) {
         if (p & SUSAMUNE_METADATA_STYLE_TEXT_R) mTextRgb[i][0] = src->textR;
@@ -659,6 +707,10 @@ void MetadataDisplay::stageStyleInto(volatile SusamuneMetadataStyleCfg *dst) con
     dst->textBrightness = mStyle.textBrightness;
     dst->padding        = mStyle.padding;
     for (u32 i = 0; i < sizeof(dst->reserved0); i++) dst->reserved0[i] = 0;
+    dst->reserved0[0] = mFieldGap;
+    dst->reserved0[1] = mRowGap;
+    dst->reserved0[2] = mColumns;
+    dst->reserved0[3] = mCompact;
     for (u32 i = 0; i < sizeof(dst->slotPresent); i++) dst->slotPresent[i] = 0;
     for (int i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++) {
         const bool override = mTextRgb[i][0] != mTextRgb[base][0] ||
@@ -683,10 +735,18 @@ void MetadataDisplay::resetLayout() {
     mStyle.scale = defaults.scale;
     mStyle.bgA   = defaults.bgA;
     gSettings.set(SETTING_METADATA_HORIZONTAL, 0);
+    mFieldGap = 12;
+    mRowGap = 0;
+    mColumns = 0;
+    mCompact = false;
     markDirty();
 }
 
 void MetadataDisplay::clampLayout() {
+    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact);
+    mFieldGap = (u8)layout.fieldGap;
+    mRowGap = (u8)layout.rowGap;
+    mColumns = (u8)layout.columns;
     mStyle.scale          = (u8)clampi(mStyle.scale, 50, 200);
     mStyle.textBrightness = (u8)clampi(mStyle.textBrightness, 25, 200);
     if (mStyle.padding != 0xff)
@@ -699,13 +759,13 @@ void MetadataDisplay::clampLayout() {
     if (mCfg.labelMode != SUSAMUNE_METADATA_LABEL_CUSTOM &&
         gSettings.getBool(SETTING_METADATA_HORIZONTAL)) {
         HorizontalMetrics metrics =
-            horizontalMetrics(mCfg, mStyle, editing(), size);
+            horizontalMetrics(mCfg, mStyle, editing(), size, editorValues(), layout);
         int maxX = kSafeRight - metrics.widestCell;
         if (maxX < 0) maxX = 0;
         mStyle.x = (u16)clampi(mStyle.x, 0, maxX);
-        lines = horizontalMetrics(mCfg, mStyle, editing(), size).rows;
+        lines = horizontalMetrics(mCfg, mStyle, editing(), size, editorValues(), layout).rows;
     }
-    int h     = lines * (size + 3);
+    int h     = lines * lineHeight(size, layout.rowGap, lines);
     int maxY  = kSafeBottom - h;
     if (maxY < 0) maxY = 0;
     mStyle.y = (u16)clampi(mStyle.y, 0, maxY);
@@ -721,12 +781,20 @@ void MetadataDisplay::syncLegacyStyle() {
 
 const char *MetadataDisplay::menuRowName(int row) {
     if (row < 0 || row >= menuRowCount()) return "";
+    if (row == FIELD_COUNT + 5) return "Field gap";
+    if (row == FIELD_COUNT + 6) return "Row gap";
+    if (row == FIELD_COUNT + 7) return "Fields per row";
+    if (row == FIELD_COUNT + 8) return "Value widths";
     if (row == 2 + FIELD_COUNT) return "Layout";
     if (row > 2 + FIELD_COUNT) row--;
     return kMetadataText + kTextOffsets[FIELD_COUNT + row];
 }
 
 const char *MetadataDisplay::menuRowValue(int row) const {
+    if (row == FIELD_COUNT + 5) return numberLabel(mFieldGap);
+    if (row == FIELD_COUNT + 6) return numberLabel(mRowGap);
+    if (row == FIELD_COUNT + 7) return mColumns ? numberLabel(mColumns) : "Auto";
+    if (row == FIELD_COUNT + 8) return mCompact ? "Compact" : "Stable";
     if (row == 0) return onOffText(mCfg.startVisible != 0);
     if (row == 1) return labelModeText(mCfg.labelMode);
     if (row >= 2 && row < 2 + FIELD_COUNT)
@@ -758,6 +826,13 @@ void MetadataDisplay::adjustMenuRow(int row, int dir) {
         beginEditor();
     } else if (row == 4 + FIELD_COUNT) {
         resetLayout();
+    } else if (row >= FIELD_COUNT + 5 && row < menuRowCount()) {
+        const int step = dir > 0 ? 1 : -1;
+        if (row == FIELD_COUNT + 5) mFieldGap = (u8)((mFieldGap + step + 33) % 33);
+        if (row == FIELD_COUNT + 6) mRowGap = (u8)((mRowGap + step + 17) % 17);
+        if (row == FIELD_COUNT + 7) mColumns = (u8)((mColumns + step + 12) % 12);
+        if (row == FIELD_COUNT + 8) mCompact = !mCompact;
+        markDirty();
     }
 }
 
@@ -835,8 +910,11 @@ void MetadataDisplay::draw(Menu *menu, bool force) const {
     const bool editor = editing();
     const Values maximum = editorValues();
     const Values v = editor ? maximum : readValues();
+    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact);
     int size  = textSize(mStyle);
-    int lineH = size + 3;
+    const int lines = editor && mCfg.labelMode != SUSAMUNE_METADATA_LABEL_CUSTOM
+                          ? FIELD_COUNT : enabledLineCount(mCfg, mFormat, mFormatLength);
+    int lineH = lineHeight(size, layout.rowGap, lines);
     const u16 selected = editor && mEditor.target()
                              ? mEditor.target() - 1 : 0xffff;
 
@@ -847,7 +925,7 @@ void MetadataDisplay::draw(Menu *menu, bool force) const {
     }
     if (gSettings.getBool(SETTING_METADATA_HORIZONTAL)) {
         drawStandardHorizontal(menu, mCfg, mStyle, mTextRgb, v, editor,
-                               size, lineH, selected);
+                               size, lineH, selected, layout);
     } else {
         drawStandard(menu, mCfg, mStyle, mTextRgb, v, editor,
                      size, lineH, selected);

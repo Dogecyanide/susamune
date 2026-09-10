@@ -63,9 +63,9 @@ class GhostStorageRefactorTests(unittest.TestCase):
         helper = _function(
             self.source, r"bool requestImportedRefresh\(u16 command\)"
         )
-        self.assertIn("if (!requestIdle()) return false;", helper)
-        self.assertIn("sImportedRefreshQueued = false;", helper)
-        self.assertIn("return beginImportedRefresh(command);", helper)
+        self.assertIn("if (busy()) return true;", helper)
+        self.assertIn("sRefreshQueued[1] = false;", helper)
+        self.assertIn("return beginRefresh(true, command);", helper)
 
     def test_all_load_wrappers_preserve_namespace_and_destination(self) -> None:
         expected = {
@@ -86,12 +86,15 @@ class GhostStorageRefactorTests(unittest.TestCase):
             self.source,
             r"bool loadTrack\(bool imported, int slot,\s*u8 destination\)",
         )
+        self.assertIn("copyIdentity(imported, slot, &identity)", helper)
         self.assertIn(
-            "imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile", helper
+            "requestIdentity(identity, SUSAMUNE_GHOST_CMD_LOAD, kLoading, destination)",
+            helper,
         )
-        self.assertIn("if (!requestAllowed(profile, slot, true))", helper)
-        self.assertIn("sPendingLoadDestination = destination;", helper)
-        self.assertRegex(helper, r"imported\s*\?\s*0\s*:\s*sCatalog\[slot\]\.generation")
+        request = _function(self.source, r"bool requestIdentity\(const Identity &identity,\s*"
+                            r"u16 command, const char \*status, u8 destination = LOAD_DESTINATION_RACE\)")
+        self.assertIn("sPendingLoadDestination = destination;", request)
+        self.assertIn("identity.generation", request)
 
     def test_catalog_access_and_names_share_one_validator(self) -> None:
         wrappers = {
@@ -134,9 +137,9 @@ class GhostStorageRefactorTests(unittest.TestCase):
             r"bool requestPersonalCommand\(int slot, u16 command,\s*"
             r"const char \*status\)",
         )
-        self.assertIn("requestAllowed(sProfile, slot, true)", helper)
+        self.assertIn("copyIdentity(false, slot, &identity)", helper)
         self.assertIn(
-            "beginRequest(command, sProfile, static_cast<u16>(slot), 0, 0, status)",
+            "requestIdentity(identity, command, status)",
             helper,
         )
 
@@ -263,7 +266,14 @@ class SavestateDebugTextTests(unittest.TestCase):
         self.assertIn("mText.mGradientTop    = color;", baseline)
         self.assertIn("mText.mGradientBottom = color;", baseline)
         self.assertIn("mText.draw(x, y);", baseline)
-        self.assertNotIn("mFontAscent", baseline)
+        japanese = re.search(
+            r"#if defined\(SUSAMUNE_VERSION_JP\)(.*?)#endif", baseline, re.S
+        ).group(1)
+        self.assertRegex(japanese, r"JapaneseUi::draw\(s, x, y - mFontAscent \* sizeY / mFontHeight,")
+        self.assertIn("sizeX, sizeY, color, mOrtho)", japanese)
+        retail = re.sub(r"#if defined\(SUSAMUNE_VERSION_JP\).*?#endif", "", baseline, flags=re.S)
+        self.assertNotIn("mFontAscent", retail)
+        self.assertIn("mText.draw(x, y);", retail)
         self.assertRegex(
             self.menu,
             r"#if ENABLE_SAVESTATE_DBG\s+"
@@ -271,12 +281,12 @@ class SavestateDebugTextTests(unittest.TestCase):
         )
 
     def test_snapshot_format_and_sequence_gate_are_current(self) -> None:
-        self.assertIn("const u32 kSnapshotVersion = 13u;", self.savestate)
+        self.assertIn("const u32 kSnapshotVersion = 17u;", self.savestate)
         process = _function(
             self.savestate,
             r"void SavestateManager::processPendingLoad\(\)",
         )
         self.assertLess(process.index("mLoadPending = false;"),
-                        process.index("loadState();"))
+                        process.index("loadSlot(sPendingSlot, sPendingGeneration)"))
 if __name__ == "__main__":
     unittest.main()

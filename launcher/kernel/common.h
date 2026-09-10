@@ -3,6 +3,17 @@
 
 #include "ff.h"
 
+extern const u32 SusamuneCrcNibbleTable[16];
+
+static inline u32 SusamuneCrcByte(u32 crc, u8 byte)
+{
+	crc ^= byte;
+	crc = (crc >> 4) ^ SusamuneCrcNibbleTable[crc & 15u];
+	return (crc >> 4) ^ SusamuneCrcNibbleTable[crc & 15u];
+}
+
+u32 SusamuneCrc32(const void *data, u32 size);
+
 #define SEEK_CUR    1
 #define SEEK_END    2
 #define SEEK_SET    0

@@ -1,3 +1,4 @@
+#include "susamune/ghost.hxx"
 #include "susamune/split_stats.hxx"
 
 #include <Dolphin/mem.h>
@@ -54,55 +55,65 @@ struct RouteDesc {
 };
 
 const RouteDesc kRoutes[SplitStats::ROUTE_COUNT] = {
-    {0, 5, 3},       {4, 121, 2},     {7, 85, 4},
-    {12, 13, 3},     {16, 14, 4},     {21, 16, 2},
-    {24, 17, 3},     {28, 20, 3},     {32, 21, 3},
-    {36, 22, 1},     {38, 90, 0},     {39, 110, 3},
-    {43, 111, 1},    {45, 1, 5},      {51, 2, 3},
-    {55, 3, 1},      {57, 112, 4},    {62, 6, 4},
-    {67, 7, 4},      {72, 8, 2},      {75, 10, 1},
-    {77, 113, 4},    {82, 34, 1},     {84, 78, 3},
-    {88, 79, 1},     {90, 80, 2},     {93, 81, 2},
-    {96, 82, 5},     {102, 83, 3},    {106, 86, 1},
-    {108, 115, 1},   {110, 38, 0},    {111, 39, 2},
-    {114, 40, 1},    {116, 42, 3},    {120, 43, 2},
-    {123, 46, 3},    {127, 47, 1},    {129, 49, 1},
-    {131, 52, 2},    {134, 53, 4},    {139, 54, 2},
-    {142, 56, 2},    {145, 57, 5},    {151, 58, 2},
-    {154, 60, 5},    {160, 61, 2},    {163, 62, 2},
-    {166, 65, 4},    {171, 66, 3},    {175, 67, 2},
-    {178, 68, 4},    {183, 69, 3},    {187, 70, 1},
-    {189, 71, 4},    {194, 72, 2},    {197, 74, 1},
-    {199, 92, 3},    {203, 93, 4},    {208, 15, 3},
-    {212, 18, 1},    {214, 0, 0},     {215, 4, 0},
-    {216, 9, 0},     {217, 11, 0},    {218, 12, 0},
-    {219, 19, 0},    {220, 23, 0},    {221, 24, 0},
-    {222, 25, 0},    {223, 26, 0},    {224, 27, 0},
-    {225, 28, 0},    {226, 29, 0},    {227, 30, 0},
-    {228, 31, 0},    {229, 32, 0},    {230, 33, 0},
-    {231, 35, 0},    {232, 36, 0},    {233, 37, 0},
-    {234, 41, 0},    {235, 44, 0},    {236, 45, 0},
-    {237, 48, 0},    {238, 50, 0},    {239, 51, 0},
-    {240, 55, 0},    {241, 59, 0},    {242, 63, 0},
-    {243, 64, 0},    {244, 73, 0},    {245, 75, 0},
-    {246, 76, 0},    {247, 77, 0},    {248, 84, 0},
-    {249, 87, 0},    {250, 88, 0},    {251, 89, 0},
-    {252, 91, 0},    {253, 94, 0},    {254, 95, 0},
-    {255, 96, 0},    {256, 97, 0},    {257, 98, 0},
-    {258, 99, 0},    {259, 100, 0},   {260, 101, 0},
-    {261, 102, 0},   {262, 103, 0},   {263, 104, 0},
-    {264, 105, 0},   {265, 106, 0},   {266, 107, 0},
-    {267, 108, 0},   {268, 109, 0},   {269, 114, 0},
-    {270, 116, 0},   {271, 117, 0},   {272, 118, 0},
-    {273, 119, 0},   {274, 120, 0},   {275, 122, 0},
-    {276, 123, 0},   {277, 124, 0},   {278, 125, 0},
-    {279, 126, 0},   {280, 127, 0},   {281, 128, 0},
-    {282, 129, 0},   {283, 130, 0},   {284, 131, 0},
+    {0, 5, 3}, {4, 121, 2}, {7, 85, 4},
+    {12, 13, 3}, {16, 14, 4}, {21, 16, 2},
+    {24, 17, 3}, {28, 20, 3}, {32, 21, 3},
+    {36, 22, 1}, {38, 90, 4}, {43, 110, 3},
+    {47, 111, 1}, {49, 1, 5}, {55, 2, 3},
+    {59, 3, 1}, {61, 112, 3}, {65, 6, 4},
+    {70, 7, 4}, {75, 8, 2}, {78, 10, 1},
+    {80, 113, 3}, {84, 34, 1}, {86, 78, 3},
+    {90, 79, 1}, {92, 80, 2}, {95, 81, 2},
+    {98, 82, 5}, {104, 83, 3}, {108, 86, 1},
+    {110, 115, 1}, {112, 38, 5}, {118, 39, 2},
+    {121, 40, 1}, {123, 42, 3}, {127, 43, 2},
+    {130, 46, 3}, {134, 47, 1}, {136, 49, 1},
+    {138, 52, 2}, {141, 53, 4}, {146, 54, 2},
+    {149, 56, 2}, {152, 57, 5}, {158, 58, 2},
+    {161, 60, 5}, {167, 61, 2}, {170, 62, 2},
+    {173, 65, 4}, {178, 66, 3}, {182, 67, 2},
+    {185, 68, 4}, {190, 69, 3}, {194, 70, 1},
+    {196, 71, 4}, {201, 72, 2}, {204, 74, 1},
+    {206, 92, 3}, {210, 93, 4}, {215, 15, 3},
+    {219, 18, 1}, {221, 0, 4}, {226, 4, 3},
+    {230, 9, 3}, {234, 11, 3}, {238, 12, 5},
+    {244, 19, 4}, {249, 23, 1}, {251, 24, 5},
+    {257, 25, 4}, {262, 26, 2}, {265, 27, 3},
+    {269, 28, 3}, {273, 29, 3}, {277, 30, 5},
+    {283, 31, 3}, {287, 32, 1}, {289, 33, 3},
+    {293, 35, 0}, {294, 36, 0}, {295, 37, 5},
+    {301, 41, 3}, {305, 44, 0}, {306, 45, 3},
+    {310, 48, 4}, {315, 50, 4}, {320, 51, 5},
+    {326, 55, 5}, {332, 59, 3}, {336, 63, 4},
+    {341, 64, 5}, {347, 73, 5}, {353, 75, 2},
+    {356, 76, 2}, {359, 77, 5}, {365, 84, 4},
+    {370, 87, 4}, {375, 88, 1}, {377, 89, 5},
+    {383, 91, 4}, {388, 94, 0}, {389, 95, 3},
+    {393, 96, 0}, {394, 97, 4}, {399, 98, 4},
+    {404, 99, 1}, {406, 100, 0}, {407, 101, 0},
+    {408, 102, 1}, {410, 103, 2}, {413, 104, 0},
+    {414, 105, 2}, {417, 106, 0}, {418, 107, 0},
+    {419, 108, 1}, {421, 109, 1}, {423, 114, 0},
+    {424, 116, 0}, {425, 117, 0}, {426, 118, 1},
+    {428, 119, 0}, {429, 120, 0}, {430, 122, 4},
+    {435, 123, 4}, {440, 124, 6}, {447, 125, 5},
+    {453, 126, 4}, {458, 127, 6}, {465, 128, 7},
+    {473, 129, 6}, {480, 130, 7}, {488, 131, 6},
 };
 
+struct RegionPayload {
+    SusamuneSplitRouteStats routeStats[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT];
+    unsigned int playedQf[SUSAMUNE_SPLIT_STATS_ROUTE_COUNT];
+    unsigned int bestQf[SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT];
+    unsigned int pbIdentityQf[SUSAMUNE_SPLIT_STATS_PROFILE_COUNT][SUSAMUNE_SPLIT_STATS_ROUTE_COUNT];
+    unsigned int pbQf[SUSAMUNE_SPLIT_STATS_PROFILE_COUNT][SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT];
+};
+static_assert(sizeof(RegionPayload) * SUSAMUNE_SPLIT_STATS_REGION_COUNT == sizeof(SusamuneSplitStatsPayload),
+              "regional stats cache must include every payload field");
+
 struct Runtime {
-    SusamuneSplitStatsPayload payload;
-    u32 attemptQf[6];
+    RegionPayload payload;
+    u32 attemptQf[SplitStats::Summary::MAX_SEGMENTS];
     u32 attemptPlayedQf;
     s32 lastPlayedClockQf;
     u32 lastAttemptSerial;
@@ -125,13 +136,13 @@ struct Runtime {
 
 Runtime sStateStorage;
 Runtime *const sState = &sStateStorage;
-static_assert(sizeof(Runtime) == 0x74A8,
+static_assert(sizeof(Runtime) == 0x3790,
               "split runtime layout drifted");
 static_assert(SplitStats::ROUTE_COUNT == SUSAMUNE_SPLIT_STATS_ROUTE_COUNT,
               "split route schema drifted");
 static_assert(sizeof(RouteDesc) == 4, "split route descriptor drifted");
 // Bianco 2 now occupies its former reserved FMV slot, so later offsets stay put.
-static_assert(285 == SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT,
+static_assert(495 == SUSAMUNE_SPLIT_STATS_SEGMENT_COUNT,
               "split segment layout changed");
 static_assert(sizeof(kFreezeFrames) == 6,
               "split overlay duration choices changed");
@@ -255,7 +266,7 @@ void commitAttemptTime(s32 exactQf = -1) {
     }
     sampleAttemptTime(exactQf);
     unsigned int &played =
-        sState->payload.playedQf[kRegion][sState->activeRoute];
+        sState->payload.playedQf[sState->activeRoute];
     played = (unsigned int)saturatedAdd((u32)played,
                                        sState->attemptPlayedQf);
     sState->attemptPlayedQf = 0;
@@ -287,12 +298,12 @@ void commitAttemptGolds() {
     }
 
     SusamuneSplitRouteStats &stats =
-        sState->payload.routeStats[kRegion][sState->activeRoute];
+        sState->payload.routeStats[sState->activeRoute];
     const RouteDesc &route = kRoutes[sState->activeRoute];
     for (u8 local = 0; local < segmentCount(route); local++) {
         if (!(sState->candidateGoldMask & (1u << local))) continue;
         const u16 segment = route.firstSegment + local;
-        sState->payload.bestQf[kRegion][segment] = sState->attemptQf[local];
+        sState->payload.bestQf[segment] = sState->attemptQf[local];
         stats.golds = saturatedIncrement(stats.golds);
     }
     sState->candidateGoldMask = 0;
@@ -328,6 +339,7 @@ void formatDelta(s32 deltaQf, char *out, u32 size) {
 
 void armOverlay(OverlayColor color, bool havePb, s32 deltaQf,
                 s32 absoluteQf) {
+    if (!gSettings.get(SETTING_SPLIT_COMPARISON)) { clearOverlay(); return; }
     u8 choice = gSettings.get(SETTING_TIMER_FREEZE_DURATION);
     if (choice >= sizeof(kFreezeFrames)) choice = 0;
     const u8 frames = kFreezeFrames[choice];
@@ -367,6 +379,7 @@ bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
         return false;
     }
 
+    Ghost::captureSplit(routeId, local, absoluteQf);
     const u16 segment = kRoutes[routeId].firstSegment + local;
     const u32 duration = (u32)(absoluteQf - sState->lastSplitQf);
     sState->attemptQf[local] = duration;
@@ -374,30 +387,31 @@ bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
     sState->expectedEvent++;
 
     OverlayColor color = OVERLAY_WHITE;
-    const u32 best = sState->payload.bestQf[kRegion][segment];
+    const u32 best = sState->payload.bestQf[segment];
     if ((sState->flags & FLAG_ATTEMPT_ELIGIBLE) &&
         (best == SUSAMUNE_SPLIT_STATS_QF_UNSET || duration < best)) {
         sState->candidateGoldMask |= (u8)(1u << local);
         color = OVERLAY_GOLD;
     }
 
-    bool havePb = sState->activeProfile <
-                          SUSAMUNE_SPLIT_STATS_PROFILE_COUNT &&
-                      sState->activeProfile == ILing::pbProfile();
+    const u8 comparison = gSettings.get(SETTING_SPLIT_COMPARISON);
+    bool havePb = comparison == 2 || (comparison == 1 &&
+        sState->activeProfile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT &&
+        sState->activeProfile == ILing::pbProfile());
     s32 delta = 0;
     u32 pbElapsed = 0;
     for (u8 prior = 0; havePb && prior <= local; prior++) {
-        const u32 pb = sState->payload.pbQf[kRegion][sState->activeProfile]
-                                               [kRoutes[routeId].firstSegment +
-                                                prior];
-        if (pb == SUSAMUNE_SPLIT_STATS_QF_UNSET) {
-            havePb = false;
-        } else {
-            pbElapsed += pb;
-        }
+        const u16 index = kRoutes[routeId].firstSegment + prior;
+        const u32 pb = comparison == 2 ? sState->payload.bestQf[index] :
+            sState->payload.pbQf[sState->activeProfile][index];
+        if (pb == SUSAMUNE_SPLIT_STATS_QF_UNSET) havePb = false;
+        else pbElapsed += pb;
+    }
+    if (comparison == 3) {
+        havePb = Ghost::comparisonDelta(routeId, local, absoluteQf, &delta);
     }
     if (havePb) {
-        delta = absoluteQf - (s32)pbElapsed;
+        if (comparison != 3) delta = absoluteQf - (s32)pbElapsed;
         if (color != OVERLAY_GOLD) {
             color = delta < 0 ? OVERLAY_GREEN
                               : delta > 0 ? OVERLAY_RED : OVERLAY_WHITE;
@@ -427,6 +441,23 @@ bool validMailbox(const volatile SusamuneSplitStatsCfg *stats) {
 }
 
 #if !IS_EMULATOR
+void readRegionPayload(RegionPayload &out, const SusamuneSplitStatsPayload &in) {
+    memcpy(out.routeStats, in.routeStats[kRegion], sizeof(out.routeStats));
+    memcpy(out.playedQf, in.playedQf[kRegion], sizeof(out.playedQf));
+    memcpy(out.bestQf, in.bestQf[kRegion], sizeof(out.bestQf));
+    memcpy(out.pbIdentityQf, in.pbIdentityQf[kRegion], sizeof(out.pbIdentityQf));
+    memcpy(out.pbQf, in.pbQf[kRegion], sizeof(out.pbQf));
+}
+
+void publishRegionPayload(SusamuneSplitStatsPayload &out, const RegionPayload &in) {
+    // The other regions remain in the mailbox; ARM only reads payload after boot.
+    memcpy(out.routeStats[kRegion], in.routeStats, sizeof(in.routeStats));
+    memcpy(out.playedQf[kRegion], in.playedQf, sizeof(in.playedQf));
+    memcpy(out.bestQf[kRegion], in.bestQf, sizeof(in.bestQf));
+    memcpy(out.pbIdentityQf[kRegion], in.pbIdentityQf, sizeof(in.pbIdentityQf));
+    memcpy(out.pbQf[kRegion], in.pbQf, sizeof(in.pbQf));
+}
+
 void beginSave() {
     volatile SusamuneSplitStatsCfg *stats = SUSAMUNE_SPLIT_STATS_PPC_PTR;
     stats->magic = SUSAMUNE_SPLIT_STATS_MAGIC;
@@ -439,7 +470,7 @@ void beginSave() {
     stats->payloadBytes = sizeof(stats->payload);
     stats->schemaHash = SUSAMUNE_SPLIT_STATS_SCHEMA_HASH;
     stats->flags = SUSAMUNE_SPLIT_STATS_FLAG_WRITABLE;
-    memcpy((void *)&stats->payload, &sState->payload, sizeof(stats->payload));
+    publishRegionPayload(*(SusamuneSplitStatsPayload *)&stats->payload, sState->payload);
     memset((void *)stats->reserved, 0, sizeof(stats->reserved));
     memset((void *)stats->tailPad, 0, sizeof(stats->tailPad));
     DCStoreRange((void *)&stats->payload,
@@ -493,15 +524,14 @@ void init() {
     DCInvalidateRange((void *)cfg, 32);
     if (cfg->magic != SUSAMUNE_CFG_MAGIC ||
         cfg->version != SUSAMUNE_CFG_VERSION ||
-        !(cfg->flags & SUSAMUNE_CFG_FLAG_SPLIT_STATS)) {
+        !(cfg->flags & SUSAMUNE_CFG_FLAG_SPLIT_STATS_V9)) {
         return;
     }
 
     volatile SusamuneSplitStatsCfg *stats = SUSAMUNE_SPLIT_STATS_PPC_PTR;
     DCInvalidateRange((void *)stats, sizeof(*stats));
     if (!validMailbox(stats)) return;
-    memcpy(&sState->payload, (const void *)&stats->payload,
-           sizeof(sState->payload));
+    readRegionPayload(sState->payload, *(const SusamuneSplitStatsPayload *)&stats->payload);
     sState->saveSeq = stats->saveSeq;
     sState->flags |= FLAG_PERSISTENT;
     if (stats->flags & SUSAMUNE_SPLIT_STATS_FLAG_WRITABLE)
@@ -570,7 +600,7 @@ void onILAttemptStarted(int entry, bool eligible) {
     beginAttemptTime();
     if (!duplicate) {
         SusamuneSplitRouteStats &stats =
-            sState->payload.routeStats[kRegion][route];
+            sState->payload.routeStats[route];
         stats.attempts = saturatedIncrement(stats.attempts);
         sState->lastAttemptSerial = serial;
         sState->lastCountedRoute = (u8)route;
@@ -600,7 +630,7 @@ void onILResult(int entry, s32 qf) {
         captureSegment(route, desc.checkpointCount, qf);
 
     SusamuneSplitRouteStats &stats =
-        sState->payload.routeStats[kRegion][route];
+        sState->payload.routeStats[route];
     // A missing start hook must not manufacture an attempt or make an invalid
     // finishes>attempts journal. Normal completions always take this branch.
     if (stats.finishes < stats.attempts)
@@ -612,7 +642,7 @@ void onILResult(int entry, s32 qf) {
         (sState->flags & FLAG_ATTEMPT_ELIGIBLE)) {
         const bool complete = sState->expectedEvent == segmentCount(desc);
         unsigned int &identity =
-            sState->payload.pbIdentityQf[kRegion][sState->activeProfile]
+            sState->payload.pbIdentityQf[sState->activeProfile]
                                              [route];
         u32 completedPb = (u32)qf;
         if (desc.checkpointCount == 0) {
@@ -626,7 +656,7 @@ void onILResult(int entry, s32 qf) {
             identity = completedPb;
             for (u8 local = 0; local < segmentCount(desc); local++) {
                 const u16 segment = desc.firstSegment + local;
-                sState->payload.pbQf[kRegion][sState->activeProfile][segment] =
+                sState->payload.pbQf[sState->activeProfile][segment] =
                     desc.checkpointCount == 0 ? completedPb
                                               : sState->attemptQf[local];
             }
@@ -643,10 +673,10 @@ void onPBDeleted(int entry, int profile) {
     }
     const u8 route = (u8)routeIndex;
     const RouteDesc &desc = kRoutes[route];
-    sState->payload.pbIdentityQf[kRegion][profile][route] =
+    sState->payload.pbIdentityQf[profile][route] =
         SUSAMUNE_SPLIT_STATS_QF_UNSET;
     for (u8 local = 0; local < segmentCount(desc); local++) {
-        sState->payload.pbQf[kRegion][profile][desc.firstSegment + local] =
+        sState->payload.pbQf[profile][desc.firstSegment + local] =
             SUSAMUNE_SPLIT_STATS_QF_UNSET;
     }
     markDirty(true);
@@ -681,12 +711,12 @@ bool summary(int entry, Summary *out) {
     if (routeIndex < 0 || !out) return false;
     const u8 route = (u8)routeIndex;
     const SusamuneSplitRouteStats &stats =
-        sState->payload.routeStats[kRegion][route];
+        sState->payload.routeStats[route];
     out->attempts = stats.attempts;
     out->finishes = stats.finishes;
     out->golds = stats.golds;
     out->playedQf = saturatedAdd(
-        sState->payload.playedQf[kRegion][route], pendingAttemptTime(route));
+        sState->payload.playedQf[route], pendingAttemptTime(route));
     const RouteDesc &desc = kRoutes[route];
     out->routeName = ILing::label(kRoutes[route].entry);
     out->segmentCount = segmentCount(desc);
@@ -696,9 +726,9 @@ bool summary(int entry, Summary *out) {
     bool havePb = profile >= 0 && profile < SUSAMUNE_SPLIT_STATS_PROFILE_COUNT;
     for (u8 local = 0; local < out->segmentCount; local++) {
         const u16 segment = desc.firstSegment + local;
-        const u32 best = sState->payload.bestQf[kRegion][segment];
+        const u32 best = sState->payload.bestQf[segment];
         u32 pb = havePb
-                     ? sState->payload.pbQf[kRegion][profile][segment]
+                     ? sState->payload.pbQf[profile][segment]
                      : SUSAMUNE_SPLIT_STATS_QF_UNSET;
         if (desc.checkpointCount == 0 &&
             pb == SUSAMUNE_SPLIT_STATS_QF_UNSET) {
@@ -733,12 +763,12 @@ DeleteGoldResult deleteGold(int entry, u8 localSegment) {
     const RouteDesc &desc = kRoutes[route];
     if (localSegment >= segmentCount(desc)) return DELETE_GOLD_INVALID;
     const u16 segment = desc.firstSegment + localSegment;
-    if (sState->payload.bestQf[kRegion][segment] ==
+    if (sState->payload.bestQf[segment] ==
         SUSAMUNE_SPLIT_STATS_QF_UNSET) {
         return DELETE_GOLD_NONE;
     }
 
-    sState->payload.bestQf[kRegion][segment] =
+    sState->payload.bestQf[segment] =
         SUSAMUNE_SPLIT_STATS_QF_UNSET;
     if ((sState->flags & FLAG_ATTEMPT_ACTIVE) &&
         sState->activeRoute == route) {

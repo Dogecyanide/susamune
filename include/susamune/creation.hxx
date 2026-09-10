@@ -34,6 +34,9 @@ public:
         CAP_PADDING    = 1 << 5,
         CAP_TEXT_COLOR = 1 << 6,
         CAP_ALL        = 0x7f,
+        CAP_OFFSET_POSITION = 1 << 7,
+        CAP_COLOR_MODE = 1 << 8,
+        CAP_RGB_ENABLES_CUSTOM = 1 << 9,
     };
 
     enum UpdateResult {
@@ -41,18 +44,23 @@ public:
         UPDATE_CHANGED   = 1,
         UPDATE_FINISHED  = 2,
         UPDATE_CANCELLED = 4,
+        UPDATE_COLOR_CHANGED = 8,
+        UPDATE_MODE_CHANGED = 16,
     };
 
     void reset();
     void begin(CreationStyle *style, u8 (*textRgb)[3], u8 (*backupRgb)[3],
                u16 textSlots, u16 targetSlots = 0,
                const char *targetNames = nullptr,
-               u8 capabilities = CAP_ALL);
+               u16 capabilities = CAP_ALL, u16 *customMask = nullptr);
     u8   update(TMarioGamePad *pad, const CreationStyle &defaults,
                 const u8 (*defaultRgb)[3], u16 defaultRgbSlots = 1);
     void draw(Menu *menu, const char *title, const char *preview) const;
     bool editing() const { return mEditing; }
     u16  target() const { return mTextTarget; }
+    void selectTarget(u16 target) {
+        if (mEditing && target <= mTargetSlots) mTextTarget = target;
+    }
 
 private:
     u32 repeatInput(TMarioGamePad *pad);
@@ -64,12 +72,14 @@ private:
     u8            (*mTextRgb)[3];
     u8            (*mBackupRgb)[3];
     const char     *mTargetNames;
+    u16           *mCustomMask;
     u32            mRepeatMask;
+    u16            mCustomMaskBackup;
     u16            mTextSlots;
     u16            mTargetSlots;
     u16            mTextTarget;
     u8             mOption;
-    u8             mCapabilities;
+    u16            mCapabilities;
     u8             mRepeatFrames;
     u8             mConfirm;
     bool           mEditing;

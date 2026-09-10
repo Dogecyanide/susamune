@@ -4,6 +4,8 @@
 
 #include "susamune/menu.hxx"
 #include "susamune/mem2_map.h"
+#include "susamune/practice_session.hxx"
+#include "susamune/qft_timer.hxx"
 
 namespace {
 
@@ -134,6 +136,24 @@ void QftDisplay::draw(Menu *menu, const char *text) const {
     sAnchorDrawn = true;
     Creation::drawTextBox(menu, mStyle, mTextRgb,
                           SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS, text, true);
+    if (PracticeSession::assisted() || gQFTTimer.practiceAssisted()) {
+        const int labelSize = clampi(size * 3 / 5, 10, 18);
+        const int labelWidth = Creation::textWidth("TAS", labelSize);
+        const int gap = 6;
+        const int pad = mStyle.padding == 0xff ? 0 : mStyle.padding;
+        int labelX = mStyle.x + sAnchorWidth + gap + pad;
+        int labelY = clampi(mStyle.y + size - labelSize, 0, 478 - labelSize);
+        if (labelX + labelWidth + pad + 2 <= 640) {
+            sAnchorWidth += gap + labelWidth + pad;
+        } else {
+            labelX = clampi((int)mStyle.x, 2, 638 - labelWidth);
+            labelY = clampi((int)mStyle.y - labelSize - 4, 0, 478 - labelSize);
+        }
+        menu->fillBox(labelX - 2, labelY, labelWidth + 4, labelSize + 2,
+                      JUtility::TColor(8, 17, 31, mStyle.textA));
+        menu->drawText("TAS", labelX, labelY, labelSize, labelSize,
+                       JUtility::TColor(130, 225, 255, mStyle.textA));
+    }
 }
 
 bool QftDisplay::hasAnchor(const char *text) const {

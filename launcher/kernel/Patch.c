@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "TRI.h"
 #include "Config.h"
 #include "global.h"
+#include "common.h"
 #include "patches.c"
 #include "DI.h"
 #include "ISO.h"
@@ -4085,55 +4086,16 @@ void DoPatches( char *Buffer, u32 Length, u32 DiscOffset )
 // The staged mod_<region>.bin, if the loader found one for this disc. PatchGame
 // can consume this immutable prefix again after an in-session reset; the asset
 // vault begins at the staged-file ceiling after PatchSusamune copies the code.
-static u32 SusamuneModFileSize(const struct SusamuneModHeader *hdr)
-{
-	return SUSAMUNE_MOD_HEADER_SIZE + hdr->codeSize + hdr->writeCount * 8;
-}
-
 static const struct SusamuneModHeader *SusamuneModStaged(void)
 {
-	const struct SusamuneModHeader *hdr = SUSAMUNE_MOD_PHYS_PTR;
-	u32 codeEnd;
-
-	sync_before_read((void*)hdr, SUSAMUNE_MOD_HEADER_SIZE);
-
-	if (hdr->magic != SUSAMUNE_MOD_MAGIC || hdr->version != SUSAMUNE_MOD_VERSION)
-		return NULL;
-	if (hdr->gameId != GAME_ID)
-		return NULL;
-	if (hdr->baseAddr != SUSAMUNE_MOD_BASE_FOR_GAME_ID(GAME_ID)
-			|| hdr->arenaReserve != SUSAMUNE_ARENA_RESERVE_SIZE
-			|| hdr->codeSize > hdr->memSize
-			|| hdr->memSize > SUSAMUNE_MOD_BLOB_MAX_SIZE)
-		return NULL;
-
-	// The file is untrusted input off an SD card: refuse anything whose parts
-	// do not add up, rather than memcpy'ing a bogus length into MEM1.
-	if (hdr->codeSize > SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE -
-			SUSAMUNE_MOD_HEADER_SIZE
-			|| (hdr->codeSize & 3) || (hdr->memSize & 3))
-		return NULL;
-	codeEnd = SUSAMUNE_MOD_HEADER_SIZE + hdr->codeSize;
-	if (hdr->writeCount > (SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE - codeEnd) / 8)
-		return NULL;
-	if (SusamuneModFileSize(hdr) > SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE)
-		return NULL;
-
-	return hdr;
-}
-
-static u32 SusamuneAssetCrc32(const void *data, u32 size)
-{
-	const u8 *bytes = (const u8*)data;
-	u32 crc = 0xFFFFFFFFu;
-	u32 i, bit;
-	for (i = 0; i < size; ++i)
-	{
-		crc ^= bytes[i];
-		for (bit = 0; bit < 8; ++bit)
-			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-	}
-	return crc ^ 0xFFFFFFFFu;
+    const struct SusamuneModHeader *hdr = SUSAMUNE_MOD_PHYS_PTR;
+    u32 size;
+    sync_before_read((void*)hdr, SUSAMUNE_MOD_HEADER_SIZE);
+    if (!SusamuneModHeaderValid(hdr, GAME_ID))
+        return NULL;
+    size = SusamuneModFileSize(hdr);
+    sync_before_read((void*)hdr, size);
+    return SusamuneModFileValid(hdr, GAME_ID, size) ? hdr : NULL;
 }
 
 static bool SusamuneShadowAssetValid(
@@ -4149,7 +4111,7 @@ static bool SusamuneShadowAssetValid(
 		asset->bmdSize == SUSAMUNE_GHOST_SHADOW_BMD_SIZE &&
 		asset->payloadChecksum == SUSAMUNE_GHOST_SHADOW_PAYLOAD_CRC32 &&
 		asset->reserved == 0 &&
-		SusamuneAssetCrc32(asset->payload,
+		SusamuneCrc32(asset->payload,
 			SUSAMUNE_GHOST_SHADOW_BMD_SIZE +
 			SUSAMUNE_GHOST_SHADOW_BTK_SIZE) ==
 			SUSAMUNE_GHOST_SHADOW_PAYLOAD_CRC32;
@@ -4168,7 +4130,7 @@ static bool SusamunePiantaAssetValid(
 		asset->bmdSize == SUSAMUNE_GHOST_PIANTA_BMD_SIZE &&
 		asset->payloadChecksum == SUSAMUNE_GHOST_PIANTA_PAYLOAD_CRC32 &&
 		asset->reserved == 0 &&
-		SusamuneAssetCrc32(asset->payload,
+		SusamuneCrc32(asset->payload,
 			SUSAMUNE_GHOST_PIANTA_BMD_SIZE) ==
 			SUSAMUNE_GHOST_PIANTA_PAYLOAD_CRC32;
 }
@@ -4360,9 +4322,14 @@ void PatchSusamune(void)
 	sync_before_read((void*)hdr, fileSize);
 
 	base = hdr->baseAddr & 0x7FFFFFFF;
-	memcpy((void*)base, code, hdr->codeSize);
-	memset((void*)(base + hdr->codeSize), 0, hdr->memSize - hdr->codeSize);
-	sync_after_write((void*)base, hdr->memSize);
+    for (i = 0; i < SUSAMUNE_MOD_SEGMENT_COUNT; ++i)
+    {
+        const struct SusamuneModSegment *seg = ((const struct SusamuneModSegment*)code) + i;
+        u32 dst = base + seg->offset;
+        memcpy((void*)dst, code + seg->payloadOffset, seg->initSize);
+        memset((void*)(dst + seg->initSize), 0, seg->memSize - seg->initSize);
+        sync_after_write((void*)dst, seg->memSize);
+    }
 
 	for (i = 0; i < hdr->writeCount; ++i)
 	{

@@ -44,6 +44,7 @@ set_property(CACHE SUSAMUNE_LOADER_OPTIMIZATION PROPERTY STRINGS "-O3" "-Os")
 # launcher build: the kernel then finds no staged blob at boot and runs the game
 # unmodified, which is exactly what stock Nintendont does.
 set(SUSAMUNE_MOD_BINS "" CACHE STRING "mod_<region>.bin files to package")
+set(SUSAMUNE_JAPANESE_UI "" CACHE FILEPATH "Japanese game catalogue/font asset")
 
 # --- Shared output locations, produced by one group and consumed by others -----
 set(_shared    "${CMAKE_BINARY_DIR}/shared")
@@ -134,6 +135,10 @@ if(LAUNCHER_OUTPUT_ZIP)
     if(LAUNCHER_CHANGELOG)
         set(_changelog_args --changelog "${LAUNCHER_CHANGELOG}")
     endif()
+    set(_japanese_ui_args "")
+    if(SUSAMUNE_JAPANESE_UI)
+        set(_japanese_ui_args --japanese-ui "${SUSAMUNE_JAPANESE_UI}")
+    endif()
     add_custom_target(package ALL
         COMMAND "${LAUNCHER_PYTHON}" "${LAUNCHER_SCRIPTS_DIR}/package_launcher.py"
             --boot-dol "${_boot_dol}"
@@ -143,6 +148,7 @@ if(LAUNCHER_OUTPUT_ZIP)
             ${_test_log_args}
             ${_pattern_test_log_args}
             ${_changelog_args}
+            ${_japanese_ui_args}
             ${_mod_bin_args}
         COMMENT "Packaging launcher HBC app zip"
         VERBATIM)

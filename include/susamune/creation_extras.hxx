@@ -36,6 +36,8 @@ public:
     void stageWallkickInto(volatile SusamuneWallkickStyleCfg *dst) const;
     void adoptMovement(const volatile SusamuneMovementStyleCfg *src);
     void stageMovementInto(volatile SusamuneMovementStyleCfg *dst) const;
+    void adoptNativeTimer(const volatile SusamuneNativeTimerStyleCfg *src);
+    void stageNativeTimerInto(volatile SusamuneNativeTimerStyleCfg *dst) const;
 
     void onStageSetup();
     void onSavestateLoaded();
@@ -43,6 +45,17 @@ public:
     void update();
     void draw(Menu *menu) const;
     void beginTimerCharacterEditor();
+    void beginNativeTimerEditor();
+    void beginHealthEditor(bool underwater);
+    bool beginHudDraw(J2DScreen *screen);
+    void endHudDraw();
+    const CreationStyle &nativeTimerStyle() const { return mNativeTimerStyle; }
+    bool nativeTimerColorsEnabled() const;
+    const u8 *nativeTimerRgb(const J2DPane *pane, bool *custom = nullptr) const;
+    bool editingNativeTimer() const {
+        return mEditMode == EDIT_NATIVE_TIMER && mEditor.editing();
+    }
+    u16 nativeTimerTarget() const { return mEditor.target(); }
     void beginRecentIlEditor();
     void beginSavestateFeedbackEditor();
     void beginWallkickEditor();
@@ -96,7 +109,6 @@ private:
     enum EditMode {
         EDIT_NONE,
         EDIT_COLOR,
-        EDIT_TIMER,
         EDIT_WORD_STYLE,
         EDIT_RECENT_ILS,
         EDIT_SAVESTATE_FEEDBACK,
@@ -107,6 +119,8 @@ private:
         EDIT_TOAST,
         EDIT_PB_BANNER,
         EDIT_STAGE_SESSION,
+        EDIT_NATIVE_TIMER,
+        EDIT_HEALTH,
     };
 
     static CreationStyle defaultWordStyle(int index);
@@ -133,6 +147,8 @@ private:
     CreationStyle mPbBannerStyle;
     CreationStyle mStageSessionStyle;
     CreationStyle mColorStyle;
+    CreationStyle mNativeTimerStyle;
+    u8 mHealthRgb[2][3];
     u8 mColors[SUSAMUNE_CREATION_COLOR_COUNT][3];
     u8 mDefaultColors[SUSAMUNE_CREATION_COLOR_COUNT][3];
     u8 mColorBackup[SUSAMUNE_CREATION_COLOR_COUNT][3];
@@ -170,6 +186,7 @@ private:
     u32 mColorPresent;
     u32 mColorPresentBeforeEdit;
     u32 mPreviewVisible;
+    u16 mNativeTimerCustomMask;
     u8 mWaterFillDefault[2][3];
     u8 mTimerLabelVisible;
     bool mKeyboard;

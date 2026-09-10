@@ -8,29 +8,27 @@
 // side owns a separate cache line; the request payload stays immutable until
 // ackSeq catches requestSeq.
 #define SUSAMUNE_GHOST_STORAGE_MAGIC        0x53475354u  // 'SGST'
-#define SUSAMUNE_GHOST_STORAGE_VERSION      3u
+#define SUSAMUNE_GHOST_STORAGE_VERSION      5u
 #define SUSAMUNE_GHOST_STORAGE_HEADER_SIZE \
     SUSAMUNE_GHOST_TRANSFER_MAILBOX_HEADER_SIZE
 #define SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE \
-    (SUSAMUNE_GHOST_SLOT_SIZE - SUSAMUNE_GHOST_STORAGE_HEADER_SIZE)
+    SUSAMUNE_GHOST_FILE_TRANSFER_SIZE
 #define SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE   0x4000u
 
-#if SUSAMUNE_GHOST_STORAGE_HEADER_SIZE + SUSAMUNE_GHOST_MAX_FILE_SIZE > SUSAMUNE_GHOST_SECONDARY_HEAP_OFFSET
-#error "ghost transfer payload overlaps the secondary model heap"
-#endif
-#if ((SUSAMUNE_GHOST_STORAGE_HEADER_SIZE + SUSAMUNE_GHOST_MAX_FILE_SIZE) & 31u) != 0
-#error "ghost transfer payload end must be cache-line aligned"
+#if SUSAMUNE_GHOST_MAX_FILE_SIZE > SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE
+#error "ghost file exceeds the dedicated transfer allocation"
 #endif
 
-// V3 keeps the 48-row wire catalog; only the first 45 personal rows are live.
-#define SUSAMUNE_GHOST_SLOT_COUNT SUSAMUNE_GHOST_PROFILE_MAX_ENTRIES
-#define SUSAMUNE_GHOST_CATALOG_MAX_ENTRIES SUSAMUNE_GHOST_SLOT_COUNT
+#define SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES 16u
+#define SUSAMUNE_GHOST_CATALOG_PAGE_MAGIC 0x53475047u
+#define SUSAMUNE_GHOST_CATALOG_PAGE_VERSION 1u
+#define SUSAMUNE_GHOST_SLOT_AUTO 0xFFFFFFFFu
 
-// Fixed-slot console files are a 64-byte big-endian commit envelope followed
+// Personal console files are a 64-byte big-endian commit envelope followed
 // by canonical SGHF bytes. The CRC covers the envelope with headerChecksum
 // zeroed; payloadChecksum covers the canonical file byte-for-byte.
 #define SUSAMUNE_GHOST_ENVELOPE_MAGIC     0x5347454Eu  // 'SGEN'
-#define SUSAMUNE_GHOST_ENVELOPE_VERSION   1u
+#define SUSAMUNE_GHOST_ENVELOPE_VERSION   2u
 #define SUSAMUNE_GHOST_ENVELOPE_SIZE      64u
 #define SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE 0x00000001u
 
@@ -47,6 +45,7 @@ struct SusamuneGhostStorageEnvelope {
     unsigned int durationQf;
     unsigned int payloadChecksum;
     unsigned int headerChecksum;
+    // V2 stores the full u32 slot in reserved[0]; V1 leaves all six zero.
     unsigned int reserved[6];
 };
 
@@ -57,11 +56,10 @@ struct SusamuneGhostStorageEnvelope {
 #define SUSAMUNE_GHOST_CMD_LIST   4u
 #define SUSAMUNE_GHOST_CMD_EXPORT 5u
 #define SUSAMUNE_GHOST_CMD_IMPORT_SCAN 6u
-// Source compatibility for the Gate 2 fixed-inbox call sites. V3 scans the
-// global import directory and does not consume request.slot.
+// Source compatibility for earlier callers; protocol 5 uses slot as a page offset.
 #define SUSAMUNE_GHOST_CMD_IMPORT SUSAMUNE_GHOST_CMD_IMPORT_SCAN
 
-// Imported files are read directly from one bounded global directory. The ARM
+// Imported files are read directly from one global directory. The ARM
 // accepts only validated ASCII LFN leaves ending in .smsghost. Export derives
 // its leaf from validated date/route/time/CRC fields.
 #define SUSAMUNE_GHOST_SHARE_DIRECTORY "share"
@@ -97,10 +95,11 @@ struct SusamuneGhostStorageRequest {
     unsigned short command;
     unsigned int requestSeq;
     unsigned short profile;
-    unsigned short slot;
+    unsigned short reserved;
+    unsigned int slot;
     unsigned int payloadSize;
     unsigned int flags;
-    unsigned int reserved[2];
+    unsigned int expectedGeneration;
 };
 
 struct SusamuneGhostStorageResponse {
@@ -111,7 +110,7 @@ struct SusamuneGhostStorageResponse {
     signed int status;
     unsigned int payloadSize;
     unsigned int generation;
-    unsigned int totalDurationQf;
+    unsigned int slot;
     unsigned short slotCount;
     unsigned short profile;
 };
@@ -145,12 +144,38 @@ struct SusamuneGhostSlotInfo {
     char name[SUSAMUNE_GHOST_NAME_SIZE];
 };
 
+struct SusamuneGhostCatalogEntry {
+    unsigned int id;
+    struct SusamuneGhostSlotInfo info;
+    char leaf[SUSAMUNE_GHOST_IMPORT_LEAF_SIZE];
+};
+
+struct SusamuneGhostCatalogPage {
+    unsigned int magic;
+    unsigned short version;
+    unsigned short count;
+    unsigned int first;
+    unsigned int totalCount;
+    unsigned int totalDurationQfLo;
+    unsigned int totalDurationQfHi;
+    unsigned int nextSlot;
+    unsigned int flags;
+    struct SusamuneGhostCatalogEntry entries[SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES];
+};
+
 struct SusamuneGhostStorageMailbox {
     struct SusamuneGhostStorageRequest request;
     struct SusamuneGhostStorageResponse response;
     unsigned char reserved[SUSAMUNE_GHOST_STORAGE_HEADER_SIZE - 64u];
-    unsigned char payload[SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE];
+    unsigned char payload[SUSAMUNE_GHOST_SLOT_SIZE -
+                          SUSAMUNE_GHOST_STORAGE_HEADER_SIZE];
 };
+
+/* Doorbells stay fixed; protocol 5 pages metadata in the existing bank. */
+#define SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR \
+    ((volatile unsigned char *)SUSAMUNE_GHOST_FILE_TRANSFER_PPC_BASE)
+#define SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR \
+    ((volatile unsigned char *)SUSAMUNE_GHOST_FILE_TRANSFER_PHYS_BASE)
 
 #define SUSAMUNE_GHOST_STORAGE_PHYS_PTR \
     ((volatile struct SusamuneGhostStorageMailbox *) \
@@ -171,14 +196,10 @@ typedef char SusamuneGhostSlotInfoCanonicalVersionOffset[
 typedef char SusamuneGhostStorageMailboxSize[
     sizeof(struct SusamuneGhostStorageMailbox) == SUSAMUNE_GHOST_SLOT_SIZE
         ? 1 : -1];
-typedef char SusamuneGhostCatalogFits[
-    sizeof(struct SusamuneGhostSlotInfo) * SUSAMUNE_GHOST_SLOT_COUNT <=
-            SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE
-        ? 1 : -1];
-typedef char SusamuneGhostImportedCatalogFits[
-    sizeof(struct SusamuneGhostSlotInfo) *
-            SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES <=
-            SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE
+typedef char SusamuneGhostCatalogPageSize[
+    sizeof(struct SusamuneGhostCatalogPage) == 3680u ? 1 : -1];
+typedef char SusamuneGhostCatalogPagesFitCache[
+    2u * sizeof(struct SusamuneGhostCatalogPage) <= SUSAMUNE_GHOST_CATALOG_CACHE_SIZE
         ? 1 : -1];
 typedef char SusamuneGhostStorageEnvelopeSize[
     sizeof(struct SusamuneGhostStorageEnvelope) ==

@@ -24,5 +24,21 @@ advance width, and writes a deterministic archive.
 
 The pre-V2.2 `background.png` was a single-colour 640x480 white image. Moonshine draws
 that stock white field and its widescreen side bars as rectangles, avoiding a
-1,228,800-byte RGBA texture. A user's `theme/background.png` is still decoded
+1,228,800-byte RGBA texture. A user's `/Moonshine_Theme/background.png` is still decoded
 at 1024x480 and rendered through the custom-theme path.
+
+
+`font_ja.zip` is a static, 400-weight subset of the official
+[Noto Sans Mono CJK JP variable TrueType font](https://github.com/notofonts/noto-cjk/blob/main/Sans/Variable/TTF/Mono/NotoSansMonoCJKjp-VF.ttf).
+It covers printable ASCII, both controller arrows, and the Japanese launcher
+catalog: 286 codepoints, 99,772 TTF bytes and 64,912 ZIP bytes. The original
+English font stays active until JP is selected; the Japanese face is loaded
+once on demand and freed before its backing buffer at launcher shutdown.
+The SIL Open Font License is retained in `OFL-NotoSansCJK.txt` and must ship
+with the launcher. Source SHA-256:
+`9a91b2f42ad958fd4295586809f85366f0afa020b85ac70b39916c25bc5cda15`.
+
+Regenerate with FontTools installed using
+`scripts/build_launcher_japanese_font.py NotoSansMonoCJKjp-VF.ttf`.
+The generator keeps the font's naming/license records and removes variable
+font tables so the existing minimal TrueType renderer remains sufficient.

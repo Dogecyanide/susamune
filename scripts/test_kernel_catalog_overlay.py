@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source invariants for the ARM ghost catalog lifetime overlay."""
+"""Source invariants for the ARM paged catalog and scan workspace."""
 
 from pathlib import Path
 import re
@@ -32,19 +32,18 @@ class GhostCatalogOverlayTests(unittest.TestCase):
         source = KERNEL.read_text(encoding="utf-8")
         self.assertIn("union GhostCatalogStorage", source)
         self.assertIn(
-            "struct SlotCatalog personal[SUSAMUNE_GHOST_SLOT_COUNT]",
+            "struct SlotCatalog personal[1]",
             source,
         )
         self.assertIn(
-            "struct ImportedSlot catalog["
-            "SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES]",
+            "struct ImportedSlot catalog[1]",
             source,
         )
         for member in (
             "struct ImportedSlot candidate;",
             "DIR dir;",
             "FILINFO entry;",
-            "typedef char ImportedCatalogWorkFitsPersonal[",
+            "typedef char PersonalCatalogDoesNotOverlapDirectory[",
         ):
             self.assertIn(member, source)
         self.assertNotIn("static struct SlotCatalog Catalog[", source)
@@ -53,12 +52,33 @@ class GhostCatalogOverlayTests(unittest.TestCase):
         self.assertNotIn("static DIR ImportDir;", source)
         self.assertNotIn("static FILINFO ImportEntry;", source)
 
+    def test_catalog_page_is_separate_from_single_record_scan_work(self) -> None:
+        source = KERNEL.read_text(encoding="utf-8")
+        self.assertIn("static struct SusamuneGhostCatalogPage Page;", source)
+        self.assertIn("static u64 PageDuration;", source)
+        self.assertNotIn("SUSAMUNE_GHOST_SLOT_COUNT", source)
+        self.assertNotIn("SUSAMUNE_GHOST_IMPORTED_MAX_ENTRIES", source)
+        header = (ROOT / "include/susamune/ghost_storage.h").read_text(encoding="utf-8")
+        self.assertRegex(header, r"#define SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES\s+16u")
+        self.assertIn("entries[SUSAMUNE_GHOST_CATALOG_PAGE_ENTRIES]", header)
+        self.assertIn("sizeof(struct SusamuneGhostCatalogPage) == 3680u", header)
+        self.assertIn("2u * sizeof(struct SusamuneGhostCatalogPage) <= "
+                      "SUSAMUNE_GHOST_CATALOG_CACHE_SIZE", header)
+
     def test_scan_switch_invalidates_before_overwriting_union(self) -> None:
         personal = source_function("BeginCatalogScan")
         self.assertLess(
             personal.index("ImportedCatalogReady = false;"),
-            personal.index("memset(Catalog, 0, sizeof(Catalog));"),
+            personal.index("BeginSingleSlot(Request.slot)"),
         )
+        self.assertLess(personal.index("ImportedCatalogReady = false;"),
+                        personal.index("Phase = OP_PERSONAL_SCAN_OPEN;"))
+        single = source_function("BeginSingleSlot")
+        self.assertIn("memset(Catalog, 0, sizeof(Catalog));", single)
+        self.assertNotIn("memset(&CatalogStorage", single)
+        self.assertNotIn("memset(&ImportDir", single)
+        self.assertIn("CatalogReady = false;", single)
+        self.assertIn("ScanSlot = slot;", single)
         imported = source_function("BeginImportScan")
         self.assertLess(
             imported.index("CatalogReady = false;"),

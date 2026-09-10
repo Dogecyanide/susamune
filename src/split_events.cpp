@@ -3,11 +3,13 @@
 #include "susamune/addresses.hxx"
 #include "susamune/features.hxx"
 #include "susamune/ghost.hxx"
+#include "susamune/iling.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/split_stats.hxx"
 
 #include "Dolphin/OS.h"
+#include "Dolphin/string.h"
 #include "SMS/Enemy/Conductor.hxx"
 #include "SMS/Enemy/SpineBase.hxx"
 #include "SMS/Enemy/SpineEnemy.hxx"
@@ -16,6 +18,7 @@
 #include "SMS/Manager/PollutionManager.hxx"
 #include "SMS/MapObj/MapObjRail.hxx"
 #include "SMS/MoveBG/ResetFruit.hxx"
+#include "SMS/MoveBG/Shine.hxx"
 #include "SMS/NPC/NpcBase.hxx"
 #include "SMS/Player/Mario.hxx"
 #include "SMS/Strategic/LiveActor.hxx"
@@ -42,7 +45,23 @@ extern "C" bool susamuneSplitRevolvingFenceMessage(void *fence,
                                                      THitActor *sender,
                                                      u32 message);
 
+extern "C" void susamuneSplitStreamingMovie(TMarDirector *director, u8 movie);
+extern "C" void susamuneSplitMapObjAppear(void *actor);
+extern "C" bool susamuneSplitRedSwitchMessage(void *actor, THitActor *sender,
+                                              u32 message);
+
+extern "C" void susamuneSplitSandCastle(void *actor);
+
+extern "C" bool susamuneSplitMirrorMessage(void *actor, THitActor *sender, u32 message);
+
+extern "C" void susamuneSplitHanachanDamage(void *actor);
+
+extern "C" void susamuneSplitTinKoopaHit(void *actor);
+
 namespace {
+
+static_assert(__builtin_offsetof(TBaseNPC, mDummyConnectActor) == 0x1D4,
+              "dummy NPC actor layout drifted");
 
 static_assert(__builtin_offsetof(TRailMapObj, mControlState) == 0x140,
               "rail control-state layout drifted");
@@ -56,6 +75,7 @@ struct CarryDesc {
 };
 
 const CarryDesc kCarryRoutes[] = {
+    {SplitStats::ROUTE_AIRSTRIP_1, 0, 0, 0, 1},
     {SplitStats::ROUTE_RICCO_1, 3, 0, 0x3B, 0},
     {SplitStats::ROUTE_RICCO_2, 3, 1, 0x1E, 0},
     {SplitStats::ROUTE_RICCO_4, 3, 3, 0x30, 0},
@@ -64,6 +84,7 @@ const CarryDesc kCarryRoutes[] = {
     {SplitStats::ROUTE_BIANCO_6_FULL, 2, 5, 0x2E, 0},
     {SplitStats::ROUTE_PIANTA_5_FULL, 8, 4, 0x2A, 0},
     {SplitStats::ROUTE_PINNA_1, 0x0D, 6, 0x3A, 1},
+    {SplitStats::ROUTE_PINNA_8, 0x0D, 5, 0x3A, 0},
     {SplitStats::ROUTE_PINNA_2_FULL, 5, 1, 0x32, 0},
     {SplitStats::ROUTE_PINNA_EYG, 5, 2, 0x29, 0},
     {SplitStats::ROUTE_SIRENA_2_FULL, 6, 1, 7, 0},
@@ -79,6 +100,24 @@ const CarryDesc kCarryRoutes[] = {
     {SplitStats::ROUTE_NOKI_4_FULL, 9, 3, 0x39, 0},
     {SplitStats::ROUTE_NOKI_6_FULL, 9, 5, 0x1F, 0},
     {SplitStats::ROUTE_CORONA, 0x34, 0, 0x3C, 0},
+    {SplitStats::ROUTE_BIANCO_3_FULL_REDS, 2, 2, 0x2F, 0},
+    {SplitStats::ROUTE_BIANCO_6_FULL_REDS, 2, 5, 0x2E, 0},
+    {SplitStats::ROUTE_RICCO_4_FULL_REDS, 3, 3, 0x30, 0},
+    {SplitStats::ROUTE_PIANTA_5_FULL_REDS, 8, 4, 0x2A, 0},
+    {SplitStats::ROUTE_PINNA_2_FULL_REDS, 5, 1, 0x32, 0},
+    {SplitStats::ROUTE_SIRENA_2_FULL_REDS, 6, 1, 7, 0},
+    {SplitStats::ROUTE_SIRENA_2_FULL_REDS, 7, 0, 0x33, 0},
+    {SplitStats::ROUTE_SIRENA_4_FULL_REDS, 6, 3, 7, 2},
+    {SplitStats::ROUTE_SIRENA_4_FULL_REDS, 7, 2, 0x0E, 0},
+    {SplitStats::ROUTE_SIRENA_4_FULL_REDS, 0x0E, 0, 0x28, 0},
+    {SplitStats::ROUTE_NOKI_6_FULL_REDS, 9, 5, 0x1F, 0},
+    {SplitStats::ROUTE_GELATO_1_FULL, 0x04, 0, 0x20, 0},
+    {SplitStats::ROUTE_GELATO_1_FULL_REDS, 0x04, 0, 0x20, 0},
+    {SplitStats::ROUTE_GELATO_4, 0x04, 3, 0x21, 0},
+    {SplitStats::ROUTE_PINNA_6_FULL, 0x0D, 3, 0x29, 0},
+    {SplitStats::ROUTE_PINNA_6_FULL_REDS, 0x0D, 3, 0x29, 0},
+    {SplitStats::ROUTE_PINNA_6_FULL_REDS, 5, 5, 0x0D, 3},
+    {SplitStats::ROUTE_NOKI_8, 0x09, 7, 0x2C, 0},
 };
 
 const int kPiantaCount = 10;
@@ -97,6 +136,10 @@ const u32 kBossGessoVtable =
     SUSAMUNE_MEM1_ADDR(0x803D7334u, 0x803B2AFCu, 0x803AA91Cu);
 const u32 kEmarioVtable =
     SUSAMUNE_MEM1_ADDR(0x803D2C5Cu, 0x803AE404u, 0x803A6784u);
+const u32 kEnemyMarioVtable =
+    SUSAMUNE_MEM1_ADDR(0x803D376Cu, 0x803AEF24u, 0x803A72A4u);
+const u32 kShineVtable =
+    SUSAMUNE_MEM1_ADDR(0x803C11E4u, 0x803C97ECu, 0x803C0FDCu);
 const u32 kGatekeeperVtable =
     SUSAMUNE_MEM1_ADDR(0x803DFDF4u, 0x803BB71Cu, 0x803B353Cu);
 const u32 kPeteyVtable =
@@ -127,8 +170,6 @@ const u32 kFireWanwanTailVtable =
     SUSAMUNE_MEM1_ADDR(0x803D8968u, 0x803B4130u, 0x803ABF50u);
 const u32 kBWPicketVtable =
     SUSAMUNE_MEM1_ADDR(0x803DABCCu, 0x803B6384u, 0x803AE1A4u);
-const u32 kEmarioManagerVtable =
-    SUSAMUNE_MEM1_ADDR(0x803D2C08u, 0x803AE3B0u, 0x803A6730u);
 const u32 kFireWanwanManagerVtable =
     SUSAMUNE_MEM1_ADDR(0x803D8A1Cu, 0x803B41E4u, 0x803AC004u);
 const u32 kTinKoopaManagerVtable =
@@ -157,6 +198,7 @@ u16 sActiveRoute = SplitStats::ROUTE_INVALID;
 u16 sArmedCarryRoute = SplitStats::ROUTE_INVALID;
 bool sAttemptInvalid;
 bool sRetailDirectOpen;
+bool sPinnaIntroTalkPending;
 bool sCarryAttempt;
 bool sBlockNextAttempt;
 
@@ -166,15 +208,17 @@ u16 sPreMarioHealth;
 s32 sPrePollutionDegree;
 bool sPreStateValid;
 bool sPrePollutionValid;
-bool sPreShadowDown;
 bool sCoconutThrowArmed;
 
 TSpineEnemy *sTinKoopa;
 TSpineEnemy *sBossGesso;
 TSpineEnemy *sBossEel;
 TSpineEnemy *sPetey;
-void *sEmario;
 u8 sGatekeeperHits;
+u8 sHanachanHits;
+u8 sTinKoopaHits;
+u8 sMirrorsCleared;
+void *sClearedMirrors[3];
 u8 sPeteyHits;
 u8 sBossGessoHits;
 u8 sBossGessoHealth;
@@ -203,6 +247,8 @@ int sBowserGripsDead;
 bool sBowserGripsValid;
 
 s32 sLastRedCoinCount;
+s32 sPreGoldCoins;
+s32 sPreBalloons;
 TResetFruit *sCoconut;
 TBaseNPC *sRecoveredPiantas[kPiantaCount];
 u8 sRecoveredPiantaCount;
@@ -221,6 +267,13 @@ u32 sGessoTentacleDamageTrampoline[2] = {0, 0};
 u32 sEelToothMessageTrampoline[2] = {0, 0};
 u32 sFenceMessageTrampoline[2] = {0, 0};
 u32 sRevolvingFenceMessageTrampoline[2] = {0, 0};
+u32 sStreamingMovieTrampoline[2] = {0x7C0802A6u, 0};
+u32 sMapObjAppearTrampoline[2] = {0x7C0802A6u, 0};
+u32 sRedSwitchMessageTrampoline[2] = {0x7C0802A6u, 0};
+u32 sSandCastleTrampoline[2] = {0x7C0802A6u, 0};
+u32 sMirrorMessageTrampoline[2] = {0x7C0802A6u, 0};
+u32 sHanachanDamageTrampoline[2] = {0x7C0802A6u, 0};
+u32 sTinKoopaHitTrampoline[2] = {0x7C0802A6u, 0};
 bool sTrampolinesReady;
 
 const u32 kCoinRedTaken =
@@ -253,10 +306,22 @@ const u32 kFenceMessage =
     SUSAMUNE_MEM1_ADDR(0x801C60ECu, 0x801EE7C4u, 0x801E669Cu);
 const u32 kRevolvingFenceMessage =
     SUSAMUNE_MEM1_ADDR(0x801C5AB0u, 0x801EE188u, 0x801E6060u);
+const u32 kStreamingMovie =
+    SUSAMUNE_MEM1_ADDR(0x800ED5C8u, 0x8029A044u, 0x80291EDCu);
+const u32 kMapObjAppear =
+    SUSAMUNE_MEM1_ADDR(0x8018C434u, 0x801B401Cu, 0x801ABED4u);
+const u32 kRedSwitchMessage =
+    SUSAMUNE_MEM1_ADDR(0x80198910u, 0x801C0A9Cu, 0x801B8954u);
+const u32 kSandCastle =
+    SUSAMUNE_MEM1_ADDR(0x801A9DECu, 0x801D2294u, 0x801CA14Cu);
+const u32 kMirrorMessage =
+    SUSAMUNE_MEM1_ADDR(0x801A968Cu, 0x801D1AB0u, 0x801C9968u);
+const u32 kHanachanDamage =
+    SUSAMUNE_MEM1_ADDR(0x802FF7ECu, 0x800ED9FCu, 0x800E709Cu);
+const u32 kTinKoopaHit =
+    SUSAMUNE_MEM1_ADDR(0x802B2B84u, 0x800A002Cu, 0x800996CCu);
 const u32 kCurrentNpc =
     SUSAMUNE_MEM1_ADDR(0x8040A3E8u, 0x8040DFA8u, 0x80405670u);
-const u32 kEmarioDownWaitingToTalk =
-    SUSAMUNE_MEM1_ADDR(0x8024D1CCu, 0x800394CCu, 0x80039584u);
 
 typedef void (*CoinRedTakenFn)(void *, void *);
 typedef void *(*RecoverNerveFn)();
@@ -270,7 +335,6 @@ typedef void (*OpenTalkFn)(void *, TBaseNPC *);
 typedef bool (*RailCheckFn)(TRailMapObj *);
 typedef void (*BathtubQuakeFn)(void *, const void *);
 typedef int (*GetNumGripsDeadFn)(const void *);
-typedef bool (*EmarioDownWaitingToTalkFn)(const void *);
 typedef void (*PeteyHipDropFn)(void *);
 typedef void (*GessoTentacleDamageFn)(void *);
 typedef bool (*ReceiveMessageFn)(void *, THitActor *, u32);
@@ -284,6 +348,7 @@ u32 nerveVtable(const TNerveBase<TLiveActor> *nerve) {
 }
 
 void clearAttemptState() {
+    sPinnaIntroTalkPending = false;
     sActiveRoute = SplitStats::ROUTE_INVALID;
     sLastRedCoinCount = 0;
     sCoconut = nullptr;
@@ -294,14 +359,14 @@ void clearAttemptState() {
     sPreHeldObject = nullptr;
     sPreStateValid = false;
     sPrePollutionValid = false;
-    sPreShadowDown = false;
     sCoconutThrowArmed = false;
     sTinKoopa = nullptr;
     sBossGesso = nullptr;
     sBossEel = nullptr;
     sPetey = nullptr;
-    sEmario = nullptr;
     sGatekeeperHits = 0;
+    sHanachanHits = sTinKoopaHits = sMirrorsCleared = 0;
+    for (int i = 0; i < 3; ++i) sClearedMirrors[i] = nullptr;
     sPeteyHits = 0;
     sBossGessoHits = 0;
     sBossGessoHealth = 0;
@@ -346,10 +411,35 @@ u16 findActiveRoute() {
     return SplitStats::ROUTE_INVALID;
 }
 
+u8 routeParentEpisode(u16 route, u8 area, u8 fallback) {
+    const bool selectable = route >= SplitStats::ROUTE_BIANCO_3_FULL_REDS ||
+        route == SplitStats::ROUTE_GELATO_HIDDEN ||
+        route == SplitStats::ROUTE_NOKI_HIDDEN ||
+        route == SplitStats::ROUTE_PIANTA_HIDDEN;
+    if (selectable && area >= 2 && area <= 9 && area != 7) {
+        const int selected = ILing::activeParentEpisode(area);
+        if (selected >= 0 && selected < 8) return static_cast<u8>(selected);
+    }
+    if (selectable && area == 0x0D) {
+        const int selected = ILing::activeParentEpisode(5);
+        // Pinna park uses its own retail scenario table.
+        const u8 parkEpisodes[8] = {0, 0, 1, 0, 2, 3, 4, 5};
+        if (selected >= 0 && selected < 8)
+            return parkEpisodes[selected];
+    }
+    if (selectable && (area == 7 || area == 0x0E)) {
+        const int selected = ILing::activeParentEpisode(6);
+        const u8 hotelEpisodes[8] = {0, 0, 1, 2, 2, 0, 3, 4};
+        if (selected >= 0 && selected < 8)
+            return area == 7 ? hotelEpisodes[selected] : selected == 4;
+    }
+    return fallback;
+}
+
 bool routeScene(u16 route, u8 area, u8 episode) {
     return stageIdentityValid() && sActiveRoute == route &&
            sStageDirector->mAreaID == area &&
-           sStageDirector->mEpisodeID == episode;
+           sStageDirector->mEpisodeID == routeParentEpisode(route, area, episode);
 }
 
 bool hookScene(u16 route, u8 area, u8 episode) {
@@ -368,36 +458,73 @@ bool publishEvent(u16 route, u8 event) {
     return false;
 }
 
+struct RedDesc {
+    u16 route;
+    u8 area, episode, first, count;
+    u8 coins[4];
+};
+const RedDesc kRedRoutes[] = {
+    {SplitStats::ROUTE_BIANCO_4, 0x02, 3, 0, 3, {1, 5, 8, 0}},
+    {SplitStats::ROUTE_RICCO_6, 0x03, 5, 1, 2, {4, 8, 0, 0}},
+    {SplitStats::ROUTE_PINNA_3, 0x0D, 1, 0, 3, {4, 6, 7, 0}},
+    {SplitStats::ROUTE_NOKI_3, 0x2C, 0, 0, 2, {4, 8, 0, 0}},
+    {SplitStats::ROUTE_BIANCO_3_REDS, 0x2F, 0, 0, 3, {2, 5, 8, 0}},
+    {SplitStats::ROUTE_BIANCO_6_REDS, 0x2E, 0, 0, 3, {3, 6, 8, 0}},
+    {SplitStats::ROUTE_BIANCO_8, 0x02, 7, 0, 3, {2, 5, 8, 0}},
+    {SplitStats::ROUTE_RICCO_4_REDS, 0x30, 0, 0, 4, {1, 4, 6, 8}},
+    {SplitStats::ROUTE_GELATO_1_REDS, 0x20, 0, 0, 3, {3, 5, 8, 0}},
+    {SplitStats::ROUTE_GELATO_4, 0x21, 0, 2, 3, {2, 7, 8, 0}},
+    {SplitStats::ROUTE_GELATO_4_INSIDE, 0x21, 0, 0, 3, {2, 7, 8, 0}},
+    {SplitStats::ROUTE_GELATO_6, 0x04, 5, 0, 3, {1, 4, 8, 0}},
+    {SplitStats::ROUTE_PINNA_2_REDS, 0x32, 0, 0, 3, {2, 5, 7, 0}},
+    {SplitStats::ROUTE_PINNA_6_REDS, 0x29, 0, 0, 4, {2, 3, 6, 8}},
+    {SplitStats::ROUTE_SIRENA_2_REDS, 0x33, 0, 1, 4, {3, 5, 6, 8}},
+    {SplitStats::ROUTE_SIRENA_4_REDS, 0x28, 0, 0, 3, {3, 6, 8, 0}},
+    {SplitStats::ROUTE_SIRENA_8, 0x07, 4, 0, 4, {2, 3, 6, 8}},
+    {SplitStats::ROUTE_NOKI_6_REDS, 0x1F, 0, 1, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_NOKI_8, 0x2C, 0, 1, 1, {8, 0, 0, 0}},
+    {SplitStats::ROUTE_PIANTA_5_REDS, 0x2A, 0, 0, 4, {2, 3, 6, 8}},
+    {SplitStats::ROUTE_PIANTA_8, 0x08, 7, 0, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_AIRSTRIP_REDS, 0x14, 0, 0, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_PACHINKO, 0x16, 0, 0, 3, {4, 6, 8, 0}},
+    {SplitStats::ROUTE_LILY_PAD, 0x18, 0, 0, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_GRASS_SECRET, 0x17, 0, 0, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_BIANCO_3_FULL_REDS, 0x2F, 0, 1, 3, {2, 5, 8, 0}},
+    {SplitStats::ROUTE_BIANCO_6_FULL_REDS, 0x2E, 0, 1, 3, {3, 6, 8, 0}},
+    {SplitStats::ROUTE_RICCO_4_FULL_REDS, 0x30, 0, 2, 4, {1, 4, 6, 8}},
+    {SplitStats::ROUTE_GELATO_1_FULL_REDS, 0x20, 0, 2, 3, {3, 5, 8, 0}},
+    {SplitStats::ROUTE_PINNA_2_FULL_REDS, 0x32, 0, 1, 3, {2, 5, 7, 0}},
+    {SplitStats::ROUTE_PINNA_6_FULL_REDS, 0x29, 0, 2, 4, {2, 3, 6, 8}},
+    {SplitStats::ROUTE_SIRENA_2_FULL_REDS, 0x33, 0, 3, 4, {3, 5, 6, 8}},
+    {SplitStats::ROUTE_SIRENA_4_FULL_REDS, 0x28, 0, 3, 3, {3, 6, 8, 0}},
+    {SplitStats::ROUTE_NOKI_6_FULL_REDS, 0x1F, 0, 3, 4, {2, 4, 6, 8}},
+    {SplitStats::ROUTE_PIANTA_5_FULL_REDS, 0x2A, 0, 2, 4, {2, 3, 6, 8}},
+};
+
+void noteRedSwitch() {
+    if (!sRetailDirectOpen || !stageIdentityValid()) return;
+    if (routeScene(SplitStats::ROUTE_SIRENA_2_REDS, 0x33, 0) ||
+        routeScene(SplitStats::ROUTE_NOKI_6_REDS, 0x1F, 0))
+        publishEvent(sActiveRoute, 0);
+    else if (routeScene(SplitStats::ROUTE_SIRENA_2_FULL_REDS, 0x33, 0) ||
+             routeScene(SplitStats::ROUTE_NOKI_6_FULL_REDS, 0x1F, 0))
+        publishEvent(sActiveRoute, 2);
+}
+
 void noteRedCoin() {
     if (!sRetailDirectOpen || !stageIdentityValid() ||
         !TFlagManager::smInstance) return;
     const s32 count = TFlagManager::smInstance->Type6Flag.mRedCoinCount;
-    if (count <= sLastRedCoinCount) return;
+    const s32 before = sLastRedCoinCount;
+    if (count <= before) return;
     sLastRedCoinCount = count;
-
-    switch (sActiveRoute) {
-    case SplitStats::ROUTE_BIANCO_4:
-        if (!routeScene(sActiveRoute, 2, 3)) break;
-        if (count == 1) publishEvent(sActiveRoute, 0);
-        else if (count == 5) publishEvent(sActiveRoute, 1);
-        else if (count == 8) publishEvent(sActiveRoute, 2);
-        break;
-    case SplitStats::ROUTE_RICCO_6:
-        if (!routeScene(sActiveRoute, 3, 5)) break;
-        if (count == 4) publishEvent(sActiveRoute, 1);
-        else if (count == 8) publishEvent(sActiveRoute, 2);
-        break;
-    case SplitStats::ROUTE_PINNA_3:
-        if (!routeScene(sActiveRoute, 0x0D, 1)) break;
-        if (count == 4) publishEvent(sActiveRoute, 0);
-        else if (count == 6) publishEvent(sActiveRoute, 1);
-        else if (count == 7) publishEvent(sActiveRoute, 2);
-        break;
-    case SplitStats::ROUTE_NOKI_3:
-        if (!routeScene(sActiveRoute, 0x2C, 0)) break;
-        if (count == 4) publishEvent(sActiveRoute, 0);
-        else if (count == 8) publishEvent(sActiveRoute, 1);
-        break;
+    for (u32 r = 0; r < sizeof(kRedRoutes) / sizeof(kRedRoutes[0]); ++r) {
+        const RedDesc &desc = kRedRoutes[r];
+        if (!routeScene(desc.route, desc.area, desc.episode)) continue;
+        for (u8 i = 0; i < desc.count; ++i)
+            if (before < desc.coins[i] && count >= desc.coins[i])
+                publishEvent(sActiveRoute, desc.first + i);
+        return;
     }
 }
 
@@ -445,21 +572,6 @@ void *findManagedActor(u32 managerVtable, u32 actorVtable) {
     return nullptr;
 }
 
-void *findStandaloneActor(u32 actorVtable) {
-    if (!gpConductor) return nullptr;
-    for (auto it = gpConductor->_30.begin(); it != gpConductor->_30.end(); ++it) {
-        void *actor = *it;
-        if (objectVtable(actor) == actorVtable) return actor;
-    }
-    return nullptr;
-}
-
-bool emarioDownWaitingToTalk() {
-    return sEmario &&
-           reinterpret_cast<EmarioDownWaitingToTalkFn>(
-               kEmarioDownWaitingToTalk)(sEmario);
-}
-
 bool isShadowRoute(u16 route) {
     return route == SplitStats::ROUTE_DELFINO_SHADOW_MARIO ||
            route == SplitStats::ROUTE_BIANCO_7 ||
@@ -493,6 +605,23 @@ bool publishTransition(u16 route, u8 event, u8 target) {
     return true;
 }
 
+bool hundredCourseTransition(u16 route, u8 before, u8 after) {
+    if (before == after) return false;
+    if (route == SplitStats::ROUTE_PINNA_100)
+        return (before == 5 || before == 0x0D) &&
+               (after == 5 || after == 0x0D);
+    if (route == SplitStats::ROUTE_SIRENA_100)
+        return (before == 6 || before == 7 || before == 0x0E) &&
+               (after == 6 || after == 7 || after == 0x0E);
+    return false;
+}
+
+bool pinnaOneParkScene() {
+    return routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 0) ||
+           routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 6) ||
+           routeScene(SplitStats::ROUTE_PINNA_1, 0x0D, 7);
+}
+
 void armCarryTransition() {
     if (sActiveRoute == SplitStats::ROUTE_RICCO_1 &&
         routeScene(sActiveRoute, 3, 0) &&
@@ -501,8 +630,7 @@ void armCarryTransition() {
         sArmedCarryRoute = sActiveRoute;
         return;
     }
-    if (sActiveRoute == SplitStats::ROUTE_PINNA_1 &&
-        routeScene(sActiveRoute, 0x0D, 6) &&
+    if (pinnaOneParkScene() &&
         gpApplication.mNextScene.mAreaID == 0x3A &&
         gpApplication.mNextScene.mEpisodeID == 1) {
         sArmedCarryRoute = sActiveRoute;
@@ -511,12 +639,19 @@ void armCarryTransition() {
     const volatile u16 *capturedTarget =
         reinterpret_cast<volatile u16 *>(SUSAMUNE_ADDR_QFT_TRANSITION_TARGET);
     if (*capturedTarget == 0xffff) return;
+    if (*capturedTarget == gpApplication.mNextScene.mAreaID &&
+        hundredCourseTransition(sActiveRoute, sStageDirector->mAreaID,
+                                gpApplication.mNextScene.mAreaID)) {
+        sArmedCarryRoute = sActiveRoute;
+        return;
+    }
     for (u32 i = 0; i < sizeof(kCarryRoutes) / sizeof(kCarryRoutes[0]); ++i) {
         const CarryDesc &desc = kCarryRoutes[i];
         if (desc.route == sActiveRoute &&
             routeScene(desc.route, desc.parentArea, desc.parentEpisode) &&
             gpApplication.mNextScene.mAreaID == desc.childArea &&
-            gpApplication.mNextScene.mEpisodeID == desc.childEpisode) {
+            gpApplication.mNextScene.mEpisodeID ==
+                routeParentEpisode(desc.route, desc.childArea, desc.childEpisode)) {
             sArmedCarryRoute = desc.route;
             return;
         }
@@ -537,6 +672,14 @@ void noteMarioStatus(TMario *mario, u32 status) {
     if (sStageDirector->mCurState != TMarDirector::STATE_NORMAL) return;
 
     switch (sActiveRoute) {
+    case SplitStats::ROUTE_NOKI_HIDDEN: {
+        const TBGCheckData *floor = mario->mFloorTriangle;
+        if (routeScene(sActiveRoute, 9, 6) && status == kMarioBounceStatus &&
+            floor && !floor->mOwner && floor->mType == 7 &&
+            floor->mValue == 30300)
+            publishEvent(sActiveRoute, 0);
+        break;
+    }
     case SplitStats::ROUTE_RICCO_1:
         if (routeScene(sActiveRoute, 3, 0) && status == kMarioDiveStatus &&
             mario->mTranslation.x > 0.0f &&
@@ -562,6 +705,7 @@ void noteMarioStatus(TMario *mario, u32 status) {
             publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_RICCO_4:
+    case SplitStats::ROUTE_RICCO_4_FULL_REDS:
     case SplitStats::ROUTE_RICCO_4_SECRET:
         if (!isSpinStatus(status)) break;
         if (routeScene(sActiveRoute, 3, 3) &&
@@ -569,7 +713,8 @@ void noteMarioStatus(TMario *mario, u32 status) {
             mario->mTranslation.z < 400.0f &&
             mario->mTranslation.y >= 1550.0f) {
             publishEvent(sActiveRoute, 0);
-        } else if (routeScene(sActiveRoute, 0x30, 0) &&
+        } else if (sActiveRoute != SplitStats::ROUTE_RICCO_4_FULL_REDS &&
+                   routeScene(sActiveRoute, 0x30, 0) &&
                    mario->mTranslation.x > 10000.0f) {
             publishEvent(sActiveRoute,
                 sActiveRoute == SplitStats::ROUTE_RICCO_4 ? 2 : 0);
@@ -587,6 +732,7 @@ void noteMarioStatus(TMario *mario, u32 status) {
         if (routeScene(sActiveRoute, 3, 5) && status == kMarioSurfStatus)
             publishEvent(sActiveRoute, 0);
         break;
+    case SplitStats::ROUTE_BIANCO_1:
     case SplitStats::ROUTE_BIANCO_2:
         if (routeScene(sActiveRoute, 2, 0) &&
             status == kMarioRolloutStatus &&
@@ -619,6 +765,7 @@ void noteMarioStatus(TMario *mario, u32 status) {
             publishEvent(sActiveRoute, 1);
         break;
     case SplitStats::ROUTE_PIANTA_5_FULL:
+    case SplitStats::ROUTE_PIANTA_5_FULL_REDS:
         if (routeScene(sActiveRoute, 8, 4) && isSpinStatus(status) &&
             mario->mTranslation.y < -3000.0f)
             publishEvent(sActiveRoute, 0);
@@ -650,8 +797,10 @@ void noteMarioStatus(TMario *mario, u32 status) {
         }
         break;
     case SplitStats::ROUTE_NOKI_6_FULL:
+    case SplitStats::ROUTE_NOKI_6_FULL_REDS:
     case SplitStats::ROUTE_NOKI_6_SECRET: {
-        if (!routeScene(sActiveRoute, 0x1F, 0)) break;
+        if (sActiveRoute == SplitStats::ROUTE_NOKI_6_FULL_REDS ||
+            !routeScene(sActiveRoute, 0x1F, 0)) break;
         const bool full = sActiveRoute == SplitStats::ROUTE_NOKI_6_FULL;
         const u8 first = full ? 2 : 0;
         if (status == kMarioRolloutStatus &&
@@ -676,27 +825,12 @@ bool enteredNerve(u32 before, s32 beforeTimer, u32 after, u32 target) {
            (before == target && beforeTimer == 0);
 }
 
-void noteGatekeeper(u32 nerveBefore, u32 previousBefore, u32 nerveAfter,
-                    u8 healthBefore, u8 healthAfter) {
-    if (nerveAfter == kBGKAppearVtable &&
-        (nerveBefore == kBGKSleepVtable ||
-         (nerveBefore == 0 && previousBefore == kBGKSleepVtable))) {
-        if (sActiveRoute == SplitStats::ROUTE_BIANCO_PLANT ||
-            sActiveRoute == SplitStats::ROUTE_TRAVEL_SKIP ||
-            sActiveRoute == SplitStats::ROUTE_GELATO_PLANT)
-            publishEvent(sActiveRoute, 0);
-    }
+void noteGatekeeper(u32, u32, u32, u8 healthBefore, u8 healthAfter) {
     if (healthAfter >= healthBefore) return;
-    const u8 hits = healthBefore - healthAfter;
-    for (u8 i = 0; i < hits; ++i) {
-        ++sGatekeeperHits;
-        if (sActiveRoute == SplitStats::ROUTE_AIRSTRIP_1)
-            publishEvent(sActiveRoute, 1);
-        else if (sActiveRoute == SplitStats::ROUTE_BIANCO_PLANT ||
-                 sActiveRoute == SplitStats::ROUTE_TRAVEL_SKIP ||
-                 sActiveRoute == SplitStats::ROUTE_GELATO_PLANT)
-            publishEvent(sActiveRoute, sGatekeeperHits);
-    }
+    const u8 first = sActiveRoute == SplitStats::ROUTE_AIRSTRIP_1 ||
+                     sActiveRoute == SplitStats::ROUTE_BIANCO_1 ? 1 : 0;
+    for (u8 i = healthAfter; i < healthBefore && sGatekeeperHits < 3; ++i)
+        publishEvent(sActiveRoute, first + sGatekeeperHits++);
 }
 
 void notePeteyDamage(u8 healthBefore, u8 healthAfter) {
@@ -750,6 +884,7 @@ bool routeUsesSpine(u16 route) {
     case SplitStats::ROUTE_RICCO_5:
     case SplitStats::ROUTE_RICCO_7:
     case SplitStats::ROUTE_AIRSTRIP_1:
+    case SplitStats::ROUTE_BIANCO_1:
     case SplitStats::ROUTE_BIANCO_PLANT:
     case SplitStats::ROUTE_DELFINO_SHADOW_MARIO:
     case SplitStats::ROUTE_TRAVEL_SKIP:
@@ -776,12 +911,12 @@ bool routeUsesSpine(u16 route) {
 }
 
 bool spineActorRelevant(u16 route, u32 vtable) {
-    if (isShadowRoute(route)) return vtable == kEmarioVtable;
     switch (route) {
     case SplitStats::ROUTE_RICCO_1:
     case SplitStats::ROUTE_RICCO_5:
         return vtable == kBossGessoVtable;
     case SplitStats::ROUTE_AIRSTRIP_1:
+    case SplitStats::ROUTE_BIANCO_1:
     case SplitStats::ROUTE_BIANCO_PLANT:
     case SplitStats::ROUTE_TRAVEL_SKIP:
     case SplitStats::ROUTE_GELATO_PLANT:
@@ -822,8 +957,7 @@ void noteSpineUpdate(TLiveActor *actor, u32 vtable, u32 nerveBefore,
         sBossGesso = enemy;
     } else if (vtable == kPeteyVtable) {
         notePetey(nerveBefore, nerveTimerBefore, nerveAfter);
-    } else if (vtable == kEmarioVtable) {
-        sEmario = actor;
+
     } else if (vtable == kFireWanwanVtable) {
         if (sActiveRoute == SplitStats::ROUTE_PIANTA_1 &&
             !actorAlreadyCounted(actor) &&
@@ -918,7 +1052,23 @@ void updateHeldObject() {
 
 void noteTalk(TBaseNPC *npc) {
     if (!npc || !sRetailDirectOpen || !stageIdentityValid()) return;
+    const u32 talkActor = objectVtable(npc->mDummyConnectActor);
+    if (isShadowRoute(sActiveRoute) &&
+        (talkActor == kEmarioVtable || talkActor == kEnemyMarioVtable)) {
+        publishEvent(sActiveRoute, shadowEvent(sActiveRoute));
+        return;
+    }
     switch (sActiveRoute) {
+    case SplitStats::ROUTE_GELATO_5:
+        if (routeScene(sActiveRoute, 4, 4))
+            publishEvent(sActiveRoute, 0);
+        break;
+    case SplitStats::ROUTE_PINNA_8:
+        // Retail scripts name the ride attendant and park director separately.
+        if (routeScene(sActiveRoute, 0x0D, 5) && npc->mKeyName &&
+            strcmp(npc->mKeyName, "\x8c\x57\x88\xf5\x83\x7d\x81\x5b\x83\x8c") == 0)
+            publishEvent(sActiveRoute, 0);
+        break;
     case SplitStats::ROUTE_PIANTA_2:
         if (routeScene(sActiveRoute, 8, 1)) publishEvent(sActiveRoute, 0);
         break;
@@ -938,18 +1088,21 @@ void noteTalk(TBaseNPC *npc) {
         break;
     }
     case SplitStats::ROUTE_PINNA_1:
-        if (routeScene(sActiveRoute, 0x0D, 6)) publishEvent(sActiveRoute, 0);
+        if (pinnaOneParkScene())
+            publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_SIRENA_1:
         if (routeScene(sActiveRoute, 6, 0)) publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_SIRENA_2_FULL:
+    case SplitStats::ROUTE_SIRENA_2_FULL_REDS:
         if (routeScene(sActiveRoute, 6, 1)) publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_SIRENA_3:
         if (routeScene(sActiveRoute, 6, 2)) publishEvent(sActiveRoute, 0);
         break;
     case SplitStats::ROUTE_SIRENA_4_FULL:
+    case SplitStats::ROUTE_SIRENA_4_FULL_REDS:
         if ((routeScene(sActiveRoute, 6, 3) ||
              routeScene(sActiveRoute, 7, 2)) && sGenericTalkCount < 2 &&
             publishEvent(sActiveRoute, sGenericTalkCount))
@@ -975,11 +1128,32 @@ void noteTalk(TBaseNPC *npc) {
 void updateTransitions() {
     armCarryTransition();
     switch (sActiveRoute) {
+    case SplitStats::ROUTE_BIANCO_3_FULL_REDS:
+        if (routeScene(sActiveRoute, 2, 2)) publishTransition(sActiveRoute, 0, 0x2F);
+        break;
+    case SplitStats::ROUTE_BIANCO_6_FULL_REDS:
+        if (routeScene(sActiveRoute, 2, 5)) publishTransition(sActiveRoute, 0, 0x2E);
+        break;
+    case SplitStats::ROUTE_GELATO_1_FULL:
+    case SplitStats::ROUTE_GELATO_1_FULL_REDS:
+        if (routeScene(sActiveRoute, 4, 0)) publishTransition(sActiveRoute, 1, 0x20);
+        break;
+    case SplitStats::ROUTE_GELATO_4:
+        if (routeScene(sActiveRoute, 4, 3)) publishTransition(sActiveRoute, 1, 0x21);
+        break;
+    case SplitStats::ROUTE_PINNA_6_FULL:
+    case SplitStats::ROUTE_PINNA_6_FULL_REDS:
+        if (routeScene(sActiveRoute, 0x0D, 3)) publishTransition(sActiveRoute, 1, 0x29);
+        break;
+    case SplitStats::ROUTE_NOKI_8:
+        if (routeScene(sActiveRoute, 9, 7)) publishTransition(sActiveRoute, 0, 0x2C);
+        break;
     case SplitStats::ROUTE_RICCO_2:
         if (routeScene(sActiveRoute, 3, 1))
             publishTransition(sActiveRoute, 0, 0x1E);
         break;
     case SplitStats::ROUTE_RICCO_4:
+    case SplitStats::ROUTE_RICCO_4_FULL_REDS:
         if (routeScene(sActiveRoute, 3, 3))
             publishTransition(sActiveRoute, 1, 0x30);
         break;
@@ -996,10 +1170,12 @@ void updateTransitions() {
             publishTransition(sActiveRoute, 1, 0x2E);
         break;
     case SplitStats::ROUTE_PIANTA_5_FULL:
+    case SplitStats::ROUTE_PIANTA_5_FULL_REDS:
         if (routeScene(sActiveRoute, 8, 4))
             publishTransition(sActiveRoute, 1, 0x2A);
         break;
     case SplitStats::ROUTE_PINNA_2_FULL:
+    case SplitStats::ROUTE_PINNA_2_FULL_REDS:
         if (routeScene(sActiveRoute, 5, 1))
             publishTransition(sActiveRoute, 0, 0x32);
         break;
@@ -1008,10 +1184,12 @@ void updateTransitions() {
             publishTransition(sActiveRoute, 1, 0x29);
         break;
     case SplitStats::ROUTE_SIRENA_2_FULL:
+    case SplitStats::ROUTE_SIRENA_2_FULL_REDS:
         if (routeScene(sActiveRoute, 7, 0))
             publishTransition(sActiveRoute, 1, 0x33);
         break;
     case SplitStats::ROUTE_SIRENA_4_FULL:
+    case SplitStats::ROUTE_SIRENA_4_FULL_REDS:
         if (routeScene(sActiveRoute, 0x0E, 0))
             publishTransition(sActiveRoute, 2, 0x28);
         break;
@@ -1020,6 +1198,7 @@ void updateTransitions() {
             publishTransition(sActiveRoute, 0, 0x39);
         break;
     case SplitStats::ROUTE_NOKI_6_FULL:
+    case SplitStats::ROUTE_NOKI_6_FULL_REDS:
         if (routeScene(sActiveRoute, 9, 5))
             publishTransition(sActiveRoute, 1, 0x1F);
         break;
@@ -1042,6 +1221,21 @@ void updatePositionAndDamage() {
     if (!sPreStateValid || !gpMarioAddress) return;
     const TVec3f &now = gpMarioAddress->mTranslation;
     switch (sActiveRoute) {
+    case SplitStats::ROUTE_GELATO_1_FULL:
+    case SplitStats::ROUTE_GELATO_1_SECRET: {
+        if (!routeScene(sActiveRoute, 0x20, 0)) break;
+        const u8 first = sActiveRoute == SplitStats::ROUTE_GELATO_1_FULL ? 2 : 0;
+        if (crossedAbove(sPreMarioPosition.x, now.x, 6400.0f))
+            publishEvent(sActiveRoute, first);
+        if (crossedAbove(sPreMarioPosition.x, now.x, 13560.0f))
+            publishEvent(sActiveRoute, first + 1);
+        break;
+    }
+    case SplitStats::ROUTE_PIANTA_HIDDEN:
+        if (routeScene(sActiveRoute, 8, 7) &&
+            crossedAbove(sPreMarioPosition.y, now.y, 9700.0f))
+            publishEvent(sActiveRoute, 0);
+        break;
     case SplitStats::ROUTE_BIANCO_3_FULL:
     case SplitStats::ROUTE_BIANCO_3_SECRET:
         if (routeScene(sActiveRoute, 0x2F, 0) &&
@@ -1090,6 +1284,7 @@ void updatePositionAndDamage() {
             publishEvent(sActiveRoute, 1);
         break;
     case SplitStats::ROUTE_NOKI_6_FULL:
+    case SplitStats::ROUTE_NOKI_6_FULL_REDS:
         if (routeScene(sActiveRoute, 9, 5) &&
             crossedAbove(sPreMarioPosition.y, now.y, 4000.0f))
             publishEvent(sActiveRoute, 0);
@@ -1099,20 +1294,6 @@ void updatePositionAndDamage() {
             crossedBelow(sPreMarioPosition.z, now.z, -3500.0f))
             publishEvent(sActiveRoute, 0);
         break;
-    }
-}
-
-void updateTinKoopa() {
-    if (!sTinKoopa)
-        sTinKoopa = reinterpret_cast<TSpineEnemy *>(findManagedActor(
-            kTinKoopaManagerVtable, kTinKoopaVtable));
-    if (sTinKoopaFourthSeen || !sTinKoopa ||
-        !routeScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1)) return;
-    const s32 remaining = *reinterpret_cast<const s32 *>(
-        reinterpret_cast<const u8 *>(sTinKoopa) + 0x1C8);
-    if (remaining <= 0) {
-        sTinKoopaFourthSeen = true;
-        publishEvent(sActiveRoute, 1);
     }
 }
 
@@ -1189,18 +1370,6 @@ void updatePollution() {
         publishEvent(sActiveRoute, 1);
 }
 
-void updateShadowMario() {
-    if (!isShadowRoute(sActiveRoute) || !stageIdentityValid()) return;
-    // TEMario can be registered without a manager.
-    if (!sEmario) sEmario = findStandaloneActor(kEmarioVtable);
-    if (!sEmario)
-        sEmario = findManagedActor(kEmarioManagerVtable, kEmarioVtable);
-    if (!sEmario) return;
-    const bool down = emarioDownWaitingToTalk();
-    if (!sPreShadowDown && down)
-        publishEvent(sActiveRoute, shadowEvent(sActiveRoute));
-}
-
 void updateBowser() {
     if (!sBathtub ||
         !routeScene(SplitStats::ROUTE_BOWSER, 0x3C, 0)) return;
@@ -1217,7 +1386,39 @@ void updateBowser() {
     }
 }
 
+void updateCountEvents() {
+    if (!TFlagManager::smInstance) return;
+    const u8 area = sStageDirector->mAreaID;
+    const bool hundred =
+        (sActiveRoute == SplitStats::ROUTE_BIANCO_100 && area == 2) ||
+        (sActiveRoute == SplitStats::ROUTE_RICCO_100 && area == 3) ||
+        (sActiveRoute == SplitStats::ROUTE_GELATO_100 && area == 4) ||
+        (sActiveRoute == SplitStats::ROUTE_PINNA_100 && (area == 5 || area == 0x0D)) ||
+        (sActiveRoute == SplitStats::ROUTE_SIRENA_100 && (area == 6 || area == 7 || area == 0x0E)) ||
+        (sActiveRoute == SplitStats::ROUTE_NOKI_100 && area == 9) ||
+        (sActiveRoute == SplitStats::ROUTE_PIANTA_100 && area == 8);
+    if (hundred) {
+        const u8 counts[] = {10, 25, 50, 75, 100};
+        const s32 now = TFlagManager::smInstance->Type4Flag.mGoldCoinCount;
+        for (u8 i = 0; i < sizeof(counts); ++i)
+            if (sPreGoldCoins < counts[i] && now >= counts[i])
+                publishEvent(sActiveRoute, i);
+    }
+    if (routeScene(SplitStats::ROUTE_PINNA_8, 0x0D, 5) ||
+        routeScene(SplitStats::ROUTE_PINNA_8, 0x3A, 0)) {
+        const u8 counts[] = {6, 11, 20};
+        const s32 now = TFlagManager::smInstance->Type6Flag.mBJRBalloonCount;
+        for (u8 i = 0; i < sizeof(counts); ++i)
+            if (sPreBalloons < counts[i] && now >= counts[i])
+                publishEvent(sActiveRoute, i + 1);
+    }
+}
+
 void samplePreDirect() {
+    sPreGoldCoins = TFlagManager::smInstance ?
+        TFlagManager::smInstance->Type4Flag.mGoldCoinCount : 0;
+    sPreBalloons = TFlagManager::smInstance ?
+        TFlagManager::smInstance->Type6Flag.mBJRBalloonCount : 0;
     sPreHeldObject = gpMarioAddress ? gpMarioAddress->mHeldObject : nullptr;
     sPreStateValid = gpMarioAddress != nullptr;
     if (sPreStateValid) {
@@ -1228,7 +1429,6 @@ void samplePreDirect() {
     if (sPrePollutionValid)
         sPrePollutionDegree =
             static_cast<s32>(gpPollution->getPollutionDegree());
-    sPreShadowDown = emarioDownWaitingToTalk();
 }
 
 void initTrampoline(u32 *trampoline, u32 site) {
@@ -1261,6 +1461,27 @@ void init() {
     if (sTrampolinesReady) return;
     sTrampolinesReady = true;
 
+    installEntryHook(kStreamingMovie,
+        reinterpret_cast<const void *>(&susamuneSplitStreamingMovie),
+        sStreamingMovieTrampoline);
+    installEntryHook(kMapObjAppear,
+        reinterpret_cast<const void *>(&susamuneSplitMapObjAppear),
+        sMapObjAppearTrampoline);
+    installEntryHook(kRedSwitchMessage,
+        reinterpret_cast<const void *>(&susamuneSplitRedSwitchMessage),
+        sRedSwitchMessageTrampoline);
+    installEntryHook(kSandCastle,
+        reinterpret_cast<const void *>(&susamuneSplitSandCastle),
+        sSandCastleTrampoline);
+    installEntryHook(kMirrorMessage,
+        reinterpret_cast<const void *>(&susamuneSplitMirrorMessage),
+        sMirrorMessageTrampoline);
+    installEntryHook(kHanachanDamage,
+        reinterpret_cast<const void *>(&susamuneSplitHanachanDamage),
+        sHanachanDamageTrampoline);
+    installEntryHook(kTinKoopaHit,
+        reinterpret_cast<const void *>(&susamuneSplitTinKoopaHit),
+        sTinKoopaHitTrampoline);
     initTrampoline(sCoinRedTakenTrampoline, kCoinRedTaken);
     initTrampoline(sEmitHappyEffectTrampoline, kEmitHappyEffect);
     installEntryHook(kChangePlayerStatus,
@@ -1310,6 +1531,14 @@ void beforeStageSetup() {
     const bool sameAttempt =
         gQFTTimer.attemptSerial() == sAttemptSerial && !sAttemptInvalid;
 
+    if (sameAttempt && sArmedCarryRoute == sActiveRoute &&
+        hundredCourseTransition(sActiveRoute, previous.mAreaID, current.mAreaID))
+        sCarryAttempt = true;
+
+    if (sameAttempt && sActiveRoute == SplitStats::ROUTE_AIRSTRIP_1 &&
+        sArmedCarryRoute == SplitStats::ROUTE_AIRSTRIP_1 &&
+        sceneMatches(current, 0, 1))
+        sCarryAttempt = true;
     if (sameAttempt && sActiveRoute == SplitStats::ROUTE_PINNA_1 &&
         sArmedCarryRoute == SplitStats::ROUTE_PINNA_1) {
         sCarryAttempt = true;
@@ -1329,14 +1558,18 @@ void beforeStageSetup() {
     for (u32 i = 0; i < sizeof(kCarryRoutes) / sizeof(kCarryRoutes[0]); ++i) {
         const CarryDesc &desc = kCarryRoutes[i];
         const bool parentToChild =
-            sceneMatches(previous, desc.parentArea, desc.parentEpisode) &&
-            sceneMatches(current, desc.childArea, desc.childEpisode);
+            sceneMatches(previous, desc.parentArea,
+                         routeParentEpisode(desc.route, desc.parentArea, desc.parentEpisode)) &&
+            sceneMatches(current, desc.childArea,
+                         routeParentEpisode(desc.route, desc.childArea, desc.childEpisode));
         if (parentToChild && sameAttempt && sArmedCarryRoute == desc.route)
             sCarryAttempt = true;
 
         const bool childReset =
-            sceneMatches(previous, desc.childArea, desc.childEpisode) &&
-            sceneMatches(current, desc.childArea, desc.childEpisode);
+            sceneMatches(previous, desc.childArea,
+                         routeParentEpisode(desc.route, desc.childArea, desc.childEpisode)) &&
+            sceneMatches(current, desc.childArea,
+                         routeParentEpisode(desc.route, desc.childArea, desc.childEpisode));
         if (childReset && sameAttempt && sActiveRoute == desc.route)
             sBlockNextAttempt = true;
     }
@@ -1364,6 +1597,10 @@ void beginFrame() {
     }
     sActiveRoute = findActiveRoute();
     sRetailDirectOpen = stageIdentityValid();
+    if (sRetailDirectOpen && sPinnaIntroTalkPending) {
+        sPinnaIntroTalkPending = false;
+        publishEvent(SplitStats::ROUTE_PINNA_1, 0);
+    }
     if (sRetailDirectOpen) samplePreDirect();
 }
 
@@ -1372,28 +1609,39 @@ void update() {
     sRetailDirectOpen = false;
     if (!retailDirectRan || !stageIdentityValid()) return;
 
+    updateCountEvents();
     updateTransitions();
     updateHeldObject();
     updatePositionAndDamage();
     updatePetey();
     updateBossGesso();
-    updateTinKoopa();
     updateManta();
     updatePiantaOne();
     updatePollution();
-    updateShadowMario();
     updateBowser();
 }
 
 void onYoshiMounted() {
     if (!sRetailDirectOpen || !stageIdentityValid()) return;
-    if (routeScene(SplitStats::ROUTE_PINNA_EYG, 5, 2))
+    if (routeScene(SplitStats::ROUTE_PINNA_EYG, 5, 2) ||
+        routeScene(SplitStats::ROUTE_PINNA_6_FULL, 0x0D, 3) ||
+        routeScene(SplitStats::ROUTE_PINNA_6_FULL_REDS, 0x0D, 3) ||
+        routeScene(SplitStats::ROUTE_SIRENA_ENTER, 1, 8) ||
+        routeScene(SplitStats::ROUTE_RICCO_8, 3, 7))
         publishEvent(sActiveRoute, 0);
 }
 
-void onNozzleCollected() {
-    if (sRetailDirectOpen && routeScene(SplitStats::ROUTE_CORONA, 0x34, 0))
+void onNozzleCollected(TItemNozzle *nozzle) {
+    if (!sRetailDirectOpen || !stageIdentityValid() || !nozzle) return;
+    if (routeScene(SplitStats::ROUTE_CORONA, 0x34, 0))
         publishEvent(sActiveRoute, 1);
+    const THitActor *item = reinterpret_cast<const THitActor *>(nozzle);
+    if (item->mObjectID != 0x20000022u) return;
+    if (routeScene(SplitStats::ROUTE_RICCO_8, 3, 7) ||
+        routeScene(SplitStats::ROUTE_GELATO_4, 4, 3) ||
+        routeScene(SplitStats::ROUTE_RIGHT_BELL, 1, 2) ||
+        routeScene(SplitStats::ROUTE_SHINE_GATE, 1, 2))
+        publishEvent(sActiveRoute, 0);
 }
 
 void armPinnaOneRetailExit() {
@@ -1495,6 +1743,11 @@ extern "C" void susamuneSplitStartDemo(
 
 extern "C" void susamuneSplitOpenTalk(void *talk, TBaseNPC *npc) {
     reinterpret_cast<OpenTalkFn>(sOpenTalkTrampoline)(talk, npc);
+    // Pinna's automatic post-movie talk opens before its first live clock frame.
+    if (npc && !sRetailDirectOpen && stageIdentityValid() &&
+        SplitStats::routeActive(SplitStats::ROUTE_PINNA_1) &&
+        sceneMatches(gpApplication.mCurrentScene, 0x0D, 6))
+        sPinnaIntroTalkPending = true;
     noteTalk(npc);
 }
 
@@ -1505,6 +1758,7 @@ extern "C" bool susamuneSplitRailCheck(TRailMapObj *rail) {
          sActiveRoute == SplitStats::ROUTE_SIRENA_4_FULL ||
          sActiveRoute == SplitStats::ROUTE_SIRENA_4_SECRET ||
          sActiveRoute == SplitStats::ROUTE_PINNA_EYG ||
+         sActiveRoute == SplitStats::ROUTE_PINNA_6_FULL ||
          sActiveRoute == SplitStats::ROUTE_PINNA_6_SECRET);
     if (!gSettings.getBool(SETTING_TIMER_FREEZE_MOVING_PLATFORM) &&
         !splitRoute)
@@ -1530,7 +1784,8 @@ extern "C" bool susamuneSplitRailCheck(TRailMapObj *rail) {
                routeScene(sActiveRoute, 0x28, 0)) {
         publishEvent(sActiveRoute,
             sActiveRoute == SplitStats::ROUTE_SIRENA_4_FULL ? 4 : 1);
-    } else if (routeScene(SplitStats::ROUTE_PINNA_EYG, 0x29, 0)) {
+    } else if (routeScene(SplitStats::ROUTE_PINNA_EYG, 0x29, 0) ||
+               routeScene(SplitStats::ROUTE_PINNA_6_FULL, 0x29, 0)) {
         publishEvent(sActiveRoute, 2);
     } else if (routeScene(SplitStats::ROUTE_PINNA_6_SECRET, 0x29, 0)) {
         publishEvent(sActiveRoute, 0);
@@ -1629,4 +1884,107 @@ extern "C" void susamuneSplitBathtubQuake(void *bathtub,
     }
     reinterpret_cast<BathtubQuakeFn>(sBathtubQuakeTrampoline)(bathtub,
                                                                position);
+}
+
+extern "C" bool susamuneSplitRedSwitchMessage(void *actor,
+                                              THitActor *sender, u32 message) {
+    const u16 before = static_cast<TMapObjBase *>(actor)->mState;
+    const bool accepted = reinterpret_cast<ReceiveMessageFn>(
+        sRedSwitchMessageTrampoline)(actor, sender, message);
+    if (accepted && message == 1 && before == 1 &&
+        static_cast<TMapObjBase *>(actor)->mState == 2)
+        noteRedSwitch();
+    return accepted;
+}
+
+extern "C" void susamuneSplitMapObjAppear(void *actor) {
+    // Retail inlines TItem::appear into both Shine spawn methods.
+    reinterpret_cast<void (*)(void *)>(sMapObjAppearTrampoline)(actor);
+    if (!sRetailDirectOpen || !stageIdentityValid() ||
+        objectVtable(actor) != kShineVtable) return;
+    const TShine *shine = static_cast<const TShine *>(actor);
+    u32 expected = 0;
+    u8 event = 0;
+    switch (sActiveRoute) {
+    case SplitStats::ROUTE_LIGHTHOUSE: expected = 93; break;
+    case SplitStats::ROUTE_LEFT_BELL: expected = 96; break;
+    case SplitStats::ROUTE_RIGHT_BELL: expected = 97; event = 1; break;
+    case SplitStats::ROUTE_SHINE_GATE: expected = 99; event = 1; break;
+    case SplitStats::ROUTE_BEACH_SHINE: expected = 117; break;
+    case SplitStats::ROUTE_GOLD_BIRD: expected = 118; break;
+    case SplitStats::ROUTE_NOKI_HIDDEN: expected = 59; event = 1; break;
+    default: return;
+    }
+    const bool scene = sActiveRoute == SplitStats::ROUTE_NOKI_HIDDEN ?
+        routeScene(sActiveRoute, 9, 6) : routeScene(sActiveRoute, 1, 2);
+    if (scene && shine->mMapObjID == expected)
+        publishEvent(sActiveRoute, event);
+}
+
+extern "C" void susamuneSplitSandCastle(void *actor) {
+    const u16 before = static_cast<TMapObjBase *>(actor)->mState;
+    reinterpret_cast<void (*)(void *)>(sSandCastleTrampoline)(actor);
+    if (sRetailDirectOpen && before != 7 &&
+        static_cast<TMapObjBase *>(actor)->mState == 7 &&
+        (routeScene(SplitStats::ROUTE_GELATO_1_FULL, 4, 0) ||
+         routeScene(SplitStats::ROUTE_GELATO_1_FULL_REDS, 4, 0)))
+        publishEvent(sActiveRoute, 0);
+}
+
+extern "C" bool susamuneSplitMirrorMessage(void *actor,
+                                            THitActor *sender, u32 message) {
+    const s32 before = *reinterpret_cast<const s32 *>(
+        static_cast<const u8 *>(actor) + 0x19C);
+    const bool accepted = reinterpret_cast<ReceiveMessageFn>(
+        sMirrorMessageTrampoline)(actor, sender, message);
+    const s32 after = *reinterpret_cast<const s32 *>(
+        static_cast<const u8 *>(actor) + 0x19C);
+    if (accepted && message == 8 && before == 1 && after == 0 &&
+        hookScene(SplitStats::ROUTE_GELATO_2, 4, 1) && sMirrorsCleared < 3) {
+        for (u8 i = 0; i < sMirrorsCleared; ++i)
+            if (sClearedMirrors[i] == actor) return accepted;
+        sClearedMirrors[sMirrorsCleared] = actor;
+        publishEvent(sActiveRoute, sMirrorsCleared++);
+    }
+    return accepted;
+}
+
+extern "C" void susamuneSplitHanachanDamage(void *actor) {
+    TSpineEnemy *enemy = static_cast<TSpineEnemy *>(actor);
+    const u8 before = enemy->mHealth;
+    reinterpret_cast<void (*)(void *)>(sHanachanDamageTrampoline)(actor);
+    if (hookScene(SplitStats::ROUTE_GELATO_3, 4, 2))
+        for (u8 health = enemy->mHealth; health < before && sHanachanHits < 3; ++health)
+            publishEvent(sActiveRoute, sHanachanHits++);
+}
+
+extern "C" void susamuneSplitTinKoopaHit(void *actor) {
+    const s32 before = *reinterpret_cast<const s32 *>(
+        static_cast<const u8 *>(actor) + 0x1C8);
+    reinterpret_cast<void (*)(void *)>(sTinKoopaHitTrampoline)(actor);
+    const s32 after = *reinterpret_cast<const s32 *>(
+        static_cast<const u8 *>(actor) + 0x1C8);
+    if (hookScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1))
+        for (s32 hit = after; hit < before && sTinKoopaHits < 4; ++hit)
+            publishEvent(sActiveRoute, 1 + sTinKoopaHits++);
+}
+
+extern "C" void susamuneSplitStreamingMovie(TMarDirector *director, u8 movie) {
+    const bool queuedBefore = (director->mGameState & 0x100) != 0;
+    reinterpret_cast<void (*)(TMarDirector *, u8)>(sStreamingMovieTrampoline)(director, movie);
+    if (!queuedBefore && (director->mGameState & 0x100) && movie == 2 &&
+        director == sStageDirector && hookScene(SplitStats::ROUTE_AIRSTRIP_1, 0, 0) &&
+        gpApplication.mNextScene.mAreaID == 0 && gpApplication.mNextScene.mEpisodeID == 1) {
+        if (publishEvent(sActiveRoute, 0)) sArmedCarryRoute = sActiveRoute;
+    }
+    if (!queuedBefore && (director->mGameState & 0x100) &&
+        director == sStageDirector &&
+        gpApplication.mNextScene.mAreaID == 0x0D &&
+        ((movie == 7 && hookScene(SplitStats::ROUTE_PINNA_1, 0x0D, 0) &&
+          gpApplication.mNextScene.mEpisodeID == 6) ||
+         (movie == 8 && hookScene(SplitStats::ROUTE_PINNA_1, 0x3A, 1) &&
+          gpApplication.mNextScene.mEpisodeID == 7))) {
+        // Watching either movie must preserve the same attempt as Exit Area.
+        sArmedCarryRoute = sActiveRoute;
+    }
 }

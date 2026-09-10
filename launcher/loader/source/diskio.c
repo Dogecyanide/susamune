@@ -241,7 +241,16 @@ DRESULT disk_shutdown (BYTE pdrv)
 	if (/*pdrv < DEV_SD ||*/ pdrv > DEV_USB)
 		return RES_PARERR;
 	if (!disk_isInit[pdrv])
+	{
+		// A partial probe can still own IOS handles before a reload.
+		if (pdrv == DEV_SD)
+			driver[pdrv]->shutdown();
+		if (pdrv == DEV_USB) {
+			USBStorageOGC_Deinitialize();
+			USB_OGC_Deinitialize();
+		}
 		return RES_OK;
+	}
 
 	if (cache[pdrv]) {
 		// Flush and destroy the cache.

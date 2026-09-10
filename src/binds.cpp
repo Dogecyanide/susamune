@@ -57,6 +57,7 @@ const u16 kB     = JUTGamePad::B;
 const u16 kX     = JUTGamePad::X;
 const u16 kY     = JUTGamePad::Y;
 const u16 kR     = JUTGamePad::R;
+const u16 kL     = JUTGamePad::L;
 const u16 kZ     = JUTGamePad::Z;
 const u16 kStart = JUTGamePad::START;
 const u16 kDUp   = JUTGamePad::DPAD_UP;
@@ -95,8 +96,8 @@ int popCount(u16 v) {
 }  // namespace
 
 Binds &gBinds = *reinterpret_cast<Binds *>(
-    SUSAMUNE_MEM2_CONFIG_RUNTIME_PPC_BASE + SUSAMUNE_CONFIG_BINDS_OFFSET);
-static_assert(sizeof(Binds) <= SUSAMUNE_CONFIG_BINDS_SIZE,
+    SUSAMUNE_MEM2_BINDS_RUNTIME_PPC_BASE);
+static_assert(sizeof(Binds) <= SUSAMUNE_FOXTROT_BINDS_SIZE,
               "binds exceed their MEM2 runtime slot");
 
 void Binds::resetDefaults() {
@@ -157,6 +158,20 @@ bool Binds::isHeld(BindId id) const {
 bool Binds::wasPressed(BindId id) const {
     u16 m = mMask[id];
     return m != 0 && live() && mHeld == m && mPrevHeld != m;
+}
+
+bool Binds::wasPressedPracticeRaw(BindId id) const {
+    if (!wasPressedSubsetRaw(id)) return false;
+    if (mHeld == mMask[id]) return true;
+    for (int i = 0; i < BIND_COUNT; ++i) {
+        if (i == BIND_PRACTICE_SPIN_CW || i == BIND_PRACTICE_SPIN_CCW)
+            continue;
+        const u16 other = mMask[i];
+        if (other != mMask[id] && (other & mMask[id]) == mMask[id] &&
+            (id == BIND_PRACTICE_STEP ? mHeld == other :
+             (mHeld & other) == other)) return false;
+    }
+    return true;
 }
 
 void Binds::update() {

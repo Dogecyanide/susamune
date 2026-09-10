@@ -9,6 +9,15 @@ file(GLOB _loader_srcs CONFIGURE_DEPENDS
 add_executable(loader ${_loader_srcs})
 set_target_properties(loader PROPERTIES OUTPUT_NAME loader SUFFIX ".elf")
 
+set(_guide_source "${CMAKE_CURRENT_SOURCE_DIR}/../../doc/launcher-guide-en.md")
+set(_guide_data "${LAUNCHER_GEN_DIR}/susamune_guide_data.inc")
+add_custom_command(OUTPUT "${_guide_data}"
+    COMMAND "${LAUNCHER_PYTHON}" "${LAUNCHER_SCRIPTS_DIR}/gen_launcher_guide.py"
+        "${_guide_source}" "${_guide_data}"
+    DEPENDS "${_guide_source}" "${LAUNCHER_SCRIPTS_DIR}/gen_launcher_guide.py"
+    VERBATIM)
+target_sources(loader PRIVATE "${_guide_data}")
+
 option(SUSAMUNE_MINIMAL_FREETYPE
     "Register only the FreeType modules used by the embedded TrueType font" ON)
 set(SUSAMUNE_LOADER_OPTIMIZATION "-Os" CACHE STRING
@@ -42,6 +51,7 @@ target_include_directories(loader PRIVATE
 # ppc/arm groups' shared data dir. The stock background is drawn procedurally;
 # only a user-supplied theme needs a full-size texture.
 susamune_embed_binary(loader "${CMAKE_CURRENT_SOURCE_DIR}/data/font.zip"       font_zip)
+susamune_embed_binary(loader "${CMAKE_CURRENT_SOURCE_DIR}/data/font_ja.zip"    font_ja_zip)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/PADReadGC.bin"    PADReadGC_bin)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/kernel.zip"       kernel_zip)
 susamune_embed_binary(loader "${LAUNCHER_DATA_DIR}/kernelboot.bin"   kernelboot_bin)

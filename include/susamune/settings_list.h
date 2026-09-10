@@ -192,7 +192,25 @@
     /* -- V2.2 PR6 practice visuals (append-only persisted ids) -- */        \
     X(SETTING_HIDDEN_ITEM_LABELS,            "hidden_item_labels")         \
     X(SETTING_HURTBOX_TARGET,                "hurtbox_target")             \
-    X(SETTING_RICCO_RACE_CHECKPOINTS,        "ricco_race_checkpoints")
+    X(SETTING_RICCO_RACE_CHECKPOINTS,        "ricco_race_checkpoints")       \
+    X(SETTING_GHOST_INPUTS,                  "ghost_inputs")                 \
+    X(SETTING_SPLIT_COMPARISON,              "split_comparison")             \
+    X(SETTING_NATIVE_TIMER_X,                "native_timer_x")               \
+    X(SETTING_NATIVE_TIMER_Y,                "native_timer_y")               \
+    X(SETTING_NATIVE_TIMER_SCALE,            "native_timer_scale")           \
+    X(SETTING_FREE_CAMERA_SPEED,             "free_camera_speed")            \
+    X(SETTING_FREE_CAMERA_STRAFE_REVERSE,    "free_camera_strafe_reverse")      \
+    X(SETTING_FREE_CAMERA_SENSITIVITY,       "free_camera_sensitivity")         \
+    X(SETTING_FREE_CAMERA_HIDE_HUD,          "free_camera_hide_hud")           \
+    X(SETTING_FAVORITES_EXTRA_0,             "favorites_extra_0")             \
+    X(SETTING_FAVORITES_EXTRA_1,             "favorites_extra_1")             \
+    X(SETTING_FAVORITES_EXTRA_2,             "favorites_extra_2")             \
+    X(SETTING_FAVORITES_EXTRA_3,             "favorites_extra_3")             \
+    X(SETTING_FAVORITES_EXTRA_4,             "favorites_extra_4")             \
+    X(SETTING_FAVORITES_EXTRA_5,             "favorites_extra_5")             \
+    X(SETTING_FAVORITES_EXTRA_6,             "favorites_extra_6")             \
+    X(SETTING_FAVORITES_EXTRA_7,             "favorites_extra_7")             \
+    X(SETTING_TAS_BANNER,                    "tas_banner")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

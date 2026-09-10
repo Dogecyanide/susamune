@@ -67,7 +67,7 @@ class IsoLayoutHookTests(unittest.TestCase):
                 self.assertEqual(layout["game_id"], self.patches.game_id[region])
                 self.assertEqual(layout["base_addr"], self.patches.base_addr[region])
                 self.assertEqual(
-                    layout["mod_region_size"], self.patches.mod_region_size
+                    layout["mod_region_size"], self.patches.mod_dol_storage_size
                 )
                 self.assertEqual(layout["source_crc32"], crc32)
 

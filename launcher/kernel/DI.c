@@ -90,6 +90,12 @@ static u8 *MediaBuffer;
 static u8 *NetworkCMDBuffer;
 static u8 *const DIMMMemory = (u8*)NIN_MEM2_DIMM_PHYS_BASE;
 
+static bool IsSunshineDIMMWrite(u32 command)
+{
+	return command == 0xAA && GAME_ID6 == 0x3031 &&
+		(GAME_ID == 0x474D534A || GAME_ID == 0x474D5345 || GAME_ID == 0x474D5350);
+}
+
 // Multi-disc filenames.
 static const char disc_filenames[8][16] = {
 	// Disc 1
@@ -472,10 +478,14 @@ void DIUpdateRegisters( void )
 		//no encryption here, just direct CMD
 		DIcommand = read32(DI_CMD_0) >> 24;
 #endif
+		// Sunshine borrows SegaBoot/DIMM only after the IPL has finished.
+		if(IsSunshineDIMMWrite(DIcommand))
+			goto unsupported_command;
 		switch( DIcommand )
 		{
 			default:
 			{
+			unsupported_command:
 				dbgprintf("DI: Unknown command:%02X\r\n", DIcommand );
 
 				for( i = 0; i < 0x30; i+=4 )

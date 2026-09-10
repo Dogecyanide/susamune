@@ -1,3 +1,4 @@
+#include "Dolphin/printf.h"
 // =====================================================================
 // settings.cpp
 //
@@ -14,6 +15,9 @@
 #include "Dolphin/OS.h"  // DCInvalidateRange, DCStoreRange
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/iling.hxx"
+#include "susamune/fludd_colors.hxx"
 #include "susamune/input_display.hxx"
 #include "susamune/metadata_display.hxx"
 #include "susamune/mem2_map.h"
@@ -44,6 +48,12 @@ enum ChoiceSet {
     CHOICES_HIDDEN_ITEMS,
     CHOICES_HURTBOX_MODE,
     CHOICES_HURTBOX_TARGET,
+    CHOICES_GHOST_INPUTS,
+    CHOICES_SPLIT_COMPARISON,
+    CHOICES_NATIVE_X,
+    CHOICES_NATIVE_Y,
+    CHOICES_NATIVE_SCALE,
+    CHOICES_FREE_CAMERA_SPEED,
     CHOICES_COUNT,
 };
 
@@ -57,9 +67,11 @@ const u8 kDefaultShift = 3;
 
 #define SBOOL(name, def, cat) name "\0"
 #define SCHOICE(name, def, choices, cat) name "\0"
+#pragma clang section rodata=".foxtrot.rodata"
 const char kSettingNames[] =
 #include "settings_descs.inc"
     ;
+#pragma clang section rodata=""
 #undef SBOOL
 #undef SCHOICE
 
@@ -74,7 +86,8 @@ const char kChoiceLabels[] =
     "Durians only\0"
     "Pattern 1\0Pattern 2\0Pattern 3\0Pattern 4\0"
     "Both\0Fruit\0Coins\0Wireframe\0Transparent\0Solid\0"
-    "All enemies\0Eely teeth only";
+    "All enemies\0Eely teeth only\0Ghost\0Both ghosts\0PB\0SOB\0"
+    "0.25x\0" "0.5x\0" "1x\0" "2x\0" "4x";
 
 const u8 kChoiceMap[] = {
     0, 1,              // bool
@@ -97,13 +110,17 @@ const u8 kChoiceMap[] = {
     0, 45, 46, 47,       // hidden items
     0, 48, 49, 50,       // hurtbox mode
     51, 52,               // hurtbox target
+    0, 53, 54,            // ghost inputs
+    0, 55, 56, 53,        // split comparison
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // numeric presentation values
+    57, 58, 59, 60, 61,  // free camera speed
 };
 const u8 kChoiceFirst[CHOICES_COUNT + 1] = {
     0, 2, 5, 9, 12, 15, 21, 24, 27, 31, 34, 36, 39, 42, 44, 50, 52, 57,
-    61, 65, 67
+    61, 65, 67, 70, 74, 107, 132, 143, 148
 };
 
-static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 67,
+static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 148,
               "choice map size changed");
 static_assert(SETTING_HELMET_APPEARANCE == SETTING_GHOST_OPACITY + 1 &&
                   SETTING_CAP_APPEARANCE == SETTING_HELMET_APPEARANCE + 1 &&
@@ -200,9 +217,8 @@ const u32 kFatFsInternalError = 2;
 }  // namespace
 
 Settings &gSettings = *reinterpret_cast<Settings *>(
-    SUSAMUNE_MEM2_CONFIG_RUNTIME_PPC_BASE +
-    SUSAMUNE_CONFIG_SETTINGS_OFFSET);
-static_assert(sizeof(Settings) <= SUSAMUNE_CONFIG_SETTINGS_SIZE,
+    SUSAMUNE_MEM2_SETTINGS_RUNTIME_PPC_BASE);
+static_assert(sizeof(Settings) <= SUSAMUNE_FOXTROT_SETTINGS_SIZE,
               "settings exceed their MEM2 runtime slot");
 
 void Settings::resetDefaults() {
@@ -214,6 +230,9 @@ void Settings::resetDefaults() {
     gMetadataDisplay.resetDefaults();
     gQftDisplay.resetDefaults();
     gCreationExtras.resetDefaults();
+    MarioColors::resetDefaults();
+    FluddColors::resetDefaults();
+    ILing::resetEpisodeChoices();
 
     for (int i = 0; i < SETTING_COUNT; i++) {
         mValues[i] = defaultValue(kSettingDescs[i]);
@@ -285,14 +304,16 @@ void Settings::save() {
         gMetadataDisplay.clearDirty();
         gQftDisplay.clearDirty();
         gCreationExtras.clearDirty();
+        MarioColors::clearDirty();
+        FluddColors::clearDirty();
         return;
     }
 
     stageInto(cfg);
 
     // Publish the payload before the doorbell, so the kernel can never see a
-    // bumped saveSeq alongside a half-written values[]/binds[]. Both live in
-    // the same mod-owned run of cache lines starting at values[].
+    // bumped saveSeq alongside half-written values[]/binds[]. Extra settings
+    // share line 0 and are published together with the doorbell below.
     DCStoreRange((void *)cfg->values,
                  sizeof(cfg->values) + sizeof(cfg->binds) + sizeof(cfg->inputDisplay) +
                  sizeof(cfg->metadataDisplay));
@@ -300,11 +321,18 @@ void Settings::save() {
                  sizeof(cfg->qftDisplay) + sizeof(cfg->metadataStyle) +
                  sizeof(cfg->inputStyle) + sizeof(cfg->creation) +
                  sizeof(cfg->wallkickStyle));
-    DCStoreRange((void *)&cfg->movementStyle, sizeof(cfg->movementStyle));
+    DCStoreRange((void *)&cfg->movementStyle,
+                 sizeof(cfg->movementStyle) + sizeof(cfg->nativeTimerStyle));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS)
+        DCStoreRange(SUSAMUNE_MARIO_COLORS_LIVE_PTR, sizeof(SusamuneMarioColorsCfg));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
+        DCStoreRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(SusamuneFluddColorsCfg));
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES)
+        DCStoreRange(SUSAMUNE_IL_EPISODES_LIVE_PTR, sizeof(SusamuneILEpisodesCfg));
 
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
-    DCStoreRange((void *)cfg, 32);  // line 0: magic/version/count/saveSeq
+    DCStoreRange((void *)cfg, 32);  // line 0 includes extraValues and saveSeq
 
     mDirty          = false;
     mLastError      = 0;
@@ -352,7 +380,7 @@ SettingsSaveState Settings::pollSave() {
             // longer owned by the old transaction.
             if (mDirty || gBinds.dirty() || gInputDisplay.dirty() ||
                 gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-                gCreationExtras.dirty()) {
+                gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
                 save();
             }
         }
@@ -377,7 +405,7 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
         n = SETTING_COUNT;
     }
     for (u16 i = 0; i < n; i++) {
-        u8 v = cfg->values[i];
+        u8 v = SusamuneCfgGetSetting(cfg, i);
         if (v == SUSAMUNE_CFG_UNSET) {
             continue;  // absent from the ini -- keep the default
         }
@@ -426,6 +454,28 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
     if (cfg->flags & SUSAMUNE_CFG_FLAG_MOVEMENT_STYLE) {
         gCreationExtras.adoptMovement(&cfg->movementStyle);
     }
+    gCreationExtras.adoptNativeTimer(
+        (cfg->flags & SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE)
+            ? &cfg->nativeTimerStyle : nullptr);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_MARIO_COLORS_LIVE_PTR, sizeof(SusamuneMarioColorsCfg));
+#endif
+        MarioColors::adopt(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
+    }
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_FLUDD_COLORS_LIVE_PTR, sizeof(SusamuneFluddColorsCfg));
+#endif
+        FluddColors::adopt(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
+    }
+
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_IL_EPISODES_LIVE_PTR, sizeof(SusamuneILEpisodesCfg));
+#endif
+        ILing::adoptEpisodes(SUSAMUNE_IL_EPISODES_LIVE_PTR);
+    }
 
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
@@ -433,7 +483,8 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
 }
 
 void Settings::stageInto(volatile SusamuneCfg *cfg) {
-    memcpy((void *)cfg->values, mValues, sizeof(mValues));
+    for (u16 i = 0; i < SETTING_COUNT; ++i)
+        SusamuneCfgSetSetting(cfg, i, mValues[i]);
     cfg->count = SETTING_COUNT;
 
     gBinds.stageInto(cfg->binds);
@@ -451,11 +502,22 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
     gCreationExtras.stageInto(&cfg->creation);
     gCreationExtras.stageWallkickInto(&cfg->wallkickStyle);
     gCreationExtras.stageMovementInto(&cfg->movementStyle);
+    gCreationExtras.stageNativeTimerInto(&cfg->nativeTimerStyle);
     gCreationExtras.clearDirty();
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS)
+        MarioColors::stageInto(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
+        FluddColors::stageInto(SUSAMUNE_FLUDD_COLORS_LIVE_PTR);
+    if (cfg->flags & SUSAMUNE_CFG_FLAG_IL_EPISODES)
+        ILing::stageEpisodes(SUSAMUNE_IL_EPISODES_LIVE_PTR);
+    MarioColors::clearDirty();
+    FluddColors::clearDirty();
 }
 
+#pragma clang section text=".foxtrot.text"
 void Settings::set(SettingId id, u8 value) {
     if ((id >= SETTING_FAVORITES_0 && id <= SETTING_FAVORITES_10) ||
+        (id >= SETTING_FAVORITES_EXTRA_0 && id <= SETTING_FAVORITES_EXTRA_7) ||
         id == SETTING_RNG_FAVORITES) {
         value &= 0x7F;
     } else {
@@ -468,11 +530,11 @@ void Settings::set(SettingId id, u8 value) {
 }
 
 bool Settings::favoriteable(SettingId id) {
-    return (id >= 0 && id < SETTING_FAVORITES_0) ||
-           rngFavoriteBit(id) >= 0;
+    return id >= 0 && id < SETTING_COUNT && name(id)[0] != '\0';
 }
 
 bool Settings::favorite(SettingId id) const {
+    if (!favoriteable(id)) return false;
     if (id >= 0 && id < SETTING_FAVORITES_0) {
         const int index = (int)id;
         const SettingId storage =
@@ -480,11 +542,15 @@ bool Settings::favorite(SettingId id) const {
         return (mValues[storage] & (1u << (index % 7))) != 0;
     }
     const int bit = rngFavoriteBit(id);
-    return bit >= 0 &&
-           (mValues[SETTING_RNG_FAVORITES] & (1u << bit)) != 0;
+    if (bit >= 0)
+        return (mValues[SETTING_RNG_FAVORITES] & (1u << bit)) != 0;
+    const int index = (int)id - (SETTING_FAVORITES_10 + 1);
+    return (mValues[SETTING_FAVORITES_EXTRA_0 + index / 7] &
+            (1u << (index % 7))) != 0;
 }
 
 void Settings::toggleFavorite(SettingId id) {
+    if (!favoriteable(id)) return;
     SettingId storage;
     int bit;
     if (id >= 0 && id < SETTING_FAVORITES_0) {
@@ -493,12 +559,21 @@ void Settings::toggleFavorite(SettingId id) {
         bit = index % 7;
     } else {
         bit = rngFavoriteBit(id);
-        if (bit < 0) return;
         storage = SETTING_RNG_FAVORITES;
+        if (bit < 0) {
+            const int index = (int)id - (SETTING_FAVORITES_10 + 1);
+            storage = (SettingId)(SETTING_FAVORITES_EXTRA_0 + index / 7);
+            bit = index % 7;
+        }
     }
     mValues[storage] ^= (u8)(1u << bit);
     mDirty = true;
 }
+
+static_assert(SETTING_COUNT - (SETTING_FAVORITES_10 + 1) <=
+              (SETTING_FAVORITES_EXTRA_7 - SETTING_FAVORITES_EXTRA_0 + 1) * 7,
+              "new settings need more Shined storage");
+#pragma clang section text=""
 
 void Settings::cycle(SettingId id, int dir) {
     int n = choiceCount(kSettingDescs[id]);
@@ -516,6 +591,14 @@ void Settings::cycle(SettingId id, int dir) {
 }
 
 const char *Settings::valueLabel(SettingId id) const {
+    static char numeric[16];
+    if (id >= SETTING_NATIVE_TIMER_X && id <= SETTING_NATIVE_TIMER_SCALE) {
+        int value = id == SETTING_NATIVE_TIMER_X ? ((int)mValues[id] - 16) * 10 :
+                    id == SETTING_NATIVE_TIMER_Y ? ((int)mValues[id] - 12) * 10 :
+                    50 + (int)mValues[id] * 10;
+        snprintf(numeric, sizeof(numeric), id == SETTING_NATIVE_TIMER_SCALE ? "%d pct" : "%d px", value);
+        return numeric;
+    }
     const SettingDesc &d = kSettingDescs[id];
     u8 index = kChoiceFirst[d.choices] + mValues[id] % choiceCount(d);
     return PackedText::at(kChoiceLabels, kChoiceMap[index]);
@@ -573,7 +656,7 @@ static_assert(sizeof(kSettingDescs) / sizeof(kSettingDescs[0]) == SETTING_COUNT,
               "kSettingDescs must have one row per SUSAMUNE_SETTING_LIST entry");
 static_assert(SETTING_CAT_COUNT <= kCategoryMask + 1,
               "SettingCategory no longer fits packed descriptor");
-static_assert(SETTING_COUNT <= SUSAMUNE_CFG_MAX_SETTINGS,
+static_assert(SETTING_COUNT <= SUSAMUNE_CFG_TOTAL_SETTINGS,
               "SETTING_COUNT exceeds the MEM2 handoff block's values[] capacity");
 static_assert(BIND_COUNT <= SUSAMUNE_CFG_MAX_BINDS,
               "BIND_COUNT exceeds the MEM2 handoff block's binds[] capacity");

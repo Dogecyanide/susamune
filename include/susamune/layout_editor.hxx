@@ -8,7 +8,7 @@ class Menu;
 namespace LayoutEditor {
 
 bool updatePositionScale(u32 rapid, u16 &x, u16 &y, u8 &scale,
-                         int maxScale = 150);
+                         int maxScale = 150, int maxX = 640, int maxY = 480);
 void drawHeader(Menu *menu, int boxHeight, const char *title, const char *status);
 
 }  // namespace LayoutEditor

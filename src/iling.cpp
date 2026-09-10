@@ -1,3 +1,4 @@
+#include "susamune/practice_session.hxx"
 #include "susamune/iling.hxx"
 
 #include "Dolphin/OS.h"
@@ -545,6 +546,7 @@ struct AttemptState {
     u8 plazaStoryFlags;
     u8 overlayCount;
     u8 assistReasons;
+    bool awaitingStageSetup;
     OverlayFlag overlayFlags[kOverlayFlagCount];
     LevelWarp::Dest start;
     u8 finish;
@@ -552,6 +554,22 @@ struct AttemptState {
     int selectedEntry;
     u32 serial;
 };
+
+static_assert(sizeof(AttemptState) == 44, "IL attempt sidecar layout changed");
+
+struct SavedAttemptData {
+    AttemptState attempt;
+    s32 secondNozzleFlag;
+    s32 bowserNozzleFlag;
+    u8 secondNozzle;
+    bool pinnaEygRestart;
+    bool temporaryRocket;
+    bool bowserShieldPending;
+    bool bowserShieldActive;
+    u8 reserved[7];
+};
+static_assert(sizeof(SavedAttemptData) == sizeof(ILing::SavestateData),
+              "IL savestate sidecar layout changed");
 
 #if IS_EMULATOR
 #define sPbProfiles (*reinterpret_cast<s32 (*)[SUSAMUNE_ILING_PROFILE_COUNT] \
@@ -639,6 +657,7 @@ static_assert(sizeof(ILingRuntime) <= SUSAMUNE_ILING_RUNTIME_SIZE,
 #define sPlazaStoryFlags sAttemptState.plazaStoryFlags
 #define sOverlayCount sAttemptState.overlayCount
 #define sAssistReasons sAttemptState.assistReasons
+#define sAwaitingStageSetup sAttemptState.awaitingStageSetup
 #define sOverlayFlags sAttemptState.overlayFlags
 #define sAttemptStart sAttemptState.start
 #define sFinishKind sAttemptState.finish
@@ -911,7 +930,7 @@ void servicePBSave() {
 
 bool validEntry(int entry) {
     // Internal entry ids are either table indexes or the -1 disarmed sentinel.
-    return entry >= 0;
+    return entry >= 0 && entry < kEntryCount;
 }
 
 bool isPlazaEntry(int entry) {
@@ -945,6 +964,21 @@ bool isBonusShine(const Entry &item) {
     return hidden || hundred;
 }
 
+u8 sEpisodeChoices[SUSAMUNE_IL_EPISODE_COUNT];
+
+int episodeChoiceIndex(int entry) {
+    if (!validEntry(entry)) return -1;
+#define EPISODE_SLOT(slot, key) slot,
+    static const u8 kSlots[] = { SUSAMUNE_IL_EPISODE_LIST(EPISODE_SLOT) };
+#undef EPISODE_SLOT
+    static_assert(sizeof(kSlots) == SUSAMUNE_IL_EPISODE_COUNT,
+                  "episode choices must match their persisted slots");
+    const int slot = pbSlot(entry);
+    for (u32 i = 0; i < sizeof(kSlots); ++i)
+        if (kSlots[i] == slot) return i;
+    return -1;
+}
+
 u8 parentOrSelf(u8 area) {
     const u8 parent = LevelWarp::parentArea(area);
     return parent == 0xFF ? area : parent;
@@ -957,6 +991,15 @@ bool sameCourse(const LevelWarp::Dest &a, const LevelWarp::Dest &b) {
 bool sameCourseEpisode(const LevelWarp::Dest &a,
                        const LevelWarp::Dest &b) {
     return sameCourse(a, b) && a.gameInt3 == b.gameInt3;
+}
+
+LevelWarp::Dest selectedStart(int entry) {
+    const LevelWarp::Dest original = kEntries[entry].start;
+    const int index = episodeChoiceIndex(entry);
+    if (index < 0 || !sEpisodeChoices[index] ||
+        sEpisodeChoices[index] == original.gameInt3 + 1) return original;
+    const u8 episode = sEpisodeChoices[index] - 1;
+    return {parentOrSelf(original.area), episode, episode};
 }
 
 bool acceptsSkipOrigin(const Entry &item) {
@@ -1299,6 +1342,7 @@ void clearAttempt() {
     }
     sRunning = false;
     sAttemptReady = false;
+    sAwaitingStageSetup = false;
     sTransitionPending = false;
     sRecordsEligible = false;
     sAssistReasons = 0;
@@ -1322,7 +1366,7 @@ void captureGhostRace(int entry) {
         race.attemptSerial != gQFTTimer.attemptSerial() ||
         race.targetQf > 0x7fffffffu)
         return;
-    const LevelWarp::Dest &start = kEntries[entry].start;
+    const LevelWarp::Dest &start = sAttemptStart;
     const u8 parentArea = LevelWarp::parentArea(start.area);
     const u8 routeFlags = parentArea == 0xff
         ? 0 : SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE;
@@ -1336,19 +1380,21 @@ void captureGhostRace(int entry) {
 
 u8 liveGlobalAssistReasons() {
     return (gSettings.getBool(SETTING_STAGE_INTRO_SKIP) ||
-            actionsFastForwardActive())
+            actionsFastForwardActive() || PracticeSession::assisted())
                ? Assist::OTHER
                : 0;
 }
 
-void armAttempt(const Entry &entry, int selected) {
+void armAttempt(const Entry &entry, int selected,
+                const LevelWarp::Dest *start = nullptr) {
     const int entryIndex = (int)(&entry - kEntries);
     sPinnaEygRestart = entryIndex == kEntryPinnaEyg;
     sRunning = true;
     sAttemptReady = false;
+    sAwaitingStageSetup = true;
     sTransitionPending = false;
     sChildRetryContinuation = false;
-    sAttemptStart = entry.start;
+    sAttemptStart = start ? *start : entry.start;
     sFinishKind = entryFinish(entry);
     sSelectedEntry = selected;
     int identity = selected;
@@ -1359,10 +1405,18 @@ void armAttempt(const Entry &entry, int selected) {
     if (identity < 0 || identity >= kEntryCount) identity = entryIndex;
     sSecretOnly = isSecretOnlyPbSlot(pbSlot(identity));
     sAttemptSerial = gQFTTimer.attemptSerial();
+    sAssistReasons = 0;
+    sRecordsEligible = true;
+    sNativeIgt = false;
+}
+
+void beginAttemptScene(int entry) {
+    // Selection still runs in the departing scene; its assists belong there.
+    sAwaitingStageSetup = false;
+    sNativeIgt = false;
     sAssistReasons = liveGlobalAssistReasons();
     sRecordsEligible = sAssistReasons == 0;
-    sNativeIgt = false;
-    Records::onILAttemptStarted(entryIndex);
+    Records::onILAttemptStarted(entry);
     if (!sRecordsEligible) {
         Records::invalidateAttempt(sAssistReasons);
         StageLoader::invalidatePlaylistBest();
@@ -1398,7 +1452,7 @@ bool attemptPBRecordingEnabled() {
 
 bool secretAttemptUsedFludd() {
     // isEmitting() reports nozzle pressure, not an accepted water emit.
-    return sRunning && sSecretOnly &&
+    return sRunning && !sAwaitingStageSetup && sSecretOnly &&
            stageObjectsLive() && gpMarioOriginal && gpMarioOriginal->mFludd &&
            gpMarioOriginal->mFludd->mIsEmitWater;
 }
@@ -1514,6 +1568,38 @@ void onPersistenceReady() {
 
 int count() { return kEntryCount; }
 
+bool canChooseEpisode(int entry) { return episodeChoiceIndex(entry) >= 0; }
+
+int selectedEpisode(int entry) {
+    return validEntry(entry) ? selectedStart(entry).gameInt3 : -1;
+}
+
+void setEpisode(int entry, int episode) {
+    const int index = episodeChoiceIndex(entry);
+    if (index < 0 || episode < 0 || episode >= 8) return;
+    sEpisodeChoices[index] = episode + 1;
+    gSettings.markDirty();
+}
+
+void resetEpisodeChoices() { memset(sEpisodeChoices, 0, sizeof(sEpisodeChoices)); }
+
+void adoptEpisodes(const volatile SusamuneILEpisodesCfg *cfg) {
+    resetEpisodeChoices();
+    if (!cfg || cfg->magic != SUSAMUNE_IL_EPISODE_MAGIC ||
+        cfg->version != SUSAMUNE_IL_EPISODE_VERSION ||
+        cfg->count > SUSAMUNE_IL_EPISODE_COUNT) return;
+    for (u32 i = 0; i < cfg->count; ++i)
+        if (cfg->episodes[i] <= 8) sEpisodeChoices[i] = cfg->episodes[i];
+}
+
+void stageEpisodes(volatile SusamuneILEpisodesCfg *cfg) {
+    memset((void *)cfg, 0, sizeof(*cfg));
+    cfg->magic = SUSAMUNE_IL_EPISODE_MAGIC;
+    cfg->version = SUSAMUNE_IL_EPISODE_VERSION;
+    cfg->count = SUSAMUNE_IL_EPISODE_COUNT;
+    memcpy((void *)cfg->episodes, sEpisodeChoices, sizeof(sEpisodeChoices));
+}
+
 bool streakEntrySelectable(int entry) {
     return entry >= 0 && entry < kEntryCount;
 }
@@ -1529,11 +1615,14 @@ bool sameEpisodeShine(int selectedEntry, int completedEntry) {
         selectedEntry <= kEntryFullRedsLast) {
         return completedEntry == selectedEntry;
     }
+    const LevelWarp::Dest start = sRunning && sSelectedEntry == selectedEntry
+                                      ? sAttemptStart
+                                      : selectedStart(selectedEntry);
     return entryFinish(selected) == FINISH_SHINE &&
            entryFinish(completed) == FINISH_SHINE &&
-           sameCourse(selected.start, completed.start) &&
+           sameCourse(start, completed.start) &&
            (isBonusShine(completed) ||
-            sameCourseEpisode(selected.start, completed.start));
+            sameCourseEpisode(start, completed.start));
 }
 
 const char *label(int entry) {
@@ -1556,7 +1645,7 @@ const char *label(int entry) {
         const int group = hundred ? item.result - 100 : item.result / 10;
         const u8 flags = item.flags & ENTRY_FLAG_MASK;
         const int episode = regularDisplayEpisode(
-            item.start.gameInt3, item.result, group, flags);
+            selectedEpisode(entry), item.result, group, flags);
         int formatOffset = LABEL_FORMAT_NORMAL;
         const char *suffix = regularSuffix(flags);
         if (hundred) {
@@ -1838,6 +1927,7 @@ void restoreWarpStartSnapshot() {
 }
 
 bool start(int entry, u32 approvedDiscardToken) {
+    if (!validEntry(entry)) return false;
     restoreWarpStartSnapshot();
     clearAttempt();
     if (gSettings.getBool(SETTING_DISABLE_WARPS)) {
@@ -1859,7 +1949,8 @@ bool start(int entry, u32 approvedDiscardToken) {
     }
     sWarpRollbackAppliedFluddSecrets =
         gSettings.get(SETTING_FLUDD_SECRETS);
-    armAttempt(item, entry);
+    const LevelWarp::Dest destination = selectedStart(entry);
+    armAttempt(item, entry, &destination);
     if (isPlazaEntry(entry)) {
         if (!TFlagManager::smInstance) {
             cancelWarpStart();
@@ -1880,7 +1971,7 @@ bool start(int entry, u32 approvedDiscardToken) {
         return true;
     }
 
-    LevelWarp::warpToGuarded(item.start, approvedDiscardToken, true);
+    LevelWarp::warpToGuarded(destination, approvedDiscardToken, true);
     return true;
 }
 
@@ -1891,9 +1982,9 @@ bool start(int entry) {
 bool copyWarpDiscardName(int entry, char *out, u32 size, u32 *outToken) {
     if (!validEntry(entry) ||
         gSettings.getBool(SETTING_DISABLE_WARPS)) return false;
-    const Entry &item = kEntries[entry];
-    const s32 variant = isPlazaEntry(entry) ? 0 : item.start.gameInt3;
-    return Ghost::copyWarpDiscardName(item.start.area, item.start.episode,
+    const LevelWarp::Dest start = selectedStart(entry);
+    const s32 variant = isPlazaEntry(entry) ? 0 : start.gameInt3;
+    return Ghost::copyWarpDiscardName(start.area, start.episode,
                                       variant, true, out, size, outToken);
 }
 
@@ -1963,6 +2054,9 @@ void beforeStageSetup() {
             // QFT. Keep the parent attempt armed for the spawned Shine.
             sAttemptReady = isPinnaEightReturn(scene);
             sAttemptSerial = gQFTTimer.attemptSerial();
+            if (!sAttemptReady)
+                beginAttemptScene(validEntry(sSelectedEntry) ? sSelectedEntry
+                                                            : entryForStartScene(scene));
             if (isPlazaEntry(sSelectedEntry)) {
                 applyPlazaOverlay(sSelectedEntry);
             } else if (sSelectedEntry >= 0) {
@@ -1974,6 +2068,7 @@ void beforeStageSetup() {
             acceptsSelectedOriginScene(kEntries[sSelectedEntry], scene)) {
             // Their cutscene hops do not restart QFT, so keep the selected
             // attempt eligible across every intermediate scene.
+            if (sAwaitingStageSetup) beginAttemptScene(sSelectedEntry);
             sAttemptReady = true;
             sAttemptSerial = gQFTTimer.attemptSerial();
             return;
@@ -1994,6 +2089,7 @@ void beforeStageSetup() {
         // Natural entry and ordinary level reset arm every valid result from
         // this start scene; the exact TShine id chooses the PB at the finish.
         armAttempt(kEntries[entry], -1);
+        beginAttemptScene(entry);
     }
 }
 
@@ -2047,7 +2143,7 @@ void update() {
     servicePBSave();
 
     const u8 globalAssistReasons = liveGlobalAssistReasons();
-    if (sRunning && globalAssistReasons)
+    if (sRunning && !sAwaitingStageSetup && globalAssistReasons)
         invalidateForAssist(globalAssistReasons);
     if (secretAttemptUsedFludd()) invalidateForAssist(Assist::OTHER);
     if (sRunning && stageObjectsLive() && gpMarDirector->mGCConsole &&
@@ -2133,7 +2229,7 @@ void update() {
     if (sAchievementChimeBlockFrames > 0) {
         sAchievementChimeBlockFrames--;
     }
-    if (!sRunning) {
+    if (!sRunning || sAwaitingStageSetup) {
         return;
     }
 
@@ -2197,6 +2293,7 @@ void update() {
             clearAttempt();
             if (entry >= 0) {
                 armAttempt(kEntries[entry], entry);
+                beginAttemptScene(entry);
                 sAttemptSerial = serial;
                 sAttemptReady = true;
                 captureGhostRace(entry);
@@ -2276,6 +2373,34 @@ void onSavestateSaved() {
     sHaveSavedAttempt = true;
 }
 
+void captureSavestate(SavestateData &out) {
+    SavedAttemptData saved = {};
+    saved.attempt = sAttemptState;
+    saved.secondNozzleFlag = sSavedSecondNozzleFlag;
+    saved.bowserNozzleFlag = sSavedBowserNozzleFlag;
+    saved.secondNozzle = sSavedSecondNozzle;
+    saved.pinnaEygRestart = sPinnaEygRestart;
+    saved.temporaryRocket = sTemporaryRocketActive;
+    saved.bowserShieldPending = sBowserNozzleShieldPending;
+    saved.bowserShieldActive = sBowserNozzleShieldActive;
+    memcpy(&out, &saved, sizeof(saved));
+}
+
+void restoreSavestate(const SavestateData &data) {
+    SavedAttemptData saved;
+    memcpy(&saved, &data, sizeof(saved));
+    sSavedAttemptState = saved.attempt;
+    sSavedSecondNozzleFlag = saved.secondNozzleFlag;
+    sSavedBowserNozzleFlag = saved.bowserNozzleFlag;
+    sSavedSecondNozzle = saved.secondNozzle;
+    sSavedPinnaEygRestart = saved.pinnaEygRestart;
+    sTemporaryRocketActive = saved.temporaryRocket;
+    sBowserNozzleShieldPending = saved.bowserShieldPending;
+    sBowserNozzleShieldActive = saved.bowserShieldActive;
+    sHaveSavedAttempt = true;
+    onSavestateLoaded();
+}
+
 void onSavestateLoaded() {
     sFanfareDelay = 0;
     sAchievementChimeBlockFrames = 0;
@@ -2304,7 +2429,7 @@ void onSavestateLoaded() {
 }
 
 void invalidateForAssist(u8 reasons) {
-    if (!sRunning) return;
+    if (!sRunning || sAwaitingStageSetup) return;
     const u8 added = reasons & ~sAssistReasons;
     if (!added) return;
     sAssistReasons |= reasons;
@@ -2313,6 +2438,34 @@ void invalidateForAssist(u8 reasons) {
     sRecordsEligible = false;
     StageLoader::invalidatePlaylistBest();
     SplitStats::invalidateAttempt();
+}
+
+u8 savestateGhostEndpoint() {
+    if (!sRunning || !sAttemptReady) return SAVED_GHOST_END_NONE;
+    switch (sFinishKind) {
+    case FINISH_TRANSITION: return SAVED_GHOST_END_TRANSITION;
+    case FINISH_PLANT: return SAVED_GHOST_END_PLANT;
+    case FINISH_DEATH: return SAVED_GHOST_END_DEATH;
+    default: return SAVED_GHOST_END_NONE;
+    }
+}
+
+void updateSavestateGhostEndpoint(u8 endpoint) {
+    if (sRunning) return;
+    s32 qf;
+    switch (endpoint) {
+    case SAVED_GHOST_END_PLANT:
+    case SAVED_GHOST_END_DEATH:
+        gQFTTimer.consumeCustom(endpoint == SAVED_GHOST_END_DEATH, &qf);
+        break;
+    case SAVED_GHOST_END_TRANSITION: {
+        u16 target;
+        gQFTTimer.consumeTransition(&qf, &target);
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 bool achievementChimeBlocked() {

@@ -23,5 +23,7 @@ public:
     u32 _00;                 // 0x0150
     u32 _01;                 // 0x0154
     THitActor *mPrevHolder;  // 0x0158
-    u32 _02[0xD4 / 4];       // 0x015C
+    u32 _02[0x78 / 4];       // 0x015C
+    const JDrama::TActor *mDummyConnectActor;  // 0x01D4
+    u32 _1D8[0x58 / 4];
 };

@@ -8,7 +8,7 @@
 
 #define SUSAMUNE_THEME_BACKGROUND_MAX_SIZE (2u * 1024u * 1024u)
 
-bool SusamuneThemeLoad(const char *launcherDevice, const char *launchDir,
+bool SusamuneThemeLoad(const char *launcherDevice,
 	GRRLIB_texImg **backgroundPtr);
 const char *SusamuneThemeWarning(void);
 bool SusamuneThemeDrawBackground(u8 alpha, f32 xScale, int xPos);

@@ -6,6 +6,7 @@
 #include "susamune/assist.hxx"
 
 class Menu;
+struct SusamuneILEpisodesCfg;
 namespace LevelWarp {
 struct Dest;
 }
@@ -19,6 +20,12 @@ void onPersistenceReady();
 int count();
 const char *label(int entry);
 const char *shortLabel(int entry);
+bool canChooseEpisode(int entry);
+int selectedEpisode(int entry);
+void setEpisode(int entry, int episode);
+void resetEpisodeChoices();
+void adoptEpisodes(const volatile SusamuneILEpisodesCfg *cfg);
+void stageEpisodes(volatile SusamuneILEpisodesCfg *cfg);
 // All IL catalogue entries, including bonus and 100-coin Shines, may streak.
 bool streakEntrySelectable(int entry);
 // A Streaking finish may be any Shine collected from the selected start scene.
@@ -66,6 +73,15 @@ void commitWarpStart();
 void cancelPendingWarp();
 void clearPB(int entry);
 void update();
+// A restored TAS recorder may finish without rearming IL records or splits.
+enum SavestateGhostEndpoint : u8 {
+    SAVED_GHOST_END_NONE,
+    SAVED_GHOST_END_TRANSITION,
+    SAVED_GHOST_END_PLANT,
+    SAVED_GHOST_END_DEATH,
+};
+u8 savestateGhostEndpoint();
+void updateSavestateGhostEndpoint(u8 endpoint);
 // Called at LevelWarp's transition tail, after the old director is finished
 // but before the destination director is constructed.
 void onWarpTail();
@@ -73,6 +89,9 @@ void onWarpTail();
 void resetAfterObserver();
 void beforeStageSetup();
 void onStageSetup();
+struct SavestateData { u32 words[16]; };
+void captureSavestate(SavestateData &out);
+void restoreSavestate(const SavestateData &saved);
 void onSavestateSaved();
 void onSavestateLoaded();
 // Revoke PB, Records and challenge credit without changing the QFT clock.

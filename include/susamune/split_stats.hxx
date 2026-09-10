@@ -152,7 +152,7 @@ struct Summary {
         s32 goldQf;
     };
 
-    enum { MAX_SEGMENTS = 6 };
+    enum { MAX_SEGMENTS = 8 };
 
     u32 attempts;
     u32 finishes;

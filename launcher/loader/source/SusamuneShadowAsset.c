@@ -12,8 +12,10 @@
 #include "SusamuneShadowAsset.h"
 
 #include "susamune/ghost_model_asset.h"
+#include "susamune/ciso_reader.h"
 
-#define SHADOW_INPUT_SIZE         0x1000u
+#define SHADOW_INPUT_SIZE         0x8000u
+#define SHADOW_CACHE_SIZE         0x1000u
 #define SHADOW_HISTORY_SIZE       0x1000u
 #define SHADOW_RARC_META_MAX      0x10000u
 #define SHADOW_DECODED_MIN_SIZE   0x40000u
@@ -34,6 +36,10 @@ typedef struct ShadowReader {
 	bool fileOpen;
 	u32 discCommand;
 	u64 size;
+	bool ciso;
+	u64 cacheStart[2];
+	u32 cacheSize[2];
+	u32 nextCache;
 } ShadowReader;
 
 typedef struct ShadowInput {
@@ -104,6 +110,8 @@ typedef char ShadowAssetHeaderSize[
 	sizeof(ShadowAssetHeader) == SUSAMUNE_GHOST_SHADOW_ASSET_HEADER_SIZE ? 1 : -1];
 
 static u8 sDiscReadScratch[SHADOW_INPUT_SIZE + 0x20] ATTRIBUTE_ALIGN(32);
+static u8 sReadCache[2][SHADOW_CACHE_SIZE] ATTRIBUTE_ALIGN(32);
+static unsigned short sCisoMap[SUSAMUNE_CISO_MAP_COUNT];
 
 static const AssetSpec sAssets[] = {
 	{
@@ -186,7 +194,7 @@ static void PublishReady(const AssetSpec *spec)
 	DCFlushRange((void *)spec->base, SUSAMUNE_GHOST_MODEL_ASSET_HEADER_SIZE);
 }
 
-static bool ReaderRead(ShadowReader *reader, u64 offset, void *data, u32 size)
+static bool ReaderRawRead(ShadowReader *reader, u64 offset, void *data, u32 size)
 {
 	if (size == 0)
 		return true;
@@ -214,6 +222,73 @@ static bool ReaderRead(ShadowReader *reader, u64 offset, void *data, u32 size)
 		memcpy(data, sDiscReadScratch + difference, size);
 		return true;
 	}
+}
+
+static bool ReaderLogicalRead(ShadowReader *reader, u64 offset, void *data,
+	u32 size)
+{
+	u8 *out = (u8*)data;
+	if (!reader->ciso)
+		return ReaderRawRead(reader, offset, data, size);
+	while (size != 0)
+	{
+		unsigned long long physical;
+		int empty;
+		u32 amount = SusamuneCisoSpan(sCisoMap, offset, size,
+			reader->size, &physical, &empty);
+		if (amount == 0)
+			return false;
+		if (empty)
+			memset(out, 0, amount);
+		else if (!ReaderRawRead(reader, physical, out, amount))
+			return false;
+		out += amount;
+		offset += amount;
+		size -= amount;
+	}
+	return true;
+}
+
+static bool ReaderRead(ShadowReader *reader, u64 offset, void *data, u32 size)
+{
+	u32 i;
+	u64 start;
+	u32 amount;
+	u64 limit = reader->ciso ?
+		(u64)SUSAMUNE_CISO_MAP_COUNT * SUSAMUNE_CISO_BLOCK_SIZE : reader->size;
+	if (size == 0)
+		return true;
+	if (size > 128u)
+		return ReaderLogicalRead(reader, offset, data, size);
+	for (i = 0; i < 2; ++i)
+		if (offset >= reader->cacheStart[i] &&
+		    offset - reader->cacheStart[i] <= reader->cacheSize[i] &&
+		    size <= reader->cacheSize[i] - (u32)(offset - reader->cacheStart[i]))
+		{
+			memcpy(data, sReadCache[i] + (u32)(offset - reader->cacheStart[i]), size);
+			return true;
+		}
+	start = offset & ~(u64)(SHADOW_CACHE_SIZE - 1u);
+	if (offset - start + size > SHADOW_CACHE_SIZE)
+		return ReaderLogicalRead(reader, offset, data, size);
+	amount = SHADOW_CACHE_SIZE;
+	if (limit != 0)
+	{
+		if (start >= limit)
+			return false;
+		if (limit - start < amount)
+			amount = (u32)(limit - start);
+	}
+	if (offset - start + size > amount)
+		return false;
+	i = reader->nextCache++ & 1u;
+	reader->cacheSize[i] = 0;
+	if (!ReaderLogicalRead(reader, start, sReadCache[i], amount))
+		return false;
+	reader->cacheStart[i] = start;
+	reader->cacheSize[i] = amount;
+	memcpy(data, sReadCache[i] + (u32)(offset - start), size);
+	return true;
 }
 
 static bool ReadFstEntry(ShadowReader *reader, u64 fstBase, u32 index,
@@ -374,7 +449,8 @@ static bool RarcStringEquals(const ShadowDecoder *decoder, u32 strings,
 	       decoder->metadata[strings + offset + length] == '\0';
 }
 
-static bool ParseRarc(ShadowDecoder *decoder)
+// Parse metadata once without adding its register saves to every decoded byte.
+static bool __attribute__((noinline)) ParseRarc(ShadowDecoder *decoder)
 {
 	const AssetSpec *spec = decoder->spec;
 	const u8 *meta = decoder->metadata;
@@ -476,7 +552,7 @@ static bool ParseRarc(ShadowDecoder *decoder)
 	return true;
 }
 
-static bool EmitByte(ShadowDecoder *decoder, u8 value)
+static inline bool __attribute__((always_inline)) EmitByte(ShadowDecoder *decoder, u8 value)
 {
 	const AssetSpec *spec = decoder->spec;
 	const u32 position = decoder->outputPosition;
@@ -723,10 +799,17 @@ static void StageAsset(const AssetSpec *spec, const char *gameDevice,
 			status = SUSAMUNE_GHOST_SHADOW_STATUS_READ_FAILED;
 			goto done;
 		}
-		if (memcmp(magic, "CISO\0\0\x20\0", 8) == 0)
+		if (memcmp(magic, "CISO", 4) == 0)
 		{
-			status = SUSAMUNE_GHOST_SHADOW_STATUS_SOURCE_UNSUPPORTED;
-			goto done;
+			u8 header[8u + SUSAMUNE_CISO_MAP_COUNT];
+			if (!ReaderRawRead(&reader, 0, header, sizeof(header)) ||
+			    !SusamuneCisoMapInit(sCisoMap, header, sizeof(header), reader.size))
+			{
+				status = SUSAMUNE_GHOST_SHADOW_STATUS_SOURCE_UNSUPPORTED;
+				goto done;
+			}
+			reader.ciso = true;
+			reader.cacheSize[0] = reader.cacheSize[1] = 0;
 		}
 		status = FindArchiveInDisc(&reader, (u64)isoShift << 2, spec,
 			&archiveOffset, &archiveSize);
@@ -777,17 +860,20 @@ static void StageAsset(const AssetSpec *spec, const char *gameDevice,
 		status = SUSAMUNE_GHOST_SHADOW_STATUS_RESOURCE_MISSING;
 		goto done;
 	}
-	checksum = crc32(0L, Z_NULL, 0);
-	checksum = crc32(checksum, (const Bytef *)spec->payload,
-		spec->bmdSize + spec->btkSize);
 	bmdChecksum = crc32(0L, Z_NULL, 0);
 	bmdChecksum = crc32(bmdChecksum, (const Bytef *)spec->payload,
 		spec->bmdSize);
+	checksum = bmdChecksum;
 	btkChecksum = crc32(0L, Z_NULL, 0);
 	if (spec->btkSize != 0)
+	{
+		checksum = crc32(checksum,
+			(const Bytef *)spec->payload + spec->bmdSize,
+			spec->btkSize);
 		btkChecksum = crc32(btkChecksum,
 			(const Bytef *)spec->payload + spec->bmdSize,
 			spec->btkSize);
+	}
 	if ((u32)checksum != spec->payloadChecksum ||
 	    (u32)bmdChecksum != spec->bmdChecksum ||
 	    (u32)btkChecksum != spec->btkChecksum)

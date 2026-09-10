@@ -91,9 +91,17 @@ public:
         return m != 0 && live() && (mHeld & m) == m;
     }
     bool wasPressedSubset(BindId id) const {
-        u16 m = mMask[id];
-        return m != 0 && live() && (mHeld & m) == m && (mPrevHeld & m) != m;
+        return live() && wasPressedSubsetRaw(id);
     }
+    // Practice pause/step can accompany a gameplay button still held after
+    // menu dismissal. The caller must exclude modals and bind recording.
+    bool wasPressedSubsetRaw(BindId id) const {
+        const u16 m = mMask[id];
+        return m != 0 && (mHeld & m) == m && (mPrevHeld & m) != m;
+    }
+    // Live-game shortcuts retain priority. A paused Step uses the raw subset
+    // edge instead; held gameplay buttons cannot turn it into a restart.
+    bool wasPressedPracticeRaw(BindId id) const;
 
     // --- recording ---
     //

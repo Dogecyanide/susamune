@@ -30,6 +30,7 @@ enum EditOption {
     OPTION_BG_B,
     OPTION_BG_A,
     OPTION_PADDING,
+    OPTION_COLOR_MODE,
     OPTION_COUNT,
 };
 
@@ -49,7 +50,7 @@ constexpr u8 kStyleOffsets[] = {
     __builtin_offsetof(CreationStyle, bgA),
     __builtin_offsetof(CreationStyle, padding),
 };
-static_assert(sizeof(kStyleOffsets) == OPTION_COUNT - OPTION_TEXT_A,
+static_assert(sizeof(kStyleOffsets) == OPTION_COLOR_MODE - OPTION_TEXT_A,
               "Creation scalar options changed");
 
 u8 &styleValue(CreationStyle &style, int option) {
@@ -162,6 +163,8 @@ void CreationEditor::reset() {
     mTextRgb      = nullptr;
     mBackupRgb    = nullptr;
     mTargetNames  = nullptr;
+    mCustomMask   = nullptr;
+    mCustomMaskBackup = 0;
     mRepeatMask   = 0;
     mTextSlots    = 0;
     mTargetSlots  = 0;
@@ -175,20 +178,24 @@ void CreationEditor::reset() {
 
 void CreationEditor::begin(CreationStyle *style, u8 (*textRgb)[3],
                            u8 (*backupRgb)[3], u16 textSlots, u16 targetSlots,
-                           const char *targetNames, u8 capabilities) {
+                           const char *targetNames, u16 capabilities,
+                           u16 *customMask) {
     if (!style || !textRgb || !backupRgb || textSlots == 0 || mEditing) return;
+    if (customMask && textSlots > 16) return;
     mStyle        = style;
     mBackup       = *style;
     mTextRgb      = textRgb;
     mBackupRgb    = backupRgb;
     mTargetNames  = targetNames;
+    mCustomMask   = customMask;
+    mCustomMaskBackup = customMask ? *customMask : 0;
     mTextSlots    = textSlots;
     mTargetSlots  = targetSlots && targetSlots < textSlots ? targetSlots : textSlots;
     for (u16 i = 0; i < mTextSlots; i++) {
         for (int c = 0; c < 3; c++) mBackupRgb[i][c] = mTextRgb[i][c];
     }
     mRepeatMask   = 0;
-    mOption       = 0;
+    mOption       = customMask ? OPTION_COLOR_MODE : 0;
     mCapabilities = capabilities;
     mTextTarget   = 0;
     mRepeatFrames = 0;
@@ -197,6 +204,8 @@ void CreationEditor::begin(CreationStyle *style, u8 (*textRgb)[3],
 }
 
 bool CreationEditor::optionEnabled(u8 option) const {
+    if (option == OPTION_COLOR_MODE)
+        return mCustomMask && (mCapabilities & CAP_COLOR_MODE);
     if (option <= OPTION_TEXT_B)
         return mCapabilities & CAP_TEXT_COLOR;
     if (option == OPTION_TEXT_A)
@@ -249,6 +258,7 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
             }
             if (mConfirm == CONFIRM_CANCEL) {
                 *mStyle = mBackup;
+                if (mCustomMask) *mCustomMask = mCustomMaskBackup;
                 for (u16 i = 0; i < mTextSlots; i++) {
                     for (int c = 0; c < 3; c++)
                         mTextRgb[i][c] = mBackupRgb[i][c];
@@ -257,9 +267,17 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                 mEditing = false;
                 return UPDATE_FINISHED | UPDATE_CANCELLED;
             }
-            if (optionEnabled(mOption)) {
+            if (mOption == OPTION_COLOR_MODE && mCustomMask) {
+                const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
+                                            : (1u << mTextSlots) - 1u;
+                *mCustomMask &= ~mask;
+            } else if (optionEnabled(mOption)) {
                 resetOption(*mStyle, defaults, mTextRgb, defaultRgb,
                             defaultRgbSlots, mTextSlots, mOption, mTextTarget);
+                if (mOption <= OPTION_TEXT_B && mCustomMask &&
+                    (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
+                    *mCustomMask |= mTextTarget ? 1u << (mTextTarget - 1)
+                                                : (1u << mTextSlots) - 1u;
             } else {
                 if (mCapabilities & CAP_POSITION) {
                     mStyle->x = defaults.x;
@@ -269,7 +287,8 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                     mStyle->scale = defaults.scale;
             }
             mConfirm = CONFIRM_NONE;
-            return UPDATE_CHANGED;
+            return UPDATE_CHANGED | (mOption <= OPTION_TEXT_B ? UPDATE_COLOR_CHANGED : 0) |
+                   (mOption == OPTION_COLOR_MODE ? UPDATE_MODE_CHANGED : 0);
         }
         if (pressed & TMarioGamePad::B) mConfirm = CONFIRM_NONE;
         return UPDATE_NONE;
@@ -306,7 +325,9 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
              ? repeat & (TMarioGamePad::L | TMarioGamePad::R)
              : 0);
     if (LayoutEditor::updatePositionScale(
-            layout, mStyle->x, mStyle->y, mStyle->scale, 200)) {
+            layout, mStyle->x, mStyle->y, mStyle->scale, 200,
+            (mCapabilities & CAP_OFFSET_POSITION) ? 1280 : 640,
+            (mCapabilities & CAP_OFFSET_POSITION) ? 960 : 480)) {
         result |= UPDATE_CHANGED;
     }
 
@@ -317,13 +338,23 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
     }
 
     int delta = 0;
-    if (repeat & TMarioGamePad::CSTICK_LEFT) delta = -4;
-    if (repeat & TMarioGamePad::CSTICK_RIGHT) delta = 4;
+    const int step = (pad->mButtons.mInput & TMarioGamePad::Y) ? 1 : 4;
+    if (repeat & TMarioGamePad::CSTICK_LEFT) delta = -step;
+    if (repeat & TMarioGamePad::CSTICK_RIGHT) delta = step;
     if (!delta || !optionEnabled(mOption)) return result;
 
-    if (mOption <= OPTION_TEXT_B) {
+    if (mOption == OPTION_COLOR_MODE) {
+        const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
+                                    : (1u << mTextSlots) - 1u;
+        if (delta > 0) *mCustomMask |= mask;
+        else *mCustomMask &= ~mask;
+        return result | UPDATE_CHANGED | UPDATE_MODE_CHANGED;
+    } else if (mOption <= OPTION_TEXT_B) {
         adjustTextChannel(mTextRgb, mTextSlots, mTextTarget,
-                          mOption - OPTION_TEXT_R, delta);
+                           mOption - OPTION_TEXT_R, delta);
+        if (mCustomMask && (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
+            *mCustomMask |= mTextTarget ? 1u << (mTextTarget - 1)
+                                        : (1u << mTextSlots) - 1u;
     } else if (mOption == OPTION_PADDING) {
         if (mStyle->padding == 0xff) {
             if (delta > 0) mStyle->padding = 0;
@@ -339,19 +370,23 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         const int hi = mOption == OPTION_TEXT_BRIGHTNESS ? 200 : 255;
         value = (u8)clampi((int)value + delta, lo, hi);
     }
-    return result | UPDATE_CHANGED;
+    return result | UPDATE_CHANGED | (mOption <= OPTION_TEXT_B ? UPDATE_COLOR_CHANGED : 0);
 }
 
 void CreationEditor::draw(Menu *menu, const char *title, const char *preview) const {
     if (!menu || !mStyle) return;
 
-    const int panelY = mStyle->y < 224 ? 264 : 8;
+    const bool offsets = mCapabilities & CAP_OFFSET_POSITION;
+    const int previewY = offsets ? (int)mStyle->y - 480 + 419 : mStyle->y;
+    const int panelY = previewY < 224 ? 264 : 8;
     int optionCount = 0;
     for (int i = 0; i < OPTION_COUNT; i++)
         if (optionEnabled((u8)i)) optionCount++;
     const bool layoutControls = mCapabilities & (CAP_POSITION | CAP_SCALE);
     const int optionRows = optionCount > 5 ? 5 : optionCount;
-    const int panelH = 80 + optionRows * 14 + (layoutControls ? 17 : 0);
+    const bool colorModes = optionEnabled(OPTION_COLOR_MODE);
+    const int panelH = 92 + optionRows * 14 + (layoutControls ? 17 : 0) +
+                       (colorModes ? 14 : 0);
     menu->fillBox(8, panelY, 624, panelH, Color(0, 0, 0, 215));
 
     menu->drawText(title, 18, panelY + 9, 16, 16,
@@ -378,8 +413,9 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
 
     int infoY = panelY + 29;
     if (layoutControls) {
-        snprintf(status, sizeof(status), "Position X:%u Y:%u   Size:%u pct",
-                 mStyle->x, mStyle->y, mStyle->scale);
+        snprintf(status, sizeof(status), "Position X:%d Y:%d   Size:%u pct",
+                 offsets ? (int)mStyle->x - 640 : mStyle->x,
+                 offsets ? (int)mStyle->y - 480 : mStyle->y, mStyle->scale);
         menu->drawText(status, 18, infoY, 12, 12,
                        Color(190, 220, 255, 255));
         infoY += 17;
@@ -411,8 +447,17 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
         infoY += 18;
     }
 
+    if (colorModes) {
+        menu->drawText((mCapabilities & CAP_RGB_ENABLES_CUSTOM)
+                           ? "Original: retail colours   Custom: your RGB   RGB edits select Custom"
+                           : "Original: shaded tint   Custom: flat colour   RGB works in both",
+                       18, infoY, 9, 9, Color(190, 220, 255, 255));
+        infoY += 14;
+    }
+
     int shown = 0;
-    for (int i = 0; i < OPTION_COUNT; i++) {
+    for (int order = 0; order < OPTION_COUNT; order++) {
+        const int i = order == 0 ? OPTION_COLOR_MODE : order - 1;
         if (!optionEnabled((u8)i)) continue;
         const int column = shown / 5;
         const int row = shown % 5;
@@ -423,7 +468,7 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
             menu->fillBox(x - 3, y - 1, 294, 14, Color(90, 170, 255, 60));
             menu->drawText(">", x, y, 11, 11, Color(90, 170, 255, 255));
         }
-        const char *optionName = PackedText::at(
+        const char *optionName = i == OPTION_COLOR_MODE ? "Appearance" : PackedText::at(
             mTargetNames && i <= OPTION_TEXT_BRIGHTNESS
                 ? kElementOptionNames : kOptionNames, i);
         menu->drawText(optionName, x + 12, y, 11, 11,
@@ -431,7 +476,12 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
                                 : Color(200, 206, 220, 255));
 
         const char *value = status;
-        if (i <= OPTION_TEXT_B) {
+        if (i == OPTION_COLOR_MODE) {
+            const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
+                                        : (1u << mTextSlots) - 1u;
+            value = !(*mCustomMask & mask) ? "Original" :
+                    (*mCustomMask & mask) == mask ? "Custom" : "Mixed";
+        } else if (i <= OPTION_TEXT_B) {
             u8 v;
             if (textChannel(mTextRgb, mTextSlots, mTextTarget, i, &v))
                 snprintf(status, sizeof(status), "%u", v);
@@ -457,7 +507,10 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
                                SUSAMUNE_GLYPH_SLASH
                                "R Adjust   START: Next   " SUSAMUNE_GLYPH_X
                                "+START: Previous";
-        menu->drawText(controls, 18, panelY + panelH - 32, 9, 9,
+        menu->drawText(controls, 18, panelY + panelH - 44, 9, 9,
+                       Color(150, 170, 205, 255));
+        menu->drawText("Hold " SUSAMUNE_GLYPH_Y " while adjusting: step 1 (normal 4)",
+                       18, panelY + panelH - 32, 9, 9,
                        Color(150, 170, 205, 255));
     }
     if (layoutControls)
