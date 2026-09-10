@@ -88,10 +88,12 @@ if(LAUNCHER_VERSION STREQUAL "V1.2.0" OR
    LAUNCHER_VERSION MATCHES "^V2\\.1\\.0 Pre-Release [0-9]+" OR
    LAUNCHER_VERSION MATCHES "^V2\\.1\\.0 Release Candidate [0-9]+" OR
    LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Pre-Release [0-9]+" OR
-   LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Release Candidate [0-9]+")
+   LAUNCHER_VERSION MATCHES "^V2\\.2\\.0 Release Candidate [0-9]+" OR
+   LAUNCHER_VERSION MATCHES "^V2\\.3\\.0 .*FOXTROT" OR
+   LAUNCHER_VERSION MATCHES "^V2\\.3\\.0 .*Pre-release")
     unset(LAUNCHER_VERSION CACHE)
 endif()
-set(LAUNCHER_VERSION "V2.3.0 FOXTROT Pre-release" CACHE STRING
+set(LAUNCHER_VERSION "V2.3.0 Frame By Frame" CACHE STRING
     "Version shown in the packaged launcher meta.xml")
 
 option(IS_EMULATOR "Target Dolphin (ON) instead of Wii/Nintendont (OFF)" OFF)
@@ -426,9 +428,9 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_OUTPUT_ZIP=${LAUNCHER_ZIP}"
         "-DLAUNCHER_DEFAULT_SOURCE=${LAUNCHER_DEFAULT_SOURCE}"
         "-DLAUNCHER_VERSION=${LAUNCHER_VERSION}"
-        "-DLAUNCHER_TEST_LOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-tester-checklist.md"
+        "-DLAUNCHER_TEST_LOG="
         "-DLAUNCHER_PATTERN_TEST_LOG="
-        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/foxtrot-changelog.md"
+        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/release-notes-v2.3.0.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
         "-DSUSAMUNE_LOADER_OPTIMIZATION:STRING=${SUSAMUNE_LOADER_OPTIMIZATION}"
     DEPENDS mod_bins launcher_build_id japanese_ui

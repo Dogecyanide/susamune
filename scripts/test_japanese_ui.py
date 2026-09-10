@@ -107,6 +107,19 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         self.assertEqual(self.lib.lookup(b'Practice'),b'Practice')
         self.assertEqual(self.lib.measure('日本語'.encode('cp932')),-1)
 
+    def test_release_identity_is_japanese_only_with_the_japanese_asset(self):
+        translated = self.lib.lookup(b'Moonshine')
+        self.assertEqual(translated, 'Moonshine 日本語版'.encode('cp932'))
+        self.assertEqual(self.lib.lookup(b'Moonshine guide'), 'Moonshineガイド'.encode('cp932'))
+        self.assertEqual(self.lib.lookup(b'V2.3.0 Frame By Frame'), b'V2.3.0 Frame By Frame')
+        # Leave at least a full-cell allowance for every version character.
+        title_width = (self.lib.measure(translated) * 20 + 23) // 24
+        self.assertLess(title_width + len('V2.3.0 Frame By Frame') * 12 + 12, 560 - 2 * 18)
+        stale = C.create_string_buffer(bytes(64) + bytes(self.asset[64:]))
+        self.lib.reset(stale, len(self.asset))
+        self.assertEqual(self.lib.lookup(b'Moonshine'), b'Moonshine')
+        self.assertEqual(self.lib.lookup(b'Moonshine guide'), b'Moonshine guide')
+
     def test_zeroed_ready_header_keeps_entire_catalogue_english_after_previous_japanese_boot(self):
         self.assertNotEqual(self.lib.lookup(b'Practice'),b'Practice')
         # The previous payload can remain in the staging tail; only its header is cleared.
@@ -238,7 +251,7 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         labels += re.findall(r'\{"([^"\\]+)",', pages)
         labels += ['Quick','Practice','Runs','Records','Ghosts','Display','System',
                    'ILs','Stage Loader','PB Safety','Layout editor','Button binds',
-                   'FOXTROT guide','Frame advance','Free camera','Input replay (experimental)',
+                   'Moonshine guide','Frame advance','Free camera','Input replay (experimental)',
                    'Timers','Controller inputs','Metadata','Native HUD colours','Custom text',
                    'Practice feedback','Menu and notifications','Save latest ghost',
                    'Achievements  >','Statistics overview  >','Worlds  >']

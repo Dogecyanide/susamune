@@ -9,10 +9,10 @@ permissions:
 
 jobs:
   build-and-upload:
-    name: Moonshine Launcher
-    # The bundled devkitPro toolchain is Windows-specific.  Pin the runner so
-    # its pre-installed CMake/Ninja versions cannot change unexpectedly.
+    name: English and 日本語版 downloads
     runs-on: windows-2022
+    env:
+      PYTHONUTF8: '1'
 
     steps:
       - name: Check out release source
@@ -34,65 +34,41 @@ jobs:
       - name: Install build dependencies
         run: python setup_venv.py
 
-      # One launcher serves all three discs now, so this is a single job rather
-      # than a region matrix; the preset sets VERS to all three, which is what
-      # decides the mod_<region>.bin files bundled into the app.
-      - name: Configure console build
-        run: cmake --preset release_console
-
-      - name: Build launcher
-        run: cmake --build --preset console
-
-      - name: Upload launcher to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "build/moonshine_launcher.zip" --clobber
-
-  build-emulator-patch:
-    name: Moonshine emulator BPS
-    runs-on: windows-2022
-
-    steps:
-      - name: Check out release source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.release.tag_name }}
-          lfs: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Verify build tools
+      - name: Build console launcher
         run: |
-          cmake --version
-          ninja --version
+          cmake --preset release_console
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build --preset console
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - name: Install build dependencies
-        run: python setup_venv.py
-
-      - name: Configure Dolphin build
-        run: cmake --preset release_emu -DVERS="jp;us;pal"
-
-      - name: Build source-free BPS patches
-        run: cmake --build --preset emu_patches
-
-      - name: Add version to emulator patch names
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Build English and Japanese Dolphin patches
         run: |
-          Rename-Item -LiteralPath "build/moonshine_jp.bps" -NewName "moonshine_emu_jp_${env:RELEASE_TAG}.bps"
-          Rename-Item -LiteralPath "build/moonshine_us.bps" -NewName "moonshine_emu_us_${env:RELEASE_TAG}.bps"
-          Rename-Item -LiteralPath "build/moonshine_pal.bps" -NewName "moonshine_emu_pal_${env:RELEASE_TAG}.bps"
+          cmake -S . -B build/emu -G Ninja -DIS_EMULATOR=ON -DVERS="jp;us;pal"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build/emu --target emulator_patches emulator_patches_japanese
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - name: Upload emulator patches to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Run host checks
+        run: |
+          & venv/Scripts/python.exe -m unittest discover -s scripts -p 'test_*.py' 2>&1 | Tee-Object -FilePath build/release-tests.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # The approved tag is rebuilt without retail ISOs or private Dolphin
+      # recordings. Its manifest identifies that narrower CI verification scope.
+      - name: Package separate language downloads
         run: >-
-          gh release upload "${env:RELEASE_TAG}"
-          "build/moonshine_emu_jp_${env:RELEASE_TAG}.bps"
-          "build/moonshine_emu_us_${env:RELEASE_TAG}.bps"
-          "build/moonshine_emu_pal_${env:RELEASE_TAG}.bps"
-          --clobber
+          venv/Scripts/python.exe scripts/package_release.py candidate
+          --build-dir build --emulator-build-dir build/emu
+          --launcher-boot build/launcher/shared/boot.dol
+          --host-log build/release-tests.log --out-dir build/release
+
+      - name: Upload language downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $releaseArchives = @(Get-ChildItem -LiteralPath build/release -Filter 'Moonshine_*.zip' -File)
+          if ($releaseArchives.Count -ne 4) { throw 'Expected English and Japanese launcher and Dolphin downloads.' }
+          $releaseFiles = @(Get-ChildItem -LiteralPath build/release -File | Where-Object { $_.Name -match '\.zip$|\.sha256$|manifest\.json$' } | ForEach-Object { $_.FullName })
+          gh release upload $env:RELEASE_TAG @releaseFiles --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

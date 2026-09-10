@@ -1,5 +1,5 @@
 """Package the built Nintendont loader into the HBC app zip:
-moonshine_launcher/{boot.dol, icon.png, meta.xml, mod_<region>.bin...}.
+apps/moonshine_launcher/{boot.dol, icon.png, meta.xml, mod_<region>.bin...}.
 
 One app serves every supported disc revision. The mod is no longer compiled into
 the launcher: each mod_<region>.bin sits next to boot.dol and the loader reads
@@ -22,14 +22,48 @@ from pathlib import Path
 
 LAUNCHER_DIR = Path(__file__).resolve().parent.parent / "launcher"
 META_TEMPLATE = LAUNCHER_DIR / "meta.xml.j2"
-APP_NAME = "moonshine_launcher"
+APP_NAME = "apps/moonshine_launcher"
 APP_ICON = LAUNCHER_DIR / "icon.png"
 MINIZ_LICENSE = LAUNCHER_DIR.parent / "vendor" / "miniz" / "LICENSE"
 LZ4_LICENSE = LAUNCHER_DIR.parent / "vendor" / "lz4" / "LICENSE"
 DROID_LICENSE = LAUNCHER_DIR.parent / "data" / "fonts" / "Droid-LICENSE.txt"
 NOTO_LICENSE = LAUNCHER_DIR / "loader" / "data" / "OFL-NotoSansCJK.txt"
-RC1_TEST_LOG = LAUNCHER_DIR.parent / "doc" / "foxtrot-rc1-test-log.md"
-RC1_ROUTES = LAUNCHER_DIR.parent / "doc" / "foxtrot-rc1-routes.md"
+GUIDE_PATHS = {name: LAUNCHER_DIR.parent / "doc" / name
+               for name in ("guide-en.md", "guide-ja.md")}
+
+
+def launcher_files(boot_dol, mod_bins, source="di", version=None,
+                   language="en", japanese_ui=None, changelog=None):
+    """Build the exact app tree; final release verification lives in package_release."""
+    if language not in ("en", "ja") or (language == "ja" and not japanese_ui):
+        raise ValueError("Japanese language requires its validated game asset")
+    bins = [Path(path) for path in mod_bins]
+    regions = sorted(path.stem.split("_", 1)[1] for path in bins)
+    if any(region not in ("jp", "us", "pal") for region in regions) or len(set(regions)) != len(regions):
+        raise ValueError("Invalid or duplicate mod region")
+    files = {
+        "boot.dol": Path(boot_dol).read_bytes(),
+        "language.txt": (language + "\n").encode("ascii"),
+        "icon.png": APP_ICON.read_bytes(),
+        "meta.xml": render_meta(source, regions, version).encode("utf-8"),
+        "licenses/miniz-LICENSE.txt": MINIZ_LICENSE.read_bytes(),
+        "licenses/lz4-LICENSE.txt": LZ4_LICENSE.read_bytes(),
+        "licenses/OFL-NotoSansCJK.txt": NOTO_LICENSE.read_bytes(),
+        "licenses/Droid-LICENSE.txt": DROID_LICENSE.read_bytes(),
+        "licenses/fonts-README.md": (DROID_LICENSE.parent / "README.md").read_bytes(),
+        "tools/decode_crash.py": (LAUNCHER_DIR.parent / "scripts/decode_crash.py").read_bytes(),
+        **{name: path.read_bytes() for name, path in GUIDE_PATHS.items()},
+        **{path.name: path.read_bytes() for path in bins},
+    }
+    if japanese_ui:
+        from gen_japanese_ui import build
+        asset = Path(japanese_ui).read_bytes()
+        if asset != build()[0]:
+            raise ValueError("Japanese UI asset is stale; regenerate it before packaging")
+        files["ja_ui.bin"] = asset
+    if changelog:
+        files["CHANGELOG.md"] = Path(changelog).read_bytes()
+    return {f"{APP_NAME}/{name}": data for name, data in files.items()}
 
 
 def git_version():
@@ -76,42 +110,15 @@ def main(argv):
     if args.language == "ja" and not args.japanese_ui:
         ap.error("--language ja requires --japanese-ui")
 
-    mod_bins = [Path(p) for p in args.mod_bins]
-    # "mod_jp.bin" -> "jp", for the meta.xml blurb.
-    regions = sorted(p.stem.split("_", 1)[1] for p in mod_bins)
-
+    files = launcher_files(args.boot_dol, args.mod_bins, args.source, args.version,
+                           args.language, args.japanese_ui, args.changelog)
+    if args.test_log:
+        files[f"{APP_NAME}/TESTING.md"] = Path(args.test_log).read_bytes()
+    if args.pattern_test_log:
+        files[f"{APP_NAME}/PATTERN_TESTING.md"] = Path(args.pattern_test_log).read_bytes()
     with zipfile.ZipFile(args.out_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(args.boot_dol, f"{APP_NAME}/boot.dol")
-        z.writestr(f"{APP_NAME}/language.txt", args.language + "\n")
-        z.write(APP_ICON, f"{APP_NAME}/icon.png")
-        z.write(MINIZ_LICENSE, f"{APP_NAME}/licenses/miniz-LICENSE.txt")
-        z.write(LZ4_LICENSE, f"{APP_NAME}/licenses/lz4-LICENSE.txt")
-        z.write(NOTO_LICENSE, f"{APP_NAME}/licenses/OFL-NotoSansCJK.txt")
-        if args.japanese_ui:
-            from gen_japanese_ui import build
-            asset = Path(args.japanese_ui).read_bytes()
-            if asset != build()[0]:
-                raise ValueError("Japanese UI asset is stale; regenerate it before packaging")
-            z.writestr(f"{APP_NAME}/ja_ui.bin", asset)
-            z.write(DROID_LICENSE, f"{APP_NAME}/licenses/Droid-LICENSE.txt")
-            z.write(DROID_LICENSE.parent / "README.md", f"{APP_NAME}/licenses/fonts-README.md")
-        z.writestr(f"{APP_NAME}/meta.xml",
-                   render_meta(args.source, regions, args.version))
-        if args.test_log:
-            z.write(args.test_log, f"{APP_NAME}/TESTING.md")
-        z.write(RC1_TEST_LOG, f"{APP_NAME}/RC1_TESTING.md")
-        z.write(RC1_ROUTES, f"{APP_NAME}/RC1_ROUTES.md")
-        if args.pattern_test_log:
-            z.write(args.pattern_test_log, f"{APP_NAME}/PATTERN_TESTING.md")
-        if args.changelog:
-            z.write(args.changelog, f"{APP_NAME}/CHANGELOG.md")
-        for name in ("foxtrot-guide-en.md", "foxtrot-guide-ja.md"):
-            guide = LAUNCHER_DIR.parent / "doc" / name
-            if guide.exists(): z.write(guide, f"{APP_NAME}/{name}")
-        decoder = LAUNCHER_DIR.parent / "scripts" / "decode_crash.py"
-        if decoder.exists(): z.write(decoder, f"{APP_NAME}/tools/{decoder.name}")
-        for bin_path in mod_bins:
-            z.write(bin_path, f"{APP_NAME}/{bin_path.name}")
+        for name, data in sorted(files.items()):
+            z.writestr(name, data)
     return 0
 
 

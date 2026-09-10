@@ -9,7 +9,7 @@ file(GLOB _loader_srcs CONFIGURE_DEPENDS
 add_executable(loader ${_loader_srcs})
 set_target_properties(loader PROPERTIES OUTPUT_NAME loader SUFFIX ".elf")
 
-set(_guide_source "${CMAKE_CURRENT_SOURCE_DIR}/../../doc/foxtrot-launcher-guide-en.md")
+set(_guide_source "${CMAKE_CURRENT_SOURCE_DIR}/../../doc/launcher-guide-en.md")
 set(_guide_data "${LAUNCHER_GEN_DIR}/susamune_guide_data.inc")
 add_custom_command(OUTPUT "${_guide_data}"
     COMMAND "${LAUNCHER_PYTHON}" "${LAUNCHER_SCRIPTS_DIR}/gen_launcher_guide.py"

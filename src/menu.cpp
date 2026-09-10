@@ -2710,7 +2710,7 @@ private:
                         ? "Switch Records between this region and all regions."
                         : "Shows a popup and chime when an achievement unlocks.";
         drawHelpLine(menu, x, y, w, h - 52, help);
-        menu->drawText("Moonshine FOXTROT",
+        menu->drawText("Moonshine",
                        x + 4, y + h - 44, FOOT_SZ, FOOT_SZ, cRowDim());
         menu->drawText(storageStatus(), x + 4, y + h - 24,
                        FOOT_SZ, FOOT_SZ,
@@ -5959,8 +5959,8 @@ static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
 class GuideTab final : public MenuTab {
 public:
     GuideTab() : mPage(0) {}
-    const char *title() const override { return "FOXTROT guide"; }
-    const char *summary() const override { return "Controls, recording limits and pre-release information."; }
+    const char *title() const override { return "Moonshine guide"; }
+    const char *summary() const override { return "Controls, recording limits and release information."; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         u32 nav = menu->navigationInput(pad);
         if (nav & (TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_DOWN)) mPage = (u8)wrap(mPage + 1, 6);
@@ -5987,7 +5987,7 @@ public:
              "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",
              "Metadata: field gap, row gap, columns, width.", "Practice feedback: wallkick, rollout and dust.",
              "Hold Y while adjusting RGB for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
-            {"FOXTROT PRE-RELEASE", "Moonshine Launcher V2.3.0", "Find Timer and splits in Runs or Display.",
+            {"FRAME BY FRAME", "Moonshine V2.3.0 Frame By Frame", "Find Timer and splits in Runs or Display.",
              "Split comparison: Off, PB, SOB or Ghost.", "Report any missing or incorrect checkpoints.",
              "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
         };
@@ -6777,10 +6777,10 @@ void Menu::draw(J2DOrthoGraph *ortho) {
     fillBox(PANEL_X, PANEL_Y, PANEL_W, 3, cAccent());
 
     // Title + accent underline.
-    drawText("Moonshine FOXTROT", PANEL_X + PAD - 2, PANEL_Y + 12,
+    drawText("Moonshine", PANEL_X + PAD - 2, PANEL_Y + 12,
              TITLE_SZ, TITLE_SZ, cTitle());
-    drawText("V2.3.0 PRE-RELEASE", PANEL_X + PANEL_W - PAD - textWidth("V2.3.0 PRE-RELEASE", 11),
-             PANEL_Y + 21, 11, 11, col(255, 196, 90, 255));
+    drawText("V2.3.0 Frame By Frame", PANEL_X + PANEL_W - PAD - textWidth("V2.3.0 Frame By Frame", FOOT_SZ),
+             PANEL_Y + 21, FOOT_SZ, FOOT_SZ, col(255, 196, 90, 255));
     fillBox(PANEL_X + PAD, PANEL_Y + 12 + TITLE_SZ + 1, 260, 2, cAccent());
 
     drawTabStrip(PANEL_X + PAD, TAB_STRIP_Y, PANEL_W - PAD * 2);

@@ -80,7 +80,7 @@ def generate(source):
     if size > 65535 or len(offsets) > 65535:
         raise ValueError("Guide exceeds its 16-bit string/line offset budget")
 
-    output = ["/* Generated from foxtrot-launcher-guide-en.md. */",
+    output = ["/* Generated from launcher-guide-en.md. */",
               "static const char kGuideText[] ="]
     output.extend(f"    {json.dumps(value + chr(0))}".replace("\\u0000", "\\0")
                   for value in strings)

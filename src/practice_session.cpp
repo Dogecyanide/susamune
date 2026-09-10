@@ -37,6 +37,8 @@ const u32 kPadRead = SUSAMUNE_MEM1_ADDR(0x80011bd8u, 0x802c8b9cu, 0x802c0c30u);
 const u32 kStickMode = SUSAMUNE_MEM1_ADDR(0x80408ad0u, 0x8040cc10u, 0x80404370u);
 const u32 kCameraPerform = SUSAMUNE_MEM1_ADDR(0x80352f70u, 0x80023004u, 0x800230bcu);
 const u32 kCameraVtable = SUSAMUNE_MEM1_ADDR(0x803e4820u, 0x803acde8u, 0x803a5168u);
+const u32 kTalkPerform = SUSAMUNE_MEM1_ADDR(0x802130a8u, 0x80151c88u, 0x80146aa4u);
+const u32 kTalkVtable = SUSAMUNE_MEM1_ADDR(0x803d1118u, 0x803c03c8u, 0x803b7948u);
 const u32 kDirectorMovement = SUSAMUNE_MEM1_ADDR(0x800eda30u, 0x8029a4acu, 0x80292344u);
 const u32 kHitCheck = SUSAMUNE_MEM1_ADDR(0x801151f8u, 0x8021b900u, 0x80213854u);
 const u32 kHitClear = SUSAMUNE_MEM1_ADDR(0x80114dd8u, 0x8021b4e0u, 0x80213434u);
@@ -95,6 +97,7 @@ bool sHaveRead;
 bool sConsumedFrame;
 bool sPadHookReady;
 bool sCameraHookReady;
+bool sTalkHookReady;
 bool sMovementHookReady;
 bool sCollisionHooksReady;
 bool sStateHookReady;
@@ -680,6 +683,13 @@ bool installCall(u32 address, u32 originalTarget, void *target) {
     return true;
 }
 
+bool installVtableEntry(u32 *entry, u32 originalTarget, void *target) {
+    if (*entry != originalTarget) return false;
+    *entry = static_cast<u32>(reinterpret_cast<__UINTPTR_TYPE__>(target));
+    DCFlushRange(entry, sizeof(*entry));
+    return true;
+}
+
 void warnDesync(u32 frame) {
     if (sDesyncFrame >= 0) return;
     sDesyncFrame = static_cast<s32>(frame);
@@ -856,6 +866,18 @@ extern "C" void susamunePracticeCameraPerform(CPolarSubCamera *camera,
     }
     reinterpret_cast<void (*)(CPolarSubCamera *, u32, JDrama::TGraphics *)>(
         kCameraPerform)(camera, cue, graphics);
+}
+
+extern "C" void susamunePracticeTalkPerform(JDrama::TViewObj *talk,
+                                             u32 cue, JDrama::TGraphics *graphics) {
+    static_assert(__builtin_offsetof(TMarDirector, _11) == 0xb0,
+                  "director talk owner offset changed");
+    // Retail pause keeps both text update cues live; drawing must remain live.
+    if (sFreeze && stageReady() &&
+        reinterpret_cast<__UINTPTR_TYPE__>(talk) == gpMarDirector->_11)
+        cue &= ~3u;
+    reinterpret_cast<void (*)(JDrama::TViewObj *, u32, JDrama::TGraphics *)>(
+        kTalkPerform)(talk, cue, graphics);
 }
 
 extern "C" void susamunePracticeMovement(TMarDirector *director) {
@@ -1140,6 +1162,8 @@ void init() {
     sCollisionHooksReady = checkReady && clearReady;
     sStateHookReady = installCall(kChangeStateCall, kChangeState,
         reinterpret_cast<void *>(&susamunePracticeChangeState));
+    sTalkHookReady = installVtableEntry(reinterpret_cast<u32 *>(kTalkVtable + 0x20u),
+        kTalkPerform, reinterpret_cast<void *>(&susamunePracticeTalkPerform));
     u32 *table = reinterpret_cast<u32 *>(kCameraVtable);
     for (u32 i = 0; i < 32; ++i) {
         if (table[i] != kCameraPerform) continue;
@@ -1805,7 +1829,7 @@ bool replaying() { return sReplay; }
 s32 desyncFrame() { return sDesyncFrame; }
 bool starting() { return sLoadKind != 0; }
 bool assisted() { return sAssisted; }
-bool available() { return sPadHookReady; }
+bool available() { return sPadHookReady && sTalkHookReady; }
 u32 stepCount() { return sSteps; }
 u32 recordedFrames() { return sCount; }
 u32 replayFrame() { return sCursor; }

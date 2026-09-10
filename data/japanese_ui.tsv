@@ -1,10 +1,11 @@
-# UTF-8 source catalog for Moonshine FOXTROT Japanese presentation.
+# UTF-8 source catalog for Moonshine Japanese presentation.
 # Format: English key<TAB>Japanese CP932-rendered text.
 # Controller glyphs use {A}, {B}, {X}, {Y}, {L}, {R}, {Z}, {C},
 # {AMP}, {SLASH}, {LEFT}, {UP}, {RIGHT}, {DOWN}, and {SHINE}.
 
 # Core navigation, tabs, and shared values.
-susamune	スサムネ
+susamune	Moonshine
+Moonshine	Moonshine 日本語版
 Gameplay	ゲーム
 Savestate	ステート
 Practice	練習
@@ -106,7 +107,7 @@ Deathless blooper surfing	死なないイカサーフィン
 No shine get animation	シャイン取得演出なし
 Fruit never times out	永久フルーツ
 Disable Z Menu	Zメニュー無効
-Disable Susamune Warps	スサムネワープ無効
+Disable Susamune Warps	Moonshineワープ無効
 Mute background music	BGMミュート
 Episode names as IDs	ストーリー名をID表示
 Shine outfit	シャイン衣装
@@ -1057,7 +1058,7 @@ Exactly tie an IL PB's QFT.	IL PBと同じQFTを出す。
 Unlock one in every non-Special category.	スペシャル以外の全カテゴリで1つ解除。
 Die 100 times.	100回ミスする。
 Start 2,000 attempts per world.	各ワールドで2,000回挑戦する。
-Play Susamune for 1,000 hours.	スサムネを1,000時間プレイする。
+Play Moonshine for 1,000 hours.	Moonshineを1,000時間プレイする。
 Bianco 3 Secret: exact 13.80 QFT benchmark.	ビアンコ3のヒミツでQFT 13.80ちょうど。
 Unlock the original Bronze-through-Demon roster.	初期のブロンズからデーモンまで全解除。
 Save 1 ghost.	ゴーストを1体保存する。
@@ -1073,7 +1074,7 @@ Yoshi{SLASH}nozzle save prompt	ヨッシー・ノズルでセーブテキスト�
 Quick	クイック
 Runs	走行
 System	システム
-V2.3.0 PRE-RELEASE	V2.3.0 プレリリース
+V2.3.0 Frame By Frame	V2.3.0 Frame By Frame
 Guide	使い方
 Frame advance	コマ送り
 Free camera	フリーカメラ
@@ -1365,7 +1366,8 @@ Other HUD	その他のHUD
 World and audio	ステージ・音楽
 Stage Loader	ステージ連続練習
 Button binds	ボタン割り当て
-FOXTROT guide	FOXTROTガイド
+Moonshine guide	Moonshineガイド
+Controls, recording limits and release information.	操作方法、録画の上限、リリース情報。
 ROUTE SETUP	ルートの準備
 COURSE RNG	コースの乱数
 TESTING	試験機能

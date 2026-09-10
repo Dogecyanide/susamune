@@ -196,9 +196,9 @@ void PrintInfo(void)
 
 void PrintSusamuneBuild(void)
 {
-	static const char BuildProduct[] = "Moonshine Launcher FOXTROT";
+	static const char BuildProduct[] = "Moonshine Launcher";
 	static const char BuildTitle[] =
-		"V2.3.0 PRE-RELEASE";
+		"V2.3.0 Frame By Frame";
 	static const char BuildChecksum[] = "[" SUSAMUNE_BUILD_CHECKSUM "].";
 	PrintFormat(DEFAULT_SIZE, BLACK,
 	            640 - MENU_POS_X - ((int)sizeof(BuildProduct) - 1) * 10,

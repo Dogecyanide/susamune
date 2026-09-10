@@ -11,7 +11,7 @@ import gen_launcher_guide
 from test_native_timer_creation import function
 
 ROOT = Path(__file__).resolve().parents[1]
-GUIDE = ROOT / "doc/foxtrot-launcher-guide-en.md"
+GUIDE = ROOT / "doc/launcher-guide-en.md"
 
 
 class GuideContentTests(unittest.TestCase):
@@ -47,7 +47,21 @@ class GuideContentTests(unittest.TestCase):
         self.assertIn('"Guide%s"', function(source, "DrawMainMenu"))
         cmake = (ROOT / "launcher/loader/CMakeLists.txt").read_text()
         self.assertIn("gen_launcher_guide.py", cmake)
+        self.assertIn("/doc/launcher-guide-en.md", cmake)
         self.assertIn('target_sources(loader PRIVATE "${_guide_data}")', cmake)
+
+    def test_launcher_release_identity_is_consistent(self):
+        menu = (ROOT / "launcher/loader/source/menu.c").read_text()
+        build = function(menu, "PrintSusamuneBuild")
+        guide = function((ROOT / "launcher/loader/source/SusamuneMenu.c").read_text(),
+                         "GuideScreen")
+        meta = (ROOT / "launcher/meta.xml.j2").read_text()
+        self.assertIn('"Moonshine Launcher"', build)
+        self.assertIn("<name>Moonshine Launcher</name>", meta)
+        for source in (build, guide, meta):
+            self.assertIn("V2.3.0 Frame By Frame", source)
+            for old in ("FOXTROT", "PRE-RELEASE", "RC1"):
+                self.assertNotIn(old, source.upper())
 
 
 class GuideRuntimeTests(unittest.TestCase):

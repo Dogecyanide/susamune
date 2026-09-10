@@ -1,4 +1,4 @@
-# Moonshine guide
+# Moonshine Launcher guide - V2.3.0 Frame By Frame
 
 ## Getting started
 
