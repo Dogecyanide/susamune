@@ -26,8 +26,8 @@ static SavedTape tapeData[32];
 static u32 liveFrameWords[4096*4],slotScenes[3],livePosition,currentScene,startScene,nextFileId;
 static SusamuneTasTransition liveTransitions[32];
 static u32 liveTransitionCount,tapeExportCount,tapeImportCount,saveCount,failTapeExport,restoreTakeCount;
-static bool takePresent,tapePayloadFails,restoreCheckpointFails,worldLoadFails;
-static u32 worldLoadAttempts;
+static bool takePresent,tapePayloadFails,restoreCheckpointFails,worldLoadFails,recordedScene;
+static u32 worldLoadAttempts,continueCalls;
 static SavestateManager::SlotInfo memory[3];
 static PracticeSession::SavestateData stateData[3];
 static SavestateManager::TransferResult transfer;
@@ -88,6 +88,7 @@ bool projectSavestateMatches(const SavestateData&d,const u32(&key)[2],u32 role,u
  return (d.flags&3)==3&&d.frames==frames&&(role?((d.flags&4)&&d.originKey[0]==key[0]&&d.originKey[1]==key[1]):
  (!frames&&!(d.flags&4)&&d.stateKey[0]==key[0]&&d.stateKey[1]==key[1]));}
 bool available(){return true;}bool projectAvailable(){return canStart;}bool starting(){return false;}
+bool atRecordedScene(){return recordedScene;}
 bool recording(){return tapeRecord;}bool checkpointReady(){return readyCheckpoint&&tapeAttached;}
 bool attachedTo(const u32(&key)[2]){return tapeAttached&&key[0]==liveKey[0]&&key[1]==liveKey[1];}
 bool takeBelongsTo(const u32(&key)[2]){return takePresent&&key[0]==liveKey[0]&&key[1]==liveKey[1];}
@@ -113,7 +114,8 @@ bool requestRecordFrom(u32 slot,u32 gen){if(!memory[slot].valid||memory[slot].ge
  takePresent=tapeAttached=tapeRecord=tapePause=true;liveFrames=livePosition=liveTransitionCount=0;startScene=currentScene;liveKey[0]=stateData[slot].stateKey[0];liveKey[1]=stateData[slot].stateKey[1];++liveRevision;return true;}
 void pauseEditing(){tapeRecord=false;tapePause=true;}
 void pauseForCheckpoint(){tapePause=true;}
-bool requestBeginning(){return takePresent;}bool requestContinue(){tapeRecord=true;return tapeAttached;}
+bool requestBeginning(){if(!takePresent)return false;livePosition=0;tapeAttached=tapePause=true;tapeRecord=false;return true;}
+bool requestContinue(){++continueCalls;tapeRecord=true;return tapeAttached;}
 bool requestPlayback(){return takePresent;}
 const char*status(){return runtimeStatus;}
 }
@@ -168,8 +170,8 @@ extern "C" __declspec(dllexport) void reset(){
  memset(tapeData,0,sizeof(tapeData));memset(liveFrameWords,0,sizeof(liveFrameWords));memset(liveTransitions,0,sizeof(liveTransitions));memset(slotScenes,0,sizeof(slotScenes));
  memset(&published,0,sizeof(published));memset(&catalogData,0,sizeof(catalogData));
  transferReady=responseReady=tapeAttached=tapeRecord=tapePause=saveFails=false;
- compatible=canStart=readyCheckpoint=true;nextGeneration=100;
- takePresent=tapePayloadFails=restoreCheckpointFails=worldLoadFails=false;worldLoadAttempts=0;
+ compatible=canStart=readyCheckpoint=recordedScene=true;nextGeneration=100;
+ takePresent=tapePayloadFails=restoreCheckpointFails=worldLoadFails=false;worldLoadAttempts=continueCalls=0;
  livePosition=nextFileId=liveTransitionCount=tapeExportCount=tapeImportCount=saveCount=failTapeExport=restoreTakeCount=0;
  currentScene=startScene=0x2000000;
  exportCount=commitCount=importCount=loadCount=clearCount=failExport=liveFrames=liveRevision=0;
@@ -196,15 +198,16 @@ extern "C" __declspec(dllexport) void option(u32 code,u32 value){switch(code){ca
  case 16:liveTransitions[liveTransitionCount++]={(u16)liveFrames,0,startScene,currentScene,value};++liveRevision;break;
  case 17:tapeData[published.tape.componentId].data.originKey[1]=value;break;
  case 18:tapeData[published.tape.componentId].data.frames=value;break;
- case 19:worldLoadFails=value;break;
+ case 19:worldLoadFails=value;break;case 20:recordedScene=value;break;
  }}
 extern "C" __declspec(dllexport) u32 value(u32 code){switch(code){case 0:return TasProject::active();case 1:return TasProject::busy();case 2:return TasProject::replacementNeeded();case 3:return exportCount;case 4:return commitCount;case 5:return importCount;case 6:return loadCount;case 7:return clearCount;case 8:return published.generation;case 9:return published.componentCount;case 10:return published.currentRole;case 11:return TasProject::dirty();case 12:return liveFrames;case 13:return ordinarySave;case 14:return ordinaryLoad;case 15:return lastLoaded;case 16:return TasProject::named();case 17:return TasProject::checkpointOverwritePending();
  case 18:return tapeExportCount;case 19:return tapeImportCount;case 20:return saveCount;case 21:return livePosition;case 22:return tapeAttached;
  case 23:return takePresent;case 24:return published.tapeFrames;case 25:return published.checksum;case 26:return restoreTakeCount;
- case 27:return liveTransitionCount;case 28:return currentScene;case 29:return worldLoadAttempts;default:return 0;}}
+ case 27:return liveTransitionCount;case 28:return currentScene;case 29:return worldLoadAttempts;case 30:return continueCalls;default:return 0;}}
 extern "C" __declspec(dllexport) u32 frameWord(u32 frame){return liveFrameWords[frame*4];}
 extern "C" __declspec(dllexport) u32 loadable(u32 role){return TasProject::checkpoint(role).loadableHere;}
 extern "C" __declspec(dllexport) u32 present(u32 role){return TasProject::checkpoint(role).present;}
+extern "C" __declspec(dllexport) u32 checkpointFrames(u32 role){return TasProject::checkpoint(role).frames;}
 extern "C" __declspec(dllexport) const char*projectName(){return TasProject::name();}
 extern "C" __declspec(dllexport) u32 generation(u32 slot){return memory[slot].generation;}
 extern "C" __declspec(dllexport) u32 role(u32 role){return TasProject::sRefs[role].slot;}
@@ -246,6 +249,31 @@ extern "C" __declspec(dllexport) const char*status(){return TasProject::status()
         self.new();self.lib.append();self.lib.option(7,999)
         self.assertFalse(self.lib.action(4,0))
         self.assertEqual(self.lib.value(6),0)
+
+    def test_beginning_then_new_inputs_can_save_checkpoint_without_continue(self):
+        self.lib.ordinary(2);ordinary=self.lib.generation(2)
+        self.new()
+        for _ in range(6): self.lib.append()
+        beginning=self.lib.generation(self.lib.role(0))
+        self.assertTrue(self.lib.action(4,0))
+        self.assertEqual((self.lib.value(12),self.lib.value(21)),(6,0))
+        for _ in range(3): self.lib.append()
+        self.assertTrue(self.lib.action(1,1));self.finish()
+        self.assertEqual(self.lib.checkpointFrames(1),3)
+        self.assertEqual(self.lib.value(30),0)
+        self.assertEqual(self.lib.generation(self.lib.role(0)),beginning)
+        self.assertEqual(self.lib.generation(2),ordinary)
+
+    def test_save_after_beginning_without_input_retains_full_published_take(self):
+        self.new()
+        for _ in range(6): self.lib.append()
+        before=[self.lib.frameWord(i) for i in range(6)]
+        self.assertTrue(self.lib.action(4,0));self.save()
+        self.assertEqual(self.lib.value(24),6)
+        self.assertEqual(self.lib.value(21),0)
+        self.assertEqual([self.lib.frameWord(i) for i in range(6)],before)
+        self.assertEqual(self.lib.value(30),0)
+        self.assertFalse(self.lib.present(1))
 
     def test_dirty_checkpoint_survives_lost_beginning_for_discard_warning(self):
         self.new();self.lib.append();self.lib.action(1,1);self.finish();self.save();self.lib.append()
@@ -378,6 +406,22 @@ extern "C" __declspec(dllexport) const char*status(){return TasProject::status()
     def test_not_ready_scene_or_changed_settings_cannot_create_checkpoint(self):
         self.lib.option(3,0);self.assertFalse(self.lib.action(0,0));self.lib.option(3,1);self.new()
         self.lib.option(4,0);self.assertFalse(self.lib.action(1,1))
+
+    def test_late_portal_checkpoint_refusal_keeps_slots_and_whole_tape_saveable(self):
+        self.new()
+        for _ in range(6): self.lib.append()
+        before=[self.lib.generation(i) for i in range(3)]
+        captures=self.lib.value(20)
+        self.lib.option(20,0)
+        self.assertFalse(self.lib.action(1,1))
+        self.assertEqual(self.lib.value(20),captures)
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+        self.save()
+        self.assertEqual(self.lib.value(24),6)
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
+        self.lib.option(20,1)
+        self.assertTrue(self.lib.action(1,1));self.finish()
+        self.assertEqual(self.lib.checkpointFrames(1),6)
 
     def test_save_needs_no_new_checkpoint_or_free_memory_slot(self):
         self.lib.ordinary(1);self.lib.ordinary(2);self.new();self.lib.append()

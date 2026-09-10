@@ -17,7 +17,7 @@ class PracticeCheckpointTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, name) for name in (
-            "bool captureSavestate(", "bool savestateRestoreSpans(",
+            "bool atRecordedScene()", "bool captureSavestate(", "bool savestateRestoreSpans(",
             "bool copySavestateBytes(", "bool restoreSavestate(", "bool requestContinue()",
             "bool captureTake(", "bool restoreTake(", "bool takeBelongsTo("))
         functions = functions.replace("reinterpret_cast<u32>(gpApplication.mCurrentHeap)",
@@ -43,7 +43,8 @@ static PadHistory sStatePad,sModalPad;
 static bool sModalPadValid;
 static u32 sEditRevision;
 static u32 sOriginKey[2],sCount,sCursor,sTakePosition,sTapeSeed,sTapeSlot,sTapeHash,sTapeStage,sTapeStart,sStageGeneration,sSteps,sSettingsHash;
-static bool sOwnRestoreValid;
+static bool sOwnRestoreValid,sEditArmed;
+static s32 sDesyncFrame;
 static u32 sPendingReleases;
 static bool sOwnLoad,sHaveRead,sFrameInjected,sConsumedFrame,sTakeAttached,sPaused,sRecord,sReplay,sPausePending,sStepQueued;
 static u16 sStripButtons;
@@ -62,6 +63,7 @@ u32 currentSceneKey(){return liveScene;}
 void capturePad(PadHistory&out,Pad*p){out=p->history;}
 void restorePad(const PadHistory&in,Pad*p){p->history=in;}
 void message(const char*p){lastMessage=p;}
+void warnDesync(u32 frame){if(sDesyncFrame<0){sDesyncFrame=frame;message("desync warning");}}
 void invalidate(){}
 namespace Ghost {bool observerStatsSuppressed(){return observer;}}
 const int SETTING_SAVE_RNG_STATE=1,BIND_SAVESTATE_LOAD=2;
@@ -79,7 +81,7 @@ SavestateManager::SlotInfo SavestateManager::slotInfo(u32 i)const{return i<3?inf
 ''' + '\n'.join(function_source(production, name) for name in (
     "u32 hashBytes(", "bool validSavedTake(", "bool findTakeStart()", "bool validSceneKey(",
     "bool validTransitions(", "u32 transitionsThrough(")) + r'''
-void stopTape(const char*){if(sRecord)sTapeHash=hashBytes(2166136261u,sFrames,sCount*sizeof(Frame));sRecord=sReplay=false;}
+void stopTape(const char*){if(sRecord)sTapeHash=hashBytes(2166136261u,sFrames,sCount*sizeof(Frame));sRecord=sReplay=sEditArmed=false;}
 namespace PracticeSession {
 bool available(){return true;}
 ''' + functions + r'''
@@ -95,7 +97,7 @@ extern "C" __declspec(dllexport) void reset(){
     liveScene=0x02000000;memset(sTransitions,0,sizeof(sTransitions));sTransitionCount=sTransitionCursor=0;sStartScene=currentSceneKey();
     sOriginKey[0]=sOriginKey[1]=sCount=sCursor=sTakePosition=sTapeSeed=sTapeSlot=sTapeHash=sTapeStage=sTapeStart=sSteps=0;
     sOwnLoad=sHaveRead=sFrameInjected=sConsumedFrame=sTakeAttached=sPaused=sRecord=sReplay=sPausePending=sStepQueued=false;
-    sPendingReleases=0;sOwnRestoreValid=sModalPadValid=false;
+    sPendingReleases=0;sOwnRestoreValid=sModalPadValid=sEditArmed=false;sDesyncFrame=-1;
     sStageGeneration=1;sSettingsHash=liveSettings=123;liveFingerprint=456;
     gameplay=storageReady=rng=true;observer=menuShown=false;clockValue=0;lastMessage="";sStripButtons=0;
     gpApplication.mCurrentHeap=(void*)0x80500000;gpApplication.mGamePads[0]=&pad;
@@ -146,11 +148,15 @@ extern "C" __declspec(dllexport) void config(unsigned key,unsigned value){
     case 14:sPendingReleases=value;break;
     case 15:sModalPadValid=true;sModalPad=pad.history;sModalPad.meaning[0]=(u8)value;break;
     case 16:menuShown=value!=0;break;
+    case 17:liveFingerprint=value;break;
+    case 18:sEditArmed=value;sPaused=true;break;
+    case 19:archives[value].data.savedFingerprint^=1;break;
+    case 20:liveScene=value;break;
     }
 }
 extern "C" __declspec(dllexport) unsigned value(unsigned key){
     switch(key){case 0:return sCount;case 1:return sRecord;case 2:return sPaused;case 3:return pad.history.meaning[0];
-    case 4:return sTapeSlot;case 5:return sTapeSeed;case 6:return sTakeAttached;case 7:return sTakePosition;case 8:return sPendingReleases;case 9:return sOwnRestoreValid;case 10:return sStripButtons;case 11:return sTransitionCount;default:return 0;}
+    case 4:return sTapeSlot;case 5:return sTapeSeed;case 6:return sTakeAttached;case 7:return sTakePosition;case 8:return sPendingReleases;case 9:return sOwnRestoreValid;case 10:return sStripButtons;case 11:return sTransitionCount;case 12:return sEditArmed;case 13:return sDesyncFrame;default:return 0;}
 }
 extern "C" __declspec(dllexport) void zone(unsigned scene){
     sTransitions[sTransitionCount++]={(u16)sCount,0,liveScene,scene,liveFingerprint};liveScene=scene;
@@ -193,6 +199,40 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
         self.lib.config(0, 1)
         self.lib.config(5, 77)
         self.assertTrue(self.lib.save(1))
+
+    def test_beginning_checkpoint_captures_zero_prefix_and_preserves_live_future(self):
+        self.checkpoint()
+        self.lib.config(11, 0)
+        self.lib.config(8, 0)  # Stop active recording without touching its full tape.
+        self.lib.config(18, 1)
+        self.assertTrue(self.lib.save(2))
+        self.assertEqual((self.lib.value(0), self.lib.value(7)), (3, 0))
+        self.assertTrue(self.lib.load(2, 0))
+        self.assertEqual((self.lib.value(0), self.lib.value(7), self.lib.value(12)), (0, 0, 1))
+
+    def test_unmatched_area_blocks_checkpoint_and_edit_but_full_take_can_save(self):
+        self.checkpoint()
+        self.lib.config(20, 0x2F000001)
+        self.assertFalse(self.lib.save(2))
+        self.assertFalse(self.lib.resume())
+        self.assertTrue(self.lib.exportTake())
+        self.assertEqual((self.lib.value(0), self.lib.value(6)), (3, 1))
+        self.lib.config(20, 0x02000000)
+        self.assertTrue(self.lib.save(2))
+
+    def test_stopped_checkpoint_load_is_armed_for_editing_without_continue(self):
+        self.checkpoint()
+        self.lib.config(8, 0)
+        self.assertTrue(self.lib.save(2)); self.assertTrue(self.lib.load(2, 0))
+        self.assertEqual((self.lib.value(1), self.lib.value(6), self.lib.value(12)), (0, 1, 1))
+
+    def test_checkpoint_import_fingerprint_is_warning_after_all_prefix_checks(self):
+        self.checkpoint(); self.assertTrue(self.lib.exportTake())
+        self.assertTrue(self.lib.load(1, 0))
+        self.lib.config(17, 999)
+        self.assertTrue(self.lib.importTake(1))
+        self.assertEqual((self.lib.value(6), self.lib.value(12), self.lib.value(13)), (1, 1, 3))
+        self.assertIn(b"warning", self.lib.status())
 
     def test_checkpoint_rewinds_inputs_and_replaces_future(self):
         self.checkpoint()

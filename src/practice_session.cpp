@@ -7,6 +7,7 @@
 #include "susamune/ghost.hxx"
 #include "susamune/ghost_storage.h"
 #include "susamune/iling.hxx"
+#include "susamune/japanese_ui.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
 #include "susamune/qft_timer.hxx"
@@ -107,6 +108,8 @@ bool sCameraWaitButtons;
 bool sCameraApplied;
 bool sRecord;
 bool sReplay;
+bool sEditArmed;
+s32 sDesyncFrame = -1;
 bool sOwnLoad;
 bool sFrameInjected;
 u8 sLoadKind;
@@ -141,7 +144,14 @@ u16 sStartRelease;
 u16 sLoadHoldButtons;
 bool sLoadHoldActive;
 bool sLoadHoldPending;
+#if !IS_EMULATOR
+// Balance the console's two fixed spans without growing either reservation.
+#pragma clang section bss=""
+#endif
 char sReplayFailure[64];
+#if !IS_EMULATOR
+#pragma clang section bss=".foxtrot.bss"
+#endif
 const char *sStatus = "Save a state before recording";
 
 bool seedMatches(u32 slot, u32 generation) {
@@ -332,6 +342,7 @@ bool replayPresentationSetting(SettingId id) {
     case SETTING_FREE_CAMERA_HIDE_HUD:
     case SETTING_METADATA_HORIZONTAL:
     case SETTING_GHOST_INPUTS:
+    case SETTING_TAS_BANNER:
         return true;
     default:
         return false;
@@ -663,12 +674,26 @@ bool installCall(u32 address, u32 originalTarget, void *target) {
     return true;
 }
 
+void warnDesync(u32 frame) {
+    if (sDesyncFrame >= 0) return;
+    sDesyncFrame = static_cast<s32>(frame);
+#if defined(SUSAMUNE_VERSION_JP)
+    JapaneseUi::format(sReplayFailure, sizeof(sReplayFailure),
+#else
+    snprintf(sReplayFailure, sizeof(sReplayFailure),
+#endif
+             "TAS desync at frame %lu - playback continues", frame);
+    message(sReplayFailure);
+    CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, 3, frame);
+}
+
 void stopTape(const char *reason) {
     if (sRecord || sReplay || sLoadKind)
         CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, 0, sReplay ? sCursor : sCount);
     if (sRecord) sTapeHash = hashBytes(2166136261u, sFrames, sCount * sizeof(Frame));
     sRecord = false;
     sReplay = false;
+    sEditArmed = false;
     sLoadKind = 0;
     sLoadWait = 0;
     sStartRelease = 0;
@@ -681,8 +706,7 @@ bool suspendForScene() {
     if (sTransitionMode) return true;
     const u32 scene = sTransitionCount ? sTransitions[sTransitionCount - 1].toScene : sStartScene;
     if (sReplay) {
-        if (sTransitionCursor >= sTransitionCount ||
-            sTransitions[sTransitionCursor].frame != sCursor) {
+        if (sTransitionCursor >= sTransitionCount) {
             const bool finished = sCursor == sCount;
             stopTape(finished ? "TAS finished at loading zone - take kept" :
                                 "Replay stopped: unexpected loading zone - take kept");
@@ -691,6 +715,7 @@ bool suspendForScene() {
             if (!finished) sPausePending = true;
             return false;
         }
+        if (sTransitions[sTransitionCursor].frame != sCursor) warnDesync(sCursor);
         sTransitionFrom = sTransitions[sTransitionCursor].fromScene;
     } else if (sRecord) {
         if (sTransitionCount == 32 || !sCount ||
@@ -718,16 +743,19 @@ bool activateTimelineArrival(bool secondaryTick = false) {
     bool valid = validSceneKey(scene) && settingsHash() == sSettingsHash;
     if (sTransitionMode == 2) {
         const SusamuneTasTransition &entry = sTransitions[sTransitionCursor];
-        valid = valid && entry.frame == sCursor && entry.fromScene == sTransitionFrom &&
-            entry.toScene == scene && entry.startFingerprint == start;
-        if (valid) ++sTransitionCursor;
+        valid = valid && entry.fromScene == sTransitionFrom &&
+            entry.toScene == scene;
+        if (valid) {
+            if (entry.startFingerprint != start) warnDesync(sCursor);
+            ++sTransitionCursor;
+        }
     } else if (valid) {
         sTransitions[sTransitionCount++] = {
             static_cast<u16>(sCount), 0, sTransitionFrom, scene, start};
         ++sEditRevision;
     }
     if (!valid) {
-        stopTape("Replay stopped: next area or game state differed - take kept");
+        stopTape("Replay stopped: next area or settings differed - take kept");
         sTakeAttached = false;
         sPaused = true;
     } else {
@@ -735,10 +763,12 @@ bool activateTimelineArrival(bool secondaryTick = false) {
         sTapeStage = sStageGeneration;
         sTakeAttached = true;
         sPaused = true;
-        if (replayEnd) stopTape("TAS playback finished at the new area - fingerprints matched");
+        if (replayEnd) stopTape(sDesyncFrame >= 0 ? "TAS playback finished - desync warning" :
+                                                    "TAS playback finished at the new area - fingerprints matched");
         else {
             sArrivalResume = true;
-            message(sTransitionPaused ? "New area ready - Step to continue TAS" : "TAS continuing in the new area");
+            message(sDesyncFrame >= 0 ? sReplayFailure :
+                sTransitionPaused ? "New area ready - Step to continue TAS" : "TAS continuing in the new area");
         }
     }
     sReadPad = gpApplication.mGamePads[0];
@@ -887,6 +917,7 @@ bool captureSavestate(SavestateData &out,
     spans[0] = {&sStatePad, sizeof(sStatePad)};
     if (!omitTake && sTakeAttached && (out.flags & SAVED_RNG) &&
         (sOriginKey[0] | sOriginKey[1]) && settingsHash() == sSettingsHash) {
+        if (!atRecordedScene()) return false;
         if (!tapeStorageReady() || sCount > kMaxFrames || sTakePosition > sCount) return false;
         out.flags |= SAVED_TAKE | ((sRecord || sReplay) ? SAVED_RECORDING : 0);
         out.frames = sTakePosition;
@@ -956,7 +987,7 @@ bool restoreTake(const SusamuneTasTakeData &data, const void *frames, const void
         position = saved.frames;
         if (!validSavedTake(saved) || !normalStage() || position > data.frames ||
             (saved.flags & (SAVED_PAD | SAVED_RNG)) != (SAVED_PAD | SAVED_RNG) ||
-            fingerprint() != saved.savedFingerprint || settingsHash() != data.settingsHash) return false;
+            settingsHash() != data.settingsHash) return false;
         while (prefixCount < data.transitionCount && table[prefixCount].frame <= position) ++prefixCount;
         const u32 scene = prefixCount ? table[prefixCount - 1].toScene : data.startScene;
         if (scene != currentSceneKey()) return false;
@@ -967,7 +998,7 @@ bool restoreTake(const SusamuneTasTakeData &data, const void *frames, const void
                 saved.transitionCount != prefixCount || saved.transitionHash !=
                     hashBytes(2166136261u, table, prefixCount * sizeof(SusamuneTasTransition))) return false;
         } else if (position || saved.stateKey[0] != data.originKey[0] ||
-                   saved.stateKey[1] != data.originKey[1] || fingerprint() != data.startFingerprint) return false;
+                   saved.stateKey[1] != data.originKey[1]) return false;
     }
     // Complete validation precedes replacement of an unsaved live take.
     stopTape(nullptr);
@@ -988,6 +1019,12 @@ bool restoreTake(const SusamuneTasTakeData &data, const void *frames, const void
     sTapeSeed = 0;
     findTakeStart();
     sPaused = sTakeAttached;
+    sEditArmed = sTakeAttached;
+    sDesyncFrame = -1;
+    if (loadedCheckpoint &&
+        (fingerprint() != loadedCheckpoint->savedFingerprint ||
+         (!(loadedCheckpoint->flags & SAVED_TAKE) && fingerprint() != data.startFingerprint)))
+        warnDesync(position);
     ++sEditRevision;
     return true;
 }
@@ -1047,7 +1084,7 @@ bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation) {
     sTapeSeed = sTapeHash = 0;
     sOriginKey[0] = sOriginKey[1] = 0;
     sTakeAttached = false;
-    if (!padValid || fingerprint() != data.savedFingerprint ||
+    if (!padValid ||
         hashBytes(2166136261u, sFrames, data.frames * sizeof(Frame)) != data.frameHash ||
         hashBytes(2166136261u, sTransitions, data.transitionCount * sizeof(SusamuneTasTransition)) != data.transitionHash ||
         !validTransitions(sTransitions, data.transitionCount, data.frames,
@@ -1078,8 +1115,11 @@ bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation) {
         return false;
     }
     sRecord = (data.flags & SAVED_RECORDING) && sCount < kMaxFrames;
+    sEditArmed = !sRecord;
+    sDesyncFrame = -1;
     sStripButtons |= gBinds.get(BIND_SAVESTATE_LOAD);
     message(sRecord ? "TAS checkpoint loaded - recording continues" : "TAS checkpoint loaded");
+    if (fingerprint() != data.savedFingerprint) warnDesync(sTakePosition);
     gBinds.suppressUntilRelease();
     return true;
 }
@@ -1174,19 +1214,21 @@ void beforeDirect(bool modalOwnsInput) {
         sTakeAttached = false;
     }
     if (sReplay && !sTransitionMode && sTransitionCursor < sTransitionCount &&
-        sTransitions[sTransitionCursor].frame == sCursor) {
-        stopTape("Replay stopped: expected loading zone did not begin - take kept");
-        sTakeAttached = false;
+        sTransitions[sTransitionCursor].frame <= sCursor)
+        warnDesync(sTransitions[sTransitionCursor].frame);
+    if (sEditArmed && !atRecordedScene()) {
+        sEditArmed = false;
         sPaused = true;
+        message("Area timing differs - return to a checkpoint to edit");
     }
     if (assisted()) {
         ILing::invalidateForAssist();
         Records::invalidateAttempt();
         Ghost::invalidateForAssist();
     }
-    if ((sRecord || sReplay) && settingsHash() != sSettingsHash)
+    if ((sRecord || sReplay || sEditArmed) && settingsHash() != sSettingsHash)
         stopTape("Settings changed - record again");
-    if ((sRecord || sReplay) && actionsFastForwardActive())
+    if ((sRecord || sReplay || sEditArmed) && actionsFastForwardActive())
         stopTape("Input session stopped: fast-forward");
     if (sReplay && sModal) stopTape("Input playback stopped: menu opened");
     if (((injectedBeforeDirect && !sReplay) || (sModal && sFreeCamera)) &&
@@ -1282,6 +1324,17 @@ void afterDirect(s32 appState, bool gameplayActive) {
         if (sRecord || sReplay) stopTape("Controller disconnected - input stopped");
         return;
     }
+    if (sEditArmed && sTakeAttached) {
+        sEditArmed = false;
+        sDesyncFrame = -1;
+        sRecord = true;
+        if (sCount != sTakePosition) {
+            sCount = sTakePosition;
+            sTransitionCount = transitionsThrough(sTakePosition);
+            sTransitionCursor = sTransitionCount;
+            ++sEditRevision;
+        }
+    }
     if (sRecord) {
         if (sCount == kMaxFrames) {
             stopTape("Input recording full");
@@ -1298,15 +1351,10 @@ void afterDirect(s32 appState, bool gameplayActive) {
         ++sCursor;
         sTakePosition = sCursor;
         sTakeAttached = true;
-        if ((fingerprint() & kFrameFingerprintMask) != expected) {
-            snprintf(sReplayFailure, sizeof(sReplayFailure),
-                     "Replay stopped at frame %lu: game state differed", sCursor);
-            stopTape(sReplayFailure);
-            sTakeAttached = false;
-            CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, 3, sCursor);
-            sPaused = true;
-        } else if (sCursor == sCount && !leaving) {
-            stopTape("Playback finished - fingerprints matched");
+        if ((fingerprint() & kFrameFingerprintMask) != expected) warnDesync(sCursor);
+        if (sCursor == sCount && !leaving) {
+            stopTape(sDesyncFrame >= 0 ? "Playback finished - desync warning" :
+                                         "Playback finished - fingerprints matched");
             sPaused = true;
         }
     } else if (!sReplay) {
@@ -1377,6 +1425,7 @@ void afterDraw() {
     sFreeCamera = false;
     sCursor = 0;
     sTakePosition = 0;
+    sDesyncFrame = -1;
     if (kind == 1) {
         ++sEditRevision;
         sCount = 0;
@@ -1394,16 +1443,13 @@ void afterDraw() {
         sRecord = true;
         message("Recording inputs - Stop keeps this take");
     } else {
-        if (fingerprint() != sTapeStart) {
-            stopTape("Replay start differs - save a new state and record");
-            sPaused = true;
-            return;
-        }
         sReplay = kind == 2;
+        sEditArmed = kind == 3;
         sTransitionCursor = 0;
         sTakeAttached = true;
         sTapeStage = sStageGeneration;
-        message(sReplay ? "TAS replay - B or Start stops" : "Beginning loaded - Continue to edit here");
+        message(sReplay ? "TAS replay - B or Start stops" : "Beginning loaded - Step or Resume to edit");
+        if (sReplay && fingerprint() != sTapeStart) warnDesync(0);
     }
     CrashReport::note(SUSAMUNE_CRASH_EVENT_REPLAY, kind, sCount);
     invalidate();
@@ -1663,6 +1709,7 @@ bool requestPlayback() { return requestReview(false); }
 bool requestBeginning() { return requestReview(true); }
 void pauseForCheckpoint() {
     if (sReplay) stopTape(nullptr);
+    if (!sRecord && sTakeAttached && sTapeStage == sStageGeneration && atRecordedScene()) sEditArmed = true;
     sPaused = true;
     sPausePending = sStepQueued = false;
     sMenuAction = 0;
@@ -1676,9 +1723,14 @@ bool attachedTo(const u32 (&key)[2]) {
     return sTakeAttached && sTapeStage == sStageGeneration &&
         sOriginKey[0] == key[0] && sOriginKey[1] == key[1];
 }
+bool atRecordedScene() {
+    const u32 count = transitionsThrough(sTakePosition);
+    return currentSceneKey() == (count ? sTransitions[count - 1].toScene : sStartScene);
+}
 bool checkpointReady() {
     return normalStage() && sTakeAttached && sTapeStage == sStageGeneration &&
-        settingsHash() == sSettingsHash && (sPaused || sRecord || sReplay) &&
+        atRecordedScene() &&
+        settingsHash() == sSettingsHash && (sPaused || sRecord || sReplay || sEditArmed) &&
         !Ghost::observerStatsSuppressed();
 }
 bool projectAvailable() {
@@ -1691,6 +1743,10 @@ bool requestContinue() {
     if (!available() || !normalStage() || !sTakeAttached || !tapeStorageReady() ||
         Ghost::observerStatsSuppressed() || sTakePosition >= kMaxFrames || sTakePosition > sCount) {
         message("Load a TAS checkpoint before continuing");
+        return false;
+    }
+    if (!atRecordedScene()) {
+        message("Area timing differs - return to a checkpoint to edit");
         return false;
     }
     if (settingsHash() != sSettingsHash) {
@@ -1708,6 +1764,8 @@ bool requestContinue() {
     sTransitionCursor = sTransitionCount;
     sTapeHash = hashBytes(2166136261u, sFrames, sCount * sizeof(Frame));
     sRecord = true;
+    sEditArmed = false;
+    sDesyncFrame = -1;
     sPaused = true;
     sPausePending = sStepQueued = false;
     if (gMenu && gMenu->shown()) sStripButtons |= JUTGamePad::A;
@@ -1769,6 +1827,7 @@ bool hideHud() {
 }
 bool recording() { return sRecord; }
 bool replaying() { return sReplay; }
+s32 desyncFrame() { return sDesyncFrame; }
 bool starting() { return sLoadKind != 0; }
 bool assisted() { return sAssisted; }
 bool available() { return sPadHookReady; }
@@ -1787,10 +1846,22 @@ bool consumedInput(SusamunePracticeInput *out) {
 void draw(Menu *menu) {
     if (!menu || menu->shown() || menu->hasToast() ||
         (!sPausePending && !sFreeCamera && !sRecord && !sReplay && !sLoadKind)) return;
+    const bool banner = gSettings.get(SETTING_TAS_BANNER) != 0;
+    const s32 desync = sReplay ? desyncFrame() : -1;
     char text[96];
+    if (!banner && !sPausePending && !sFreeCamera) {
+        if (desync < 0) return;
+        snprintf(text, sizeof(text), "DESYNC f%ld", desync);
+        menu->fillBox(42, 410, 160, 20, JUtility::TColor(8, 17, 31, 225));
+        menu->drawText(text, 50, 413, 13, 13, JUtility::TColor(255, 195, 85, 255));
+        return;
+    }
     if (sPausePending) snprintf(text, sizeof(text), "FRAME ADVANCE ARMED - waiting for Mario control");
-    else if (sRecord) snprintf(text, sizeof(text), "INPUT REC  %lu / %lu", sCount, kMaxFrames);
-    else if (sReplay) snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu", sCursor, sCount);
+    else if (banner && sRecord) snprintf(text, sizeof(text), "INPUT REC  %lu / %lu", sCount, kMaxFrames);
+    else if (banner && sReplay) {
+        if (desync >= 0) snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu  DESYNC f%ld", sCursor, sCount, desync);
+        else snprintf(text, sizeof(text), "INPUT PLAY  %lu / %lu", sCursor, sCount);
+    }
     else if (sFreeCamera) snprintf(text, sizeof(text), "CAMERA ON  %.2fx  X boost  Mario input OFF",
                                   cameraSpeedScale());
     else snprintf(text, sizeof(text), sStartRelease ?
@@ -1798,7 +1869,7 @@ void draw(Menu *menu) {
     menu->fillBox(42, 388, 556, 40, JUtility::TColor(8, 17, 31, 225));
     menu->drawText(text, 50, 394, 16, 16, JUtility::TColor(130, 225, 255, 255));
     menu->drawText(sFreeCamera ? "Turn camera Off to step with A or other Mario inputs" :
-                   sRecord ? "Save checkpoints to keep inputs. Use Stop to finish the take." :
+                   sRecord ? "Save TAS keeps your project. Checkpoints let you retry." :
                    sReplay ? "B or Start stops playback." :
                    "Other gameplay buttons can stay held. Stop cancels this request.", 50, 413, 12, 12,
                    JUtility::TColor(235, 235, 235, 255));

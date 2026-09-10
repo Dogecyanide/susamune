@@ -72,7 +72,7 @@ extern "C" __declspec(dllexport) void rate(float value){cadence=value;}
             "SETTING_NATIVE_TIMER_SCALE", "SETTING_FREE_CAMERA_SPEED",
             "SETTING_FREE_CAMERA_SENSITIVITY", "SETTING_FREE_CAMERA_HIDE_HUD",
             "SETTING_FREE_CAMERA_STRAFE_REVERSE", "SETTING_METADATA_HORIZONTAL",
-            "SETTING_GHOST_INPUTS"}
+            "SETTING_GHOST_INPUTS", "SETTING_TAS_BANNER"}
         actual = {name for i, name in enumerate(self.ids) if self.lib.excluded(i)}
         self.assertEqual(actual, expected)
 

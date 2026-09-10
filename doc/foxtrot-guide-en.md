@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build C34FF061
+V2.3.0 pre-release · Build 2BF27B14
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
@@ -118,12 +118,14 @@ Open **Practice > TAS projects**. A TAS keeps Mario's recorded inputs, its begin
 
 1. Choose **New TAS** where you want the recording to begin. Moonshine saves the beginning automatically, including the RNG. Release the A used to confirm. Gameplay stays paused until you use Step or Resume.
 2. Hold Mario's buttons and press **Step** to record one frame, or use **Resume** to record normal play. Opening the menu pauses your work.
-3. Under **Checkpoints**, choose **Save Checkpoint 1** before a move you might want to redo. Play farther, then choose **Go to Checkpoint 1** to return there. **Continue** lets you replace the old continuation. Checkpoint 2 gives you another place to retry. The Beginning is kept for replay.
+3. Under **Checkpoints**, choose **Save Checkpoint 1** before a move you might want to redo. Play farther, then choose **Go to Checkpoint 1** to return there. Use Step or Resume to record a new continuation. Checkpoint 2 gives you another place to retry. The Beginning is kept for replay.
 4. Choose **Replay** to watch your recorded inputs from the beginning. B or Start stops playback.
 5. Choose **Save TAS**, enter a name and confirm with Start. It saves the entire recording, its Beginning and any checkpoints you already made. It does not create a new checkpoint or need another empty slot. Later saves update that same TAS. Wait for the saved message before closing the game.
 6. To return later, use the same build, game region and setup, then choose **Open TAS** and its name. If its selected checkpoint or Beginning can load in your current area and episode, it opens there paused and keeps the later recorded inputs for Replay. Otherwise, the recording opens without moving Mario: you can save it again, or enter its Beginning area before Replay.
 
-**Continue stays paused** so you can arrange the next input before using Step or Resume. Opening a saved TAS at a checkpoint keeps its full saved recording for Replay; Continue starts editing from that checkpoint. Manually choosing **Go to Checkpoint 1/2** rewinds the local recording to that point. The full SD recording stays unchanged until you use Save TAS again.
+**Go to Beginning, Go to Checkpoint and Open TAS leave you paused and ready to edit.** The later inputs remain available for Replay until your first new Step or Resume records a replacement continuation. You do not have to select Continue first. Save TAS keeps whichever recording is currently in memory; saving or opening alone does not shorten it. The SD copy changes only when you save.
+
+**Continue stays paused** so you can arrange the next input before Step or Resume. After explicitly stopping the take or finishing Replay, choose Continue when you want to record again; ordinary Steps do not silently edit a stopped take.
 
 Saving over an existing checkpoint asks before replacing it, whether you use the menu or a shortcut. A confirms; B keeps it. **Save TAS** still updates the named SD project directly.
 
@@ -137,7 +139,11 @@ Normal area changes, such as entering a secret, keep the recording and continue 
 
 A checkpoint marked **Other area** is still saved. Enter its matching area and episode before loading it. For **Replay** or **Go to Beginning**, return to the area and episode where the TAS began; Moonshine does not take you there automatically.
 
-Replay is experimental and stops if the checked game state differs. Gameplay settings must match; timer layout, metadata, ghost inputs and camera presentation can still be adjusted. TAS projects cannot be shared across regions or builds. Use an exported ghost to share a finished attempt.
+Replay is experimental. If the game first differs from the recording, **DESYNC fN** shows that frame and playback continues with the remaining inputs. The warning means the result may no longer match the original; it does not repair the replay. B or Start still stops playback. Damaged input files, incompatible gameplay settings and invalid area/state loads remain protected. Timer layout, metadata, ghost inputs and camera presentation can still be adjusted. TAS projects cannot be shared across regions or builds. Use an exported ghost to share a finished attempt.
+
+**TAS banner** starts On. Find it in **Practice > TAS projects** or **Display > Other HUD**, or Shine it to Quick. Off hides the large progress and help banner. A small DESYNC warning remains during a mismatched replay even with the banner Off. **f0** means the starting state already differed.
+
+If Replay reaches the expected loading zone early or late, it warns and keeps the remaining inputs in order. Checkpoint editing can be temporarily unavailable while the current area no longer matches that point in the recording. **Save TAS still keeps the full take**; return to an existing compatible checkpoint to edit there. An unexpected destination is still refused.
 
 ## Ghost inputs and splits
 

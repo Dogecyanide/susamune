@@ -22,9 +22,11 @@ class TasMenuTests(unittest.TestCase):
         shim = r'''
 #include "susamune/state_storage.h"
 #include "susamune/binds_list.h"
+#include "susamune/settings_list.h"
 typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
 #define ID(name,key) name,
 enum BindId { SUSAMUNE_BIND_LIST(ID) BIND_COUNT };
+enum SettingId { SUSAMUNE_SETTING_LIST(ID) SETTING_COUNT };
 #undef ID
 extern "C" void *memcpy(void*d,const void*s,unsigned long long n){for(unsigned i=0;i<n;++i)((volatile char*)d)[i]=((const char*)s)[i];return d;}
 extern "C" unsigned long long strlen(const char*s){unsigned n=0;while(s[n])++n;return n;}
@@ -35,6 +37,8 @@ struct TMarioGamePad {enum{CSTICK_UP=1,CSTICK_DOWN=2,CSTICK_LEFT=4,CSTICK_RIGHT=
  struct {u32 mRapidInput;}mButtons;u32 nav;};
 static int calls,lastAction,closeCount,bindTarget,cleared,confirmCount,cancelCount;
 static bool overwrite,replacePrompt,phaseBusy,dirtyState;
+struct Settings { bool value=true,star=false; void cycle(SettingId,int){value=!value;}
+ void toggleFavorite(SettingId){star=!star;} }gSettings;
 void hit(int action){++calls;lastAction=action;}
 struct Menu {u32 navigationInput(TMarioGamePad*p){return p->nav;}void hide(){++closeCount;}void toast(const char*){}};
 struct Binds {bool rec;bool recording(){return rec;}void cancelRecord(){rec=false;}
@@ -64,7 +68,8 @@ bool catalogReady(){return false;}const SusamuneStateCatalog&catalog(){static Su
 '''
         body = r'''
 static void reset(){calls=lastAction=closeCount=confirmCount=cancelCount=0;bindTarget=cleared=-1;
- overwrite=replacePrompt=phaseBusy=dirtyState=gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;}
+ overwrite=replacePrompt=phaseBusy=dirtyState=gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;
+ gSettings.value=true;gSettings.star=false;}
 static void press(TasProjectTab&t,u16 held,u32 nav=0){Menu m;TMarioGamePad p={};p.nav=nav;
  JUTGamePad::mPadStatus[0].mButton=held;t.update(&m,&p);}
 extern "C" __declspec(dllexport) int route(int page,int row,int button,int*out){
@@ -91,6 +96,16 @@ extern "C" __declspec(dllexport) int cancelBinding(){
  press(tab,JUTGamePad::A,TMarioGamePad::CSTICK_LEFT);
  press(tab,JUTGamePad::A);if(gBinds.rec||calls)return 1;
  press(tab,0);press(tab,JUTGamePad::A);return calls==1&&lastAction==7?0:2;
+}
+extern "C" __declspec(dllexport) int bannerCase(int nav){
+ reset();TasProjectTab tab;tab.mSel=7;press(tab,0,TMarioGamePad::CSTICK_DOWN);
+ if(tab.mSel!=8||!tab.favoriteHint())return 1;
+ press(tab,nav?0:JUTGamePad::A,nav?TMarioGamePad::CSTICK_RIGHT:0);
+ if(gSettings.value||calls||closeCount)return 2;
+ press(tab,0);press(tab,JUTGamePad::X);
+ if(!gSettings.star||gBinds.rec||bindTarget!=-1)return 3;
+ press(tab,0,TMarioGamePad::CSTICK_DOWN);
+ return tab.mSel==0&&!tab.favoriteHint()?0:4;
 }
 '''
         cls.tmp = tempfile.TemporaryDirectory()
@@ -131,6 +146,10 @@ extern "C" __declspec(dllexport) int cancelBinding(){
             out=(C.c_int*5)()
             self.assertEqual(self.lib.route(page,row,0x100,out),1)
             self.assertEqual(list(out)[:2],[action,closes])
+
+    def test_banner_toggle_and_shine_are_reachable_without_triggering_an_action(self):
+        for nav in (0, 1):
+            self.assertEqual(self.lib.bannerCase(nav), 0)
 
     def test_fourth_recorded_button_cannot_activate_rebind_or_close(self):
         for page,row in [(0,7),(1,1)]:

@@ -132,7 +132,7 @@ Open Practice > TAS projects. Your recorded inputs, Beginning and two checkpoint
 
 2. Hold Mario's buttons and press Step to record one frame, or Resume to record normal play. Opening the menu pauses your work.
 
-3. Open Checkpoints and Save Checkpoint 1 before a move you might want to retry. Later, Go to Checkpoint 1 rewinds the recording too. Continue lets you replace the old continuation. Checkpoint 2 gives you another retry point.
+3. Open Checkpoints and Save Checkpoint 1 before a move you might want to retry. Later, Go to Checkpoint 1 returns there ready to edit. Step or Resume records a new continuation. Checkpoint 2 gives you another retry point.
 
 4. Replay watches your inputs from the Beginning. B or Start stops playback. Continue stays paused until you Step or Resume.
 
@@ -154,9 +154,15 @@ Normal area changes keep the recording. It continues when Mario can move again; 
 
 Other area means the checkpoint is still saved, but you must enter its matching area and episode to load it. Replay and Go to Beginning need the area and episode where the TAS began. They do not warp there automatically.
 
-Opening a saved TAS at a checkpoint keeps its full recorded tail for Replay. Continue edits from that checkpoint. Manually choosing Go to Checkpoint 1 or 2 rewinds the local recording to that point. The full SD copy stays until Save TAS replaces it.
+Go to Beginning, Go to Checkpoint and Open TAS leave you paused and ready to edit. Later inputs remain available for Replay until Step or Resume records the first new input. Save/Open alone does not shorten the recording. The SD copy stays until Save TAS replaces it.
 
-Replay is experimental and stops if checked game state differs. Gameplay settings must match. Timer layout, metadata and camera presentation can still be adjusted. Use an exported ghost to share a finished attempt.
+After Stop or a completed Replay, use Continue when you want to record again. It stays paused while you arrange the next input; ordinary Steps do not silently edit a stopped take.
+
+Replay is experimental. DESYNC fN marks the first frame that differs, but the remaining inputs keep playing. B or Start stops playback. Damaged files, incompatible settings and wrong-area state loads are still refused. Use an exported ghost to share a finished attempt.
+
+TAS banner starts On. Find it in TAS projects or Display > Other HUD, or Shine it to Quick. Off hides the large progress/help banner. A small DESYNC warning remains during a mismatched replay. f0 means the starting state differed.
+
+An early or late arrival at the expected loading zone warns and keeps playing the remaining inputs in order. Checkpoint editing may be unavailable while the current area differs from that point in the recording. Save TAS still keeps the whole take. Return to an existing compatible checkpoint to edit. An unexpected destination is still refused.
 
 ## Save, race and watch ghosts
 

@@ -1536,3 +1536,17 @@ TAS recording, Beginning and checkpoints saved to SD.	入力記録・開始地�
 This checkpoint is in another area. Return there to load it.	中間地点は別のエリアです。そのエリアに戻って読み込んでください。
 Return to the area where this TAS begins, then Replay.	TASの開始エリアに戻ってから再生してください。
 TAS recording kept. Return to its beginning area to Replay.	入力記録を保持しました。開始エリアに戻ると再生できます。
+# TAS editing and replay feedback.
+TAS banner	TASバナー
+Shows TAS progress below gameplay. Desync warnings stay visible.	TASの進行状況を画面下に表示します。ずれの警告は常に表示します。
+Replay warns if game state differs, and continues.	再生中に状態が異なった場合は警告し、そのまま再生を続けます。
+TAS desync at frame %lu - playback continues	TASずれ：%luコマ目。再生を継続
+Replay stopped: next area or settings differed - take kept	再生停止：次のエリアか設定が違います。入力記録は残っています。
+TAS playback finished - desync warning	TAS再生終了：ずれを検出
+Playback finished - desync warning	再生終了：ずれを検出
+Beginning loaded - Step or Resume to edit	開始地点を読込済み。コマ送りか再開で編集できます。
+TAS checkpoint loaded	TASの中間地点を読み込みました。
+TAS checkpoint loaded - recording continues	TASの中間地点を読込済み。記録を続けます。
+TAS editing resumed - Step or Resume when ready	TAS編集を再開しました。入力を決めてコマ送りか再開を選びます。
+Area timing differs - return to a checkpoint to edit	エリア移動のタイミングが違います。中間地点に戻ると編集できます。
+Checkpoint unavailable here after desync. Replay can continue.	ずれのため、この地点では中間地点を作れません。再生は続けられます。

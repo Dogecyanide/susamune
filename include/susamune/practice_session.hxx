@@ -60,6 +60,7 @@ bool requestBeginning();
 void pauseEditing();
 void pauseForCheckpoint();
 bool attachedTo(const u32 (&key)[2]);
+bool atRecordedScene();
 bool checkpointReady();
 bool projectAvailable();
 u32 editRevision();
@@ -81,6 +82,8 @@ bool freeCamera();
 bool hideHud();
 bool recording();
 bool replaying();
+// -1 means no warning; 0 identifies the loaded beginning.
+s32 desyncFrame();
 bool starting();
 bool assisted();
 bool available();

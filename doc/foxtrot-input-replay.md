@@ -6,13 +6,21 @@ The primary workflow is **Practice > TAS projects**. New TAS captures a Beginnin
 
 Snapshot version 17 carries the checkpoint's input/transition prefix and controller history. Project manifest version 2 adds a separate tape component and each state's scene identity; SD transport protocol 7 serves the bounded tape payload through existing storage ownership. Older state/project files require their matching older build.
 
-Open imports the necessary states and the complete tape. If the selected checkpoint, or otherwise the Beginning, matches the currently loaded scene, it restores that point and reattaches the full tape at the checkpoint's position. Replay retains later inputs; Continue edits from that point. Manual Go to Checkpoint restores only that checkpoint's prefix into the local take; it does not preserve the later local tail. The published SD take remains unchanged until Save TAS. Without a compatible point, Open retains a detached tape without restoring Mario. The detached tape remains saveable. Checkpoint loads require their matching area/episode; Replay and Go to Beginning require manually returning to the Beginning area. Build, region, setup and state-owner validation remain in force.
+Open imports the necessary states and the complete tape. If the selected checkpoint, or otherwise the Beginning, matches the currently loaded scene, it restores that point and reattaches the full tape at the checkpoint's position. Beginning, compatible checkpoint/Open and save-pause paths arm editing while retaining the compatible future inputs. Only the first consumed input from Step or Resume replaces that future; waiting, menu navigation and Save/Open alone do not truncate it. Explicit Stop and replay completion do not arm a new edit. Continue remains an explicit paused editing command. The published SD take remains unchanged until Save TAS. Without a compatible point, Open retains a detached tape without restoring Mario. The detached tape remains saveable. Checkpoint loads require their matching area/episode; Replay and Go to Beginning require manually returning to the Beginning area. Build, region, setup and state-owner validation remain in force.
+
+Diagnostic mismatches are warnings. Replay keeps the first differing frame and continues with subsequent recorded inputs, including a mismatch in the restored start or first actionable arrival. Frame 0 means the start; later numbers identify consumed input frames. Further mismatches cannot replace the first warning. Tape CRC/hash/schema, prefix/origin identity, settings, scene and restore-owner checks remain hard guards. A warning does not imply the replay remains deterministic or repairs its state.
+
+An early or late transition to the expected destination also warns without skipping or retiming input frames. Checkpoint/Continue temporarily refuse while the actual scene differs from the scene at the current recorded input index; saving the independent full take remains available. The destination identity itself remains a hard guard. This avoids publishing a checkpoint with scene metadata that disagrees with its input prefix.
+
+The default-On TAS banner setting (ID 138) is presentation-only and shared by TAS projects and Display > Other HUD. Disabling it hides recording/replay progress and help while retaining a small DESYNC badge during replay. It fits the existing configuration capacity; snapshot 17, project manifest 2 and transport 7 are unchanged.
+
+The current polish build, console `2BF27B14` / US `162DD499`, passed 1,212 host tests and a bounded private US Dolphin check. Beginning preserved a six-frame future until the first new Step, then 64 replacement frames recorded without Continue and saved successfully as Checkpoint 1. A deliberate live Mario-position change produced the first warning at frame 4 and replay still consumed all 64 inputs without changing the tape. A second deliberate discrepancy at Bianco 3's natural secret arrival warned at frame 14 and replay finished all 19 inputs. These warned endpoints intentionally differ from their recordings; no deterministic match is claimed. Banner On/Off screenshots preserved the position, input count, QFT/input overlays and retail HUD while hiding only the large TAS panel. Evidence is in `build/foxtrot-tas-polish-proof`; the checked aggregate is `build/foxtrot-tas-polish-runtime-proof.json`. The two private callbacks and raw-input patch are documented there. A later console-only section-placement change leaves the emulator binary unchanged and has its own equivalence receipt. This is not SD/reboot, Japanese visual or physical-console evidence. Earlier full-level results follow under their original build identities.
 
 Current host coverage in `scripts/test_tas_project.py` exercises the production coordinator against bounded state/storage fakes: no-capture saves with full RAM slots, saving a detached take, zero-frame saves, separate-tape export failure preserving the published manifest, importing in another area without world restoration, retaining a later tape after checkpoint restoration, invalid tape origin/length, and the existing slot/generation/overwrite protections. `test_tas_menu.py` covers the existing menu and Other area presentation. The new Wii reboot workflow still needs hardware testing.
 
 US Dolphin recorded 19 frames through Bianco 3's actual secret entrance, kept the frame count through loading, refused an other-area Beginning load without discarding the take, then replayed after a manual return. All recorded fingerprints and the final Mario position matched; tape bytes were unchanged. The private setup positioned Mario before New TAS; recording and replay used the retail portal collision. Evidence: `build/foxtrot-tas-zone-proof/complete.json`, shipping baseline `233FBD49`. This is a short single-route emulator check, not a complete IL or physical SD test.
 
-The final source, US `8332FAAC` / console `C34FF061`, repeated the same 19-frame portal recording and replay after the in-game guide correction. Endpoint, fingerprints and retained tape bytes matched again. Evidence: `build/foxtrot-tas-zone-final/replay-zone.json`; source/object provenance and cleanup are collected in `build/foxtrot-zone-runtime-proof.json`.
+The earlier full-level release, US `8332FAAC` / console `C34FF061`, repeated the same 19-frame portal recording and replay after the in-game guide correction. Endpoint, fingerprints and retained tape bytes matched again. Evidence: `build/foxtrot-tas-zone-final/replay-zone.json`; source/object provenance and cleanup are collected in `build/foxtrot-zone-runtime-proof.json`. This predates the lazy-edit and warn-and-continue changes.
 
 Frames remain 16 bytes. The 21-bit history of physical releases between steps
 uses spare input bits and the top fingerprint bit, so those edges remain
@@ -41,16 +49,16 @@ may stay held. A disconnected controller cancels the request before restoring.
 
 After the existing drawing barrier, the state loads and its saved controller
 history is restored. Old pause, Step and button-consumption latches are cleared.
-Record stores the initial game fingerprint; Replay checks that same fingerprint
-before injecting its first input. The original per-frame fingerprint checks
-remain intact. A different restored start, a changed setting, damaged take bytes,
-and a later frame mismatch now have separate messages. Later mismatches include
-the frame number. Gameplay and RNG checks remain intact.
+Record stores the initial game fingerprint; Replay compares it before injecting
+the first input and checks each consumed frame. Start, per-frame and arrival
+diagnostic differences latch a warning and continue. Changed settings and
+damaged take bytes still refuse playback. File, scene and ownership validation
+are separate from these diagnostic comparisons.
 
 The settings hash excludes only audited presentation values: favourites and RNG
 favourites (`settings.cpp` stores menu stars), legacy native-timer coordinates and
 scale (`CreationExtras::adoptNativeTimer` reads layout defaults), free-camera speed
-and sideways direction, look sensitivity and hide-HUD controls (camera or
+and sideways direction, look sensitivity, hide-HUD and TAS banner controls (camera or
 presentation only; replay disables the camera), metadata orientation (layout/clamping/drawing only), and ghost input
 visibility (only the post-draw input overlay). Every other setting, including
 Mario appearance flags, RNG controls and new settings, remains guarded. This lets

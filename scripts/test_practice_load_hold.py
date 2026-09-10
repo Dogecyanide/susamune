@@ -27,17 +27,17 @@ class LoadHoldTests(unittest.TestCase):
                 "bool activatePendingLoadHold(", "void armLoadHold(",
                 "void cancelLoadHold(", "void onSavestateLoaded()",
                 "bool paused()", "bool manualPaused()",
-                "u32 hashBytes(", "bool validSceneKey(", "void stopTape(",
+                "u32 hashBytes(", "bool validSceneKey(", "u32 transitionsThrough(", "bool atRecordedScene()", "void warnDesync(", "void stopTape(",
                 "bool suspendForScene(", "bool activateTimelineArrival(",
                 "void beforeDirect(", 'extern "C" s32 susamunePracticeChangeState(',
-                "void afterDirect(", "void beforeStageSetup()",
-                "void releaseForDeparture()", "void requestStop()"))
+                'extern "C" u32 susamunePracticeReadPad()', "void afterDirect(", "void beforeStageSetup()",
+                "void releaseForDeparture()", "void requestStop()", "void pauseForCheckpoint()", "void pauseEditing()"))
         source = Path(cls.folder.name) / "load_hold.cpp"
         source.write_text(r'''
 #include "Dolphin/types.h"
 #include "susamune/practice_input.h"
 #include "susamune/tas_storage.h"
-static unsigned meaningCalls;
+static unsigned meaningCalls,lastReleases,lastInjected;
 struct TMarioGamePad {
     u8 prefix[0xe2];u16 flags;u32 padding;s32 _E8;
     struct { bool mDisable; } mState;
@@ -59,7 +59,8 @@ static SusamunePracticeInput sPhysical,sConsumed;
 static bool ready,transition,sPaused,sPausePending,sLoadHoldActive,sLoadHoldPending;
 static bool sOwnLoad,sCameraWaitButtons,sFreeCamera,sStepQueued,sHaveRead;
 static bool sConsumedFrame,sStepping,sModal,sFrameInjected,sRecord,sReplay,sFreeze;
-static bool sBorrowedPause,sAssisted;
+static bool sBorrowedPause,sAssisted,sEditArmed;
+static s32 sDesyncFrame;
 static bool sTakeAttached,sModalPadValid;
 static u32 sEditRevision;
 static SusamuneTasTransition sTransitions[32];
@@ -69,7 +70,7 @@ static u16 sLoadWait,sStartRelease;
 static bool sTransitionSetup,sTransitionPaused,sArrivalResume;
 static u32 liveScene,liveFingerprint,neutralizations;
 static u32 sTakePosition,sOriginKey[2],sPendingReleases;
-static u16 sLoadHoldButtons,sStripButtons,sBeforeRead;
+static u16 sLoadHoldButtons,sStripButtons,sBeforeRead,sPriorButtons;
 static u8 sMenuAction,sLoadKind;
 static u32 sSteps,sSettingsHash,sCount,sCursor,sTapeSeed,sStageGeneration;
 static unsigned invalidations,retailCalls,begins,ends;
@@ -86,7 +87,10 @@ struct SavestateManager { static const u32 kSlotCount=3; };
 struct Seed { bool valid; };
 static Seed sSeeds[3];
 struct Timer { void beginPracticePause() {++begins;} void endPracticePause() {++ends;} } gQFTTimer;
-struct JUTGamePad { enum { A=0x100 }; };
+struct JUTGamePad { enum { A=0x100,B=0x200,START=0x1000 };static SusamunePracticeInput mPadStatus[1]; };
+SusamunePracticeInput JUTGamePad::mPadStatus[1];
+static struct {bool shown(){return false;}} menu,*gMenu=&menu;
+namespace StageLoader {bool resultOwnsInput(){return false;}}
 const int BIND_PRACTICE_STOP=1;
 static struct {bool wasPressed(int){return true;}u16 get(int){return 0x20;}void suppressUntilRelease(){}} gBinds;
 static const unsigned SUSAMUNE_CRASH_EVENT_PRACTICE=1,SUSAMUNE_CRASH_EVENT_REPLAY=2;
@@ -112,23 +116,28 @@ void invalidate() {++invalidations;sAssisted=true;}
 void restoreCamera() {}
 void updateCamera() {}
 void stopTape(const char *);
-void inject(const SusamunePracticeInput &,TMarioGamePad *,u32 releases=0) {if(releases==0x1fffff)++neutralizations;}
-void writeFrame(Frame &f,const SusamunePracticeInput&i,u32 h,u32){f.input=i;f.fingerprint=h;}
+void inject(const SusamunePracticeInput &input,TMarioGamePad *,u32 releases=0) {lastInjected=input.buttons;if(releases==0x1fffff)++neutralizations;}
+SusamunePracticeInput snapshot(const SusamunePracticeInput &input){return input;}
+SusamunePracticeInput frameInput(const Frame &f){return f.input;}
+u32 frameReleases(const Frame&){return 0;}
+u32 retailRead(){return 0;}
+static auto sPadReadTail=&retailRead;
+void writeFrame(Frame &f,const SusamunePracticeInput&i,u32 h,u32 releases){f.input=i;f.fingerprint=h;lastReleases=releases;}
 void consumeControlInput() {}
 void retainPausedReleases(TMarioGamePad *) {}
 void retainModalHistory() {}
 void capturePad(u16 &out,TMarioGamePad *p) {out=p->flags;}
 void restorePad(u16 value,TMarioGamePad *p) {p->flags=value;}
-int snprintf(char *,size_t,const char *,...) {return 0;}
+int snprintf(char *out,size_t n,const char *,...) {const char*t="TAS desync warning";size_t i=0;for(;i+1<n&&t[i];++i)out[i]=t[i];out[i]=0;return i;}
 s32 retailChange(TMarDirector *d) {++retailCalls;d->mCurState=retailNext;return retailResult;}
 static const size_t kChangeState=reinterpret_cast<size_t>(&retailChange);
 ''' + functions + r'''
 extern "C" __declspec(dllexport) void reset(unsigned state,unsigned modes) {
     ready=true;transition=false;pad={};pad.flags=2;director={};director.mCurState=state;
-    sPhysical={};sConsumed={};sPaused=modes&1;sOwnLoad=modes&2;
+    sPhysical={};sConsumed={};JUTGamePad::mPadStatus[0]={};sPriorButtons=0;sPaused=modes&1;sOwnLoad=modes&2;
     sPausePending=sLoadHoldActive=sLoadHoldPending=sCameraWaitButtons=false;
     sFreeCamera=sStepQueued=sHaveRead=sConsumedFrame=sStepping=sModal=false;
-    sFrameInjected=sRecord=sReplay=sFreeze=sBorrowedPause=sAssisted=false;
+    sFrameInjected=sRecord=sReplay=sFreeze=sBorrowedPause=sAssisted=sEditArmed=false;sDesyncFrame=-1;
     sLoadHoldButtons=sStripButtons=sBeforeRead=sMenuAction=sLoadKind=0;
     sReadPad=0;sCamera=0;mario.mState=0;
     sSteps=sSettingsHash=sCount=sCursor=sTapeSeed=sStageGeneration=0;
@@ -180,7 +189,7 @@ extern "C" __declspec(dllexport) void replayZone(unsigned destination,unsigned h
     sReplay=sTakeAttached=true;sOriginKey[1]=77;sCount=3;sCursor=0;
     sTransitions[0]={1,0,sStartScene,destination,hash};sTransitionCount=1;
     sHaveRead=sFrameInjected=true;sReadPad=&pad;
-    sFrames[0].fingerprint=liveFingerprint;director.mCurState=9;afterDirect(1,true);
+    sFrames[0].fingerprint=liveFingerprint;sFrames[1].input.buttons=0x100;sFrames[1].fingerprint=456;sFrames[2].input.buttons=0;sFrames[2].fingerprint=789;director.mCurState=9;afterDirect(1,true);
 }
 extern "C" __declspec(dllexport) void scene(unsigned scene,unsigned hash) {liveScene=scene;liveFingerprint=hash;}
 extern "C" __declspec(dllexport) void fullZones() {sTransitionCount=32;sTransitions[31]={0,0,sStartScene,sStartScene,0};}
@@ -190,7 +199,32 @@ extern "C" __declspec(dllexport) unsigned timeline(unsigned field) {
     case 3:return sRecord;case 4:return sReplay;case 5:return sTakeAttached;case 6:return sFrames[0].input.buttons;
     case 7:return sOriginKey[1];case 8:return sCursor;case 9:return neutralizations;case 10:return sTransitions[0].frame;
     case 11:return sTransitions[0].fromScene;case 12:return sTransitions[0].toScene;case 13:return sTransitions[0].startFingerprint;
-    case 14:return sStageGeneration;case 15:return sAssisted;case 16:return meaningCalls;default:return 0;}
+    case 14:return sStageGeneration;case 15:return sAssisted;case 16:return meaningCalls;case 17:return sDesyncFrame;case 18:return sEditArmed;case 19:return sTakePosition;case 20:return lastReleases;case 21:return lastInjected;case 22:return atRecordedScene();default:return 0;}
+}
+extern "C" __declspec(dllexport) void editAt(unsigned position) {
+    sRecord=false;sReplay=false;sTakeAttached=true;sTapeStage=sStageGeneration;
+    sCount=4;sTakePosition=position;sOriginKey[1]=77;
+    for(unsigned i=0;i<4;++i)sFrames[i].input.buttons=10+i;
+    sTransitions[0]={2,0,sStartScene,0x2f000000,0};sTransitionCount=1;liveScene=position>=2?0x2f000000:sStartScene;
+    pauseEditing();
+}
+extern "C" __declspec(dllexport) void consume(unsigned buttons,unsigned releases) {
+    sHaveRead=true;sReadPad=&pad;sConsumed.buttons=buttons;sConsumed.error=0;
+    sPendingReleases=releases;sFreeze=sModal=false;director.mCurState=4;
+    afterDirect(1,true);
+}
+extern "C" __declspec(dllexport) void replayTick(unsigned hash) {liveFingerprint=hash;susamunePracticeReadPad();beforeDirect(false);afterDirect(1,!sFreeze);}
+extern "C" __declspec(dllexport) void checkpointPause() {pauseForCheckpoint();}
+extern "C" __declspec(dllexport) void replayInputs() {
+    sReplay=sTakeAttached=true;sCount=3;sCursor=sTakePosition=0;sDesyncFrame=-1;
+    for(unsigned i=0;i<3;++i){sFrames[i].input.buttons=0x100+i;sFrames[i].fingerprint=100+i;}
+}
+extern "C" __declspec(dllexport) void setMarker(unsigned frame) {
+    sTransitions[0]={(u16)frame,0,sStartScene,0x2f000001,555};sTransitionCount=1;sTransitionCursor=0;
+}
+extern "C" __declspec(dllexport) void leaveNow(){director.mCurState=9;afterDirect(5,false);}
+extern "C" __declspec(dllexport) void replayInput(unsigned hash) {
+    liveFingerprint=hash;sFrameInjected=true;consume(0,0);
 }
 extern "C" __declspec(dllexport) const char*text(){return sStatus;}
 ''', encoding="ascii")
@@ -248,15 +282,84 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         self.arrive_zone()
         self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 8)], [3, 0, 1, 1, 1])
 
-    def test_replay_wrong_destination_or_arrival_hash_freezes_and_keeps_take(self):
-        for scene, fingerprint in ((0x2F000002, 123), (0x2F000001, 456)):
-            with self.subTest(scene=scene, fingerprint=fingerprint):
-                self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
-                self.arrive_zone(scene, fingerprint)
-                self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 7)], [3, 0, 0, 0, 77])
-                self.assertTrue(self.low() & 8)
-                self.assertTrue(self.low() & 32)
-                self.assertIn(b"differed", self.lib.text())
+    def test_replay_wrong_destination_freezes_and_keeps_take(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
+        self.arrive_zone(0x2F000002, 123)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 7)], [3, 0, 0, 0, 77])
+        self.assertTrue(self.low() & 8)
+        self.assertIn(b"differed", self.lib.text())
+
+    def test_arrival_fingerprint_desync_warns_and_keeps_replaying(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
+        self.arrive_zone(0x2F000001, 456)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 8, 17)], [3, 0, 1, 1, 1, 1])
+        self.lib.after(1); self.lib.before(0)
+        self.assertFalse(self.low() & 8)
+        self.assertIn(b"desync", self.lib.text())
+
+    def test_early_expected_zone_keeps_input_order_and_waits_for_prefix_scene_alignment(self):
+        self.lib.reset(4, 0); self.lib.replayInputs(); self.lib.setMarker(2)
+        self.lib.replayInput(100); self.lib.leaveNow()
+        self.assertEqual([self.lib.timeline(i) for i in (2, 4, 8, 17)], [2, 1, 1, 1])
+        self.arrive_zone(0x2F000001, 555); self.lib.after(1)
+        self.assertFalse(self.lib.timeline(22))
+        self.lib.replayTick(101)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 8, 17, 21, 22)], [1, 2, 1, 0x101, 1])
+        self.lib.replayTick(102)
+        self.assertEqual((self.lib.timeline(8), self.lib.timeline(21)), (3, 0x102))
+
+    def test_delayed_expected_zone_warns_then_continues_before_and_after_actual_departure(self):
+        self.lib.reset(4, 0); self.lib.replayInputs(); self.lib.setMarker(1)
+        self.lib.replayTick(100)
+        self.lib.replayTick(101)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 5, 8, 17, 21, 22)], [1, 1, 2, 1, 0x101, 0])
+        self.lib.before(0); self.lib.before(0)
+        self.assertEqual((self.lib.timeline(4), self.lib.timeline(17)), (1, 1))
+        self.lib.leaveNow(); self.arrive_zone(0x2F000001, 555); self.lib.after(1)
+        self.assertTrue(self.lib.timeline(22))
+        self.lib.replayTick(102)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 8, 17, 21)], [0, 3, 1, 0x102])
+
+    def test_desynced_arrival_resumes_actual_pad_injection_until_end(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
+        self.arrive_zone(0x2F000001, 456); self.lib.after(1)
+        self.lib.replayTick(456)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 5, 8, 17, 21)], [1, 1, 2, 1, 0x100])
+        self.lib.replayTick(789)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 5, 8, 17, 21)], [0, 1, 3, 1, 0])
+        self.assertTrue(self.low() & 8)
+
+    def test_checkpoint_while_replaying_arms_editing_and_replaces_future(self):
+        self.lib.reset(4, 0); self.lib.replayInputs(); self.lib.replayInput(100)
+        self.lib.checkpointPause()
+        self.assertEqual([self.lib.timeline(i) for i in (0, 4, 5, 18)], [3, 0, 1, 1])
+        self.lib.consume(0x100, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 3, 5, 19)], [2, 1, 1, 2])
+
+    def test_first_frame_desync_latches_and_all_remaining_frames_continue(self):
+        self.lib.reset(4, 0); self.lib.replayInputs()
+        self.lib.replayInput(999)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 5, 8, 17)], [1, 1, 1, 1])
+        self.lib.replayInput(101)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 8, 17)], [1, 2, 1])
+        self.lib.replayInput(998)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 5, 8, 17)], [0, 1, 3, 1])
+        self.assertIn(b"desync warning", self.lib.text())
+        self.assertTrue(self.low() & 8)
+
+    def test_editing_point_preserves_future_until_first_consumed_input(self):
+        self.lib.reset(4, 0); self.lib.editAt(0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 3, 5, 18)], [4, 1, 0, 1, 1])
+        self.lib.after(1)  # Paused/menu waiting does not truncate the full tape.
+        self.assertEqual((self.lib.timeline(0), self.lib.timeline(1)), (4, 1))
+        self.lib.consume(0x100, 0x100010)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 3, 5, 6, 18, 19, 20)],
+                         [1, 0, 1, 1, 0x100, 0, 1, 0x100010])
+
+    def test_checkpoint_edit_branches_at_current_position_without_continue(self):
+        self.lib.reset(4, 0); self.lib.editAt(2)
+        self.lib.consume(0x100, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 3, 5, 19)], [3, 1, 1, 1, 3])
 
     def test_replay_ending_at_arrival_remains_paused_without_extra_gameplay_frame(self):
         self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123); self.lib.endAtZone()

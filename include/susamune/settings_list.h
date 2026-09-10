@@ -209,7 +209,8 @@
     X(SETTING_FAVORITES_EXTRA_4,             "favorites_extra_4")             \
     X(SETTING_FAVORITES_EXTRA_5,             "favorites_extra_5")             \
     X(SETTING_FAVORITES_EXTRA_6,             "favorites_extra_6")             \
-    X(SETTING_FAVORITES_EXTRA_7,             "favorites_extra_7")
+    X(SETTING_FAVORITES_EXTRA_7,             "favorites_extra_7")             \
+    X(SETTING_TAS_BANNER,                    "tas_banner")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

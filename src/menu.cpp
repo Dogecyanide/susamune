@@ -3354,6 +3354,7 @@ const u8 kDisplayNativeSettings[] = {
     SETTING_TIMER_SUNSHINE_VISIBILITY,
 };
 const u8 kDisplayOtherSettings[] = {
+    SETTING_TAS_BANNER,
     SETTING_GHOST_INPUTS,
     SETTING_SHOW_BGM_SLOTS,
     SETTING_RESTART_QUEUED_FEEDBACK,
@@ -3485,6 +3486,7 @@ const char *settingHelp(SettingId id) {
     case SETTING_ROLLOUT_DISPLAY: return "Shows the effective A-hold frames of a rollout.";
     case SETTING_DUST_DISPLAY: return "Shows frames from landing until the rollout input.";
     case SETTING_SHOW_BGM_SLOTS: return "Shows free music slots for audio diagnostics.";
+    case SETTING_TAS_BANNER: return "Shows TAS progress below gameplay. Desync warnings stay visible.";
     case SETTING_RESTART_QUEUED_FEEDBACK: return "Shows when a restart has been queued.";
     case SETTING_PINNA_HIDDEN_ITEMS: return "Reveals spray-hidden fruit and coin locations globally.";
     case SETTING_HIDDEN_ITEM_LABELS: return "Adds Fruit and Coin names to hidden-item markers.";
@@ -5976,7 +5978,7 @@ public:
              "Hide all HUD removes overlays for filming.", "Turn camera Off, then Resume to play."},
             {"TAS PROJECTS", "Practice: TAS projects, then New TAS.", "The beginning is captured automatically.",
              "Continue edits while paused; Step or Resume.", "Checkpoints save places to return to.",
-             "Save TAS keeps everything together on SD.", "Open TAS keeps the full saved recording.", "Replay stops if the recorded state does not match."},
+             "Save TAS keeps everything together on SD.", "Open TAS keeps the full saved recording.", "Replay warns if game state differs, and continues."},
             {"TAS PRACTICE", "The timer stops while frame advance is paused.",
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",

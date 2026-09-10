@@ -10,6 +10,7 @@ public:
     void showCheckpointPrompt() { mPage = CHECKPOINTS; mSel = 0; mReplaceConfirm = false; focus(); }
     bool grabsInput() const override { return mBinding || gBinds.recording() || mPage != MAIN || TasProject::busy(); }
     bool suppressesBinds() const override { return true; }
+    bool favoriteHint() const override { return mPage == MAIN && mSel == 8; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         const u32 nav = menu->navigationInput(pad);
         if (mBinding || gBinds.recording()) {
@@ -107,7 +108,7 @@ public:
             focus(); return;
         }
         if (mPage == CHECKPOINTS || mPage == MAIN) {
-            navigate(nav, mPage == CHECKPOINTS ? 5 : 8);
+            navigate(nav, mPage == CHECKPOINTS ? 5 : 9);
             const BindId bind = selectedBind();
             if (bind != BIND_COUNT) {
                 if (pressed & JUTGamePad::X) {
@@ -115,6 +116,15 @@ public:
                 }
                 if (pressed & JUTGamePad::Z) { gBinds.set(bind, 0); focus(); return; }
             }
+        }
+        if (mPage == MAIN && mSel == 8) {
+            if (pressed & JUTGamePad::X) {
+                gSettings.toggleFavorite(SETTING_TAS_BANNER);
+            } else if ((pressed & JUTGamePad::A) ||
+                       (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT))) {
+                gSettings.cycle(SETTING_TAS_BANNER, 1);
+            }
+            return;
         }
         if (mPage == CHECKPOINTS) {
             if (!(pressed & JUTGamePad::A)) return;
@@ -195,9 +205,9 @@ public:
         const int listY = y + 28, listH = h - 98;
         const auto &files = TasProject::catalog();
         const int fileCount = TasProject::catalogReady() ? files.count : 0;
-        const int count = mPage == FILES ? fileCount + 2 : mPage == CHECKPOINTS ? 5 : 8;
+        const int count = mPage == FILES ? fileCount + 2 : mPage == CHECKPOINTS ? 5 : 9;
         const int start = listScrollStart(mSel, count, listH / ROW_H), end = clampi(start + listH / ROW_H, 0, count);
-        static const char *const mainRows[] = {"New TAS", "Continue", "Replay", "Save TAS", "Open TAS", "Checkpoints", "Pause / Resume", "Advance one frame"};
+        static const char *const mainRows[] = {"New TAS", "Continue", "Replay", "Save TAS", "Open TAS", "Checkpoints", "Pause / Resume", "Advance one frame", "TAS banner"};
         static const char *const checkpointRows[] = {"Go to Beginning", "Save Checkpoint 1", "Go to Checkpoint 1", "Save Checkpoint 2", "Go to Checkpoint 2"};
         for (int i = start; i < end; ++i) {
             char value[32] = {}; const char *label;
@@ -208,7 +218,10 @@ public:
                 else if (cp.present) snprintf(value, sizeof(value), "%lu frames", cp.frames);
                 else memcpy(value, "Empty", 6);
             } else label = mainRows[i];
-            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, label, value, i == mSel, false, true);
+            const bool banner = mPage == MAIN && i == 8;
+            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, label,
+                banner ? gSettings.valueLabel(SETTING_TAS_BANNER) : value, i == mSel,
+                banner && gSettings.favorite(SETTING_TAS_BANNER), true);
         }
         drawScrollHints(menu, x, listY, w, listH, start, end, count);
         const BindId bind = selectedBind();
@@ -222,6 +235,7 @@ public:
         drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
             "Hold new buttons, then release to save. C-stick cancels." : mPage == FILES ? "A: open   Start: rename   X: delete   B: back" :
             mPage == CHECKPOINTS ? "A: choose action   B: back. Beginning is kept for Replay." :
+            mSel == 8 ? "Shows TAS progress below gameplay. Desync warnings stay visible." :
             "Continue stays paused. Hold Mario inputs, then use Step or Resume.");
     }
 private:

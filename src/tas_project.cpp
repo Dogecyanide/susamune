@@ -213,6 +213,10 @@ bool newProject() {
     return true;
 }
 static bool captureCheckpoint(u32 role, bool confirm) {
+    if (ready() && active() && role > 0 && role < 3 &&
+        PracticeSession::attachedTo(sRefs[0].key) && !PracticeSession::atRecordedScene()) {
+        sStatus = "Checkpoint unavailable here after desync. Replay can continue."; return false;
+    }
     if (!ready() || !active() || role == 0 || role >= 3 || !PracticeSession::attachedTo(sRefs[0].key) ||
         !PracticeSession::checkpointReady()) {
         sStatus = "Continue or open this TAS before saving a checkpoint."; return false;
@@ -273,6 +277,9 @@ bool loadCheckpoint(u32 role) {
     return true;
 }
 bool continueEditing() {
+    if (active() && PracticeSession::attachedTo(sRefs[0].key) && !PracticeSession::atRecordedScene()) {
+        sStatus = "Area timing differs - return to a checkpoint to edit"; return false;
+    }
     if (!active() || !PracticeSession::attachedTo(sRefs[0].key) || !PracticeSession::requestContinue()) {
         sStatus = "Open this TAS or load one of its checkpoints first."; return false;
     }

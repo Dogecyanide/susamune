@@ -1,18 +1,15 @@
 # Moonshine FOXTROT — latest checks
 
-**V2.3.0 pre-release · Build C34FF061 · Full-level TAS update**
+**V2.3.0 pre-release · Build 2BF27B14 · TAS editing and display**
 
-Reuse one TAS that enters another area, such as an approach into a secret. Keep earlier RC1 passes; these four checks cover the new behavior. The full `RC1_TESTING.md` remains available for gaps in the team's coverage.
+Keep your earlier passes. Use one short TAS with a checkpoint and a recognisable ending for these three checks.
 
 **Tester / platform / game region / English or Japanese download:**
 
-**Make new SD states and TAS projects with this build.** Older files need their matching older build. Settings, records and ghosts are kept. Dolphin has no launcher SD service; skip the SD steps there.
+Make fresh states/projects with this build; older files need their matching build. Dolphin has no launcher SD service, so skip Save/Open there.
 
-- [ ] **Record through an area change.** New TAS, record a recognisable opening and save Checkpoint 1 before the entrance. Enter the next area normally and record a little more. The recording and frame count must stay; loading/menu waiting must not add input frames. Checkpoint 1 should say Other area and refuse to load until you return there. Return to the Beginning area and Replay: expect the opening, the same entrance and the recorded continuation.
-- [ ] **Save without making a checkpoint.** In the later area, use Save TAS and name it. It should save the whole recording while keeping Checkpoint 1 at its earlier point, with no request for an extra memory slot. Wait for the saved message. A later Save TAS updates the same named project.
-- [ ] **Open after one reboot.** Console: reboot and Open the project in the later area. If neither its selected checkpoint nor Beginning matches, Mario must stay where he is and the recording/count must still open. Return to the Beginning area and Open it again: its Beginning or a compatible checkpoint opens paused, while Replay still includes all recorded inputs. Go to Checkpoint 1: the local recording should rewind to that point. Continue to make a different ending, then save it. The earlier full SD copy stays until this new save. No separate state imports.
-- [ ] **Shined settings.** Before that reboot, add a newer camera setting to Quick and remove one once. Check Movement speed, Reverse sideways, Look sensitivity and Hide all HUD offer Shined; your old stars must stay. After the same reboot, check the chosen star remains.
+- [ ] **Rewind, then record.** Go to Beginning and Replay once: the old recording should still be there. Return to Beginning again and use Step or Resume with different inputs, without choosing Continue first. Those inputs should now record and replace the old ending. **Save Checkpoint 1: it should save without asking you to Continue or Open.** Try the same from a checkpoint. Console: Save TAS, Open it again, then check you can edit from the restored point too. Save/Open alone must not shorten the recording.
+- [ ] **Replay through a loading zone.** Use a take that enters another area, especially one that previously stopped there. If **DESYNC fN** appears, playback should continue with the remaining inputs after loading and keep the first warning's frame number. B/Start should still stop it. If no warning occurs, report that; there is no need to force one or damage a file.
+- [ ] **TAS banner.** Switch it Off in TAS projects: the large progress/help banner should disappear. The same setting should show Off in Display > Other HUD. Turn it On there and check the banner returns. Shine it to Quick if useful. If you see a replay warning, its small DESYNC badge must remain with the banner Off. Console: keep your preferred choice through the same reboot used for Save/Open.
 
-The take holds **4096 input frames and 32 area changes**. You do not need to hit both limits. If recording stops unexpectedly, check the existing take/count remains available to save and report the exact message. Standard Moonshine should still be English on JP; Japanese testers can check the new text during the same pass.
-
-For a problem, send **build checksum, route/episode, what you pressed, and the exact message**. A photo or short clip helps.
+For a problem, send **build checksum, route/episode, what you pressed, and the exact message**. A photo or short clip helps. The full `RC1_TESTING.md` is still available for gaps in the team's coverage.

@@ -1,12 +1,11 @@
 # Moonshine Launcher FOXTROT — latest changes
 
-**V2.3.0 pre-release · Build C34FF061**
+**V2.3.0 pre-release · Build 2BF27B14**
 
-- **Keep a TAS through area changes.** Record the approach, enter a secret or another area, then keep going. Loading time uses no recorded-input frames. The limit is 4096 input frames and 32 area changes; an unsupported transition stops the take without erasing it.
-- **Save the recording, even without a new checkpoint.** Save TAS keeps the full input recording, its Beginning and your existing checkpoints under one name. It no longer creates a checkpoint at your current position or needs another empty memory slot.
-- **Know where a checkpoint can load.** Other area means it is still saved. Enter its matching area and episode first. Replay and Go to Beginning need the area where the TAS started. Opening a project keeps its full recording even if no checkpoint can load where you are.
-- **More Shined favourites.** Newer named settings can be starred, including camera movement speed, sideways direction, look sensitivity and Hide all HUD. Existing stars stay.
+- **Record after going back.** Go to Beginning, Go to Checkpoint and Open TAS leave you ready to edit with Step or Resume. The old continuation remains available for Replay until you record the first new input. Save/Open alone does not shorten it.
+- **A warning keeps Replay moving.** DESYNC fN shows the first frame that differed; the rest of the inputs continue playing, including after a loading zone. B/Start still stops playback. Wrong-area state loads, incompatible settings and damaged files remain protected.
+- **Choose whether to show the TAS banner.** The setting starts On and appears in TAS projects and Display > Other HUD. Off hides the large progress/help display; a small DESYNC warning remains during replay. You can Shine it to Quick.
 
 **Make new SD states and TAS projects with this build.** Older files need their matching older build. Settings, records and ghosts are kept.
 
-[TESTING.md](foxtrot-tester-checklist.md) has four focused checks. Keep earlier RC1 results; use the [full test log](foxtrot-rc1-test-log.md) only to fill gaps in coverage. The [changelog](foxtrot-changelog.md) keeps the earlier changes.
+[TESTING.md](foxtrot-tester-checklist.md) has three focused checks. Keep earlier RC1 results; use the [full test log](foxtrot-rc1-test-log.md) only to fill gaps in coverage. The [changelog](foxtrot-changelog.md) keeps the earlier changes.

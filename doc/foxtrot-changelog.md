@@ -1,4 +1,14 @@
-# Moonshine Launcher FOXTROT — full-level TAS update
+# Moonshine Launcher FOXTROT — TAS editing and display update
+
+**V2.3.0 pre-release · Build 2BF27B14**
+
+- **Edit straight after a rewind.** Go to Beginning, Go to Checkpoint and Open TAS leave you ready to record with Step or Resume. The old ending stays available for Replay until your first new input replaces it. Continue is still available; stopping or finishing Replay does not silently start a new recording.
+- **Replay keeps going after a mismatch.** A small **DESYNC fN** warning marks the first frame that differed. The remaining inputs still play, so you can see what happens next. Damaged files, incompatible settings and wrong-area state loads are still refused.
+- **Hide the TAS banner.** The new **TAS banner** setting starts On and appears in TAS projects and Display > Other HUD. Off hides the large progress/help banner; a replay's small DESYNC warning remains visible. You can Shine the setting to Quick.
+
+**TESTING.md** has three short checks for this update. Make new states/projects with this build; keep older files with their matching build. This update keeps the same state and project file formats.
+
+## Earlier full-level TAS update — C34FF061
 
 **V2.3.0 pre-release · Build C34FF061**
 

@@ -70,6 +70,8 @@ static u8 sLoadKind;
 static u8 sMenuAction;
 static u16 sLoadWait,sStartRelease,sStripButtons,sPriorButtons;
 static u32 sTapeStart;
+static bool sEditArmed;
+static s32 sDesyncFrame;
 bool SavestateManager::practiceData(u32 slot,PracticeSession::SavestateData*out)const {
     if(slot>=3||!infos[slot].valid||sSeeds[slot].stage!=sStageGeneration)return false;
     *out=meta[slot];return true;
@@ -108,7 +110,8 @@ void restoreCamera(){}
 void invalidate(){}
 static const char *lastMessage;
 void message(const char *text){lastMessage=text;}
-void stopTape(const char *reason){sRecord=sReplay=false;sLoadKind=0;sLoadWait=sStartRelease=0;
+void warnDesync(u32 frame){if(sDesyncFrame<0){sDesyncFrame=frame;message("desync warning");}}
+void stopTape(const char *reason){sRecord=sReplay=sEditArmed=false;sLoadKind=0;sLoadWait=sStartRelease=0;
     sTapeHash=42;if(reason)message(reason);}
 ''' + function_source(production, "void queueTapeLoad(") + r'''
 ''' + seed_match.replace(narrow, replacement) + function_source(production, "bool findTakeStart()") + r'''
@@ -128,7 +131,7 @@ extern "C" __declspec(dllexport) void reset() {
     menuOpen=wheelOpen=promptOpen=resultOpen=diskActive=false;
     sPausePending=sStepQueued=false;sMenuAction=0;sStartRelease=sStripButtons=sPriorButtons=0;
     currentHash=tapeHash=42;currentFingerprint=123;recordBind=4;replayBind=8;
-    sTapeStart=0;lastMessage="";
+    sTapeStart=0;sEditArmed=false;sDesyncFrame=-1;lastMessage="";
     gpApplication.mCurrentHeap=(void*)0x80500000;gpApplication.mGamePads[0]=&pad;
 }
 extern "C" __declspec(dllexport) void save(u32 slot,u32 generation,u32 marker) {
@@ -170,6 +173,7 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
     case 7:return sLoadKind;case 8:return sTapeSlot;case 9:return sTapeSeed;
     case 10:return sPausePending;case 11:return sStepQueued;case 12:return sMenuAction;
     case 13:return sPaused;case 14:return sStartRelease;case 15:return sStripButtons;
+    case 16:return sEditArmed;case 17:return sDesyncFrame;case 18:return sTakeAttached;case 19:return sTakePosition;
     default:return 999;}
 }
 ''', encoding="ascii")
@@ -288,7 +292,19 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.assertTrue(self.lib.beginning());self.lib.poll()
         self.assertEqual(self.lib.value(6),4)
         self.assertEqual((self.lib.value(4),self.lib.value(5),self.lib.value(13)),(0,0,1))
+        self.assertEqual((self.lib.value(16), self.lib.value(18), self.lib.value(19)), (1, 1, 0))
         self.assertTrue(self.lib.replay())
+
+    def test_replay_start_desync_warns_but_starts_with_full_take(self):
+        self.make_take()
+        self.assertTrue(self.lib.replay())
+        self.lib.config(4, 124)
+        self.lib.poll()
+        self.assertEqual([self.lib.value(i) for i in (5, 6, 13, 17, 18)], [1, 4, 0, 0, 1])
+        self.assertIn(b"warning", self.lib.status())
+        self.lib.config(4, 123)
+        self.assertTrue(self.lib.replay()); self.lib.poll()
+        self.assertEqual(self.lib.value(17), -1)
 
     def test_tas_shortcut_waits_its_own_buttons_and_preserves_gameplay_holds(self):
         self.make_take()
@@ -389,13 +405,6 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.assertEqual((self.lib.value(0), self.lib.value(7)), (1, 0))
         self.assertIn(b"Settings changed", self.lib.status())
 
-    def test_different_restored_start_pauses_before_first_input(self):
-        self.make_take()
-        self.assertTrue(self.lib.replay())
-        self.lib.config(4, 124)
-        self.lib.poll()
-        self.assertEqual([self.lib.value(i) for i in (0, 5, 7, 13)], [2, 0, 0, 1])
-        self.assertIn(b"Replay start differs", self.lib.status())
 
 
 if __name__ == "__main__":
