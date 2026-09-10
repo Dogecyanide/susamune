@@ -42,7 +42,7 @@ static TMarDirector *gpMarDirector=&director;
 struct TApplication { enum { CONTEXT_DIRECT_MAIN_LOOP=1 }; TMarioGamePad *mGamePads[1]; };
 static TApplication gpApplication={{&pad}};
 static TMarioGamePad *sReadPad;
-static bool sHaveRead;
+static bool sHaveRead,sRecord,sReplay;static u32 sOriginKey[2];
 static u16 sBeforeRead;
 struct Timer { void beginPracticePause() {} } gQFTTimer;
 void capturePad(u16 &out,TMarioGamePad *p) { out=p->flags; }

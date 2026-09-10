@@ -1,4 +1,16 @@
-# Moonshine Launcher FOXTROT — TAS editing and display update
+# Moonshine Launcher FOXTROT — intro and movie input update
+
+**V2.3.0 pre-release · Build 9975EF7F**
+
+- **TAS records intro and movie inputs.** Skip presses and their timing remain in the take, including FLUDD's movie sequence. Replay carries those inputs through to the gameplay afterward. Intro and movie input frames count toward the existing 4096-frame limit; loading waits do not.
+- **Buffered pause during cinematics.** Pause/Step requested during an intro or movie waits for Mario's first controllable frame.
+- **Movies no longer interrupt Ghost Watch.** Watch skips them automatically while preserving the ghost's movement timing.
+- **TAS submenus close normally.** The configured Close shortcut now works inside Checkpoints and the other TAS pages. Active shortcut recording still captures that combination instead of closing the menu.
+- Shared validation code uses about 1.6 KiB less memory, without expanding the memory reserve or reducing savestate capacity.
+
+**TESTING.md** has three short checks for this update. Make new states/projects with this build; keep older files with their matching build.
+
+## Earlier TAS editing and display update — 2BF27B14
 
 **V2.3.0 pre-release · Build 2BF27B14**
 

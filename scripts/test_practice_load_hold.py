@@ -22,7 +22,7 @@ class LoadHoldTests(unittest.TestCase):
         cls.addClassCleanup(cls.folder.cleanup)
         functions = "\n".join(function_source(ROOT / "src/practice_session.cpp", name)
             for name in (
-                "bool normalStage(", "bool controlStage(", "bool introStage(",
+                "bool inputAdvanced(", "bool normalStage(", "bool controlStage(", "bool introStage(",
                 "bool actionableStage(", "bool activatePendingPause(",
                 "bool activatePendingLoadHold(", "void armLoadHold(",
                 "void cancelLoadHold(", "void onSavestateLoaded()",
@@ -30,7 +30,7 @@ class LoadHoldTests(unittest.TestCase):
                 "u32 hashBytes(", "bool validSceneKey(", "u32 transitionsThrough(", "bool atRecordedScene()", "void warnDesync(", "void stopTape(",
                 "bool suspendForScene(", "bool activateTimelineArrival(",
                 "void beforeDirect(", 'extern "C" s32 susamunePracticeChangeState(',
-                'extern "C" u32 susamunePracticeReadPad()', "void afterDirect(", "void beforeStageSetup()",
+                'extern "C" u32 susamunePracticeReadPad()', "void afterDirect(", "void beforeStageSetup()", "void afterStageSetup()",
                 "void releaseForDeparture()", "void requestStop()", "void pauseForCheckpoint()", "void pauseEditing()"))
         source = Path(cls.folder.name) / "load_hold.cpp"
         source.write_text(r'''
@@ -46,7 +46,7 @@ struct TMarioGamePad {
 static_assert(__builtin_offsetof(TMarioGamePad,_E8)==0xe8,"retail pad gate offset");
 struct TMarDirector {
     enum { STATE_GAME_STARTING=2,STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_STAGE_EXIT=9,STATE_STAGE_EXIT_2=12 };
-    u32 mCurState,mGameState,mDemoState;
+    u32 mCurState,mGameState,mDemoState;u8 _260;
 };
 struct TApplication { enum { CONTEXT_DIRECT_MAIN_LOOP=1,CONTEXT_DIRECT_STAGE=5,CONTEXT_DIRECT_MOVIE=6 };TMarioGamePad *mGamePads[1]; };
 struct Mario { u32 mState; };
@@ -56,7 +56,7 @@ static TMarDirector *gpMarDirector=&director;
 static TApplication gpApplication={{&pad}};
 static Mario mario,*gpMarioOriginal=&mario;
 static SusamunePracticeInput sPhysical,sConsumed;
-static bool ready,transition,sPaused,sPausePending,sLoadHoldActive,sLoadHoldPending;
+static bool ready,movieContext,movieInitialized,transition,sPaused,sPausePending,sLoadHoldActive,sLoadHoldPending;
 static bool sOwnLoad,sCameraWaitButtons,sFreeCamera,sStepQueued,sHaveRead;
 static bool sConsumedFrame,sStepping,sModal,sFrameInjected,sRecord,sReplay,sFreeze;
 static bool sBorrowedPause,sAssisted,sEditArmed;
@@ -68,7 +68,7 @@ static u32 sTransitionCount,sTransitionCursor,sStartScene,sTransitionFrom,sTapeS
 static u8 sTransitionMode;
 static u16 sLoadWait,sStartRelease;
 static bool sTransitionSetup,sTransitionPaused,sArrivalResume;
-static u32 liveScene,liveFingerprint,neutralizations;
+static u32 liveScene,liveFingerprint,neutralizations,changeMovieDuring;
 static u32 sTakePosition,sOriginKey[2],sPendingReleases;
 static u16 sLoadHoldButtons,sStripButtons,sBeforeRead,sPriorButtons;
 static u8 sMenuAction,sLoadKind;
@@ -76,7 +76,7 @@ static u32 sSteps,sSettingsHash,sCount,sCursor,sTapeSeed,sStageGeneration;
 static unsigned invalidations,retailCalls,begins,ends;
 static s32 retailResult;
 static u32 retailNext;
-static TMarioGamePad *sReadPad;
+static TMarioGamePad *sReadPad;static u32 sReadScene;
 static void *sCamera;
 static const char *sStatus;
 static char sReplayFailure[64];
@@ -104,7 +104,15 @@ void frameControl(bool hold,bool) {frozen=hold;}
 void invalidateForAssist() {}
 }
 namespace WarpWheel { bool shown() {return false;} bool promptPending() {return false;} }
-bool stageReady() {return ready;}
+struct TMovieDirector {u16 mFlags;};
+static TMovieDirector movie;
+namespace RetailInput {
+enum Context {Unavailable,StageLoading,StageReady,MovieLoading,MovieReady};
+TMarDirector *stageDirector(){return ready&&!movieContext?&director:nullptr;}
+TMovieDirector *movieDirector(){movie.mFlags=movieInitialized?1:0;return ready&&movieContext?&movie:nullptr;}
+Context context(){return !ready?Unavailable:movieContext?(movieInitialized?MovieReady:MovieLoading):director._260?StageReady:StageLoading;}
+}
+bool stageReady() {return ready&&!movieContext&&director._260;}
 bool observerTransition() {return transition;}
 bool assisted() {return sAssisted;}
 bool actionsFastForwardActive() {return false;}
@@ -133,7 +141,7 @@ s32 retailChange(TMarDirector *d) {++retailCalls;d->mCurState=retailNext;return 
 static const size_t kChangeState=reinterpret_cast<size_t>(&retailChange);
 ''' + functions + r'''
 extern "C" __declspec(dllexport) void reset(unsigned state,unsigned modes) {
-    ready=true;transition=false;pad={};pad.flags=2;director={};director.mCurState=state;
+    ready=true;transition=false;pad={};pad.flags=2;director={};director._260=1;director.mCurState=state;movieContext=movieInitialized=false;
     sPhysical={};sConsumed={};JUTGamePad::mPadStatus[0]={};sPriorButtons=0;sPaused=modes&1;sOwnLoad=modes&2;
     sPausePending=sLoadHoldActive=sLoadHoldPending=sCameraWaitButtons=false;
     sFreeCamera=sStepQueued=sHaveRead=sConsumedFrame=sStepping=sModal=false;
@@ -143,7 +151,7 @@ extern "C" __declspec(dllexport) void reset(unsigned state,unsigned modes) {
     sSteps=sSettingsHash=sCount=sCursor=sTapeSeed=sStageGeneration=0;
     sTransitionCount=sTransitionCursor=sTransitionFrom=sTapeStage=sTapeHash=0;
     sLoadWait=sStartRelease=sTransitionMode=0;sTransitionSetup=sTransitionPaused=sArrivalResume=false;
-    liveScene=sStartScene=0x02000000;liveFingerprint=neutralizations=meaningCalls=0;
+    liveScene=sStartScene=0x02000000;liveFingerprint=neutralizations=meaningCalls=changeMovieDuring=0;
     sOriginKey[0]=sOriginKey[1]=sTakePosition=0;sTakeAttached=sModalPadValid=false;
     invalidations=retailCalls=begins=ends=0;Ghost::frozen=false;
 }
@@ -183,15 +191,41 @@ extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
 extern "C" __declspec(dllexport) void depart(unsigned paused) {
     sRecord=sTakeAttached=true;sOriginKey[1]=77;sPaused=paused!=0;
     sHaveRead=true;sReadPad=&pad;sConsumed.buttons=0x100;
-    director.mCurState=9;afterDirect(1,true);
+    director.mCurState=9;afterDirect(5,true);
 }
 extern "C" __declspec(dllexport) void replayZone(unsigned destination,unsigned hash) {
     sReplay=sTakeAttached=true;sOriginKey[1]=77;sCount=3;sCursor=0;
     sTransitions[0]={1,0,sStartScene,destination,hash};sTransitionCount=1;
     sHaveRead=sFrameInjected=true;sReadPad=&pad;
-    sFrames[0].fingerprint=liveFingerprint;sFrames[1].input.buttons=0x100;sFrames[1].fingerprint=456;sFrames[2].input.buttons=0;sFrames[2].fingerprint=789;director.mCurState=9;afterDirect(1,true);
+    sFrames[0].fingerprint=liveFingerprint;sFrames[1].input.buttons=0x100;sFrames[1].fingerprint=456;sFrames[2].input.buttons=0;sFrames[2].fingerprint=789;director.mCurState=9;afterDirect(5,true);
 }
 extern "C" __declspec(dllexport) void scene(unsigned scene,unsigned hash) {liveScene=scene;liveFingerprint=hash;}
+extern "C" __declspec(dllexport) void arrival(unsigned scene,unsigned hash) {
+    liveScene=scene;liveFingerprint=hash;director._260=0;director.mCurState=0;
+    susamunePracticeReadPad();beforeStageSetup();afterStageSetup();director._260=1;director.mCurState=2;
+    retailNext=4;retailResult=1;susamunePracticeChangeState(&director);
+}
+extern "C" __declspec(dllexport) void contextTick(unsigned kind,unsigned initializedBefore,unsigned initializesDuring,unsigned result,unsigned buttons) {
+    ready=kind!=0;movieContext=kind==2;movieInitialized=initializedBefore!=0;director._260=initializedBefore;
+    JUTGamePad::mPadStatus[0]={};JUTGamePad::mPadStatus[0].buttons=buttons;
+    susamunePracticeReadPad();beforeDirect(false);
+    if(initializesDuring){if(movieContext)movieInitialized=true;else{beforeStageSetup();afterStageSetup();director._260=1;}}
+    if(changeMovieDuring){liveScene=changeMovieDuring;changeMovieDuring=0;}
+    afterDirect(result,true);
+}
+extern "C" __declspec(dllexport) void movieChangesTo(unsigned scene){changeMovieDuring=scene;}
+extern "C" __declspec(dllexport) void movieChainReplay(){
+    sCount=4;sCursor=sTakePosition=1;sReplay=true;sRecord=false;sTransitionMode=2;sTransitionCursor=0;
+    sTransitionFrom=sStartScene;sTransitionCount=3;sTransitionSetup=false;
+    sTransitions[0]={1,0,sStartScene,0xfe000002,0};
+    sTransitions[1]={2,0,0xfe000002,0xfe000012,0};
+    sTransitions[2]={3,0,0xfe000012,0x00010000,0};
+    for(unsigned i=0;i<4;++i){sFrames[i].input={};sFrames[i].input.buttons=0x100;sFrames[i].fingerprint=0;}
+}
+extern "C" __declspec(dllexport) void recordNow(){sRecord=sTakeAttached=true;sOriginKey[1]=77;}
+extern "C" __declspec(dllexport) void pendingPause(){sPausePending=true;}
+extern "C" __declspec(dllexport) unsigned frameButtons(unsigned i){return sFrames[i].input.buttons;}
+extern "C" __declspec(dllexport) void cancelArrival(){susamunePracticeReadPad();beforeDirect(false);}
 extern "C" __declspec(dllexport) void fullZones() {sTransitionCount=32;sTransitions[31]={0,0,sStartScene,sStartScene,0};}
 extern "C" __declspec(dllexport) void endAtZone(){sCount=sCursor;}
 extern "C" __declspec(dllexport) unsigned timeline(unsigned field) {
@@ -248,10 +282,7 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         return self.lib.status() & 255
 
     def arrive_zone(self, scene=0x2F000001, fingerprint=123):
-        self.lib.lifecycle(0)
-        self.lib.state(2)
-        self.lib.scene(scene, fingerprint)
-        self.lib.change(4, 1)
+        self.lib.arrival(scene, fingerprint)
 
     def test_zone_entry_input_recorded_before_loading_suspends_tape(self):
         self.lib.reset(4, 0); self.lib.depart(1)
@@ -264,14 +295,15 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3, 5, 7)], [1, 1, 0, 1, 1, 77])
         self.assertEqual([self.lib.timeline(i) for i in (9, 10, 11, 12, 13, 14, 15)],
                          [1, 1, 0x02000000, 0x2F000001, 123, 1, 1])
-        self.assertTrue(self.low() & 32)  # Retail transition cannot consume the arrival tick.
+        self.assertFalse(self.low() & 32)  # TAS never discards a partially consumed intro frame.
+        self.assertTrue(self.low() & 16)
         self.assertEqual(self.lib.timeline(16), 0)  # No extra retail controller-timer decrement.
         self.lib.after(1); self.lib.before(0)
         self.assertTrue(self.low() & 8)
 
-    def test_running_tas_resumes_after_single_arrival_barrier(self):
+    def test_running_tas_arrives_without_an_extra_barrier(self):
         self.lib.reset(4, 0); self.lib.depart(0); self.arrive_zone()
-        self.assertTrue(self.low() & 32)
+        self.assertFalse(self.low() & 32)
         self.lib.after(1); self.lib.before(0)
         self.assertFalse(self.low() & (4 | 8))
         self.assertEqual(self.lib.timeline(0), 1)
@@ -286,7 +318,7 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
         self.arrive_zone(0x2F000002, 123)
         self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 7)], [3, 0, 0, 0, 77])
-        self.assertTrue(self.low() & 8)
+        self.assertTrue(self.low() & (8 | 16))
         self.assertIn(b"differed", self.lib.text())
 
     def test_arrival_fingerprint_desync_warns_and_keeps_replaying(self):
@@ -369,14 +401,58 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         self.assertTrue(self.low() & 4)
         self.assertIn(b"finished", self.lib.text())
 
-    def test_arrival_waits_for_real_mario_control_and_not_just_loaded_area(self):
-        self.lib.reset(4, 0); self.lib.depart(1); self.lib.lifecycle(0)
-        self.lib.scene(0x2F000001, 123); self.lib.gates(0, 0, 0, 0)
-        self.lib.change(4, 1)
-        self.assertEqual(self.lib.timeline(2), 1)
-        self.assertEqual(self.lib.timeline(1), 0)
-        self.lib.gates(2, 0, 0, 0); self.lib.change(4, 1)
-        self.assertEqual(self.lib.timeline(1), 1)
+    def test_ready_intro_counts_input_before_mario_is_controllable(self):
+        self.lib.reset(4, 0); self.lib.depart(0)
+        self.lib.scene(0x2F000001, 0); self.lib.state(1); self.lib.gates(1, 0, 0, 0)
+        self.lib.contextTick(1, 0, 1, 1, 0x100)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3)], [2, 1, 0, 1])
+        self.assertEqual(self.lib.frameButtons(1), 0x100)
+        self.assertFalse(self.low() & (4 | 8))
+
+    def test_movie_loading_polls_do_not_count_but_worker_finishing_in_direct_does(self):
+        self.lib.reset(4, 0); self.lib.depart(0); self.lib.scene(0xFE000002, 0)
+        self.lib.contextTick(2, 0, 0, 0, 0)
+        self.lib.contextTick(2, 0, 0, 0, 0)
+        self.assertEqual((self.lib.timeline(0), self.lib.timeline(1)), (1, 0))
+        self.lib.contextTick(2, 0, 1, 1, 0x100)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3)], [2, 1, 0, 1])
+        self.assertEqual(self.lib.frameButtons(1), 0x100)
+        self.assertEqual(self.lib.timeline(16), 0)
+
+    def test_replay_injects_first_movie_skip_even_when_loading_completes_after_pad_read(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0xFE000002, 0); self.lib.scene(0xFE000002, 0)
+        self.lib.contextTick(2, 0, 0, 0, 0)
+        self.assertEqual(self.lib.timeline(8), 1)
+        self.lib.contextTick(2, 0, 1, 1, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (4, 8, 21)], [1, 2, 0x100])
+        self.lib.contextTick(2, 1, 0, 1, 0)
+        self.assertEqual((self.lib.timeline(4), self.lib.timeline(8)), (0, 3))
+
+    def test_fludd_movie_chain_replays_inputs_through_save_ui_back_to_airstrip(self):
+        self.lib.reset(4, 0); self.lib.movieChainReplay(); self.lib.scene(0xFE000002, 0)
+        self.lib.movieChangesTo(0xFE000012)
+        self.lib.contextTick(2, 0, 1, 6, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (2, 4, 8, 21)], [2, 1, 2, 0x100])
+        self.lib.contextTick(2, 0, 1, 5, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (2, 4, 8, 21)], [2, 1, 3, 0x100])
+        self.lib.scene(0x00010000, 0); self.lib.state(1)
+        self.lib.contextTick(1, 0, 1, 1, 0)
+        self.assertEqual([self.lib.timeline(i) for i in (2, 4, 8, 21)], [0, 0, 4, 0x100])
+
+    def test_pending_pause_does_not_suppress_movie_inputs(self):
+        self.lib.reset(4, 0); self.lib.depart(1); self.lib.scene(0xFE000002, 0)
+        self.lib.contextTick(2, 0, 1, 1, 0x100)
+        self.lib.contextTick(2, 1, 0, 1, 0)
+        self.assertEqual(self.lib.timeline(0), 3)
+        self.assertTrue(self.low() & 16)
+        self.assertFalse(self.low() & (4 | 8))
+
+    def test_stage_fade_input_is_recorded_until_direct_really_departs(self):
+        self.lib.reset(9, 0); self.lib.recordNow()
+        self.lib.contextTick(1, 1, 0, 1, 0x100)
+        self.assertEqual((self.lib.timeline(0), self.lib.timeline(2)), (1, 0))
+        self.lib.contextTick(1, 1, 0, 5, 0)
+        self.assertEqual((self.lib.timeline(0), self.lib.timeline(2)), (2, 1))
 
     def test_manual_warp_and_unexpected_setup_keep_unsaved_prefix(self):
         self.lib.reset(4, 0); self.lib.depart(1)
@@ -385,9 +461,9 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
         self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3, 5, 7)], [1, 0, 0, 0, 0, 77])
 
     def test_canceled_zone_keeps_unsaved_prefix_detached(self):
-        self.lib.reset(4, 0); self.lib.depart(0); self.lib.state(4); self.lib.before(0)
+        self.lib.reset(4, 0); self.lib.depart(0); self.lib.state(4); self.lib.cancelArrival()
         self.assertEqual([self.lib.timeline(i) for i in (0, 2, 3, 5, 7)], [1, 0, 0, 0, 77])
-        self.assertIn(b"canceled", self.lib.text())
+        self.assertIn(b"differed", self.lib.text())
 
     def test_transition_limit_stops_without_erasing_zone_entry_or_older_markers(self):
         self.lib.reset(4, 0); self.lib.fullZones(); self.lib.depart(0)

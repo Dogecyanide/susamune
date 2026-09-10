@@ -24,7 +24,7 @@ class MenuOpeningHoldTests(unittest.TestCase):
             expressions.append(signature + source.split(signature, 1)[1].split(";", 1)[0] + ";")
         program = Path(cls.folder.name) / "menu_open.cpp"
         program.write_text(r'''
-struct TMarDirector {enum {STATE_NORMAL=4}; unsigned mCurState;};
+struct TMarDirector {enum {STATE_NORMAL=4}; unsigned mCurState; unsigned _260;};
 static bool menuShown,menuPressed,wheelShown,practiceHold;
 struct Menu {bool shown(){return menuShown;}};
 struct Binds {bool wasPressedRaw(int){return menuPressed;}} gBinds;
@@ -33,10 +33,10 @@ namespace WarpWheel {bool shown(){return wheelShown;}}
 namespace PracticeSession {bool freezeRequested(){return practiceHold;}}
 extern "C" __declspec(dllexport) unsigned opening(unsigned flags,unsigned state) {
     Menu menu;Menu *gMenu=(flags&128)?nullptr:&menu;
-    TMarDirector director={state};TMarDirector *gpMarDirector=(flags&1)?&director:nullptr;
+    TMarDirector director={state,1};TMarDirector *stageDirector=(flags&1)?&director:nullptr;
     menuShown=flags&2;menuPressed=flags&4;wheelShown=flags&8;practiceHold=flags&32;
     const bool sessionModalBeforeDirect=flags&16,stateDiskBusy=flags&64;
-    const bool stepOverridesShortcut=flags&256;
+    const bool stepOverridesShortcut=flags&256,tasCinematic=false;
 ''' + "\n".join(expressions) + r'''
     return freeze;
 }

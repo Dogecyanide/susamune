@@ -94,7 +94,7 @@ Make fresh SD states and TAS projects with this build. Keep old files with their
 
 Open Practice > TAS projects for Pause / Resume and Advance one frame. D-Down toggles practice pause. D-Up pauses gameplay, then advances one frame with each further press. Select either row and press X to change its shortcut, or Z to clear it.
 
-You can press Pause or Step during loading or an intro. Armed means it will pause as soon as you can control Mario. Press Pause again to cancel.
+You can press Pause or Step during loading, an intro or a movie. Armed means it will pause as soon as you can control Mario. Intros and movies run in real time. Press Pause again to cancel.
 
 While paused, the QFT stays still. Each Step advances it by one game frame. TAS appears beside the QFT for an assisted attempt. Restart the stage for a fresh, ordinary attempt.
 
@@ -150,7 +150,9 @@ Continue, Replay, Beginning and checkpoint actions have optional shortcuts. Sele
 
 In Open TAS, Start renames the highlighted file. X asks to delete its SD copy. Memory checkpoints stay; save again to keep that work after closing the game.
 
-Normal area changes keep the recording. It continues when Mario can move again; loading time uses no input frames. A TAS holds 4096 input frames and 32 area changes. That is about 137 seconds of recorded play at 30 fps, or 164 seconds at 25 fps. An unsupported transition or a reached limit stops recording but keeps the take for saving.
+Normal area changes keep the recording. Intro, fade, conversation and movie inputs are recorded too, including skips and FLUDD's movies. Loading waits use no input frames; ready intro and movie frames count toward the 4096-frame limit. A take holds 32 area/movie transitions. A reached limit or unsupported transition keeps the take for saving.
+
+Your usual Close shortcut works inside Checkpoints and the other TAS pages. While assigning a new shortcut, the recorder owns those buttons. Finish or cancel the edit, release the buttons, then press Close again.
 
 Other area means the checkpoint is still saved, but you must enter its matching area and episode to load it. Replay and Go to Beginning need the area and episode where the TAS began. They do not warp there automatically.
 
@@ -173,6 +175,8 @@ Personal and imported lists have pages. On the page row, use C-stick left/right,
 Choose a ghost to race it or watch it. Watch2 shows two tracks together. B or Start leaves Watch. Your full menu combo opens the menu without leaving Watch.
 
 Pause, Step and free camera work while watching. The ghost stays still while paused.
+
+Ghost Watch skips movies automatically and keeps the ghost's movement timing. Watch stays active when gameplay returns.
 
 Ghosts > Ghost inputs turns on the ghost's controller display. Both ghosts shows two ghost controllers in Watch2, or your live input and the ghost's input while racing.
 

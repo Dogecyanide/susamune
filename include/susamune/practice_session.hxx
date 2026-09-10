@@ -35,12 +35,13 @@ bool takeBelongsTo(const u32 (&key)[2]);
 
 void init();
 void beforeStageSetup();
+void afterStageSetup();
 // Call before borrowing a director state; modal includes menu/wheel/editors.
 void beforeDirect(bool modalOwnsInput);
 bool freezeRequested();
 bool ownsGameplayInput();
 // Call after restoring the real director state, before gameplay observers.
-void afterDirect(s32 appState, bool gameplayActive);
+void afterDirect(s32 appState, bool retailAdvanced);
 // Service replay loads only after the existing GX completion barrier.
 void afterDraw();
 void onSavestateSaved(u32 slot, u32 generation);

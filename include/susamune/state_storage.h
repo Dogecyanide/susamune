@@ -91,12 +91,13 @@ typedef char StateNameMailboxLines[__builtin_offsetof(struct SusamuneStateStorag
 typedef char TasMailboxLines[__builtin_offsetof(struct SusamuneStateStorageMailbox, tasRequest) == 8000 &&
     __builtin_offsetof(struct SusamuneStateStorageMailbox, tasProject) == 8032 ? 1 : -1];
 
-// C++ callers share the table; the ARM C worker keeps its local definition.
+// C++ callers share emitted validators and the table; ARM C keeps local definitions.
 #ifdef __cplusplus
-inline
+#define SUSAMUNE_STATE_SHARED_INLINE inline
 #else
-static inline
+#define SUSAMUNE_STATE_SHARED_INLINE static inline
 #endif
+SUSAMUNE_STATE_SHARED_INLINE
 unsigned int SusamuneStateCrcUpdate(unsigned int crc,
         const void *data, unsigned int size) {
     static const unsigned int table[256] = {
@@ -138,7 +139,7 @@ unsigned int SusamuneStateCrcUpdate(unsigned int crc,
     for (i = 0; i < size; ++i) crc = (crc >> 8) ^ table[(crc ^ p[i]) & 255u];
     return crc;
 }
-static inline unsigned int SusamuneStateCrc(const void *data, unsigned int size) {
+SUSAMUNE_STATE_SHARED_INLINE unsigned int SusamuneStateCrc(const void *data, unsigned int size) {
     return ~SusamuneStateCrcUpdate(0xFFFFFFFFu, data, size);
 }
 static inline unsigned int SusamuneStateHeaderCrc(const struct SusamuneStateArchiveHeader *h) {
@@ -155,7 +156,7 @@ static inline unsigned int SusamuneStateNameCrc(const struct SusamuneStateNameRe
     crc = SusamuneStateCrcUpdate(crc, &zero, 4);
     return ~SusamuneStateCrcUpdate(crc, p + 52, sizeof(*r) - 52);
 }
-static inline int SusamuneStateNameValid(const char *name) {
+SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateNameValid(const char *name) {
     unsigned int i;
     if (!name) return 0;
     for (i = 0; i < SUSAMUNE_STATE_NAME_BYTES; ++i) {
@@ -164,7 +165,7 @@ static inline int SusamuneStateNameValid(const char *name) {
     }
     return 0;
 }
-static inline int SusamuneStateGameValid(unsigned int id) {
+SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateGameValid(unsigned int id) {
     return id == 0x474D534Au || id == 0x474D5345u || id == 0x474D5350u;
 }
 static inline int SusamuneStateHeaderValid(const struct SusamuneStateArchiveHeader *h) {
@@ -204,14 +205,14 @@ static inline int SusamuneTasRequestValid(const struct SusamuneTasRequest *reque
         request->role <= SUSAMUNE_TAS_TAPE_ROLE && !request->reserved[0] && !request->reserved[1] &&
         request->checksum == SusamuneTasRequestCrc(request);
 }
-static inline unsigned int SusamuneTasManifestCrc(const struct SusamuneTasManifest *project) {
+SUSAMUNE_STATE_SHARED_INLINE unsigned int SusamuneTasManifestCrc(const struct SusamuneTasManifest *project) {
     const unsigned char *bytes = (const unsigned char *)project;
     const unsigned int zero = 0;
     unsigned int crc = SusamuneStateCrcUpdate(0xFFFFFFFFu, bytes, 40);
     crc = SusamuneStateCrcUpdate(crc, &zero, 4);
     return ~SusamuneStateCrcUpdate(crc, bytes + 44, sizeof(*project) - 44);
 }
-static inline int SusamuneTasManifestValid(const struct SusamuneTasManifest *project) {
+SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValid(const struct SusamuneTasManifest *project) {
     unsigned int i, j, count = 0, total = 0;
     if (project->magic != SUSAMUNE_TAS_MAGIC || project->version != SUSAMUNE_TAS_VERSION ||
         !project->projectId || project->projectId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !project->generation ||
@@ -263,4 +264,5 @@ static inline int SusamuneTasTapeMetadataValid(const struct SusamuneStateArchive
         h->sceneKey == take->startScene && h->packedSize == SusamuneTasTakeBytes(take);
 }
 
+#undef SUSAMUNE_STATE_SHARED_INLINE
 #endif

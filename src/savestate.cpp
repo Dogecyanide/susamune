@@ -1,4 +1,5 @@
 #include "susamune/practice_session.hxx"
+#include "susamune/retail_input.hxx"
 #include "susamune/state_crc.hxx"
 #include "susamune/crash_report.hxx"
 // =====================================================================
@@ -697,7 +698,7 @@ void reconcilePauseAudio(u8 previousState) {
 // visible by then (SMS loads everything up front -- nothing streams in
 // dynamically), so snapshotting is safe. Allow state >= 2.
 bool inLoadTransition() {
-    if (!gpMarDirector) {
+    if (!gpMarDirector || RetailInput::stageDirector() != gpMarDirector) {
         return true;
     }
     if (gpMarDirector->_260 == 0) {

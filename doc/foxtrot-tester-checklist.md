@@ -1,15 +1,15 @@
 # Moonshine FOXTROT — latest checks
 
-**V2.3.0 pre-release · Build 2BF27B14 · TAS editing and display**
+**V2.3.0 pre-release · Build 9975EF7F · Intros, movies and menu closing**
 
-Keep your earlier passes. Use one short TAS with a checkpoint and a recognisable ending for these three checks.
+Keep your earlier passes. These are the three checks for this update.
 
 **Tester / platform / game region / English or Japanese download:**
 
 Make fresh states/projects with this build; older files need their matching build. Dolphin has no launcher SD service, so skip Save/Open there.
 
-- [ ] **Rewind, then record.** Go to Beginning and Replay once: the old recording should still be there. Return to Beginning again and use Step or Resume with different inputs, without choosing Continue first. Those inputs should now record and replace the old ending. **Save Checkpoint 1: it should save without asking you to Continue or Open.** Try the same from a checkpoint. Console: Save TAS, Open it again, then check you can edit from the restored point too. Save/Open alone must not shorten the recording.
-- [ ] **Replay through a loading zone.** Use a take that enters another area, especially one that previously stopped there. If **DESYNC fN** appears, playback should continue with the remaining inputs after loading and keep the first warning's frame number. B/Start should still stop it. If no warning occurs, report that; there is no need to force one or damage a file.
-- [ ] **TAS banner.** Switch it Off in TAS projects: the large progress/help banner should disappear. The same setting should show Off in Display > Other HUD. Turn it On there and check the banner returns. Shine it to Quick if useful. If you see a replay warning, its small DESYNC badge must remain with the banner Off. Console: keep your preferred choice through the same reboot used for Save/Open.
+- [ ] **TAS through an intro or movie.** Start recording before entering a secret or triggering a movie. Use your usual skip input, then record a short recognisable movement afterward. Return to the Beginning area and Replay: the skip and following movement should play back without losing the take. If available, include FLUDD's movie sequence. Pause/Step requested during the intro or movie should wait until Mario is controllable. The input counter may grow during movies; the limit remains 4096.
+- [ ] **Watch a ghost through movies.** Watch a ghost on a route with a movie. It should skip the movie automatically, keep Watch active and continue the ghost at the correct point. Pause/Step should still work when gameplay returns.
+- [ ] **Close the TAS submenu.** Open Practice > TAS projects > Checkpoints, then use your normal Close shortcut: the menu should close. Try it after editing a shortcut too. While actually recording a new bind, those buttons must be recorded instead of closing the menu; release them, finish the edit and press Close again.
 
-For a problem, send **build checksum, route/episode, what you pressed, and the exact message**. A photo or short clip helps. The full `RC1_TESTING.md` is still available for gaps in the team's coverage.
+For a problem, send **build checksum, route/episode, what you pressed, and the exact message**. A photo or short clip helps. If Replay shows **DESYNC fN**, include the frame number and whether playback continued. The full `RC1_TESTING.md` remains available for gaps in the team's coverage.

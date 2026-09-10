@@ -12,6 +12,7 @@
 #include "SMS/Player/MarioDraw.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/MarDirector.hxx"
+#include "SMS/System/MovieDirector.hxx"
 #include "susamune/addresses.hxx"
 #include "susamune/actions.hxx"
 #include "susamune/binds.hxx"
@@ -27,6 +28,7 @@
 #include "susamune/features.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/records.hxx"
+#include "susamune/retail_input.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/stage_loader.hxx"
 #include "susamune/warp_wheel.hxx"
@@ -2680,6 +2682,17 @@ void frameControl(bool frozen, bool assisted) {
 }
 
 void beforeDirect() {
+    if (TMovieDirector *movie = RetailInput::movieDirector()) {
+        // Watch is pose playback. Skip movies without feeding its raw exit bind
+        // or accepting the movie's later dialogs.
+        if (observerRunning() && (movie->mFlags & 1) &&
+            movie->mState >= 0 && movie->mState <= 1 &&
+            movie->mGamePad == gpApplication.mGamePads[0] && movie->mGamePad)
+            movie->mGamePad->mFrameMeaning |= 0x20;
+        return;
+    }
+    TMarDirector *const stage = RetailInput::stageDirector();
+    if (!stage || !stage->_260) return;
     if (!observerRunning() || !sObserverStageReady) return;
     if (!sFrameFrozen && sObserverMarioBaselineFinalized && gpMarDirector &&
         gpMarDirector->mCurState != TMarDirector::STATE_NORMAL) {
@@ -2721,8 +2734,7 @@ void update() {
     }
     // A freshly allocated director can reuse the previous director's address
     // before setupObjects() replaces the stage-owned Mario and camera globals.
-    if (gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE ||
-        !gpMarDirector || gpMarDirector->_260 == 0) {
+    if (!RetailInput::stageDirector() || gpMarDirector->_260 == 0) {
         sGhostVisible = false;
         sSecondaryGhostVisible = false;
         return;

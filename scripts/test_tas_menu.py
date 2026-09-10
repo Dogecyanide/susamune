@@ -17,6 +17,7 @@ class TasMenuTests(unittest.TestCase):
         text = text.replace(function(text, '    void draw(Menu *menu, int x, int y, int w, int h) override'), '')
         text = text[text.index('class TasProjectTab'):text.index('static_assert')]
         text = text.replace(' : public MenuTab', '').replace(' override', '').replace('private:', 'public:')
+        menu_update = function((ROOT / 'src/menu.cpp').read_text(), 'void Menu::update(TMarioGamePad *pad)')
         raw = (ROOT / 'include/susamune/raw_prompt_input.hxx').read_text()
         raw = raw[raw.index('class RawPromptInput'):raw.index('#endif')]
         shim = r'''
@@ -34,15 +35,28 @@ struct JUTGamePad {enum{A=0x100,B=0x200,X=0x400,Y=0x800,Z=0x10,START=0x1000};
  struct Status{u16 mButton;};static Status mPadStatus[1];};
 JUTGamePad::Status JUTGamePad::mPadStatus[1];
 struct TMarioGamePad {enum{CSTICK_UP=1,CSTICK_DOWN=2,CSTICK_LEFT=4,CSTICK_RIGHT=8};
+ enum{L=0x40,R=0x20};
  struct {u32 mRapidInput;}mButtons;u32 nav;};
 static int calls,lastAction,closeCount,bindTarget,cleared,confirmCount,cancelCount;
 static bool overwrite,replacePrompt,phaseBusy,dirtyState;
+static u16 closeMask=0x1800,previousButtons;
 struct Settings { bool value=true,star=false; void cycle(SettingId,int){value=!value;}
- void toggleFavorite(SettingId){star=!star;} }gSettings;
+ void toggleFavorite(SettingId){star=!star;} bool dirty(){return false;} }gSettings;
 void hit(int action){++calls;lastAction=action;}
-struct Menu {u32 navigationInput(TMarioGamePad*p){return p->nav;}void hide(){++closeCount;}void toast(const char*){}};
+class TasProjectTab;
+struct Menu {bool mShown=true;int mCurTab=0,mToastFrames=0,mCRepeatFrames=0;TasProjectTab*mTabs[1];
+ u32 navigationInput(TMarioGamePad*p){return p->nav;}void hide(){++closeCount;mShown=false;}
+ void toast(const char*){}void update(TMarioGamePad*);void pollSettingsSave(){}void requestSettingsSave(){}
+ void switchTab(int){hit(99);}};
 struct Binds {bool rec;bool recording(){return rec;}void cancelRecord(){rec=false;}
- void beginRecord(BindId id){rec=true;bindTarget=id;}void set(BindId id,u16 v){if(!v)cleared=id;}}gBinds;
+ void beginRecord(BindId id){rec=true;bindTarget=id;}void set(BindId id,u16 v){if(!v)cleared=id;}
+ bool dirty(){return false;}bool wasPressedRaw(BindId){return closeMask&&JUTGamePad::mPadStatus[0].mButton==closeMask&&previousButtons!=closeMask;}}gBinds;
+void updateAchievementBanner(){}bool rngControlInvalidatesIl(){return false;}
+namespace WarpWheel {bool promptShown(){return false;}}
+namespace StageTargets {void service(Menu*){}}
+namespace MarioColors {bool dirty(){return false;}}
+namespace FluddColors {bool dirty(){return false;}}
+struct Display {bool dirty(){return false;}void update(){}}gInputDisplay,gMetadataDisplay,gQftDisplay,gCreationExtras;
 struct StateManager {struct Info{u32 generation;};Info slotInfo(u32){return {11};}}manager,*gSavestateMgr=&manager;
 int wrap(int v,int count){return (v+count)%count;}int clampi(int v,int lo,int hi){return v<lo?lo:v>hi?hi:v;}
 void updateCreationKeyboardText(TMarioGamePad*,char*,u8&,int,u8&,bool&,u8&){}
@@ -69,7 +83,7 @@ bool catalogReady(){return false;}const SusamuneStateCatalog&catalog(){static Su
         body = r'''
 static void reset(){calls=lastAction=closeCount=confirmCount=cancelCount=0;bindTarget=cleared=-1;
  overwrite=replacePrompt=phaseBusy=dirtyState=gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;
- gSettings.value=true;gSettings.star=false;}
+ gSettings.value=true;gSettings.star=false;closeMask=0x1800;previousButtons=0;}
 static void press(TasProjectTab&t,u16 held,u32 nav=0){Menu m;TMarioGamePad p={};p.nav=nav;
  JUTGamePad::mPadStatus[0].mButton=held;t.update(&m,&p);}
 extern "C" __declspec(dllexport) int route(int page,int row,int button,int*out){
@@ -107,11 +121,24 @@ extern "C" __declspec(dllexport) int bannerCase(int nav){
  press(tab,0,TMarioGamePad::CSTICK_DOWN);
  return tab.mSel==0&&!tab.favoriteHint()?0:4;
 }
+extern "C" __declspec(dllexport) int closePage(int page,int mask,int busy,int recording,int*out){
+ reset();TasProjectTab tab;tab.mPage=page;tab.mSel=page==tab.CHECKPOINTS?1:7;
+ Menu menu;menu.mTabs[0]=&tab;TMarioGamePad pad={};closeMask=(u16)mask;
+ phaseBusy=busy;tab.mBinding=recording!=0;gBinds.rec=recording==1;
+ JUTGamePad::mPadStatus[0].mButton=(u16)mask;pad.mButtons.mRapidInput=mask;
+ menu.update(&pad);out[0]=menu.mShown;out[1]=calls;out[2]=confirmCount;out[3]=cancelCount;
+ out[4]=tab.mPage;out[5]=gBinds.rec;
+ if(recording){previousButtons=(u16)mask;gBinds.rec=false;menu.update(&pad);
+  out[6]=menu.mShown;JUTGamePad::mPadStatus[0].mButton=0;pad.mButtons.mRapidInput=0;
+  menu.update(&pad);previousButtons=0;JUTGamePad::mPadStatus[0].mButton=(u16)mask;
+  pad.mButtons.mRapidInput=mask;menu.update(&pad);out[7]=menu.mShown;}
+ return 0;
+}
 '''
         cls.tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.tmp.cleanup)
         source = Path(cls.tmp.name) / 'menu.cpp'
-        source.write_text(shim + raw + text + body)
+        source.write_text(shim + raw + text + menu_update + body)
         dll = source.with_suffix('.dll')
         result = subprocess.run([str(ROOT/'toolchain/clang++.exe'), '--target=x86_64-pc-windows-msvc',
             '-shared','-nostdlib','-fuse-ld=lld','-Wl,/noentry','-O2','-std=c++17',
@@ -166,6 +193,25 @@ extern "C" __declspec(dllexport) int bannerCase(int nav){
         for shortcut in (0,1):
             for cancel in (0,1):
                 self.assertEqual(self.lib.overwriteCase(shortcut,cancel),0)
+
+    def test_close_shortcut_exits_every_tas_page_without_running_its_action(self):
+        for page in range(6):
+            for mask in (0x1800, 0x140, 0x60):
+                for busy in (0, 1):
+                    with self.subTest(page=page, mask=mask, busy=busy):
+                        out = (C.c_int * 8)()
+                        self.lib.closePage(page, mask, busy, 0, out)
+                        self.assertEqual(list(out)[:4], [0, 0, 0, 0])
+                        self.assertEqual(out[4], page)
+
+    def test_inline_recorder_and_its_commit_frame_keep_close_combo_until_fresh_press(self):
+        for page in (0, 1):
+            for recording in (1, 2):
+                out = (C.c_int * 8)()
+                self.lib.closePage(page, 0x1800, 0, recording, out)
+                self.assertEqual(list(out)[:4], [1, 0, 0, 0])
+                self.assertEqual(out[6], 1)
+                self.assertEqual(out[7], 0)
 
 
 if __name__ == '__main__': unittest.main()

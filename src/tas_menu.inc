@@ -8,7 +8,11 @@ public:
     const char *summary() const override { return "New, edit, replay and save a TAS with its checkpoints."; }
     void focus() override { mInput.begin(SUSAMUNE_BIND_BUTTON_MASK); }
     void showCheckpointPrompt() { mPage = CHECKPOINTS; mSel = 0; mReplaceConfirm = false; focus(); }
-    bool grabsInput() const override { return mBinding || gBinds.recording() || mPage != MAIN || TasProject::busy(); }
+    bool grabsInput() const override {
+        // The recorder owns every button, including its final commit frame.
+        return mBinding || gBinds.recording() ||
+            ((mPage != MAIN || TasProject::busy()) && !gBinds.wasPressedRaw(BIND_MENU_TOGGLE));
+    }
     bool suppressesBinds() const override { return true; }
     bool favoriteHint() const override { return mPage == MAIN && mSel == 8; }
     void update(Menu *menu, TMarioGamePad *pad) override {

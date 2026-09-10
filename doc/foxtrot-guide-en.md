@@ -1,6 +1,6 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build 2BF27B14
+V2.3.0 pre-release · Build 9975EF7F
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
@@ -135,7 +135,11 @@ In **Open TAS**, highlight a name and press **Start** to rename it or **X** to d
 
 TAS projects use the same three memory slots as ordinary savestates. A new TAS uses an empty slot when possible. If it needs an occupied ordinary slot, it asks which state you want to replace; cancel to keep it. Its Beginning and two checkpoints have clear names in the TAS screen, so you do not need to manage their slot numbers or import separate files. **Save Checkpoint** keeps a retry point in memory; **Save TAS** keeps the whole project on SD, under `/moonshine_tas`. Only the SD save survives closing the game or rebooting. The ordinary SD states menu remains separate.
 
-Normal area changes, such as entering a secret, keep the recording and continue it when Mario can move again. Loading time uses no recorded-input frames. The limit is **4096 input frames and 32 area changes**: about 137 seconds of recorded play at 30 fps or 164 seconds at 25 fps. If a transition is unsupported or the limit is reached, recording stops and the take is kept so you can save it.
+Normal area changes, such as entering a secret, keep the recording. Inputs during intros, fades, conversations and movies are recorded too, including skip presses and FLUDD's movie sequence. Loading waits use no input frames, but ready intro and movie frames count toward the **4096-frame limit**. Up to **32 area/movie transitions** fit in a take. If a transition is unsupported or a limit is reached, recording stops and the take is kept so you can save it.
+
+Intros and movies run in real time. Press Pause or Step during one to stop when Mario becomes controllable; the movie itself is not frame-advanced.
+
+Your usual Close shortcut works inside Checkpoints and the other TAS submenus. While recording a new shortcut, those buttons belong to the recorder. Finish or cancel that edit, release the buttons, then press Close again.
 
 A checkpoint marked **Other area** is still saved. Enter its matching area and episode before loading it. For **Replay** or **Go to Beginning**, return to the area and episode where the TAS began; Moonshine does not take you there automatically.
 
@@ -156,6 +160,8 @@ New ghost files can include the inputs actually consumed during the attempt, plu
 In **Ghosts > Ghost inputs**, choose Off, Ghost, or **Both ghosts**. The same control is available in Display > Layout editor > Controller inputs and Display > HUD and displays > Other HUD. Both ghosts shows both ghost controllers in Watch2, or the live and ghost controller while racing. Turning Ghost display Off also hides ghost inputs. Turning it back On restores your chosen input display; your separate controller overlay stays independent. Ghost input is a teaching overlay; imported tracks do not control Mario.
 
 Ghost recordings made with practice pause, free camera or stepping are marked **TAS**. Their playback omits paused time, so arranging a camera or planning the next input does not create a long pause in the saved ghost. The QFT also stops during practice pause. TAS ghosts are for practice and cannot earn an ordinary PB.
+
+Ghost Watch skips movies automatically and keeps the ghost's movement timing. Watch remains active when gameplay returns; Pause, Step and free camera are still available there.
 
 Saving a state during ghost recording now includes the recording from the level's start to that moment. Loading restores that opening and replaces everything recorded after it with your new continuation. Finish, save and export the resulting full-level TAS ghost as usual. Loading a state made without an active recording does not invent an opening or start a new ghost automatically. TAS projects save editable inputs; ghosts save the finished attempt for watching, racing and sharing.
 

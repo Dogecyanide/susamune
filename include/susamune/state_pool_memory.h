@@ -17,11 +17,17 @@ typedef struct StatePoolMemorySpan {
 
 typedef __UINTPTR_TYPE__ StatePoolAddress;
 
-static inline int StatePoolMemoryBufferValid(const void *data, unsigned int size) {
+#ifdef __cplusplus
+#define SUSAMUNE_POOL_SHARED_INLINE inline
+#else
+#define SUSAMUNE_POOL_SHARED_INLINE static inline
+#endif
+
+SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryBufferValid(const void *data, unsigned int size) {
     return !size || (data && (StatePoolAddress)data <= ~(StatePoolAddress)0 - size);
 }
 
-static inline int StatePoolMemoryValid(const StatePoolMemory *memory) {
+SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryValid(const StatePoolMemory *memory) {
     if (!memory || !memory->sizes[0] ||
         memory->sizes[1] > ~0u - memory->sizes[0]) return 0;
     for (unsigned int i = 0; i < 2; ++i)
@@ -38,7 +44,7 @@ static inline unsigned int StatePoolMemoryCapacity(const StatePoolMemory *memory
     return StatePoolMemoryValid(memory) ? memory->sizes[0] + memory->sizes[1] : 0;
 }
 
-static inline int StatePoolMemoryRangeValid(const StatePoolMemory *memory,
+SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryRangeValid(const StatePoolMemory *memory,
                                            unsigned int offset, unsigned int size) {
     if (!StatePoolMemoryValid(memory)) return 0;
     const unsigned int capacity = memory->sizes[0] + memory->sizes[1];
@@ -193,4 +199,5 @@ static inline int StateSlotPoolCommitBanked(StateSlotPool *pool,
     return 1;
 }
 
+#undef SUSAMUNE_POOL_SHARED_INLINE
 #endif

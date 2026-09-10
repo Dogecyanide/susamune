@@ -10,6 +10,7 @@
 #include "susamune/japanese_ui.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
+#include "susamune/retail_input.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/savestate.hxx"
 #include "susamune/settings.hxx"
@@ -24,6 +25,7 @@
 #include "SMS/Manager/FlagManager.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/CardManager.hxx"
+#include "SMS/System/MovieDirector.hxx"
 
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
@@ -86,6 +88,7 @@ const u32 kSavedTakeVersion = 2;
 PadHistory sModalPad;
 bool sModalPadValid;
 TMarioGamePad *sReadPad;
+u32 sReadScene;
 SusamunePracticeInput sPhysical;
 SusamunePracticeInput sConsumed;
 bool sHaveRead;
@@ -132,7 +135,7 @@ SusamuneTasTransition sTransitions[32];
 u32 sTransitionCount, sTransitionCursor, sStartScene;
 u32 sTransitionFrom;
 u8 sTransitionMode;
-bool sTransitionSetup, sTransitionPaused, sArrivalResume;
+bool sTransitionSetup, sTransitionPaused;
 bool sTakeAttached;
 u32 sTakePosition;
 u32 sEditRevision;
@@ -192,11 +195,16 @@ bool mem1(const void *ptr, u32 size) {
 }
 
 bool stageReady() {
-    return gpApplication.mContext == TApplication::CONTEXT_DIRECT_STAGE &&
-           mem1(gpMarDirector, sizeof(TMarDirector)) &&
+    return RetailInput::stageDirector() == gpMarDirector && gpMarDirector &&
            gpMarDirector->_260 != 0 &&
            mem1(gpApplication.mGamePads[0], sizeof(TMarioGamePad)) &&
            mem1(gpMarioOriginal, sizeof(TMario));
+}
+
+bool inputAdvanced() {
+    if (TMarDirector *stage = RetailInput::stageDirector()) return stage->_260 != 0;
+    TMovieDirector *movie = RetailInput::movieDirector();
+    return movie && (movie->mFlags & 1u);
 }
 
 bool normalStage() {
@@ -231,10 +239,7 @@ bool actionableStage(bool secondaryTick = false) {
 }
 
 u32 currentSceneKey() {
-    const u32 parent = TFlagManager::smInstance ?
-        static_cast<u32>(TFlagManager::smInstance->getFlag(0x40003)) & 0xffffu : 0;
-    return (static_cast<u32>(gpApplication.mCurrentScene.mAreaID) << 24) |
-           (static_cast<u32>(gpApplication.mCurrentScene.mEpisodeID) << 16) | parent;
+    return RetailInput::sceneKey();
 }
 
 void message(const char *text) {
@@ -257,7 +262,8 @@ bool activatePendingPause(bool secondaryTick = false) {
     sStepQueued = false;
     sFreeze = true;
     invalidate();
-    message("Gameplay paused - press Step to advance");
+    if (sRecord || sReplay || !(sOriginKey[0] | sOriginKey[1]))
+        message("Gameplay paused - press Step to advance");
     return true;
 }
 
@@ -289,8 +295,8 @@ bool validSavedTake(const PracticeSession::SavestateData &data) {
 }
 
 bool validSceneKey(u32 scene) {
-    return (scene >> 24) <= 0x3cu && ((scene >> 16) & 0xffu) <= 9u &&
-           (scene & 0xffffu) <= 255u;
+    return ((scene >> 24) <= 0x3cu && ((scene >> 16) & 0xffu) <= 9u &&
+            (scene & 0xffffu) <= 255u) || (scene >= 0xfe000000u && scene <= 0xfe000013u);
 }
 
 bool validTransitions(const SusamuneTasTransition *transitions, u32 count,
@@ -698,7 +704,7 @@ void stopTape(const char *reason) {
     sLoadWait = 0;
     sStartRelease = 0;
     sTransitionMode = 0;
-    sArrivalResume = false;
+    sTransitionSetup = false;
     if (reason) message(reason);
 }
 
@@ -734,17 +740,16 @@ bool suspendForScene() {
     return true;
 }
 
-bool activateTimelineArrival(bool secondaryTick = false) {
-    if (!sTransitionMode || !sTransitionSetup || sModal ||
-        !actionableStage(secondaryTick)) return false;
-    const u32 scene = currentSceneKey();
+bool activateTimelineArrival() {
+    if (!sTransitionMode || !sTransitionSetup || !sHaveRead) return false;
+    const u32 scene = RetailInput::movieDirector() ? sReadScene : currentSceneKey();
     const u32 start = fingerprint();
     const bool replayEnd = sTransitionMode == 2 && sCursor == sCount;
-    bool valid = validSceneKey(scene) && settingsHash() == sSettingsHash;
+    bool valid = validSceneKey(scene) && scene != sTransitionFrom &&
+        settingsHash() == sSettingsHash;
     if (sTransitionMode == 2) {
         const SusamuneTasTransition &entry = sTransitions[sTransitionCursor];
-        valid = valid && entry.fromScene == sTransitionFrom &&
-            entry.toScene == scene;
+        valid = valid && entry.fromScene == sTransitionFrom && entry.toScene == scene;
         if (valid) {
             if (entry.startFingerprint != start) warnDesync(sCursor);
             ++sTransitionCursor;
@@ -757,31 +762,20 @@ bool activateTimelineArrival(bool secondaryTick = false) {
     if (!valid) {
         stopTape("Replay stopped: next area or settings differed - take kept");
         sTakeAttached = false;
-        sPaused = true;
-    } else {
-        sTransitionMode = 0;
-        sTapeStage = sStageGeneration;
-        sTakeAttached = true;
-        sPaused = true;
-        if (replayEnd) stopTape(sDesyncFrame >= 0 ? "TAS playback finished - desync warning" :
-                                                    "TAS playback finished at the new area - fingerprints matched");
-        else {
-            sArrivalResume = true;
-            message(sDesyncFrame >= 0 ? sReplayFailure :
-                sTransitionPaused ? "New area ready - Step to continue TAS" : "TAS continuing in the new area");
-        }
+        sPaused = false;
+        sPausePending = true;
+        return false;
     }
-    sReadPad = gpApplication.mGamePads[0];
-    capturePad(sBeforeRead, sReadPad);
-    // Loading inputs must not become held gameplay edges in the new scene.
-    const SusamunePracticeInput neutral = {};
-    inject(neutral, sReadPad, 0x1fffffu);
-    // Retail decodes next frame; calling it here would decrement input timers.
-    capturePad(sBeforeRead, sReadPad);
-    sHaveRead = true;
-    sFrameInjected = false;
-    sPendingReleases = 0;
-    sFreeze = true;
+    sTransitionMode = 0;
+    sTapeStage = sStageGeneration;
+    sTakeAttached = true;
+    sPausePending = sPausePending || sTransitionPaused;
+    sPaused = false;
+    if (replayEnd) {
+        stopTape(sDesyncFrame >= 0 ? "TAS playback finished - desync warning" :
+                                   "TAS playback finished at the new area - fingerprints matched");
+        sPausePending = true;
+    } else message(sDesyncFrame >= 0 ? sReplayFailure : "TAS continuing in the new area");
     invalidate();
     return true;
 }
@@ -806,8 +800,9 @@ void queueTapeLoad(u8 kind, u32 slot, u32 generation) {
 
 extern "C" u32 susamunePracticeReadPad() {
     restoreCamera();
-    sHaveRead = stageReady();
+    sHaveRead = RetailInput::context() != RetailInput::Unavailable;
     sReadPad = sHaveRead ? gpApplication.mGamePads[0] : nullptr;
+    sReadScene = RetailInput::movieDirector() ? currentSceneKey() : 0;
     if (sReadPad) capturePad(sBeforeRead, sReadPad);
     const u32 result = reinterpret_cast<u32 (*)()>(sPadReadTail)();
     sPhysical = snapshot(JUTGamePad::mPadStatus[0]);
@@ -824,9 +819,19 @@ extern "C" u32 susamunePracticeReadPad() {
         stopTape("Input playback stopped - paused for editing");
         gBinds.suppressUntilRelease();
     }
-    if (sReplay && !sTransitionMode && sReadPad && sCursor < sCount &&
+    if (sTransitionMode && sReadPad) {
+        sTransitionSetup = true;
+        // Loading polls do not own edges; both modes begin with fresh history.
+        const SusamunePracticeInput neutral = {};
+        inject(neutral, sReadPad, 0x1fffffu);
+        capturePad(sBeforeRead, sReadPad);
+        sPendingReleases = 0;
+        if (inputAdvanced()) activateTimelineArrival();
+        inject(sPhysical, sReadPad);
+    }
+    if (sReplay && (!sTransitionMode || sTransitionSetup) && sReadPad && sCursor < sCount &&
         (!gMenu || !gMenu->shown()) && !WarpWheel::shown() &&
-        !StageLoader::resultOwnsInput() && normalStage()) {
+        !StageLoader::resultOwnsInput()) {
         sConsumed = frameInput(sFrames[sCursor]);
         inject(sConsumed, sReadPad, frameReleases(sFrames[sCursor]));
         sFrameInjected = true;
@@ -874,13 +879,12 @@ extern "C" s32 susamunePracticeChangeState(TMarDirector *director) {
     const bool secondaryTick = (director->mGameState & 0x4000u) == 0;
     bool pauseActivated = false;
     bool loadActivated = false;
-    bool timelineActivated = false;
     if (result <= TApplication::CONTEXT_DIRECT_MAIN_LOOP) {
-        timelineActivated = activateTimelineArrival(secondaryTick);
-        pauseActivated = activatePendingPause(secondaryTick);
+        // A TAS input owns the whole director call, including the intro skip.
+        if (!sRecord && !sReplay) pauseActivated = activatePendingPause(secondaryTick);
         loadActivated = activatePendingLoadHold(secondaryTick);
     }
-    if (pauseActivated || loadActivated || timelineActivated) {
+    if (pauseActivated || loadActivated) {
         sReadPad = gpApplication.mGamePads[0];
         sHaveRead = true;
         // Keep nextStateInitialize's newly enabled pad flags across the hold.
@@ -1160,18 +1164,20 @@ void beforeStageSetup() {
     sMenuAction = 0;
     sFreeze = false;
     sAssisted = false;
-    sHaveRead = false;
     sModalPadValid = false;
     sPendingReleases = 0;
     sTakeAttached = false;
-    if (sTransitionMode) {
-        sTransitionSetup = true;
-        sStatus = "TAS waiting for Mario in the next area";
-    } else {
+    if (!sTransitionMode) {
+        sHaveRead = false;
         stopTape(nullptr);
         sStatus = (sOriginKey[0] | sOriginKey[1]) ? "TAS kept - return to its beginning or checkpoint" :
             sPausePending ? "Frame advance armed - waiting for Mario control" : "Save a state before recording";
     }
+}
+
+void afterStageSetup() {
+    // PADRead already prepared this setup call's first input before updateMeaning.
+    activateTimelineArrival();
 }
 
 void beforeDirect(bool modalOwnsInput) {
@@ -1183,35 +1189,17 @@ void beforeDirect(bool modalOwnsInput) {
         (sPhysical.buttons & sLoadHoldButtons) != sLoadHoldButtons))
         cancelLoadHold();
     const bool injectedBeforeDirect = sFrameInjected;
-    const bool arrivedNow = activateTimelineArrival();
-    if (sArrivalResume && !arrivedNow) {
-        sPaused = sTransitionPaused;
-        sArrivalResume = false;
-    }
     activatePendingPause();
     activatePendingLoadHold();
     if (!controlStage()) {
         if (!introStage()) cancelLoadHold();
-        sCameraWaitButtons = false;
+        sPausePending = sPausePending || sPaused;
         sPaused = false;
         sStepQueued = false;
         sMenuAction = 0;
         sFreeze = false;
         sFreeCamera = false;
-        if ((sRecord || sReplay) && !sTransitionMode) {
-            const bool leaving = stageReady() &&
-                (gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT ||
-                 gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2);
-            if (!leaving || !suspendForScene()) {
-                stopTape("TAS stopped outside gameplay - take kept");
-                sTakeAttached = false;
-            }
-        }
-        return;
-    }
-    if (sTransitionMode && !sTransitionSetup) {
-        stopTape("TAS loading was canceled - take kept");
-        sTakeAttached = false;
+        sCameraWaitButtons = false;
     }
     if (sReplay && !sTransitionMode && sTransitionCursor < sTransitionCount &&
         sTransitions[sTransitionCursor].frame <= sCursor)
@@ -1238,6 +1226,7 @@ void beforeDirect(bool modalOwnsInput) {
         sConsumed = sPhysical;
         sFrameInjected = false;
     }
+    if (!controlStage()) return;
     retainModalHistory();
     if (sMenuAction && !sModal && !(sPhysical.buttons & JUTGamePad::A)) {
         if (sMenuAction == 2) {
@@ -1275,7 +1264,7 @@ void beforeDirect(bool modalOwnsInput) {
 bool freezeRequested() { return sFreeze; }
 bool ownsGameplayInput() { return sPaused || sFreeCamera || sReplay || sLoadKind != 0 || sLoadHoldActive; }
 
-void afterDirect(s32 appState, bool gameplayActive) {
+void afterDirect(s32 appState, bool retailAdvanced) {
     gQFTTimer.endPracticePause();
     if (sBorrowedPause) {
         if (stageReady() && gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2)
@@ -1283,36 +1272,24 @@ void afterDirect(s32 appState, bool gameplayActive) {
         sBorrowedPause = false;
     }
     restoreCamera();
-    const bool ready = stageReady();
-    const bool leaving = ready &&
-        (gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT ||
-         gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2 ||
-         appState == TApplication::CONTEXT_DIRECT_STAGE ||
-         appState == TApplication::CONTEXT_DIRECT_MOVIE);
-    if (sTransitionMode || !ready ||
-        (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP && !leaving)) {
+    const bool leaving = appState == TApplication::CONTEXT_DIRECT_STAGE ||
+                         appState == TApplication::CONTEXT_DIRECT_MOVIE;
+    if (appState > TApplication::CONTEXT_DIRECT_MAIN_LOOP && !leaving) {
         cancelLoadHold();
-        sCameraWaitButtons = false;
-        if ((sRecord || sReplay) && !sTransitionMode) {
-            stopTape("TAS stopped outside gameplay - take kept");
-            sTakeAttached = false;
-        }
-        sFreeCamera = false;
-        sPaused = false;
-        sStepQueued = false;
-        sMenuAction = 0;
-        sFreeze = false;
+        stopTape("TAS stopped outside gameplay - take kept");
+        sTakeAttached = false;
+        sFreeCamera = sPaused = sStepQueued = sFreeze = false;
         return;
     }
+    if (!sHaveRead || !inputAdvanced()) return;
+    if (sTransitionMode) activateTimelineArrival();
     sModal = sModal || WarpWheel::shown() || WarpWheel::promptPending();
     if (sReplay && sModal)
         stopTape("Input session ended: overlay opened");
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         restorePad(sBeforeRead, sReadPad);
     }
-    if ((sRecord || sReplay) && !controlStage() && !leaving)
-        stopTape("TAS stopped outside gameplay - take kept");
-    sConsumedFrame = sHaveRead && gameplayActive && !sFreeze && !sModal &&
+    sConsumedFrame = sHaveRead && retailAdvanced && !sFreeze && !sModal &&
                      !actionsFastForwardActive();
     if (sStepping && sConsumedFrame) ++sSteps;
     if (!sConsumedFrame) {
@@ -1537,7 +1514,6 @@ bool requestPauseToggle(bool fromMenu) {
         return true;
     }
     if (!sPaused && !actionableStage()) {
-        if (sReplay) stopTape(nullptr);
         sPausePending = true;
         message("Frame advance armed - waiting for Mario control");
         return true;
@@ -1568,7 +1544,6 @@ bool requestStep(bool fromMenu) {
     }
     if (!fromMenu) sStripButtons |= gBinds.get(BIND_PRACTICE_STEP);
     if (!sPaused && !actionableStage()) {
-        if (sReplay) stopTape(nullptr);
         sPausePending = true;
         message("Frame advance armed - waiting for Mario control");
         return true;
