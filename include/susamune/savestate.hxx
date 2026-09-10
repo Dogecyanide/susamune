@@ -41,6 +41,8 @@ public:
     };
     bool takeTransferResult(TransferResult &out);
     bool projectCompatible(const SusamuneTasManifest &project) const;
+    u32 slotSceneKey(u32 slot) const;
+    u32 currentSceneKey() const;
     bool exportSlotExplicit(u32 slot, u32 expectedGeneration, const SusamuneTasRequest *project);
     bool importSlotExplicit(u32 slot, u32 expectedGeneration, u32 archiveId,
                             u32 expectedHeaderCrc, u32 packedBytes, const SusamuneTasRequest *project,

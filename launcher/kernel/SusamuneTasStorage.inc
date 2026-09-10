@@ -13,6 +13,43 @@ static bool TasValid[2];
 static u32 TasLatest, TasId, TasPart, TasRemoveIndex;
 static char TasRoot[32];
 
+static u32 TasPartId(const struct SusamuneTasManifest *project, u32 part)
+{
+    return part == SUSAMUNE_TAS_TAPE_ROLE ? project->tape.componentId : project->components[part].componentId;
+}
+
+static bool TasHeaderMatches(const struct SusamuneStateArchiveHeader *header,
+                             const struct SusamuneTasManifest *project, u32 part)
+{
+    const bool tape = part == SUSAMUNE_TAS_TAPE_ROLE;
+    if (header->gameId != project->gameId || header->buildCrc != project->buildCrc ||
+        header->configId != project->configId) return false;
+    if (tape) return SusamuneTasTapeHeaderValid(header) && header->sceneKey == project->sceneKey &&
+        header->headerCrc == project->tape.headerCrc && header->packedSize == project->tape.packedBytes;
+    return header->snapshotVersion != SUSAMUNE_TAS_TAPE_SNAPSHOT &&
+        header->sceneKey == project->components[part].sceneKey &&
+        header->headerCrc == project->components[part].headerCrc &&
+        header->packedSize == project->components[part].packedBytes;
+}
+
+static bool TasTransferHeaderValid(void)
+{
+    if (!TasContext.projectId) return Header.snapshotVersion != SUSAMUNE_TAS_TAPE_SNAPSHOT;
+    if (TasContext.role == SUSAMUNE_TAS_TAPE_ROLE) {
+        if (!SusamuneTasTapeHeaderValid(&Header) || Request.poolOffset ||
+            Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) return false;
+    } else if (Header.snapshotVersion == SUSAMUNE_TAS_TAPE_SNAPSHOT) return false;
+    return Request.command == SUSAMUNE_STATE_CMD_EXPORT || TasHeaderMatches(&Header, &TasProject, TasContext.role);
+}
+
+static bool TasTapeMetadataValid(bool projectBound)
+{
+    const struct SusamuneTasTakeData *take = (const struct SusamuneTasTakeData *)STATE_MAILBOX->metadata;
+    if (!SusamuneTasTapeMetadataValid(&Header, take)) return false;
+    return !projectBound || (take->frames == TasProject.tapeFrames &&
+        !memcmp(take->originKey, TasProject.startKey, sizeof(take->originKey)));
+}
+
 static void TasDirectory(u32 id)
 {
     _sprintf(TasRoot, "%s/moonshine_tas", SusamuneCfgStoragePrefix());
@@ -170,13 +207,17 @@ static void TasPreflight(void)
             sync_before_read(&STATE_MAILBOX->header, sizeof(STATE_MAILBOX->header));
             const struct SusamuneStateArchiveHeader *h = &STATE_MAILBOX->header;
             if (!empty && (h->gameId != latest->gameId || h->buildCrc != latest->buildCrc ||
-                h->configId != latest->configId || h->sceneKey != latest->sceneKey)) {
+                h->configId != latest->configId ||
+                ((TasContext.role == 0 || TasContext.role == SUSAMUNE_TAS_TAPE_ROLE) && h->sceneKey != latest->sceneKey))) {
                 Finish(SUSAMUNE_STATE_WRONG_CONFIG); return;
             }
         } else {
-            const struct SusamuneTasComponent *component = &latest->components[TasContext.role];
-            if (empty || component->componentId != Request.id || component->headerCrc != Request.expectedHeaderCrc ||
-                component->packedBytes != Request.packedSize) { Finish(SUSAMUNE_STATE_STALE); return; }
+            const bool tape = TasContext.role == SUSAMUNE_TAS_TAPE_ROLE;
+            const u32 crc = tape ? latest->tape.headerCrc : latest->components[TasContext.role].headerCrc;
+            const u32 packed = tape ? latest->tape.packedBytes : latest->components[TasContext.role].packedBytes;
+            if (empty || TasPartId(latest, TasContext.role) != Request.id || crc != Request.expectedHeaderCrc ||
+                packed != Request.packedSize) { Finish(SUSAMUNE_STATE_STALE); return; }
+            TasProject = *latest;
         }
         Phase = PREPARED_REQUEST; return;
     }
@@ -218,7 +259,8 @@ static void TasAddCatalog(void)
     entry.id = project->projectId; entry.gameId = project->gameId;
     entry.buildCrc = project->buildCrc; entry.sceneKey = project->sceneKey;
     entry.headerCrc = project->checksum; entry.metadataSize = sizeof(*project);
-    entry.rawSize = project->components[project->currentRole].frames;
+    entry.rawSize = project->tapeFrames;
+    entry.packedSize = project->tape.packedBytes;
     memcpy(entry.name, project->name, sizeof(entry.name));
     for (i = 0; i < SUSAMUNE_TAS_COMPONENTS; ++i) entry.packedSize += project->components[i].packedBytes;
     for (at = 0; at < catalog->count && catalog->entries[at].id < entry.id; ++at) {}
@@ -283,20 +325,17 @@ static void TasService(void)
     }
     if (Phase == TAS_VERIFY_OPEN) {
         while (TasPart < SUSAMUNE_TAS_COMPONENTS && !TasProject.components[TasPart].componentId) ++TasPart;
-        if (TasPart == SUSAMUNE_TAS_COMPONENTS) { TasPreparePublish(false); return; }
-        Paths(TasProject.components[TasPart].componentId);
+        if (TasPart > SUSAMUNE_TAS_TAPE_ROLE) { TasPreparePublish(false); return; }
+        Paths(TasPartId(&TasProject, TasPart));
         result = f_open_char(&File, Path, FA_READ);
         if (result != FR_OK) { Finish(TasMissing(result) ? SUSAMUNE_STATE_NOT_FOUND : SUSAMUNE_STATE_IO_ERROR); return; }
         FileOpen = true; Phase = TAS_VERIFY_HEADER; return;
     }
     if (Phase == TAS_VERIFY_HEADER) {
-        const struct SusamuneTasComponent *component = &TasProject.components[TasPart];
         result = f_read(&File, &Header, sizeof(Header), &done);
         if (result != FR_OK || done != sizeof(Header)) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File)) ||
-            Header.headerCrc != component->headerCrc || Header.packedSize != component->packedBytes ||
-            Header.gameId != TasProject.gameId || Header.buildCrc != TasProject.buildCrc ||
-            Header.configId != TasProject.configId || Header.sceneKey != TasProject.sceneKey) {
+            !TasHeaderMatches(&Header, &TasProject, TasPart)) {
             Finish(SUSAMUNE_STATE_BAD_FILE); return;
         }
         Phase = TAS_VERIFY_METADATA; return;
@@ -305,6 +344,7 @@ static void TasService(void)
         result = f_read(&File, m->metadata, Header.metadataSize, &done);
         if (result != FR_OK || done != Header.metadataSize) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (SusamuneStateCrc(m->metadata, Header.metadataSize) != Header.metadataCrc) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (TasPart == SUSAMUNE_TAS_TAPE_ROLE && !TasTapeMetadataValid(true)) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
         Offset = 0; PayloadCrc = 0xFFFFFFFFu; Phase = TAS_VERIFY_PAYLOAD; return;
     }
     if (Phase == TAS_VERIFY_PAYLOAD) {
@@ -314,6 +354,10 @@ static void TasService(void)
         result = f_read(&File, STATE_STAGING, amount, &done);
         sync_after_write(STATE_STAGING, amount);
         if (result != FR_OK || done != amount) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
+        if (TasPart == SUSAMUNE_TAS_TAPE_ROLE && !Offset &&
+            (STATE_STAGING[0] || STATE_STAGING[1] || STATE_STAGING[2] || STATE_STAGING[3])) {
+            Finish(SUSAMUNE_STATE_BAD_FILE); return;
+        }
         PayloadCrc = SusamuneStateCrcUpdate(PayloadCrc, STATE_STAGING, amount);
         Offset += amount;
         if (Offset != Header.packedSize) return;
@@ -352,12 +396,11 @@ static void TasService(void)
     }
     if (Phase == TAS_CLEANUP) {
         const u32 outgoing = TasLatest ^ 1;
-        while (TasValid[outgoing] && TasRemoveIndex < SUSAMUNE_TAS_COMPONENTS) {
-            const u32 id = TasCopies[outgoing].components[TasRemoveIndex++].componentId;
+        while (TasValid[outgoing] && TasRemoveIndex <= SUSAMUNE_TAS_TAPE_ROLE) {
+            const u32 id = TasPartId(&TasCopies[outgoing], TasRemoveIndex++);
             bool retained = !id;
-            for (i = 0; i < SUSAMUNE_TAS_COMPONENTS; ++i)
-                if (TasProject.components[i].componentId == id ||
-                    TasCopies[TasLatest].components[i].componentId == id) retained = true;
+            for (i = 0; i <= SUSAMUNE_TAS_TAPE_ROLE; ++i)
+                if (TasPartId(&TasProject, i) == id || TasPartId(&TasCopies[TasLatest], i) == id) retained = true;
             if (retained) continue;
             Paths(id);
             // Publication already succeeded; leftover cleanup must not undo it.
@@ -367,13 +410,13 @@ static void TasService(void)
         Finish(SUSAMUNE_STATE_OK); return;
     }
     if (Phase == TAS_REMOVE) {
-        if (TasRemoveIndex < 6) {
-            const u32 copy = TasRemoveIndex / 3, part = TasRemoveIndex % 3;
+        if (TasRemoveIndex < 8) {
+            const u32 copy = TasRemoveIndex / 4, part = TasRemoveIndex % 4;
             ++TasRemoveIndex;
-            if (!TasValid[copy] || !TasCopies[copy].components[part].componentId) return;
-            Paths(TasCopies[copy].components[part].componentId);
-        } else if (TasRemoveIndex < 10) {
-            const u32 index = TasRemoveIndex++ - 6;
+            if (!TasValid[copy] || !TasPartId(&TasCopies[copy], part)) return;
+            Paths(TasPartId(&TasCopies[copy], part));
+        } else if (TasRemoveIndex < 12) {
+            const u32 index = TasRemoveIndex++ - 8;
             _sprintf(Path, index < 2 ? "%s/project.%c" : "%s/project.%c.tmp", Directory, 'a' + (index & 1));
         } else { Finish(SUSAMUNE_STATE_OK); return; }
         result = f_unlink_char(Path);

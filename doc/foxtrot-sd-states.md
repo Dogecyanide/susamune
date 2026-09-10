@@ -26,20 +26,21 @@ supplied file bytes/ARM receipts, so it does not measure actual SD speed or prov
 cold-reboot behavior for this new build. See `build/foxtrot-speed-sd-proof` and the
 codec document for the exact evidence.
 
-## Archive version 1, transport protocol 6
+## Archive version 1, transport protocol 7
 
 `include/susamune/state_storage.h` keeps archive version 1: a 96-byte big-endian
 header, bounded opaque metadata, then the exact compressed stream (bounded MSL4
 or zlib). PowerPC `StoredState` has a compile-checked 7,168-byte metadata limit.
 It includes QFT, IL and ghost sidecars, the 5,920-byte owner profile and the
-56-byte practice sidecar. Snapshot version 16 also preserves the used input take
-and controller state; used input and ghost prefixes belong to the compressed
-stream. Earlier snapshots need resaving with the current build. Separate CRCs
+64-byte practice sidecar. Snapshot version 17 also preserves the used input take,
+controller state and completed loading-zone markers; used input, marker and ghost
+prefixes belong to the compressed stream. Current metadata is 6,960 bytes for JP
+and 6,936 for US/PAL. Earlier snapshots need resaving with the current build. Separate CRCs
 cover header, metadata and compressed payload.
 The header contains no restore pointers or pool offsets. Its printable name is
 at most 31 characters and never becomes a path.
 
-The mailbox transport is now protocol 6. This requires the bounded window reader
+The mailbox transport is now protocol 7. This requires the bounded window reader
 and rejects older workers, including those whose primary pool boundary predates
 workspace relocation (now 0xFF0000). Its 8,192-byte structure exactly fills
 the same 8 KiB allocation; the request/result name buffers occupy their
@@ -57,30 +58,56 @@ its header CRC remain immutable after successful export, including across rename
 Build/region/configuration restrictions still apply independently of archive-format
 compatibility.
 
-## TAS project version 1
+## TAS project version 2
 
-A saved TAS groups its Beginning and one or two checkpoints in a separate
+A saved TAS groups its Beginning, up to two checkpoints and an independent input tape in a separate
 `/moonshine_tas/tas_00000001/` directory on the same configuration device. The
 ordinary SD-state catalog still reads only `/moonshine_states`; project components
 do not appear as ordinary saved states. Names are display text, never paths.
 
-Each project component is an immutable `state_00000001.mss` archive using the
-same version-1 header, metadata and compressed stream described above. Every
+Each project component is an immutable `state_00000001.mss` archive. State
+components use the version-1 header, metadata and compressed stream described above. Every
 export allocates a new component ID; it cannot overwrite an earlier component.
 `project.a` and `project.b` hold alternating checked 160-byte manifests. A manifest
-records project ID and generation, game/build/configuration/scene identity, the
-Beginning's two-word identity, the selected checkpoint and up to three component
-references. Each reference binds a role, file ID, header CRC, packed byte count
-and input-frame count.
+records project ID and generation, common game/build/configuration identity,
+the Beginning's scene and two-word identity, the selected state and full tape
+frame count. Three 20-byte state references at offset 80 bind file ID, header
+CRC, packed byte count, frame count and that state's own scene. Their array
+indexes are the roles. A 12-byte tape reference at offset 140 holds its file ID,
+header CRC and payload byte count; the Beginning key stays at offset 152.
 
-Role 0 is Beginning and has no recorded frames. Roles 1 and 2 are checkpoints;
-the selected role must be one of those checkpoints. A valid project has Beginning
-and at least one checkpoint, unique component IDs, at most 4,096 input frames per
-checkpoint, and a combined packed size within the supported expanded RAM pool.
-Absent component entries and reserved fields are zero. PPC independently checks
+Role 0 is Beginning and has no recorded frames. Roles 1 and 2 are optional
+checkpoints, which may belong to different areas. The selected role must exist;
+a new zero-frame project can contain only Beginning and its tape. All four
+component IDs are unique. The three state references together must fit the
+supported RAM pool; tape storage does not consume that pool. A checkpoint can
+retain an older branch with more frames than the current tape. Absent state
+references are zero. PPC independently checks
 the imported snapshot's role, Beginning identity and frame count before adopting
 it into the project; ARM treats the snapshot metadata as opaque checked bytes.
-The file format does not remove RAM capacity, compatibility or owner-profile checks.
+Project imports can retain a different area's validated compressed state in RAM.
+They verify the pinned component scene, compiled restore spans, metadata and owner
+profile structure without dereferencing its old heap. Actual restoration still
+requires the exact current scene, heap address/size and live owner profile.
+
+Role 3 is an uncompressed tape archive with snapshot tag `0x54415001`, a fixed
+64-byte `SusamuneTasTakeData` metadata record and a payload containing four zero
+bytes, the used 16-byte input frames, then the used 16-byte transition records.
+The zero prefix allows a valid empty tape. Limits remain 4,096 frames and 32
+completed transitions, making the maximum payload 66,052 bytes. Tape metadata
+binds the Beginning key, settings and initial fingerprint, used frame/table hashes,
+position, starting scene and ending scene. Its independent timeline lets Save TAS
+preserve work after changing areas without manufacturing a new checkpoint.
+Checkpoint restoration followed by tape import attaches only after the core
+validates the checkpoint's prefix and live scene; otherwise the tape stays detached.
+
+Tape export copies immutable input into the existing 4 MiB staging window before
+ARM receives ownership. Import uses that same window and verifies the complete
+envelope, metadata, zero prefix and payload CRC before returning borrowed bytes.
+The practice core validates its hashes and transition chain before copying any
+live recording. A failed read therefore cannot partially replace the take.
+Version-1 project manifests are rejected and left unchanged; they belong to older
+builds and cannot supply the new standalone tape.
 
 BEGIN allocates a previously unused project directory without publishing an
 incomplete project. Component transfers pin the project ID, current generation,
@@ -92,7 +119,8 @@ Unpublished orphan components cannot be imported through the project interface.
 
 COMMIT accepts only the next generation against the expected previous manifest
 CRC. Before publication, ARM reads every referenced component and verifies exact
-file size, header identity, metadata CRC and complete compressed-payload CRC.
+file size, per-component header identity, metadata CRC and complete payload CRC.
+The tape additionally requires the published Beginning key and full frame count.
 It then writes, syncs and closes the inactive manifest's temporary file before
 renaming it into place. The current published generation survives a failed read,
 write, sync or rename. Both valid generations' component files are retained.
@@ -270,7 +298,9 @@ and renames check cleanup of only obsolete known components, retention of shared
 Beginning files and both published generations, and successful receipts even when
 post-publication cleanup fails. Client tests also
 check staging cache ownership, receipt routing and exact COMMIT candidate identity.
-The new worker and client compile with the actual ARM and PowerPC toolchains.
+Version-2 tests additionally cover empty and maximum-size tapes, independent
+checkpoint scenes, malformed tape metadata, preserving occupied pool bytes, and
+reclaiming only tape files no longer referenced by either retained manifest.
 This is not yet evidence of TAS project saving or reopening on a physical SD card.
 
 The new direct-load proof is in `build/foxtrot-sd-direct/results.json`, on interim

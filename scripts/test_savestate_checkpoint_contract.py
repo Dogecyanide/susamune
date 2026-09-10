@@ -110,7 +110,7 @@ class SavestateCheckpointContractTests(unittest.TestCase):
         for region, lib in self.libs.items():
             with self.subTest(region=region):
                 lib.reset()
-                self.assertEqual(lib.metadataSize(), 6952 if region == 'JP' else 6928)
+                self.assertEqual(lib.metadataSize(), 6960 if region == 'JP' else 6936)
                 self.assertLessEqual(lib.metadataSize(), 7168)
                 self.assertLessEqual(lib.headerSize(), 0x120)
                 for slot in range(3):

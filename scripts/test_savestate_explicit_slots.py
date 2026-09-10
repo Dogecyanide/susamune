@@ -27,7 +27,7 @@ static u32 sActiveSlot,sLoadSlot,sDiskSlot,sDiskGeneration,sDiskPoolUsed,sDiskSc
 static bool sBusy,sAwaitingLoadApproval,sDiskActive,sDiskRestore,sDiskStream,sDiskRecovered;
 static bool sExplicitTransfer,sTransferReady;
 static SavestateManager::TransferResult sTransferResult;
-static u32 sProjectStartKey[2],sProjectRole,sProjectFrames;
+static u32 sProjectStartKey[2],sProjectRole,sProjectFrames,sProjectScene;
 static SusamuneStateCatalogEntry sSelectedSD;
 static OSTime sDiskStarted;static const char*sDiskStatus;
 static const u32 kSnapshotMagic=0x53544154,kSnapshotVersion=16;
@@ -64,7 +64,8 @@ static void prepareProject(){manifest={};manifest.magic=SUSAMUNE_TAS_MAGIC;manif
  manifest.projectId=3;manifest.generation=4;manifest.gameId=archiveGameId();manifest.buildCrc=12;
  manifest.configId=14;manifest.sceneKey=13;manifest.currentRole=1;manifest.componentCount=2;
  strncpy(manifest.name,"project",32);manifest.startKey[0]=1;manifest.startKey[1]=2;
- manifest.components[0]={70,76,50000,0,0,0};manifest.components[1]={71,77,60000,1,16,0};
+ manifest.components[0]={70,76,50000,0,13};manifest.components[1]={71,77,60000,16,13};
+ manifest.tape={72,78,260};manifest.tapeFrames=16;
  manifest.checksum=SusamuneTasManifestCrc(&manifest);request.projectId=3;request.projectGeneration=4;
  request.componentId=71;request.expectedProjectCrc=manifest.checksum;request.role=1;
  request.checksum=SusamuneTasRequestCrc(&request);}
@@ -169,9 +170,10 @@ class ExplicitStateSlotTests(unittest.TestCase):
             self.lib.reset();self.assertEqual(self.lib.ordinary(imported),1)
             self.assertEqual([self.lib.get(i) for i in (0,1,2,4,5,6,9)],[1,2,71,1,102,0,0])
 
-    def test_manifest_guard_requires_exact_region_build_settings_and_scene(self):
+    def test_manifest_guard_requires_region_build_settings_but_allows_other_scene_import(self):
         self.assertEqual(self.lib.compatible(0),1)
-        for field in range(1,5):self.assertEqual(self.lib.compatible(field),0)
+        for field in (1,2,4):self.assertEqual(self.lib.compatible(field),0)
+        self.assertEqual(self.lib.compatible(3),1)
 
     def test_explicit_save_routes_only_the_named_slot_and_captures_forced_rng_without_settings_write(self):
         save=function_source(SOURCE,'bool SavestateManager::saveSlotExplicit(')

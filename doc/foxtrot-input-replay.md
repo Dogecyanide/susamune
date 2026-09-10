@@ -1,17 +1,18 @@
-# FOXTROT input replay start handling
+# FOXTROT full-level TAS recording and storage
 
-Input takes remain experimental recordings of up to 4,096 rendered frames.
-Snapshot version 16 stores the used input prefix and controller decoder state,
-with checked metadata linking the take to its start. A checkpoint load rewinds
-the recorded inputs as well as the game. A checkpoint saved while recording
-resumes that recording; a stopped take can use Continue editing checkpoint.
+The primary workflow is **Practice > TAS projects**. New TAS captures a Beginning with RNG automatically. The take holds at most 4096 input frames and 32 area transitions. Supported retail area changes retain recording/replay state across setup, and loading time consumes no input frames. Each recorded transition links its source, destination and input position to the checked first actionable state. An unsupported transition or exceeded limit stops the take while retaining its existing bytes and origin for saving.
 
-Export both the start state and the latest checkpoint to SD to preserve a TAS
-across reboot. Import the matching start into any RAM slot, then restore the
-checkpoint. Direct SD checkpoint restore is supported, but replay from the
-beginning still needs the matching RAM start. Earlier SD states require new
-saves with this build. The existing build, region, scene, ownership and gameplay
-settings checks remain. These state archives are not portable replay files.
+**Save TAS** publishes an independent complete input tape together with the Beginning and any existing checkpoints. It does not capture the current game state. This allows saving a retained take after an area change or when no additional checkpoint can fit. A project manifest is published only after its state components and tape export succeed; a failed tape export leaves the previous manifest intact. Unchanged state files may be reused.
+
+Snapshot version 17 carries the checkpoint's input/transition prefix and controller history. Project manifest version 2 adds a separate tape component and each state's scene identity; SD transport protocol 7 serves the bounded tape payload through existing storage ownership. Older state/project files require their matching older build.
+
+Open imports the necessary states and the complete tape. If the selected checkpoint, or otherwise the Beginning, matches the currently loaded scene, it restores that point and reattaches the full tape at the checkpoint's position. Replay retains later inputs; Continue edits from that point. Manual Go to Checkpoint restores only that checkpoint's prefix into the local take; it does not preserve the later local tail. The published SD take remains unchanged until Save TAS. Without a compatible point, Open retains a detached tape without restoring Mario. The detached tape remains saveable. Checkpoint loads require their matching area/episode; Replay and Go to Beginning require manually returning to the Beginning area. Build, region, setup and state-owner validation remain in force.
+
+Current host coverage in `scripts/test_tas_project.py` exercises the production coordinator against bounded state/storage fakes: no-capture saves with full RAM slots, saving a detached take, zero-frame saves, separate-tape export failure preserving the published manifest, importing in another area without world restoration, retaining a later tape after checkpoint restoration, invalid tape origin/length, and the existing slot/generation/overwrite protections. `test_tas_menu.py` covers the existing menu and Other area presentation. The new Wii reboot workflow still needs hardware testing.
+
+US Dolphin recorded 19 frames through Bianco 3's actual secret entrance, kept the frame count through loading, refused an other-area Beginning load without discarding the take, then replayed after a manual return. All recorded fingerprints and the final Mario position matched; tape bytes were unchanged. The private setup positioned Mario before New TAS; recording and replay used the retail portal collision. Evidence: `build/foxtrot-tas-zone-proof/complete.json`, shipping baseline `233FBD49`. This is a short single-route emulator check, not a complete IL or physical SD test.
+
+The final source, US `8332FAAC` / console `C34FF061`, repeated the same 19-frame portal recording and replay after the in-game guide correction. Endpoint, fingerprints and retained tape bytes matched again. Evidence: `build/foxtrot-tas-zone-final/replay-zone.json`; source/object provenance and cleanup are collected in `build/foxtrot-zone-runtime-proof.json`.
 
 Frames remain 16 bytes. The 21-bit history of physical releases between steps
 uses spare input bits and the top fingerprint bit, so those edges remain
@@ -21,7 +22,7 @@ menu navigation keeps separate gameplay controller history. Removing the old
 three-seed cache saves about 532 bytes against the intermediate checkpoint
 implementation; no memory reserve changed.
 
-The current implementation passed an isolated US Dolphin check of saving two
+An earlier, single-area implementation passed an isolated US Dolphin check of saving two
 checkpoints, rewinding, replacing the ending and replaying with matching
 fingerprints and position. Opening the actual Y+Start menu, navigating and
 saving a checkpoint also retained replay history. Evidence is in
@@ -31,10 +32,7 @@ This does not establish physical-console or cross-reboot behavior.
 
 ## Start transaction
 
-Record pins the current **Save to** slot and generation. Replay resolves the
-matching start identity to a RAM slot, then pins its generation independently of
-the current Save/Load selections. The start may have been imported into a
-different slot after reboot.
+New TAS pins its explicitly chosen Beginning slot and generation; the older optional Record action still uses Save to. Replay resolves the matching Beginning identity to a RAM slot, then pins its generation independently of the ordinary Save/Load selections. Open TAS imports and resolves that Beginning automatically.
 The request clears an earlier buffered frame pause or queued Step. While waiting,
 gameplay stays held and the request defers to menus, warp confirmations, the SD
 service and memory-card work. Only the buttons that issued the request must be
@@ -63,15 +61,11 @@ flag changes. Previously it stopped recording before the director ran, then
 allowed one extra neutral-input gameplay frame before showing the menu. That
 could leave Mario slightly beyond the correctly replayed take's endpoint.
 
-The seed remembers whether **Save RNG state** was enabled when it was saved.
-Turning it on afterward is insufficient: a new state must be saved. The user's
-last backed-up configuration already had this enabled, so this guard is not
-evidence that RNG settings caused their reported intermittent mismatch.
+New TAS always captures RNG for its Beginning. The older Record-from-state shortcut still requires a state saved with RNG; turning the setting on afterward cannot add missing state. This guard remains separate from the transition/tape workflow.
 
 ## Earlier verification
 
-The results below predate snapshot version 16 and do not establish its new
-checkpoint or reboot workflow. Current focused tests are in
+The results below predate snapshot version 17 and project version 2; they do not establish the new full-level or reboot workflow. Existing focused checkpoint tests are in
 `test_practice_checkpoints.py` and `test_savestate_checkpoint_contract.py`;
 real-console checkpoint/reboot checks remain on the RC1 tester sheet.
 

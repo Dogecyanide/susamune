@@ -1530,3 +1530,9 @@ TAS: save Checkpoint 2	TAS：中間地点2を保存
 TAS: go to Checkpoint 2	TAS：中間地点2に戻る
 TAS: continue	TAS：編集を続ける
 TAS: replay	TAS：再生
+Other area	別エリア
+Its recording and checkpoint files will be deleted.	入力記録と中間地点のファイルが削除されます。
+TAS recording, Beginning and checkpoints saved to SD.	入力記録・開始地点・中間地点をSDに保存しました。
+This checkpoint is in another area. Return there to load it.	中間地点は別のエリアです。そのエリアに戻って読み込んでください。
+Return to the area where this TAS begins, then Replay.	TASの開始エリアに戻ってから再生してください。
+TAS recording kept. Return to its beginning area to Replay.	入力記録を保持しました。開始エリアに戻ると再生できます。

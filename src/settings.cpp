@@ -67,9 +67,11 @@ const u8 kDefaultShift = 3;
 
 #define SBOOL(name, def, cat) name "\0"
 #define SCHOICE(name, def, choices, cat) name "\0"
+#pragma clang section rodata=".foxtrot.rodata"
 const char kSettingNames[] =
 #include "settings_descs.inc"
     ;
+#pragma clang section rodata=""
 #undef SBOOL
 #undef SCHOICE
 
@@ -512,8 +514,10 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
     FluddColors::clearDirty();
 }
 
+#pragma clang section text=".foxtrot.text"
 void Settings::set(SettingId id, u8 value) {
     if ((id >= SETTING_FAVORITES_0 && id <= SETTING_FAVORITES_10) ||
+        (id >= SETTING_FAVORITES_EXTRA_0 && id <= SETTING_FAVORITES_EXTRA_7) ||
         id == SETTING_RNG_FAVORITES) {
         value &= 0x7F;
     } else {
@@ -526,11 +530,11 @@ void Settings::set(SettingId id, u8 value) {
 }
 
 bool Settings::favoriteable(SettingId id) {
-    return (id >= 0 && id < SETTING_FAVORITES_0) ||
-           rngFavoriteBit(id) >= 0;
+    return id >= 0 && id < SETTING_COUNT && name(id)[0] != '\0';
 }
 
 bool Settings::favorite(SettingId id) const {
+    if (!favoriteable(id)) return false;
     if (id >= 0 && id < SETTING_FAVORITES_0) {
         const int index = (int)id;
         const SettingId storage =
@@ -538,11 +542,15 @@ bool Settings::favorite(SettingId id) const {
         return (mValues[storage] & (1u << (index % 7))) != 0;
     }
     const int bit = rngFavoriteBit(id);
-    return bit >= 0 &&
-           (mValues[SETTING_RNG_FAVORITES] & (1u << bit)) != 0;
+    if (bit >= 0)
+        return (mValues[SETTING_RNG_FAVORITES] & (1u << bit)) != 0;
+    const int index = (int)id - (SETTING_FAVORITES_10 + 1);
+    return (mValues[SETTING_FAVORITES_EXTRA_0 + index / 7] &
+            (1u << (index % 7))) != 0;
 }
 
 void Settings::toggleFavorite(SettingId id) {
+    if (!favoriteable(id)) return;
     SettingId storage;
     int bit;
     if (id >= 0 && id < SETTING_FAVORITES_0) {
@@ -551,12 +559,21 @@ void Settings::toggleFavorite(SettingId id) {
         bit = index % 7;
     } else {
         bit = rngFavoriteBit(id);
-        if (bit < 0) return;
         storage = SETTING_RNG_FAVORITES;
+        if (bit < 0) {
+            const int index = (int)id - (SETTING_FAVORITES_10 + 1);
+            storage = (SettingId)(SETTING_FAVORITES_EXTRA_0 + index / 7);
+            bit = index % 7;
+        }
     }
     mValues[storage] ^= (u8)(1u << bit);
     mDirty = true;
 }
+
+static_assert(SETTING_COUNT - (SETTING_FAVORITES_10 + 1) <=
+              (SETTING_FAVORITES_EXTRA_7 - SETTING_FAVORITES_EXTRA_0 + 1) * 7,
+              "new settings need more Shined storage");
+#pragma clang section text=""
 
 void Settings::cycle(SettingId id, int dir) {
     int n = choiceCount(kSettingDescs[id]);

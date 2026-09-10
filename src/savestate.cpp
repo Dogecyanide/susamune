@@ -237,7 +237,7 @@ const int kNumPointedAllocs = sizeof(kPointedAllocs) / sizeof(kPointedAllocs[0])
 // One header lives at the very start of the snapshot buffer; the saved
 // bytes follow at kHeaderSize.
 const u32 kSnapshotMagic   = 0x53555341u; // 'SUSA'
-const u32 kSnapshotVersion = 16u;
+const u32 kSnapshotVersion = 17u;
 const u32 kHeaderSize      = 0x120u;
 // One slot per static range, one per pointed alloc, plus one for the heap.
 const int kMaxRegions      = kNumStaticRanges + kNumPointedAllocs + 1;
@@ -317,7 +317,7 @@ OSTime sDiskStarted;
 bool sDiskActive;
 bool sExplicitTransfer, sTransferReady;
 SavestateManager::TransferResult sTransferResult;
-u32 sProjectStartKey[2], sProjectFrames, sProjectRole;
+u32 sProjectStartKey[2], sProjectFrames, sProjectRole, sProjectScene;
 bool sDiskRestore, sDiskLoadReady;
 bool sDiskStream, sDiskRecovered;
 SusamuneStateArchiveHeader sStreamHeader;
@@ -749,6 +749,33 @@ bool archiveCandidateMatches(const SusamuneStateArchiveHeader &file) {
     return StateArchiveProfile::matches(sCandidate.archiveProfile, sLiveArchiveProfile);
 }
 
+bool archiveProjectCandidateMatches(const SusamuneStateArchiveHeader &file) {
+    const SavestateHeader &h = sCandidate.header;
+    if (file.metadataSize != sizeof(sCandidate) || file.buildCrc != archiveBuildId() ||
+        file.gameId != archiveGameId() || file.snapshotVersion != kSnapshotVersion ||
+        file.sceneKey != sProjectScene || file.packedSize != sCandidate.packedSize ||
+        file.rawSize != sCandidate.rawSize || h.magic != kSnapshotMagic ||
+        h.version != kSnapshotVersion || h.game_version != SUSAMUNE_GAME_VERSION ||
+        sCandidate.metadataTag != metadataTag(sCandidate) || !sCandidate.generation ||
+        file.sceneKey != ((static_cast<u32>(h.area_id) << 24) | (static_cast<u32>(h.episode_id) << 16) |
+                          (sCandidate.parentEpisode & 0xFFFFu)) ||
+        h.heap_addr < 0x80000000u || h.heap_addr >= 0x81800000u ||
+        !h.heap_size || h.heap_size > 0x81800000u - h.heap_addr ||
+        !validSnapshotRegions(&h, h.heap_addr, h.heap_addr + h.heap_size) ||
+        !StateArchiveProfile::valid(sCandidate.archiveProfile) ||
+        sCandidate.archiveProfile.game != SUSAMUNE_GAME_VERSION ||
+        sCandidate.archiveProfile.build != file.buildCrc || sCandidate.archiveProfile.config != file.configId) return false;
+    StateCodec::WriteSpan ghost[Ghost::kSavestateSpanCount];
+    StateCodec::WriteSpan practice[PracticeSession::kSavestateSpanCount];
+    if (!Ghost::savestateRestoreSpans(sCandidate.ghost, ghost) ||
+        !PracticeSession::savestateRestoreSpans(sCandidate.practice, practice)) return false;
+    u32 raw = h.regions[h.region_count - 1].buf_offset + h.heap_size;
+    for (u32 i = 0; i < Ghost::kSavestateSpanCount; ++i) raw += ghost[i].size;
+    for (u32 i = 0; i < PracticeSession::kSavestateSpanCount; ++i) raw += practice[i].size;
+    // Import only retains validated bytes; loadSlot still checks live owners.
+    return raw == sCandidate.rawSize;
+}
+
 void copyStateBytes(void *profile, void *destination, const void *source, unsigned int size) {
     if (PracticeSession::copySavestateBytes(destination, source, size)) return;
     if (profile) StateArchiveProfile::copyGameBytes(profile, destination, source, size);
@@ -1006,8 +1033,15 @@ const char *SavestateManager::sdStatus() const {
 
 bool SavestateManager::projectCompatible(const SusamuneTasManifest &project) const {
     return project.gameId == archiveGameId() && project.buildCrc == archiveBuildId() &&
-        project.configId == StateStorage::configId() && project.sceneKey == archiveSceneKey();
+        project.configId == StateStorage::configId();
 }
+u32 SavestateManager::slotSceneKey(u32 slot) const {
+    if (!slotInfo(slot).valid) return 0;
+    const StoredState &saved = sSlots[slot];
+    return (static_cast<u32>(saved.header.area_id) << 24) |
+        (static_cast<u32>(saved.header.episode_id) << 16) | (saved.parentEpisode & 0xFFFFu);
+}
+u32 SavestateManager::currentSceneKey() const { return archiveSceneKey(); }
 
 bool SavestateManager::takeTransferResult(TransferResult &out) {
     if (!sTransferReady) return false;
@@ -1073,12 +1107,13 @@ bool SavestateManager::importSlotExplicit(u32 slot, u32 expectedGeneration, u32 
         slotInfo(slot).generation != expectedGeneration) return false;
     const SusamuneTasComponent &component = manifest->components[project->role];
     if (component.componentId != id || project->componentId != id ||
-        component.headerCrc != crc || component.packedBytes != packed || component.role != project->role ||
+        component.headerCrc != crc || component.packedBytes != packed ||
         !beginSDLoad(id, crc, packed, false, slot, project)) return false;
     sProjectStartKey[0] = manifest->startKey[0];
     sProjectStartKey[1] = manifest->startKey[1];
     sProjectFrames = component.frames;
-    sProjectRole = component.role;
+    sProjectRole = project->role;
+    sProjectScene = component.sceneKey;
     return true;
 }
 
@@ -1147,10 +1182,10 @@ bool SavestateManager::cancelSD() {
 
 void SavestateManager::updateDisk() {
     StateStorage::update();
+    if (!sDiskActive) { StateStorage::discardCancelledResult(); return; }
     StateStorage::Result result;
     if (!StateStorage::takeResult(result)) return;
     const bool wasActive = sDiskActive;
-    if (!wasActive && sDiskRecovered && result.command == SUSAMUNE_STATE_CMD_CANCEL) return;
     bool imported = false;
     if (result.status == SUSAMUNE_STATE_OK && (result.command == SUSAMUNE_STATE_CMD_IMPORT ||
             result.command == SUSAMUNE_STATE_CMD_READ_WINDOW)) {
@@ -1162,7 +1197,8 @@ void SavestateManager::updateDisk() {
             archiveSceneKey() == sDiskScene && result.header.metadataSize == sizeof(sCandidate) && result.metadata;
         if (valid) {
             memcpy(&sCandidate, result.metadata, sizeof(sCandidate));
-            valid = archiveCandidateMatches(result.header);
+            valid = sExplicitTransfer && !sDiskRestore ? archiveProjectCandidateMatches(result.header) :
+                archiveCandidateMatches(result.header);
         }
         if (valid && sExplicitTransfer)
             valid = PracticeSession::projectSavestateMatches(sCandidate.practice,

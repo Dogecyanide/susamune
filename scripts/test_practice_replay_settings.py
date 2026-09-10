@@ -67,6 +67,7 @@ extern "C" __declspec(dllexport) void rate(float value){cadence=value;}
 
     def test_allowlist_contains_only_audited_presentation_settings(self):
         expected = {f"SETTING_FAVORITES_{i}" for i in range(11)} | {
+            f"SETTING_FAVORITES_EXTRA_{i}" for i in range(8)} | {
             "SETTING_RNG_FAVORITES", "SETTING_NATIVE_TIMER_X", "SETTING_NATIVE_TIMER_Y",
             "SETTING_NATIVE_TIMER_SCALE", "SETTING_FREE_CAMERA_SPEED",
             "SETTING_FREE_CAMERA_SENSITIVITY", "SETTING_FREE_CAMERA_HIDE_HUD",

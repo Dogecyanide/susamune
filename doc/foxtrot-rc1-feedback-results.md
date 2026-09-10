@@ -1,5 +1,30 @@
 # RC1 feedback received
 
+## C34FF061 — full-level TAS and Shined update
+
+The full host suite passed 1,190 checks. Separate follow-ups passed 85 storage,
+settings and translation checks, then 29 final menu checks; these overlapping
+runs are not added as unique tests. Ordinary QFT source still matches its
+authorized baseline. Both console and Dolphin builds passed for JP, US and PAL.
+
+US Dolphin recorded 19 inputs through Bianco 3's actual secret portal, with the
+area change after input 14. Loading kept the count fixed. Replay after manually
+returning to the Beginning area crossed the portal again and matched every
+fingerprint and the exact endpoint, with unchanged tape bytes. The final
+shipping-source baseline `8332FAAC` repeated that result after the guide edit.
+The private adapter positioned Mario before New TAS and supplied controller
+samples; no warp or portal event was injected during recording or replay.
+Evidence: `build/foxtrot-tas-zone-final` and `build/foxtrot-zone-runtime-proof.json`.
+
+Both the earlier `233FBD49` and final `8332FAAC` passes exercised X-Shine on Movement
+speed and Reverse sideways and found both under Quick without changing their values. Host checks
+cover packed favourite persistence and old favourite mappings.
+
+SD tape publication, reopening and failure handling are exercised by the
+production client/ARM worker host fixtures. The new project format still needs
+physical-console save/reboot feedback. Make new states/projects for this build;
+older files remain tied to their matching build.
+
 ## AE95E374 — follow-up
 
 The tester confirmed the third memory state now works, although saving it can

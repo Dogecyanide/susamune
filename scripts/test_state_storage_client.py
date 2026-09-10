@@ -96,15 +96,16 @@ __declspec(dllexport) u32 beginProjectRead(u32 id,u32 crc) {return StateStorage:
 __declspec(dllexport) u32 beginProjectCatalog(void) {return StateStorage::projectCatalog(0);}
 __declspec(dllexport) u32 prepareProject(u32 corrupt) {
  auto &p=testMailbox.tasProject;memset(&p,0,sizeof(p));
- p.magic=SUSAMUNE_TAS_MAGIC;p.version=1;p.projectId=10;p.generation=1;
+ p.magic=SUSAMUNE_TAS_MAGIC;p.version=SUSAMUNE_TAS_VERSION;p.projectId=10;p.generation=1;
  p.gameId=0x474D5350;p.buildCrc=23;p.configId=123;p.sceneKey=0x01020000;
  p.currentRole=1;p.componentCount=2;memcpy(p.name,"Test TAS",9);p.startKey[1]=123;
- p.components[0]={1,101,100,0,0,0};p.components[1]={2,102,120,1,42,0};
+ p.components[0]={1,101,100,0,p.sceneKey};p.components[1]={2,102,120,42,p.sceneKey};
+ p.tape={3,103,676};p.tapeFrames=42;
  if(corrupt==1)p.components[1].componentId=1;if(corrupt==2)p.components[0].frames=1;
  if(corrupt==3)p.components[1].frames=4097;if(corrupt==4)p.currentRole=2;
- if(corrupt==5)p.components[2].reserved=1;if(corrupt==6)p.components[1].packedBytes=SUSAMUNE_STATE_POOL_EXPANDED_SIZE;
+ if(corrupt==5)p.components[2].sceneKey=1;if(corrupt==6)p.components[1].packedBytes=SUSAMUNE_STATE_POOL_EXPANDED_SIZE;
  if(corrupt==7)p.componentCount=3;if(corrupt==8)p.startKey[1]=0;
- if(corrupt==9)p.currentRole=0;
+ if(corrupt==9)p.tape.componentId=0;
  p.checksum=SusamuneTasManifestCrc(&p);return p.checksum;
 }
 __declspec(dllexport) u32 projectValid(void) {return SusamuneTasManifestValid(&testMailbox.tasProject);}
@@ -131,7 +132,7 @@ __declspec(dllexport) void exportReceipt(u32 id) {
 }
 __declspec(dllexport) u32 beginProjectImport(u32 corrupt) {
  SusamuneTasRequest context={10,7,1,1,345,{0,0},0};
- if(corrupt==1)context.componentId=8;if(corrupt==2)context.role=3;
+ if(corrupt==1)context.componentId=8;if(corrupt==2)context.role=4;
  if(corrupt==3)context.reserved[1]=1;
  context.checksum=SusamuneTasRequestCrc(&context);if(corrupt==4)context.checksum^=1;
  return StateStorage::startImport(7,999,100,0,&context);
@@ -217,6 +218,50 @@ __declspec(dllexport) u32 renamedResult(void) {
  StateStorage::Result r;if(!StateStorage::takeResult(r)||r.status||r.metadata||!SusamuneStateHeaderValid(&r.header))return 0;
  return r.name[0]=='R' && r.name[8]=='s' && r.header.name[0]=='O';
 }
+static u8 tapeFrames[65536],tapeTransitions[512];
+__declspec(dllexport) u32 beginTape(u32 frames,u32 transitions,u32 fault) {
+ SusamuneTasTakeData take={};take.version=1;take.frames=take.position=frames;
+ take.transitionCount=transitions;take.originKey[0]=17;take.startScene=take.endScene=0x10203;
+ if(fault==1)take.reserved[2]=1;if(fault==2)take.flags=1;
+ for(u32 i=0;i<sizeof(tapeFrames);++i)tapeFrames[i]=(u8)(i%251);
+ for(u32 i=0;i<sizeof(tapeTransitions);++i)tapeTransitions[i]=(u8)(i%197);
+ SusamuneStateArchiveHeader h={};h.gameId=0x474D5350;h.buildCrc=123;
+ SusamuneTasRequest request={10,0,0,3,0,{0,0},0};request.checksum=SusamuneTasRequestCrc(&request);
+ return StateStorage::startTapeExport(h,take,fault==3?0:tapeFrames,tapeTransitions,request);
+}
+__declspec(dllexport) u32 tapeExportOwnership(void) {
+ int staging=-1,request=-1;for(u32 i=0;i<flushCount;++i){
+  if(flushed[i].address==testStaging && flushed[i].size==testMailbox.header.packedSize)staging=i;
+  if(flushed[i].address==&testMailbox.request)request=i;}
+ return staging>=0 && request>staging && testMailbox.request.poolOffset==0 && testMailbox.tasRequest.role==3;
+}
+__declspec(dllexport) u32 completeTapeExport(void) {
+ auto &h=testMailbox.header;h.payloadCrc=SusamuneStateCrc(testStaging,h.packedSize);h.headerCrc=SusamuneStateHeaderCrc(&h);
+ exportReceipt(3);StateStorage::update();StateStorage::Result result;
+ return StateStorage::takeResult(result)&&result.status==0;
+}
+__declspec(dllexport) u32 beginTapeRead(void) {
+ const auto&h=testMailbox.header;SusamuneTasManifest p={};p.magic=SUSAMUNE_TAS_MAGIC;p.version=SUSAMUNE_TAS_VERSION;
+ p.projectId=10;p.generation=1;p.gameId=h.gameId;p.buildCrc=h.buildCrc;p.configId=h.configId;
+ p.sceneKey=h.sceneKey;p.componentCount=1;p.startKey[0]=17;memcpy(p.name,"Tape",5);
+ const auto&t=*(const SusamuneTasTakeData*)testMailbox.metadata;p.tapeFrames=t.frames;
+ p.components[0]={1,101,100,0,p.sceneKey};p.tape={3,h.headerCrc,h.packedSize};
+ p.checksum=SusamuneTasManifestCrc(&p);return StateStorage::startTapeImport(p);
+}
+__declspec(dllexport) void tapeImportReceipt(u32 fault) {
+ if(fault==1)testStaging[testMailbox.header.packedSize-1]^=1;
+ if(fault==2)testMailbox.metadata[0]^=1;
+ if(fault==3)testStaging[0]=1;
+ exportReceipt(3);StateStorage::update();
+}
+__declspec(dllexport) u32 readTape(void) {
+ StateStorage::Result result;SusamuneTasTakeData take;const void*frames,*transitions;
+ if(!StateStorage::takeResult(result)||!StateStorage::tapePayload(result,take,frames,transitions))return 0;
+ if(frames!=testStaging+4||transitions!=testStaging+4+take.frames*16)return 0;
+ for(u32 i=0;i<take.frames*16;++i)if(((const u8*)frames)[i]!=(u8)(i%251))return 0;
+ for(u32 i=0;i<take.transitionCount*16;++i)if(((const u8*)transitions)[i]!=(u8)(i%197))return 0;
+ return 1;
+}
 }
 '''
 
@@ -248,6 +293,36 @@ const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
 
     def setUp(self): self.lib.reset(0)
+
+    def test_tape_export_and_import_use_staging_for_zero_and_maximum_timelines(self):
+        for frames, transitions in ((0,0),(27,2),(4096,32)):
+            with self.subTest(frames=frames,transitions=transitions):
+                self.setUp()
+                self.assertEqual(self.lib.beginTape(frames,transitions,0),1)
+                self.assertEqual(self.lib.tapeExportOwnership(),1)
+                self.assertEqual(self.lib.completeTapeExport(),1)
+                self.lib.clearCacheLog()
+                self.assertEqual(self.lib.beginTapeRead(),1)
+                self.assertEqual(self.lib.stagingInvalidations(),0)
+                self.lib.tapeImportReceipt(0)
+                self.assertEqual(self.lib.stagingInvalidations(),1)
+                self.assertEqual(self.lib.readTape(),1)
+
+    def test_tape_input_bounds_and_reserved_fields_reject_before_publication(self):
+        for frames, transitions, fault in ((4097,0,0),(1,33,0),(0,1,0),(1,0,1),(1,0,2),(1,0,3)):
+            with self.subTest(values=(frames,transitions,fault)):
+                self.setUp()
+                self.assertEqual(self.lib.beginTape(frames,transitions,fault),0)
+                self.assertEqual(self.lib.command(),0)
+
+    def test_failed_tape_read_never_exposes_corrupted_staging(self):
+        for fault in (1,2,3):
+            with self.subTest(fault=fault):
+                self.setUp();self.assertEqual(self.lib.beginTape(20,2,0),1)
+                self.assertEqual(self.lib.completeTapeExport(),1)
+                self.assertEqual(self.lib.beginTapeRead(),1)
+                self.lib.tapeImportReceipt(fault)
+                self.assertEqual(self.lib.readTape(),0)
 
     def test_project_manifest_enforces_roles_identity_capacity_and_start(self):
         self.lib.prepareProject(0)

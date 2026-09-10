@@ -109,6 +109,14 @@ extern "C" __declspec(dllexport) int cancelBinding(){
         text = (ROOT / 'src/tas_menu.inc').read_text()
         self.assertIn('JapaneseUi::text(TasProject::roleName(TasProject::pendingCheckpointRole()))', text)
 
+    def test_checkpoint_in_another_area_is_not_presented_as_empty(self):
+        text = (ROOT / 'src/tas_menu.inc').read_text()
+        self.assertIn('if (cp.present && !cp.loadableHere) memcpy(value, "Other area", 11);', text)
+        self.assertIn('else if (cp.present) snprintf(value, sizeof(value), "%lu frames", cp.frames);', text)
+        self.assertIn('else memcpy(value, "Empty", 6);', text)
+        self.assertIn('PracticeSession::recordedFrames(), PracticeSession::capacityFrames()', text)
+        self.assertIn('Its recording and checkpoint files will be deleted.', text)
+
     def test_each_inline_shortcut_edits_and_clears_without_action(self):
         rows = [(0,1,39),(0,2,40),(0,6,23),(0,7,24)] + [(1,i,34+i) for i in range(5)]
         for page,row,bind in rows:

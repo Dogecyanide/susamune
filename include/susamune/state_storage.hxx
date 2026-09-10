@@ -22,6 +22,11 @@ bool startImport(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 freePoolOffs
                  const SusamuneTasRequest *project = nullptr);
 bool startWindow(u32 id, u32 expectedHeaderCrc, u32 packedSize, u32 offset, u32 size,
                  const SusamuneTasRequest *project = nullptr);
+bool startTapeExport(const SusamuneStateArchiveHeader &, const SusamuneTasTakeData &,
+                     const void *frames, const void *transitions, const SusamuneTasRequest &);
+bool startTapeImport(const SusamuneTasManifest &);
+// Borrowed staging remains valid only until the next storage request.
+bool tapePayload(const Result &, SusamuneTasTakeData &, const void *&frames, const void *&transitions);
 bool refresh(u32 afterId = 0);
 bool rename(u32 id, u32 expectedHeaderCrc, const char *name);
 bool remove(u32 id, u32 expectedHeaderCrc);
@@ -29,6 +34,7 @@ bool remove(u32 id, u32 expectedHeaderCrc);
 bool cancel();
 // Borrowed metadata stays valid until another request is accepted.
 bool takeResult(Result &);
+void discardCancelledResult();
 bool takeProjectResult(Result &);
 bool projectBegin(const char *name);
 bool projectRead(u32 id, u32 expectedCrc);

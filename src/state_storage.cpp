@@ -17,7 +17,7 @@ const u32 kStaging = SUSAMUNE_STATE_STAGING_PPC_BASE;
 SusamuneStateStorageMailbox *const sMailbox = reinterpret_cast<SusamuneStateStorageMailbox *>(kMailbox);
 u32 sSession, sSequence, sConfig, sImportSize, sImportOffset, sProjectReplyCrc;
 SusamuneStateRequest sPending;
-bool sAvailable, sResultReady, sCatalogReady;
+bool sAvailable, sResultReady, sCatalogReady, sTapeTransfer;
 Result sResult;
 StatePoolMemory sMemory;
 
@@ -63,6 +63,7 @@ bool submit(u32 command, u32 id, u32 offset, u32 size, u32 crc, u32 windowSize =
     sPending.reserved = windowSize;
     memset(&sMailbox->tasRequest, 0, sizeof(sMailbox->tasRequest));
     if (project) sMailbox->tasRequest = *project;
+    sTapeTransfer = project && project->role == SUSAMUNE_TAS_TAPE_ROLE;
     DCFlushRange(&sMailbox->tasRequest, sizeof(sMailbox->tasRequest));
     if (command == SUSAMUNE_STATE_CMD_IMPORT || command == SUSAMUNE_STATE_CMD_READ_WINDOW ||
         command == SUSAMUNE_STATE_CMD_TAS_COMMIT) {
@@ -121,7 +122,7 @@ void update() {
         DCInvalidateRange(&sMailbox->header, sizeof(sMailbox->header));
         DCInvalidateRange(sMailbox->resultName, sizeof(sMailbox->resultName));
         const SusamuneStateArchiveHeader &h = sMailbox->header;
-        if (!SusamuneStateHeaderValid(&h) || h.headerCrc != r.headerCrc ||
+        if (!SusamuneStateHeaderValid(&h) || (sTapeTransfer && !SusamuneTasTapeHeaderValid(&h)) || h.headerCrc != r.headerCrc ||
             h.metadataSize != r.metadataSize || h.packedSize != r.packedSize ||
             !SusamuneStateNameValid(sMailbox->resultName) ||
             SusamuneStateCrc(sMailbox->resultName, sizeof(sMailbox->resultName)) != r.reserved ||
@@ -183,7 +184,9 @@ void update() {
             for (u32 i = 0; valid && i < c.count; ++i) {
                 const SusamuneStateCatalogEntry &e = c.entries[i];
                 valid = e.id > prior && e.id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
-                    e.packedSize && e.packedSize <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE && SusamuneStateNameValid(e.name);
+                    e.packedSize && e.packedSize <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE +
+                    (sPending.command == SUSAMUNE_STATE_CMD_TAS_CATALOG ? SUSAMUNE_TAS_TAPE_MAX_BYTES : 0) &&
+                    SusamuneStateNameValid(e.name);
                 prior = e.id;
             }
             valid = valid && c.nextId == prior;
@@ -198,11 +201,12 @@ bool available() { return sAvailable; }
 bool busy() { return sPending.command != 0; }
 u32 configId() { return sConfig; }
 
-bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset,
-                 const SusamuneTasRequest *project) {
+static bool publishExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset,
+                          const SusamuneTasRequest *project, bool tape) {
     const StatePoolMemory &memory = sMemory;
     if (!sAvailable || busy() || sResultReady || !metadata || !SusamuneStatePoolRange(offset, source.packedSize) ||
-        (project && (!SusamuneTasRequestValid(project) || !project->projectId || project->componentId)) ||
+        (project && (!SusamuneTasRequestValid(project) || !project->projectId || project->componentId ||
+                     (project->role == SUSAMUNE_TAS_TAPE_ROLE) != tape)) ||
         !StatePoolMemoryRangeValid(&memory, offset, source.packedSize) ||
         !source.metadataSize || source.metadataSize > SUSAMUNE_STATE_METADATA_SIZE) return false;
     SusamuneStateArchiveHeader h = source;
@@ -214,12 +218,58 @@ bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata,
     h.payloadCrc = 0;
     h.headerCrc = SusamuneStateHeaderCrc(&h);
     if (!SusamuneStateHeaderValid(&h)) return false;
+    if (tape && (!project || offset || !SusamuneTasTapeMetadataValid(&h,
+        static_cast<const SusamuneTasTakeData *>(metadata)))) return false;
     memcpy(&sMailbox->header, &h, sizeof(h));
     memcpy(sMailbox->metadata, metadata, h.metadataSize);
     DCFlushRange(&sMailbox->header, sizeof(h));
     DCFlushRange(sMailbox->metadata, h.metadataSize);
-    syncPool(offset, h.packedSize, false);
+    if (tape) DCFlushRange(reinterpret_cast<void *>(kStaging), h.packedSize);
+    else syncPool(offset, h.packedSize, false);
     return submit(SUSAMUNE_STATE_CMD_EXPORT, 0, offset, h.packedSize, 0, 0, project);
+}
+bool startExport(const SusamuneStateArchiveHeader &source, const void *metadata, u32 offset,
+                 const SusamuneTasRequest *project) {
+    return publishExport(source, metadata, offset, project, false);
+}
+bool startTapeExport(const SusamuneStateArchiveHeader &source, const SusamuneTasTakeData &take,
+                     const void *frames, const void *transitions, const SusamuneTasRequest &project) {
+    if (!sAvailable || busy() || sResultReady || !SusamuneTasTakeValid(&take) ||
+        (take.frames && !frames) || (take.transitionCount && !transitions) ||
+        !SusamuneTasRequestValid(&project) || !project.projectId || project.componentId ||
+        project.role != SUSAMUNE_TAS_TAPE_ROLE) return false;
+    SusamuneStateArchiveHeader h = source;
+    h.metadataSize = sizeof(take);
+    h.packedSize = h.rawSize = SusamuneTasTakeBytes(&take);
+    h.snapshotVersion = SUSAMUNE_TAS_TAPE_SNAPSHOT;
+    h.sceneKey = take.startScene;
+    u8 *payload = reinterpret_cast<u8 *>(kStaging);
+    memset(payload, 0, 4);
+    if (take.frames) memcpy(payload + 4, frames, take.frames * 16);
+    if (take.transitionCount) memcpy(payload + 4 + take.frames * 16, transitions, take.transitionCount * 16);
+    return publishExport(h, &take, 0, &project, true);
+}
+bool startTapeImport(const SusamuneTasManifest &project) {
+    if (!SusamuneTasManifestValid(&project)) return false;
+    SusamuneTasRequest context = {};
+    context.projectId = project.projectId; context.componentId = project.tape.componentId;
+    context.projectGeneration = project.generation; context.role = SUSAMUNE_TAS_TAPE_ROLE;
+    context.expectedProjectCrc = project.checksum;
+    context.checksum = SusamuneTasRequestCrc(&context);
+    return startImport(context.componentId, project.tape.headerCrc, project.tape.packedBytes, 0, &context);
+}
+bool tapePayload(const Result &result, SusamuneTasTakeData &take, const void *&frames, const void *&transitions) {
+    frames = transitions = nullptr;
+    if (busy() || result.status != SUSAMUNE_STATE_OK || result.command != SUSAMUNE_STATE_CMD_IMPORT ||
+        result.metadata != sMailbox->metadata || !SusamuneTasTapeHeaderValid(&result.header)) return false;
+    const SusamuneTasTakeData &info = *static_cast<const SusamuneTasTakeData *>(result.metadata);
+    const u8 *payload = reinterpret_cast<const u8 *>(kStaging);
+    if (!SusamuneTasTapeMetadataValid(&result.header, &info) ||
+        SusamuneStateCrc(&info, sizeof(info)) != result.header.metadataCrc ||
+        payload[0] || payload[1] || payload[2] || payload[3] ||
+        SusamuneStateCrc(payload, result.header.packedSize) != result.header.payloadCrc) return false;
+    take = info; frames = payload + 4; transitions = payload + 4 + info.frames * 16;
+    return true;
 }
 bool startImport(u32 id, u32 crc, u32 size, u32 offset, const SusamuneTasRequest *project) {
     const StatePoolMemory &memory = sMemory;
@@ -267,6 +317,9 @@ bool takeResult(Result &out) {
     out = sResult;
     sResultReady = false;
     return true;
+}
+void discardCancelledResult() {
+    if (sResultReady && sResult.command == SUSAMUNE_STATE_CMD_CANCEL) sResultReady = false;
 }
 bool takeProjectResult(Result &out) {
     if (!sResultReady || sResult.command < SUSAMUNE_STATE_CMD_TAS_BEGIN) return false;

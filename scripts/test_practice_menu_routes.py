@@ -2,6 +2,7 @@
 
 import ctypes as C
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -18,12 +19,14 @@ class PracticeMenuTests(unittest.TestCase):
         if not compiler.exists():
             raise unittest.SkipTest("Bundled Windows compiler required")
         text = (ROOT / "src/menu.cpp").read_text(encoding="utf-8")
+        cls.ids = re.findall(r"X\((SETTING_\w+),", (ROOT / "include/susamune/settings_list.h").read_text())
         text = text[text.index("class PracticeControlsTab final"):]
         methods = "\n".join(function(text, signature).replace(" override", "")
                             for signature in ("void focus() override",
                                 "bool grabsInput() const override",
+                                "bool favoriteHint() const override",
                                 "void update(Menu *menu, TMarioGamePad *pad) override",
-                                "SettingId cameraSetting() const", "int rowCount() const", "BindId selectedBind() const"))
+                                "static SettingId cameraSetting(int row)", "int rowCount() const", "BindId selectedBind() const"))
         raw = (ROOT / "include/susamune/raw_prompt_input.hxx").read_text()
         raw = raw[raw.index("class RawPromptInput"):raw.index("#endif")]
         shim = r'''
@@ -45,7 +48,12 @@ struct Menu {u32 navigationInput(TMarioGamePad *p){return p->nav;}
 struct Binds {bool rec;bool recording(){return rec;}
     void beginRecord(BindId id){rec=true;bindTarget=id;}
     void cancelRecord(){rec=false;}}gBinds;
-struct Settings {void cycle(int id,int d){settingDirection=d;hit(1000+id);}}gSettings;
+static bool favoriteFlags[256];
+struct Settings {
+    void cycle(int id,int d){settingDirection=d;hit(1000+id);}
+    void toggleFavorite(int id){favoriteFlags[id]=!favoriteFlags[id];hit(2000+id);}
+    bool favorite(int id){return favoriteFlags[id];}
+}gSettings;
 int wrap(int value,int count){return (value+count)%count;}
 namespace PracticeSession {
 bool requestPauseToggle(bool menu){fromMenu=menu;hit(1);return true;}
@@ -67,7 +75,8 @@ METHODS
 u8 mSel;bool mBinding;RawPromptInput mInput;
 };
 static void reset(){action=events=closeCount=fromMenu=settingDirection=0;
-    bindTarget=-1;gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;}
+    bindTarget=-1;gBinds.rec=false;JUTGamePad::mPadStatus[0].mButton=0;
+    for(unsigned i=0;i<256;++i)favoriteFlags[i]=false;}
 extern "C" __declspec(dllexport) int route(int page,int row,int nav,int held,int *out){
     reset();PracticeControlsTab tab(page);tab.mSel=(u8)row;Menu menu;TMarioGamePad pad={(u32)nav};
     JUTGamePad::mPadStatus[0].mButton=(u16)held;tab.update(&menu,&pad);
@@ -148,7 +157,19 @@ extern "C" __declspec(dllexport) int fourthButton(int button,int *out){
                 self.assertEqual(events, 1)
                 self.assertGreater(out[0], 1000)
                 self.assertEqual(out[1:], [0, 0, row, -1, direction])
-            self.assertEqual(self.route(1, row, held=0x400)[0], 0)
+
+    def test_x_shines_exact_camera_setting_without_adjusting_rebinding_or_closing(self):
+        settings = ("SETTING_FREE_CAMERA_SPEED", "SETTING_FREE_CAMERA_STRAFE_REVERSE",
+                    "SETTING_FREE_CAMERA_SENSITIVITY", "SETTING_FREE_CAMERA_HIDE_HUD")
+        for row, setting in enumerate(settings, 2):
+            with self.subTest(row=row):
+                self.assertEqual(self.route(1, row, held=0x400),
+                                 (1, [2000 + self.ids.index(setting), 0, 0, row, -1, 0]))
+        for row in (0, 1):
+            events, out = self.route(1, row, held=0x400)
+            self.assertEqual(events, 0)
+            self.assertGreaterEqual(out[4], 0)
+            self.assertEqual(out[0:4], [0, 0, 0, row])
 
     def test_fourth_bind_button_cannot_step_rebind_or_switch_outer_tabs(self):
         for button in (0x100, 0x400):

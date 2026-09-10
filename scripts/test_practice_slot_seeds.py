@@ -61,6 +61,10 @@ static SavestateManager manager;
 static SavestateManager *gSavestateMgr=&manager;
 static u32 sStageGeneration,sTapeSeed,sTapeSlot,sLoadSlot,sLoadGeneration;
 static u32 sTapeStage,sSettingsHash,sTapeHash,sCount,sCursor;
+static u32 sTransitionCount,sTransitionCursor,sStartScene;
+static SusamuneTasTransition sTransitions[32];
+u32 currentSceneKey(){return 0;}
+bool validTransitions(const SusamuneTasTransition*,u32,u32,u32,u32){return true;}
 static bool sRecord,sReplay,sOwnLoad,sHaveRead,sPaused,sFreeCamera,sPausePending,sStepQueued;
 static u8 sLoadKind;
 static u8 sMenuAction;
@@ -118,6 +122,7 @@ extern "C" __declspec(dllexport) void reset() {
     selected=0;loadedSlot=99;loadedGeneration=loadCalls=0;
     sStageGeneration=7;sTapeSeed=sTapeSlot=sLoadSlot=sLoadGeneration=0;
     sCount=sCursor=sTapeStage=sSettingsHash=sTapeHash=0;
+    sTransitionCount=sTransitionCursor=sStartScene=0;
     sLoadKind=0;sLoadWait=0;sRecord=sReplay=sOwnLoad=false;
     sPhysical={};cardStatus=0;pad={};rngSaved=restorePadValid=true;
     menuOpen=wheelOpen=promptOpen=resultOpen=diskActive=false;

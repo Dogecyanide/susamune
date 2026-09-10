@@ -1,12 +1,12 @@
 # Moonshine Launcher FOXTROT
 
-V2.3.0 pre-release · Build C66EEB34
+V2.3.0 pre-release · Build C34FF061
 
 FOXTROT adds tools for studying movement and comparing attempts. This update includes the newly handmade level checkpoints, with up to eight timed segments per route, including the finish.
 
 ## Install and update
 
-Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace the package files, and keep your existing themes, music, `susamune.ini`, records and ghosts. The launcher supports the existing JP, US and PAL disc revisions. Use your own disc or game image. Do not mix FOXTROT's launcher with older mod binaries: its memory format changed. **Make fresh SD states with this build. Earlier SD states must be resaved; they cannot be loaded by this update.** Settings, records and ghosts remain usable.
+Copy the `moonshine_launcher` folder into your SD card's `apps` folder. Replace the package files, and keep your existing themes, music, `susamune.ini`, records and ghosts. The launcher supports the existing JP, US and PAL disc revisions. Use your own disc or game image. Do not mix FOXTROT's launcher with older mod binaries: its memory format changed. **Make fresh SD states with this build. Earlier SD states and TAS projects cannot be opened by this update. Keep older files with their matching build; make new saves here.** Settings, records and ghosts remain usable.
 
 The **standard download keeps every Moonshine menu in English**, including when you play JP. It does not change Sunshine's own language. The **Japanese download** uses Japanese launcher menus regardless of the selected game region, and translates Moonshine's in-game menus on JP; US/PAL in-game menus stay English. Some Japanese status messages and the built-in Guide body remain English. This update applies the 25 new wording corrections and makes small Japanese help brighter and easier to read. System > FOXTROT guide uses clearer spacing and avoids missing path-separator symbols.
 
@@ -26,7 +26,7 @@ Configuration and saved mod data belong to the device the launcher was opened fr
 
 Open the mod menu with your configured menu combo (default Y + Start). Use L/R for top-level tabs, the C-stick to move between rows, A to select, and B to go back.
 
-- **Quick:** your Shined favourites.
+- **Quick:** your Shined favourites. Newer named settings can now be Shined too, including free-camera Movement speed, Reverse sideways, Look sensitivity and Hide all HUD. Your existing stars stay.
 - **Practice:** TAS projects with frame controls, Free camera, savestates, practice rules, RNG and gameplay options.
 - **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
 - **Records:** achievements and practice statistics, also reachable from Runs.
@@ -120,10 +120,10 @@ Open **Practice > TAS projects**. A TAS keeps Mario's recorded inputs, its begin
 2. Hold Mario's buttons and press **Step** to record one frame, or use **Resume** to record normal play. Opening the menu pauses your work.
 3. Under **Checkpoints**, choose **Save Checkpoint 1** before a move you might want to redo. Play farther, then choose **Go to Checkpoint 1** to return there. **Continue** lets you replace the old continuation. Checkpoint 2 gives you another place to retry. The Beginning is kept for replay.
 4. Choose **Replay** to watch your recorded inputs from the beginning. B or Start stops playback.
-5. Choose **Save TAS**, enter a name and confirm with Start. It saves the current point, the beginning and your checkpoints together on SD. Later saves update that same TAS. Wait for the saved message before closing the game.
-6. To return later, enter the same build, game region, setup and episode, then choose **Open TAS** and its name. Moonshine restores the necessary states and leaves you paused at your saved point. Choose **Continue** to edit or **Replay** to watch.
+5. Choose **Save TAS**, enter a name and confirm with Start. It saves the entire recording, its Beginning and any checkpoints you already made. It does not create a new checkpoint or need another empty slot. Later saves update that same TAS. Wait for the saved message before closing the game.
+6. To return later, use the same build, game region and setup, then choose **Open TAS** and its name. If its selected checkpoint or Beginning can load in your current area and episode, it opens there paused and keeps the later recorded inputs for Replay. Otherwise, the recording opens without moving Mario: you can save it again, or enter its Beginning area before Replay.
 
-**Continue stays paused** so you can arrange the next input before using Step or Resume. A checkpoint rewinds the recording too: when you continue, the old inputs after that point are replaced.
+**Continue stays paused** so you can arrange the next input before using Step or Resume. Opening a saved TAS at a checkpoint keeps its full saved recording for Replay; Continue starts editing from that checkpoint. Manually choosing **Go to Checkpoint 1/2** rewinds the local recording to that point. The full SD recording stays unchanged until you use Save TAS again.
 
 Saving over an existing checkpoint asks before replacing it, whether you use the menu or a shortcut. A confirms; B keeps it. **Save TAS** still updates the named SD project directly.
 
@@ -133,7 +133,11 @@ In **Open TAS**, highlight a name and press **Start** to rename it or **X** to d
 
 TAS projects use the same three memory slots as ordinary savestates. A new TAS uses an empty slot when possible. If it needs an occupied ordinary slot, it asks which state you want to replace; cancel to keep it. Its Beginning and two checkpoints have clear names in the TAS screen, so you do not need to manage their slot numbers or import separate files. **Save Checkpoint** keeps a retry point in memory; **Save TAS** keeps the whole project on SD, under `/moonshine_tas`. Only the SD save survives closing the game or rebooting. The ordinary SD states menu remains separate.
 
-A TAS holds at most **4096 rendered frames**: about 137 seconds at 30 fps or 164 seconds at 25 fps. Changing scenes clears the live recording; return to the matching scene and open your saved TAS. Replay is experimental and stops if the checked game state differs. Gameplay settings must match; timer layout, metadata, ghost inputs and camera presentation can still be adjusted. TAS projects cannot be shared across regions or builds. Use an exported ghost to share a finished attempt.
+Normal area changes, such as entering a secret, keep the recording and continue it when Mario can move again. Loading time uses no recorded-input frames. The limit is **4096 input frames and 32 area changes**: about 137 seconds of recorded play at 30 fps or 164 seconds at 25 fps. If a transition is unsupported or the limit is reached, recording stops and the take is kept so you can save it.
+
+A checkpoint marked **Other area** is still saved. Enter its matching area and episode before loading it. For **Replay** or **Go to Beginning**, return to the area and episode where the TAS began; Moonshine does not take you there automatically.
+
+Replay is experimental and stops if the checked game state differs. Gameplay settings must match; timer layout, metadata, ghost inputs and camera presentation can still be adjusted. TAS projects cannot be shared across regions or builds. Use an exported ghost to share a finished attempt.
 
 ## Ghost inputs and splits
 

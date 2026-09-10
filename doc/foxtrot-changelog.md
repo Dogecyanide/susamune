@@ -1,4 +1,16 @@
-# Moonshine Launcher FOXTROT — RC1 feedback update
+# Moonshine Launcher FOXTROT — full-level TAS update
+
+**V2.3.0 pre-release · Build C34FF061**
+
+- TAS recordings continue through normal area changes. Loading time does not consume recorded-input frames. Unsupported transitions stop the take but keep it available to save; limits remain 4096 input frames and 32 area changes.
+- Save TAS stores the entire input recording with its Beginning and existing checkpoints. It no longer creates a current-position checkpoint or requires another free memory slot.
+- Open TAS keeps the full recording. A compatible selected checkpoint or Beginning opens paused with later inputs retained for Replay. If no point matches the current area, the recording opens without moving Mario. Other-area checkpoint and Replay messages tell you where to return first.
+- Newer named settings can be Shined, including Movement speed, Reverse sideways, Look sensitivity and Hide all HUD. Earlier favourites are preserved.
+- Make new states and TAS projects with this build. Keep older files with their matching older build; settings, records and ghosts remain usable.
+
+The four current checks are in **TESTING.md**. Keep earlier RC1 results and use the full log only for gaps in team coverage. A short US Dolphin TAS crossed Bianco 3's actual secret entrance and replayed to the exact recorded endpoint. The new SD save/reopen workflow still needs console testing; earlier successful proofs below are historical.
+
+## Earlier RC1 feedback — C66EEB34
 
 **V2.3.0 pre-release · Build C66EEB34**
 

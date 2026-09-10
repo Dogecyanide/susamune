@@ -320,11 +320,15 @@ void SusamuneStateStorageService(void)
             sync_before_read(&m->header, sizeof(m->header));
             Header = m->header;
             if (!SusamuneStateHeaderValid(&Header) || Header.gameId != GAME_ID || Header.configId != ConfigId ||
-                Header.packedSize != Request.packedSize || !SusamuneStatePoolRange(Request.poolOffset, Request.packedSize)) {
+                Header.packedSize != Request.packedSize || !SusamuneStatePoolRange(Request.poolOffset, Request.packedSize) ||
+                !TasTransferHeaderValid()) {
                 Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
             }
             sync_before_read(m->metadata, Header.metadataSize);
             if (Header.metadataCrc != SusamuneStateCrc(m->metadata, Header.metadataSize)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+            if (TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE && !TasTapeMetadataValid(false)) {
+                Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
+            }
             FileId = 1; Phase = EXPORT_FIND; return;
         }
         if (Request.command == SUSAMUNE_STATE_CMD_IMPORT) {
@@ -377,7 +381,8 @@ void SusamuneStateStorageService(void)
         else result = f_read(&File, &Header, sizeof(Header), &done);
         if (result != FR_OK || done != sizeof(Header)) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
         if (Request.command == SUSAMUNE_STATE_CMD_IMPORT || Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
-            if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File))) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+            if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File)) ||
+                !TasTransferHeaderValid()) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
             if (Header.headerCrc != Request.expectedHeaderCrc || Header.packedSize != Request.packedSize) { Finish(SUSAMUNE_STATE_STALE); return; }
             if (Header.gameId != GAME_ID || Header.configId != ConfigId) { Finish(SUSAMUNE_STATE_WRONG_CONFIG); return; }
         }
@@ -400,6 +405,10 @@ void SusamuneStateStorageService(void)
         else result = f_read(&File, m->metadata, Header.metadataSize, &done);
         if (result != FR_OK || done != Header.metadataSize) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (SusamuneStateCrc(m->metadata, Header.metadataSize) != Header.metadataCrc) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE &&
+            !TasTapeMetadataValid(Request.command != SUSAMUNE_STATE_CMD_EXPORT)) {
+            Finish(SUSAMUNE_STATE_BAD_FILE); return;
+        }
         if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW &&
             f_lseek(&File, sizeof(Header) + Header.metadataSize + Request.poolOffset) != FR_OK) {
             Finish(SUSAMUNE_STATE_IO_ERROR); return;
@@ -411,7 +420,8 @@ void SusamuneStateStorageService(void)
         amount = payloadSize - Offset;
         if (amount > SUSAMUNE_STATE_CHUNK_SIZE) amount = SUSAMUNE_STATE_CHUNK_SIZE;
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) {
-            bytes = PoolPiece(Request.poolOffset + Offset, &amount);
+            bytes = TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE ?
+                STATE_STAGING + Offset : PoolPiece(Request.poolOffset + Offset, &amount);
             sync_before_read(bytes, amount);
             PayloadCrc = SusamuneStateCrcUpdate(PayloadCrc, bytes, amount);
             result = f_write(&File, bytes, amount, &done);
@@ -427,6 +437,8 @@ void SusamuneStateStorageService(void)
             sync_after_write(bytes, amount);
         }
         if (result != FR_OK || done != amount) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
+        if (TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE && !Offset &&
+            (bytes[0] || bytes[1] || bytes[2] || bytes[3])) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
         Offset += amount;
         if (Offset != payloadSize) return;
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) {

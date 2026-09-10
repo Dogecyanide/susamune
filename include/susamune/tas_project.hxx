@@ -5,7 +5,7 @@
 #include "susamune/binds.hxx"
 namespace TasProject {
 enum { BEGINNING, CHECKPOINT1, CHECKPOINT2, ROLE_COUNT };
-struct Checkpoint { bool present; u32 frames; };
+struct Checkpoint { bool present; u32 frames; bool loadableHere; };
 void update();
 void afterDraw();
 bool active();

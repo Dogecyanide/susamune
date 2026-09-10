@@ -1,10 +1,10 @@
 # Moonshine 2.3.0 — RC1 test log
 
-**FOXTROT candidate · Build C66EEB34**
+**FOXTROT candidate · Build C34FF061**
 
 This is the full RC1 check, covering new features and normal practice. **Keep your earlier results.** Prioritise the items marked **Updated** and one ordinary run; use the remaining items to fill gaps in team coverage. `TESTING.md` is the shorter latest-fixes sheet. `RC1_ROUTES.md` lists the expected course checkpoints.
 
-**Make fresh states with this build. Earlier SD states need resaving and cannot be loaded by this update.** Settings, records and ghosts are kept.
+**Make new SD states and TAS projects with this build. Older files need their matching older build.** Settings, records and ghosts are kept.
 
 ## How to split the work
 
@@ -31,7 +31,7 @@ Dolphin testers: enable a memory card in slot B for mod settings, and set Textur
 - [ ] **1A — Startup.** Open the updated launcher with your usual theme and music. Text must be readable before loading finishes, including any storage wait. The theme should appear early. An SD-only setup should not wait for an unused USB drive. On a fresh setup, **/Moonshine_Theme** should be created automatically.
 - [ ] **1B — Remembered game.** Launch your usual version. If you own another supported version or use another storage device, select it and launch it once. Returning to the first selection should keep its path. An incorrect game/version selection should give a readable error.
 - [ ] **1C — Auto Boot and Guide (Updated).** If you use Auto Boot, check normal boot and holding B to reach the menu. Open the launcher's **Guide**, read a topic, turn a page and back out successfully. Also open System > FOXTROT guide in-game: its lines should fit without large path-separator gaps.
-- [ ] **1D — Menu navigation.** Browse Quick, Practice, Runs, Records, Ghosts, Display and System. Records should also open from Runs. Enter/back out of submenus; the A used to open a page must not also trigger an action inside it. Add and remove a Quick favourite. Check one duplicated setting shows the same value in both locations.
+- [ ] **1D — Menu navigation.** Browse Quick, Practice, Runs, Records, Ghosts, Display and System. Records should also open from Runs. Enter/back out of submenus; the A used to open a page must not also trigger an action inside it. Add and remove a Quick favourite. Newer named settings, including the four free-camera settings, should offer Shined too; existing stars stay. Keep one new star for the shared reboot check. Check one duplicated setting shows the same value in both locations.
 - [ ] **1E — Binds and saving.** Assign one shortcut from a Practice page with X, and check it under System > Button binds. Try cancelling a bind edit too. Existing shortcuts should remain. Close the menu after changing a setting: no false “storage access denied” error. Leave a harmless change saved for the reboot check.
 - [ ] **1F — Download language (Updated).** During the menu checks above, the standard download should keep Moonshine menus English even with JP selected. In the Japanese download, the launcher stays Japanese when changing game region; JP game menus are translated, while US/PAL game menus stay English. Check long setting/bind names and button labels for missing or overlapping text, and the Japanese flag for a round circle. Review the 25 amended IL/playlist/layout terms and the brighter, larger small help text. Some status messages and the built-in Guide body remain English. Standard Dolphin JP uses English menus; the separate Japanese JP patch enables translations.
 
@@ -77,13 +77,14 @@ Keep the SD connected during transfers. Testing does not require corrupting file
 
 ## 6. TAS projects — Updated
 
-Open **Practice > TAS projects**. This records editable inputs separately from shareable ghosts, up to 4096 frames. Reuse a short recording for these checks and do the reboot once in section 11.
+Open **Practice > TAS projects**. This records editable inputs separately from shareable ghosts, up to 4096 input frames and 32 area changes. Reuse one recording that enters another area, and do the reboot once in section 11.
 
 - [ ] **6A — New TAS.** Choose New TAS during gameplay. It should capture the Beginning automatically and leave you paused after releasing A. Use Step or Resume to record a walk, jump and spray; listen for normal sound effects. Open the menu: gameplay should pause while your work stays available. The recorded count beside the project name should advance with your recording and stay still while waiting.
 - [ ] **6B — Replay and stop.** Replay should use the Beginning and repeat the sequence. Check B/Start can stop playback. Report an unexpected refusal or mismatch with its exact message.
-- [ ] **6C — Checkpoints.** Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Saving over an existing checkpoint must ask first; cancel once and check it remains. Replay should include the original opening and new ending, without the discarded inputs. Continue stays paused until Step or Resume.
-- [ ] **6D — Save and open.** Console: Save TAS, name it, make a small edit and save again. It should update the same entry without asking you to export separate states. If New/Open asks about unsaved edits or replacing an ordinary state, check cancel keeps the current work. Save for the reboot in section 11. Timer/metadata edits and ordinary Save to/Load from choices must not redirect Replay to an unrelated beginning.
-- [ ] **6E — Shortcuts (Updated).** X changes the selected TAS action's bind; Z clears it. Pause/Advance are now on this page. Assign Beginning and a checkpoint Save/Go pair and try them. The seven new TAS shortcuts start unbound; overwriting through a shortcut must still ask first.
+- [ ] **6C — Checkpoints.** Save Checkpoint 1, go farther, return to it and Continue with a different ending. Try Checkpoint 2 too. Saving over an existing checkpoint must ask first; cancel once and check it remains. Go to Checkpoint rewinds the local recording, while any full SD copy stays until Save TAS. Replay should include the original opening and new ending, without the discarded inputs. Continue stays paused until Step or Resume.
+- [ ] **6D — Save the full recording (Updated).** Console: Save TAS after going beyond your last checkpoint. It must save the complete recording and existing points, without making a new checkpoint or asking for another empty slot. Save again to update the same name. If New/Open asks about unsaved edits or replacing an ordinary state, cancel should keep the current work. Keep this project for section 11. Timer/metadata edits and ordinary Save to/Load from choices must not redirect Replay.
+- [ ] **6E — Shortcuts.** X changes the selected TAS action's bind; Z clears it. Pause/Advance are on this page. Assign Beginning and a checkpoint Save/Go pair and try them. The seven TAS shortcuts start unbound; overwriting through a shortcut must still ask first.
+- [ ] **6F — Area changes (Updated).** Save a checkpoint before an entrance, enter the next area normally and keep recording. Loading time must not add input frames, and the take/count must remain. The earlier checkpoint should say Other area and refuse until you return there. Return to the Beginning area and Replay through that same entrance. If an unsupported transition stops recording, the existing take must remain saveable; report the message.
 
 ## 7. Ghosts, sharing and TAS continuation
 
@@ -128,7 +129,7 @@ Divide these options among testers who use them; one useful example per feature 
 ## 11. One final reboot and report
 
 - [ ] **11A — Persistence.** Reboot once after saving the checks above. Confirm kept settings, binds, camera movement speed/direction, look sensitivity/Hide all HUD, layouts, custom text, Mario/FLUDD colours, episode choices, records/profiles and ghosts remain correct. Check an earned achievement if you earned one during the session.
-- [ ] **11B — States and TAS after reboot (Updated).** Memory slots should start Empty. Console: restore your ordinary SD state in its matching level/episode; its ghost opening should still support a TAS continuation. For section 6's TAS, return to its matching setup/episode and use Open TAS by name. Continue and Replay should work without importing separate states.
+- [ ] **11B — States and TAS after reboot (Updated).** Memory slots should start Empty. Console: restore your ordinary SD state in its matching level/episode; its ghost opening should still support a TAS continuation. Open section 6's TAS in the later area: when neither its selected checkpoint nor Beginning matches, Mario stays put and the recording opens for keeping/replay later. Return to the Beginning area and Open again. A compatible point opens paused and Replay must still include the later inputs beyond that checkpoint. Continue makes a new ending. No separate state imports. Check section 1's new Shined favourite here too.
 - [ ] **11C — Ordinary play.** Finish with a short normal practice session. Report a new crash, slowdown, stuck input or camera problem, including the last action before it happened.
 
 **Items passed:**

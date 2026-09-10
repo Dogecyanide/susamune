@@ -5,7 +5,7 @@
 #include "susamune/tas_storage.h"
 
 #define SUSAMUNE_STATE_STORAGE_MAGIC 0x4D535354u
-#define SUSAMUNE_STATE_STORAGE_VERSION 6u
+#define SUSAMUNE_STATE_STORAGE_VERSION 7u
 #define SUSAMUNE_STATE_ARCHIVE_MAGIC 0x4D535341u
 #define SUSAMUNE_STATE_ARCHIVE_VERSION 1u
 #define SUSAMUNE_STATE_METADATA_SIZE 7168u
@@ -201,7 +201,7 @@ static inline int SusamuneTasRequestValid(const struct SusamuneTasRequest *reque
     if (!any) return 1;
     return request->projectId && request->projectId <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
         request->componentId <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
-        request->role < SUSAMUNE_TAS_COMPONENTS && !request->reserved[0] && !request->reserved[1] &&
+        request->role <= SUSAMUNE_TAS_TAPE_ROLE && !request->reserved[0] && !request->reserved[1] &&
         request->checksum == SusamuneTasRequestCrc(request);
 }
 static inline unsigned int SusamuneTasManifestCrc(const struct SusamuneTasManifest *project) {
@@ -216,28 +216,51 @@ static inline int SusamuneTasManifestValid(const struct SusamuneTasManifest *pro
     if (project->magic != SUSAMUNE_TAS_MAGIC || project->version != SUSAMUNE_TAS_VERSION ||
         !project->projectId || project->projectId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !project->generation ||
         !SusamuneStateGameValid(project->gameId) || !project->buildCrc || !project->configId ||
-        !project->currentRole || project->currentRole >= SUSAMUNE_TAS_COMPONENTS || project->componentCount < 2 ||
-        project->componentCount > SUSAMUNE_TAS_COMPONENTS || project->reserved ||
+        project->currentRole >= SUSAMUNE_TAS_COMPONENTS || !project->componentCount ||
+        project->componentCount > SUSAMUNE_TAS_COMPONENTS || project->tapeFrames > SUSAMUNE_TAS_MAX_FRAMES ||
+        !project->tape.componentId || project->tape.componentId > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
+        project->tape.packedBytes < 4 || project->tape.packedBytes > SUSAMUNE_TAS_TAPE_MAX_BYTES ||
         !SusamuneStateNameValid(project->name) || !project->name[0] ||
         !(project->startKey[0] | project->startKey[1]) ||
         project->checksum != SusamuneTasManifestCrc(project)) return 0;
     for (i = 0; i < SUSAMUNE_TAS_COMPONENTS; ++i) {
         const struct SusamuneTasComponent *component = &project->components[i];
         if (!component->componentId) {
-            if (component->headerCrc || component->packedBytes || component->role ||
-                component->frames || component->reserved) return 0;
+            if (component->headerCrc || component->packedBytes || component->frames || component->sceneKey) return 0;
             continue;
         }
-        if (component->componentId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || component->role != i ||
+        if (component->componentId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || component->componentId == project->tape.componentId ||
             !component->packedBytes || component->packedBytes > SUSAMUNE_STATE_POOL_EXPANDED_SIZE - total ||
-            component->frames > 4096u || component->reserved) return 0;
+            component->frames > SUSAMUNE_TAS_MAX_FRAMES) return 0;
         for (j = 0; j < i; ++j)
             if (project->components[j].componentId == component->componentId) return 0;
         total += component->packedBytes;
         ++count;
     }
     return count == project->componentCount && project->components[0].componentId &&
-        !project->components[0].frames && project->components[project->currentRole].componentId;
+        !project->components[0].frames && project->components[0].sceneKey == project->sceneKey &&
+        project->components[project->currentRole].componentId;
+}
+
+static inline int SusamuneTasTakeValid(const struct SusamuneTasTakeData *take) {
+    return take->version == SUSAMUNE_TAS_TAPE_VERSION && !take->flags &&
+        take->frames <= SUSAMUNE_TAS_MAX_FRAMES && take->position <= take->frames &&
+        take->transitionCount <= SUSAMUNE_TAS_MAX_TRANSITIONS &&
+        take->transitionCount <= take->frames && (take->originKey[0] | take->originKey[1]) &&
+        !take->reserved[0] && !take->reserved[1] && !take->reserved[2];
+}
+static inline unsigned int SusamuneTasTakeBytes(const struct SusamuneTasTakeData *take) {
+    return 4u + 16u * (take->frames + take->transitionCount);
+}
+static inline int SusamuneTasTapeHeaderValid(const struct SusamuneStateArchiveHeader *h) {
+    return SusamuneStateHeaderValid(h) && h->snapshotVersion == SUSAMUNE_TAS_TAPE_SNAPSHOT &&
+        h->metadataSize == sizeof(struct SusamuneTasTakeData) && h->packedSize >= 4 &&
+        h->packedSize <= SUSAMUNE_TAS_TAPE_MAX_BYTES && h->rawSize == h->packedSize;
+}
+static inline int SusamuneTasTapeMetadataValid(const struct SusamuneStateArchiveHeader *h,
+                                              const struct SusamuneTasTakeData *take) {
+    return SusamuneTasTapeHeaderValid(h) && SusamuneTasTakeValid(take) &&
+        h->sceneKey == take->startScene && h->packedSize == SusamuneTasTakeBytes(take);
 }
 
 #endif

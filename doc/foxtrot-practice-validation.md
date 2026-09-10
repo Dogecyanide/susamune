@@ -11,13 +11,16 @@ they work even when SD storage is unavailable. Pause and free camera do not
 depend on this storage capability.
 
 The tape owns complete 32-byte cache lines and has no ARM reader or writer.
-Only initialized samples up to the current count are read; stage setup
-invalidates that count without clearing unrelated mailbox or model memory.
+Only initialized samples up to the retained count are read. Supported area transitions keep the tape through stage setup; the transition table is separately bounded to 32 entries. An unsupported departure stops the take without clearing it or unrelated mailbox/model memory. SD export copies the used input and transition spans into the owned transfer staging area; ARM does not write the live tape.
 The move frees 65,536 bytes of mod BSS capacity. The requested 768 KiB MEM1
 reservation remains unchanged. Two 236-byte controller histories and under
 512 bytes of camera view state remain in MEM1. No heap is allocated.
 The September 8 timer integration excludes practice holds
 from QFT while preserving the retail director and audio clocks, as described below.
+
+## Current full-level update
+
+The current coordinator host tests validate V2 project publication, separate tape transfer failures, retained detached takes, compatible checkpoint attachment with a full later tape, Other area refusal before world restoration, and unchanged slot/generation protections. The new Wii reboot workflow still needs hardware testing. The short US Dolphin check in `build/foxtrot-tas-zone-proof/complete.json` recorded and replayed 19 frames across the actual Bianco 3 secret portal, with exact endpoint and fingerprint matches and no tape changes. It also exercised X-Shine on Movement speed and Reverse sideways without changing those values. Its shipping baseline is `233FBD49`; Mario positioning was a private setup before recording, and the portal itself used retail collision. Older receipts below cover their stated earlier builds only.
 
 ## Gameplay hold and Step
 
@@ -51,9 +54,7 @@ that edge; it cannot immediately pause itself again by also firing Step.
 New configuration defaults are D-Down Pause/Resume and D-Up Step. Camera,
 Record, Replay and Stop shortcuts are unassigned. Retired spin IDs remain reserved
 and inert, with no menu entries or input generation. Existing configured
-values are not migrated. Practice now has separate Frame advance, Free camera
-and Input replay (experimental) pages, with the selected action's actual bind
-shown and X to rebind it.
+values are not migrated. Practice > TAS projects contains Pause/Resume, Advance and the project actions with inline shortcut editing; Free camera remains a separate page. See `foxtrot-input-replay.md` for retained multi-area tapes and independent SD tape storage.
 
 ### Buffered first actionable update
 

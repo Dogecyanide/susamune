@@ -36,7 +36,7 @@ static_assert(SUSAMUNE_DOLPHIN_STATE_CODEC_PPC_BASE==0x71111000u,"Dolphin scratc
 static_assert(SUSAMUNE_CONSOLE_PRACTICE_TAPE_PPC_BASE+SUSAMUNE_PRACTICE_TAPE_SIZE<=SUSAMUNE_CONSOLE_STATE_CODEC_PPC_BASE,"console tape");
 static_assert(SUSAMUNE_DOLPHIN_PRACTICE_TAPE_PPC_BASE+SUSAMUNE_PRACTICE_TAPE_SIZE<=SUSAMUNE_DOLPHIN_STATE_CODEC_PPC_BASE,"Dolphin tape");
 static_assert(SUSAMUNE_STATE_CODEC_PPC_BASE+SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE<=SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE,"model heap");
-static_assert(SUSAMUNE_STATE_STORAGE_VERSION==6u && SUSAMUNE_STATE_ARCHIVE_VERSION==1u,"wire compatibility");
+static_assert(SUSAMUNE_STATE_STORAGE_VERSION==7u && SUSAMUNE_STATE_ARCHIVE_VERSION==1u,"wire compatibility");
 static_assert(sizeof(SusamuneStateStorageMailbox)==8192u,"fixed mailbox budget");
 '''+function_source(ROOT/'src/savestate.cpp','void *codecWorkspace()')+r'''
 extern "C" {

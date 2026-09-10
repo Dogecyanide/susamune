@@ -183,7 +183,7 @@ public:
         if (mPage == DELETE) {
             menu->drawText("Delete this TAS from SD?", x + 4, y + 32, 17, 17, cRowSel());
             menu->drawText(mName, x + 4, y + 68, 16, 16, cValue());
-            menu->drawText("Its beginning and checkpoint files will be deleted.", x + 4, y + 104, 13, 13, cRow());
+            menu->drawText("Its recording and checkpoint files will be deleted.", x + 4, y + 104, 13, 13, cRow());
             drawHelpLine(menu, x, y, w, h, "A: delete SD project   B: keep. Memory checkpoints stay."); return;
         }
         if (mPage == CONFIRM) {
@@ -204,7 +204,8 @@ public:
             if (mPage == FILES) label = i < fileCount ? files.entries[i].name : i == fileCount ? "Refresh" : "Next page";
             else if (mPage == CHECKPOINTS) {
                 label = checkpointRows[i]; const auto cp = TasProject::checkpoint((i + 1) / 2);
-                if (cp.present) snprintf(value, sizeof(value), "%lu frames", cp.frames);
+                if (cp.present && !cp.loadableHere) memcpy(value, "Other area", 11);
+                else if (cp.present) snprintf(value, sizeof(value), "%lu frames", cp.frames);
                 else memcpy(value, "Empty", 6);
             } else label = mainRows[i];
             drawValueRow(menu, x, listY + (i - start) * ROW_H, w, label, value, i == mSel, false, true);

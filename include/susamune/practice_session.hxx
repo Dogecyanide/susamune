@@ -4,18 +4,20 @@
 #include <Dolphin/types.h>
 #include "susamune/practice_input.h"
 #include "susamune/state_codec.hxx"
+#include "susamune/tas_storage.h"
 
 class Menu;
 
 namespace PracticeSession {
 
-enum { kSavestateSpanCount = 2 };
+enum { kSavestateSpanCount = 3 };
 struct SavestateData {
     u32 version, flags, frames, settingsHash, startFingerprint, frameHash;
     u32 stateKey[2], originKey[2];
     u32 padHash, savedFingerprint, steps, releases;
+    u32 transitionCount, transitionHash;
 };
-static_assert(sizeof(SavestateData) == 56, "practice state metadata size");
+static_assert(sizeof(SavestateData) == 64, "practice state metadata size");
 bool captureSavestate(SavestateData &out,
                       StateCodec::ReadSpan (&spans)[kSavestateSpanCount],
                       bool forceRng = false, bool omitTake = false);
@@ -26,6 +28,10 @@ bool restoreSavestate(const SavestateData &data, u32 slot, u32 generation);
 bool copySavestateBytes(void *destination, const void *source, u32 size);
 bool projectSavestateMatches(const SavestateData &data, const u32 (&startKey)[2],
                              u32 role, u32 frames);
+bool captureTake(SusamuneTasTakeData &out, StateCodec::ReadSpan (&spans)[2]);
+bool restoreTake(const SusamuneTasTakeData &data, const void *frames, const void *transitions,
+                 const SavestateData *loadedCheckpoint = nullptr);
+bool takeBelongsTo(const u32 (&key)[2]);
 
 void init();
 void beforeStageSetup();

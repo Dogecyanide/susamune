@@ -1,20 +1,18 @@
 # Moonshine FOXTROT — latest checks
 
-**V2.3.0 pre-release · Build C66EEB34 · RC1 feedback update**
+**V2.3.0 pre-release · Build C34FF061 · Full-level TAS update**
 
-Keep your earlier RC1 results, including the working third state and readable text. These are the new checks; reuse one short TAS. The full `RC1_TESTING.md` remains available for gaps in the team's earlier coverage.
+Reuse one TAS that enters another area, such as an approach into a secret. Keep earlier RC1 passes; these four checks cover the new behavior. The full `RC1_TESTING.md` remains available for gaps in the team's coverage.
 
 **Tester / platform / game region / English or Japanese download:**
 
-**Make fresh states with this build. Earlier SD states need resaving and will not load in this update.** Settings, records and ghosts are kept.
+**Make new SD states and TAS projects with this build.** Older files need their matching older build. Settings, records and ghosts are kept. Dolphin has no launcher SD service; skip the SD steps there.
 
-- [ ] **Advance with A+B held:** Start a TAS with freecam Off. Hold A+B and tap Advance for a jump-dive. Keep A+B held and tap Advance again: each tap must move one frame, without resetting. Holding Advance should not repeat it. Outside practice pause, check your usual reset still works normally.
-- [ ] **Set shortcuts here:** In Practice > TAS projects, select Pause / Resume or Advance and press X to change its bind; Z clears it. Try assigning Go to Beginning and one checkpoint Save/Go shortcut too. New TAS shortcuts should start unbound. The old separate Frame advance page should be gone.
-- [ ] **Replace a checkpoint:** Save a checkpoint, move farther, then save over it. Cancel once and check the old point remains; then confirm a replacement. Try the other checkpoint using its shortcut. Both ways should ask before overwriting, and holding the shortcut must not repeat it.
-- [ ] **Frame count and replay:** The project name should show a count such as 200/4096. Steps increase the recorded count; waiting in the menu does not. Return to a checkpoint, Continue and make a different ending. The count should follow the new recording, and Replay should use that new ending.
-- [ ] **Sound effects:** Try jumping and spraying while stepping, after Resume, and after returning to a checkpoint. Also load a gameplay state while the game's normal pause screen is open, then jump: effects should be audible. Music restarting is not part of this fix. Report exactly when effects go silent if it still happens.
-- [ ] **SD project — if not checked yet:** Save a named TAS, reboot once and Open it in the same setup/episode. Continue and Replay should work. Use this reboot to check your new binds were kept. No need to repeat an already-passed reboot test just for the sake of it.
+- [ ] **Record through an area change.** New TAS, record a recognisable opening and save Checkpoint 1 before the entrance. Enter the next area normally and record a little more. The recording and frame count must stay; loading/menu waiting must not add input frames. Checkpoint 1 should say Other area and refuse to load until you return there. Return to the Beginning area and Replay: expect the opening, the same entrance and the recorded continuation.
+- [ ] **Save without making a checkpoint.** In the later area, use Save TAS and name it. It should save the whole recording while keeping Checkpoint 1 at its earlier point, with no request for an extra memory slot. Wait for the saved message. A later Save TAS updates the same named project.
+- [ ] **Open after one reboot.** Console: reboot and Open the project in the later area. If neither its selected checkpoint nor Beginning matches, Mario must stay where he is and the recording/count must still open. Return to the Beginning area and Open it again: its Beginning or a compatible checkpoint opens paused, while Replay still includes all recorded inputs. Go to Checkpoint 1: the local recording should rewind to that point. Continue to make a different ending, then save it. The earlier full SD copy stays until this new save. No separate state imports.
+- [ ] **Shined settings.** Before that reboot, add a newer camera setting to Quick and remove one once. Check Movement speed, Reverse sideways, Look sensitivity and Hide all HUD offer Shined; your old stars must stay. After the same reboot, check the chosen star remains.
 
-Japanese testers: include the new shortcut and checkpoint-confirmation text in that same pass. Standard Moonshine should stay English on JP. There is no need to repeat Pinna 1, streaks, camera settings or all three ordinary state slots for this update.
+The take holds **4096 input frames and 32 area changes**. You do not need to hit both limits. If recording stops unexpectedly, check the existing take/count remains available to save and report the exact message. Standard Moonshine should still be English on JP; Japanese testers can check the new text during the same pass.
 
-For a problem, send **build checksum, route/episode or menu, what you pressed, and the exact message**. A photo or short clip helps. No long report needed.
+For a problem, send **build checksum, route/episode, what you pressed, and the exact message**. A photo or short clip helps.

@@ -27,6 +27,8 @@ class LoadHoldTests(unittest.TestCase):
                 "bool activatePendingLoadHold(", "void armLoadHold(",
                 "void cancelLoadHold(", "void onSavestateLoaded()",
                 "bool paused()", "bool manualPaused()",
+                "u32 hashBytes(", "bool validSceneKey(", "void stopTape(",
+                "bool suspendForScene(", "bool activateTimelineArrival(",
                 "void beforeDirect(", 'extern "C" s32 susamunePracticeChangeState(',
                 "void afterDirect(", "void beforeStageSetup()",
                 "void releaseForDeparture()", "void requestStop()"))
@@ -34,17 +36,19 @@ class LoadHoldTests(unittest.TestCase):
         source.write_text(r'''
 #include "Dolphin/types.h"
 #include "susamune/practice_input.h"
+#include "susamune/tas_storage.h"
+static unsigned meaningCalls;
 struct TMarioGamePad {
     u8 prefix[0xe2];u16 flags;u32 padding;s32 _E8;
     struct { bool mDisable; } mState;
-    void updateMeaning() {}
+    void updateMeaning() {++meaningCalls;}
 };
 static_assert(__builtin_offsetof(TMarioGamePad,_E8)==0xe8,"retail pad gate offset");
 struct TMarDirector {
-    enum { STATE_GAME_STARTING=2,STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_STAGE_EXIT_2=12 };
+    enum { STATE_GAME_STARTING=2,STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_STAGE_EXIT=9,STATE_STAGE_EXIT_2=12 };
     u32 mCurState,mGameState,mDemoState;
 };
-struct TApplication { enum { CONTEXT_DIRECT_MAIN_LOOP=1 };TMarioGamePad *mGamePads[1]; };
+struct TApplication { enum { CONTEXT_DIRECT_MAIN_LOOP=1,CONTEXT_DIRECT_STAGE=5,CONTEXT_DIRECT_MOVIE=6 };TMarioGamePad *mGamePads[1]; };
 struct Mario { u32 mState; };
 static TMarioGamePad pad;
 static TMarDirector director;
@@ -58,6 +62,12 @@ static bool sConsumedFrame,sStepping,sModal,sFrameInjected,sRecord,sReplay,sFree
 static bool sBorrowedPause,sAssisted;
 static bool sTakeAttached,sModalPadValid;
 static u32 sEditRevision;
+static SusamuneTasTransition sTransitions[32];
+static u32 sTransitionCount,sTransitionCursor,sStartScene,sTransitionFrom,sTapeStage,sTapeHash;
+static u8 sTransitionMode;
+static u16 sLoadWait,sStartRelease;
+static bool sTransitionSetup,sTransitionPaused,sArrivalResume;
+static u32 liveScene,liveFingerprint,neutralizations;
 static u32 sTakePosition,sOriginKey[2],sPendingReleases;
 static u16 sLoadHoldButtons,sStripButtons,sBeforeRead;
 static u8 sMenuAction,sLoadKind;
@@ -95,13 +105,14 @@ bool observerTransition() {return transition;}
 bool assisted() {return sAssisted;}
 bool actionsFastForwardActive() {return false;}
 u32 settingsHash() {return 0;}
-u32 fingerprint() {return 0;}
-void message(const char *) {}
+u32 fingerprint() {return liveFingerprint;}
+u32 currentSceneKey(){return liveScene;}
+void message(const char *text) {sStatus=text;}
 void invalidate() {++invalidations;sAssisted=true;}
 void restoreCamera() {}
 void updateCamera() {}
-void stopTape(const char *) {sRecord=sReplay=false;sLoadKind=0;}
-void inject(const SusamunePracticeInput &,TMarioGamePad *) {}
+void stopTape(const char *);
+void inject(const SusamunePracticeInput &,TMarioGamePad *,u32 releases=0) {if(releases==0x1fffff)++neutralizations;}
 void writeFrame(Frame &f,const SusamunePracticeInput&i,u32 h,u32){f.input=i;f.fingerprint=h;}
 void consumeControlInput() {}
 void retainPausedReleases(TMarioGamePad *) {}
@@ -121,6 +132,10 @@ extern "C" __declspec(dllexport) void reset(unsigned state,unsigned modes) {
     sLoadHoldButtons=sStripButtons=sBeforeRead=sMenuAction=sLoadKind=0;
     sReadPad=0;sCamera=0;mario.mState=0;
     sSteps=sSettingsHash=sCount=sCursor=sTapeSeed=sStageGeneration=0;
+    sTransitionCount=sTransitionCursor=sTransitionFrom=sTapeStage=sTapeHash=0;
+    sLoadWait=sStartRelease=sTransitionMode=0;sTransitionSetup=sTransitionPaused=sArrivalResume=false;
+    liveScene=sStartScene=0x02000000;liveFingerprint=neutralizations=meaningCalls=0;
+    sOriginKey[0]=sOriginKey[1]=sTakePosition=0;sTakeAttached=sModalPadValid=false;
     invalidations=retailCalls=begins=ends=0;Ghost::frozen=false;
 }
 extern "C" __declspec(dllexport) unsigned stopReplay() {
@@ -156,6 +171,28 @@ extern "C" __declspec(dllexport) unsigned status() {
 extern "C" __declspec(dllexport) unsigned mask() {return sLoadHoldButtons;}
 extern "C" __declspec(dllexport) unsigned pauseViews() {return paused()|(manualPaused()<<1);}
 extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
+extern "C" __declspec(dllexport) void depart(unsigned paused) {
+    sRecord=sTakeAttached=true;sOriginKey[1]=77;sPaused=paused!=0;
+    sHaveRead=true;sReadPad=&pad;sConsumed.buttons=0x100;
+    director.mCurState=9;afterDirect(1,true);
+}
+extern "C" __declspec(dllexport) void replayZone(unsigned destination,unsigned hash) {
+    sReplay=sTakeAttached=true;sOriginKey[1]=77;sCount=3;sCursor=0;
+    sTransitions[0]={1,0,sStartScene,destination,hash};sTransitionCount=1;
+    sHaveRead=sFrameInjected=true;sReadPad=&pad;
+    sFrames[0].fingerprint=liveFingerprint;director.mCurState=9;afterDirect(1,true);
+}
+extern "C" __declspec(dllexport) void scene(unsigned scene,unsigned hash) {liveScene=scene;liveFingerprint=hash;}
+extern "C" __declspec(dllexport) void fullZones() {sTransitionCount=32;sTransitions[31]={0,0,sStartScene,sStartScene,0};}
+extern "C" __declspec(dllexport) void endAtZone(){sCount=sCursor;}
+extern "C" __declspec(dllexport) unsigned timeline(unsigned field) {
+    switch(field){case 0:return sCount;case 1:return sTransitionCount;case 2:return sTransitionMode;
+    case 3:return sRecord;case 4:return sReplay;case 5:return sTakeAttached;case 6:return sFrames[0].input.buttons;
+    case 7:return sOriginKey[1];case 8:return sCursor;case 9:return neutralizations;case 10:return sTransitions[0].frame;
+    case 11:return sTransitions[0].fromScene;case 12:return sTransitions[0].toScene;case 13:return sTransitions[0].startFingerprint;
+    case 14:return sStageGeneration;case 15:return sAssisted;case 16:return meaningCalls;default:return 0;}
+}
+extern "C" __declspec(dllexport) const char*text(){return sStatus;}
 ''', encoding="ascii")
         library = source.with_suffix(".dll")
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
@@ -165,6 +202,7 @@ extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
         cls.lib = C.CDLL(str(library))
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         cls.lib.status.restype = C.c_uint
+        cls.lib.text.restype = C.c_char_p
 
     def start(self, state=4, modes=0, buttons=0x102, bind=2):
         self.lib.reset(state, modes)
@@ -174,6 +212,84 @@ extern "C" __declspec(dllexport) void step() {sStepQueued=true;}
 
     def low(self):
         return self.lib.status() & 255
+
+    def arrive_zone(self, scene=0x2F000001, fingerprint=123):
+        self.lib.lifecycle(0)
+        self.lib.state(2)
+        self.lib.scene(scene, fingerprint)
+        self.lib.change(4, 1)
+
+    def test_zone_entry_input_recorded_before_loading_suspends_tape(self):
+        self.lib.reset(4, 0); self.lib.depart(1)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 3, 5, 6, 7)], [1, 1, 1, 0, 0x100, 77])
+        self.lib.after(5)
+        self.assertEqual(self.lib.timeline(0), 1)
+
+    def test_setup_retains_tape_and_origin_then_arrival_gets_exact_marker(self):
+        self.lib.reset(4, 0); self.lib.depart(1); self.arrive_zone()
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3, 5, 7)], [1, 1, 0, 1, 1, 77])
+        self.assertEqual([self.lib.timeline(i) for i in (9, 10, 11, 12, 13, 14, 15)],
+                         [1, 1, 0x02000000, 0x2F000001, 123, 1, 1])
+        self.assertTrue(self.low() & 32)  # Retail transition cannot consume the arrival tick.
+        self.assertEqual(self.lib.timeline(16), 0)  # No extra retail controller-timer decrement.
+        self.lib.after(1); self.lib.before(0)
+        self.assertTrue(self.low() & 8)
+
+    def test_running_tas_resumes_after_single_arrival_barrier(self):
+        self.lib.reset(4, 0); self.lib.depart(0); self.arrive_zone()
+        self.assertTrue(self.low() & 32)
+        self.lib.after(1); self.lib.before(0)
+        self.assertFalse(self.low() & (4 | 8))
+        self.assertEqual(self.lib.timeline(0), 1)
+
+    def test_replay_waits_through_load_and_validates_new_scene(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 8)], [3, 2, 1, 1])
+        self.arrive_zone()
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 8)], [3, 0, 1, 1, 1])
+
+    def test_replay_wrong_destination_or_arrival_hash_freezes_and_keeps_take(self):
+        for scene, fingerprint in ((0x2F000002, 123), (0x2F000001, 456)):
+            with self.subTest(scene=scene, fingerprint=fingerprint):
+                self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123)
+                self.arrive_zone(scene, fingerprint)
+                self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 7)], [3, 0, 0, 0, 77])
+                self.assertTrue(self.low() & 8)
+                self.assertTrue(self.low() & 32)
+                self.assertIn(b"differed", self.lib.text())
+
+    def test_replay_ending_at_arrival_remains_paused_without_extra_gameplay_frame(self):
+        self.lib.reset(4, 0); self.lib.replayZone(0x2F000001, 123); self.lib.endAtZone()
+        self.arrive_zone(); self.lib.after(1); self.lib.before(0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 4, 5, 8)], [1, 0, 0, 1, 1])
+        self.assertTrue(self.low() & 8)
+        self.assertTrue(self.low() & 4)
+        self.assertIn(b"finished", self.lib.text())
+
+    def test_arrival_waits_for_real_mario_control_and_not_just_loaded_area(self):
+        self.lib.reset(4, 0); self.lib.depart(1); self.lib.lifecycle(0)
+        self.lib.scene(0x2F000001, 123); self.lib.gates(0, 0, 0, 0)
+        self.lib.change(4, 1)
+        self.assertEqual(self.lib.timeline(2), 1)
+        self.assertEqual(self.lib.timeline(1), 0)
+        self.lib.gates(2, 0, 0, 0); self.lib.change(4, 1)
+        self.assertEqual(self.lib.timeline(1), 1)
+
+    def test_manual_warp_and_unexpected_setup_keep_unsaved_prefix(self):
+        self.lib.reset(4, 0); self.lib.depart(1)
+        self.lib.lifecycle(1)
+        self.lib.lifecycle(0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3, 5, 7)], [1, 0, 0, 0, 0, 77])
+
+    def test_canceled_zone_keeps_unsaved_prefix_detached(self):
+        self.lib.reset(4, 0); self.lib.depart(0); self.lib.state(4); self.lib.before(0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 2, 3, 5, 7)], [1, 0, 0, 0, 77])
+        self.assertIn(b"canceled", self.lib.text())
+
+    def test_transition_limit_stops_without_erasing_zone_entry_or_older_markers(self):
+        self.lib.reset(4, 0); self.lib.fullZones(); self.lib.depart(0)
+        self.assertEqual([self.lib.timeline(i) for i in (0, 1, 2, 3, 7)], [1, 32, 0, 0, 77])
+        self.assertIn(b"limit", self.lib.text())
 
     def test_normal_restore_holds_subset_and_release_resumes_without_pausing(self):
         self.start(bind=0x42, buttons=0x142)

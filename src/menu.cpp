@@ -3885,7 +3885,6 @@ private:
             const SettingId id = (SettingId)i;
             const bool include = isStarred()
                     ? Settings::favoriteable(id) &&
-                          Settings::category(id) != SETTING_CAT_HIDDEN &&
                           gSettings.favorite(id)
                     : Settings::category(id) == (SettingCategory)mCat;
             if (include) {
@@ -5841,6 +5840,7 @@ public:
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
     bool suppressesBinds() const override { return true; }
+    bool favoriteHint() const override { return mSel >= 2 && mSel <= 5; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         const u32 nav = menu->navigationInput(pad);
         if (mBinding || gBinds.recording()) {
@@ -5856,10 +5856,16 @@ public:
         if (nav & TMarioGamePad::CSTICK_DOWN) mSel = (u8)wrap(mSel + 1, rowCount());
         if (mSel >= 2 && mSel <= 5 &&
             (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))
-            gSettings.cycle(cameraSetting(),
+            gSettings.cycle(cameraSetting(mSel),
                 (nav & TMarioGamePad::CSTICK_LEFT) ? -1 : 1);
         const u16 pressed = mInput.update();
         const BindId bind = selectedBind();
+        if ((pressed & JUTGamePad::X) && favoriteHint()) {
+            const SettingId id = cameraSetting(mSel);
+            gSettings.toggleFavorite(id);
+            menu->toast(gSettings.favorite(id) ? "Added to Shined" : "Removed from Shined");
+            return;
+        }
         if ((pressed & JUTGamePad::X) && bind != BIND_COUNT) {
             mBinding = true;
             gBinds.beginRecord(bind);
@@ -5903,7 +5909,8 @@ public:
         const int start = listScrollStart(mSel, rowCount(), listH / ROW_H);
         const int end = clampi(start + listH / ROW_H, 0, rowCount());
         for (int i = start; i < end; ++i)
-            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, labels[i], values[i], i == mSel, false, true);
+            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, labels[i], values[i], i == mSel,
+                i >= 2 && i <= 5 && gSettings.favorite(cameraSetting(i)), true);
         drawScrollHints(menu, x, listY, w, listH, start, end, rowCount());
         const BindId bind = selectedBind();
         if (bind != BIND_COUNT) {
@@ -5916,11 +5923,11 @@ public:
             "Hold your new buttons, then release to save. C-stick cancels." : help());
     }
 private:
-    SettingId cameraSetting() const {
+    static SettingId cameraSetting(int row) {
         static const SettingId ids[] = {SETTING_FREE_CAMERA_SPEED,
             SETTING_FREE_CAMERA_STRAFE_REVERSE, SETTING_FREE_CAMERA_SENSITIVITY,
             SETTING_FREE_CAMERA_HIDE_HUD};
-        return ids[mSel - 2];
+        return ids[row - 2];
     }
     int rowCount() const { return 7; }
     BindId selectedBind() const {
@@ -5969,7 +5976,7 @@ public:
              "Hide all HUD removes overlays for filming.", "Turn camera Off, then Resume to play."},
             {"TAS PROJECTS", "Practice: TAS projects, then New TAS.", "The beginning is captured automatically.",
              "Continue edits while paused; Step or Resume.", "Checkpoints save places to return to.",
-             "Save TAS keeps everything together on SD.", "Open TAS restores its current checkpoint.", "Replay stops if the recorded state does not match."},
+             "Save TAS keeps everything together on SD.", "Open TAS keeps the full saved recording.", "Replay stops if the recorded state does not match."},
             {"TAS PRACTICE", "The timer stops while frame advance is paused.",
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",

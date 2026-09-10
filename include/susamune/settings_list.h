@@ -201,7 +201,15 @@
     X(SETTING_FREE_CAMERA_SPEED,             "free_camera_speed")            \
     X(SETTING_FREE_CAMERA_STRAFE_REVERSE,    "free_camera_strafe_reverse")      \
     X(SETTING_FREE_CAMERA_SENSITIVITY,       "free_camera_sensitivity")         \
-    X(SETTING_FREE_CAMERA_HIDE_HUD,          "free_camera_hide_hud")
+    X(SETTING_FREE_CAMERA_HIDE_HUD,          "free_camera_hide_hud")           \
+    X(SETTING_FAVORITES_EXTRA_0,             "favorites_extra_0")             \
+    X(SETTING_FAVORITES_EXTRA_1,             "favorites_extra_1")             \
+    X(SETTING_FAVORITES_EXTRA_2,             "favorites_extra_2")             \
+    X(SETTING_FAVORITES_EXTRA_3,             "favorites_extra_3")             \
+    X(SETTING_FAVORITES_EXTRA_4,             "favorites_extra_4")             \
+    X(SETTING_FAVORITES_EXTRA_5,             "favorites_extra_5")             \
+    X(SETTING_FAVORITES_EXTRA_6,             "favorites_extra_6")             \
+    X(SETTING_FAVORITES_EXTRA_7,             "favorites_extra_7")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

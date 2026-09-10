@@ -18,14 +18,25 @@ class Context(C.Structure):
 
 class Component(C.Structure):
     _fields_ = [(name, C.c_uint) for name in
-                ('id', 'crc', 'packed', 'role', 'frames', 'reserved')]
+                ('id', 'crc', 'packed', 'frames', 'scene')]
+
+
+class Tape(C.Structure):
+    _fields_ = [(name, C.c_uint) for name in ('id', 'crc', 'packed')]
+
+
+class TakeData(C.Structure):
+    _fields_ = [(name, C.c_uint) for name in
+                ('version', 'flags', 'frames', 'position', 'settings', 'startFingerprint',
+                 'frameHash', 'transitions', 'transitionHash', 'startScene', 'endScene')] + [
+        ('origin', C.c_uint * 2), ('reserved', C.c_uint * 3)]
 
 
 class Project(C.Structure):
     _fields_ = [(name, C.c_uint) for name in
                 ('magic', 'version', 'id', 'generation', 'game', 'build', 'config',
-                 'scene', 'current', 'count', 'checksum', 'reserved')] + [
-        ('name', C.c_char * 32), ('components', Component * 3), ('start', C.c_uint * 2)]
+                 'scene', 'current', 'count', 'checksum', 'tapeFrames')] + [
+        ('name', C.c_char * 32), ('components', Component * 3), ('tape', Tape), ('start', C.c_uint * 2)]
 
     def seal(self):
         self.checksum = 0
@@ -78,11 +89,15 @@ class TasStorageKernelTests(unittest.TestCase):
         self.assertEqual(self.finish(), OK)
         return self.result_id()
 
-    def export_component(self, id, role, published=None, data=None):
+    def export_component(self, id, role, published=None, data=None, scene=0x10203):
         if data is None:
             data = bytes(range(251)) * 171 + bytes([role])
         meta = b'opaque profile and tape sidecar'
         self.lib.prepare(self.buffer(data), len(data), 32, self.buffer(meta), len(meta))
+        header = Header.from_address(self.lib.mailbox() + 96)
+        header.sceneKey = scene
+        header.headerCrc = 0
+        header.headerCrc = zlib.crc32(bytes(header))
         self.context(id, 0, published.generation if published else 0, role,
                      published.checksum if published else 0)
         self.lib.submit(EXPORT, 0, 32, len(data), 0, 11)
@@ -90,16 +105,39 @@ class TasStorageKernelTests(unittest.TestCase):
         component = self.result_id()
         archive = self.file(id, f'state_{component:08d}.mss')
         h = Header.from_buffer_copy(archive)
-        return Component(component, h.headerCrc, h.packedSize, role, 0 if role == 0 else 12), archive
+        return Component(component, h.headerCrc, h.packedSize, 0 if role == 0 else 12, scene), archive
+
+    def export_tape(self, id, published=None, frames=12, transitions=0):
+        take = TakeData(1, 0, frames, frames, 123, 456, 789, transitions, 321, 0x10203, 0x10203)
+        take.origin[0] = 12345
+        payload = bytes(4) + bytes((i % 251 for i in range(16 * (frames + transitions))))
+        self.lib.prepare(self.buffer(payload), len(payload), 32, self.buffer(bytes(take)), 64)
+        header = Header.from_address(self.lib.mailbox() + 96)
+        header.snapshotVersion = 0x54415001
+        header.rawSize = header.packedSize
+        header.headerCrc = 0
+        header.headerCrc = zlib.crc32(bytes(header))
+        C.memmove(self.lib.staging(), payload, len(payload))
+        self.context(id, 0, published.generation if published else 0, 3,
+                     published.checksum if published else 0)
+        self.lib.submit(EXPORT, 0, 0, len(payload), 0, 11)
+        self.assertEqual(self.finish(), OK)
+        component = self.result_id()
+        archive = self.file(id, f'state_{component:08d}.mss')
+        h = Header.from_buffer_copy(archive)
+        self.assertEqual(archive[160:], payload)
+        return Tape(component, h.headerCrc, h.packedSize), archive
 
     def unpublished(self):
         id = self.begin()
         start, _ = self.export_component(id, 0)
         take, _ = self.export_component(id, 1)
-        project = Project(0x4D535450, 1, id, 1, 0x474D534A, 123, 6789, 0x10203, 1, 2)
+        project = Project(0x4D535450, 2, id, 1, 0x474D534A, 123, 6789, 0x10203, 1, 2)
         project.name = b'Plaza take'
         project.start[0] = 12345
         project.components[0], project.components[1] = start, take
+        project.tape, _ = self.export_tape(id)
+        project.tapeFrames = 12
         return project.seal()
 
     def published(self):
@@ -215,6 +253,7 @@ class TasStorageKernelTests(unittest.TestCase):
         for part in project.components:
             if part.id:
                 self.assertIsNone(self.file(project.id, f'state_{part.id:08d}.mss'))
+        self.assertIsNone(self.file(project.id, f'state_{project.tape.id:08d}.mss'))
         self.lib.reboot()
         self.command(READ, project.id)
         self.assertEqual(self.finish(), NOT_FOUND)
@@ -282,7 +321,7 @@ class TasStorageKernelTests(unittest.TestCase):
                     component.id = 99
                     project.seal()
                 else:
-                    project.scene ^= 1
+                    project.components[1].scene ^= 1
                     project.seal()
                 self.command(COMMIT, project.id, project=project)
                 self.assertEqual(self.finish(), NOT_FOUND if fault == 'missing' else BAD)
@@ -346,6 +385,8 @@ class TasStorageKernelTests(unittest.TestCase):
             candidate = Project.from_buffer_copy(bytes(current))
             candidate.generation = generation
             candidate.components[1] = replacement
+            candidate.tape, tape_archive = self.export_tape(current.id, current, frames=generation * 20)
+            candidate.tapeFrames = generation * 20
             candidate.seal()
             retired = previous.components[1].id if previous else None
             self.command(COMMIT, current.id, current.checksum, candidate)
@@ -353,6 +394,9 @@ class TasStorageKernelTests(unittest.TestCase):
             self.assertEqual(bytes(self.returned()), bytes(candidate))
             if retired is not None:
                 self.assertIsNone(self.file(current.id, f'state_{retired:08d}.mss'))
+                self.assertIsNone(self.file(current.id, f'state_{previous.tape.id:08d}.mss'))
+            self.assertIsNotNone(self.file(current.id, f'state_{current.tape.id:08d}.mss'))
+            self.assertEqual(self.file(current.id, f'state_{candidate.tape.id:08d}.mss'), tape_archive)
             self.assertIsNotNone(self.file(current.id, f'state_{current.components[1].id:08d}.mss'))
             self.assertEqual(self.file(current.id, f'state_{replacement.id:08d}.mss'), archive)
             self.assertEqual(self.file(current.id, start_leaf), start_bytes)
@@ -366,6 +410,7 @@ class TasStorageKernelTests(unittest.TestCase):
         self.assertEqual(self.file(current.id, 'project.b'), bytes(current))
         self.assertEqual(self.file(current.id, 'project.a'), bytes(renamed))
         self.assertIsNone(self.file(current.id, f'state_{previous.components[1].id:08d}.mss'))
+        self.assertIsNone(self.file(current.id, f'state_{previous.tape.id:08d}.mss'))
         self.assertEqual(self.file(current.id, start_leaf), start_bytes)
         self.assertEqual(self.file(current.id, orphan_leaf), orphan_bytes)
         self.assertEqual(self.file(current.id, 'notes.txt'), b'User notes')
@@ -396,6 +441,68 @@ class TasStorageKernelTests(unittest.TestCase):
         self.lib.unlinkFailure(0)
         self.lib.reboot()
         self.assertEqual(bytes(self.read(first.id)), bytes(third))
+
+    def test_zero_frame_project_needs_only_beginning_and_nonempty_tape_envelope(self):
+        id = self.begin()
+        start, _ = self.export_component(id, 0)
+        tape, archive = self.export_tape(id, frames=0)
+        project = Project(0x4D535450, 2, id, 1, 0x474D534A, 123, 6789, 0x10203, 0, 1)
+        project.name = b'New empty take'; project.start[0] = 12345
+        project.components[0] = start; project.tape = tape; project.seal()
+        self.assertEqual(archive[160:], bytes(4))
+        self.command(COMMIT, id, project=project)
+        self.assertEqual(self.finish(), OK)
+        self.assertEqual(bytes(self.returned()), bytes(project))
+
+    def test_checkpoint_scenes_are_individual_and_tape_can_import_with_full_pool(self):
+        project = self.published()
+        replacement, _ = self.export_component(project.id, 2, project, scene=0x34000003)
+        tape, archive = self.export_tape(project.id, project, frames=4096, transitions=32)
+        candidate = Project.from_buffer_copy(bytes(project)); candidate.generation += 1
+        candidate.components[2] = replacement; candidate.count = 3; candidate.current = 2
+        candidate.tape = tape; candidate.tapeFrames = 4096; candidate.seal()
+        self.command(COMMIT, project.id, project.checksum, candidate)
+        self.assertEqual(self.finish(), OK)
+        pool = C.string_at(self.lib.pool(), self.lib.poolSize())
+        extra = C.string_at(self.lib.extra(), self.lib.expandedSize() - self.lib.poolSize())
+        for role, part in ((2, replacement), (3, tape)):
+            self.context(project.id, part.id, candidate.generation, role, candidate.checksum)
+            self.lib.submit(IMPORT, part.id, 0, part.packed, part.crc, 11)
+            self.assertEqual(self.finish(), OK)
+        self.assertEqual(C.string_at(self.lib.staging(), tape.packed), archive[160:])
+        self.assertEqual(C.string_at(self.lib.pool(), self.lib.poolSize()), pool)
+        self.assertEqual(C.string_at(self.lib.extra(), len(extra)), extra)
+
+    def test_valid_outer_checksums_cannot_publish_bad_tape_identity_or_shape(self):
+        for fault in ('origin', 'frames', 'flags', 'reserved', 'version', 'length', 'prefix', 'payload_crc'):
+            with self.subTest(fault=fault):
+                self.setUp(); project = self.published()
+                tape, archive = self.export_tape(project.id, project)
+                raw = bytearray(archive); h = Header.from_buffer(raw); take = TakeData.from_buffer(raw, 96)
+                if fault == 'origin': take.origin[0] += 1
+                elif fault == 'frames': take.frames = take.position = 11
+                elif fault == 'flags': take.flags = 1
+                elif fault == 'reserved': take.reserved[2] = 1
+                elif fault == 'version': take.version = 2
+                elif fault == 'length': h.rawSize += 4
+                elif fault == 'prefix': raw[160] = 1
+                elif fault == 'payload_crc': raw[-1] ^= 1
+                h.metadataCrc = zlib.crc32(raw[96:160])
+                if fault != 'payload_crc': h.payloadCrc = zlib.crc32(raw[160:])
+                h.headerCrc = 0; h.headerCrc = zlib.crc32(raw[:96]); tape.crc = h.headerCrc
+                self.add(project.id, f'state_{tape.id:08d}.mss', raw)
+                candidate = Project.from_buffer_copy(bytes(project)); candidate.generation += 1
+                candidate.tape = tape; candidate.seal()
+                self.command(COMMIT, project.id, project.checksum, candidate)
+                self.assertEqual(self.finish(), BAD)
+                self.assertEqual(bytes(self.read(project.id)), bytes(project))
+
+    def test_previous_manifest_version_is_rejected_without_overwriting_it(self):
+        project = self.published(); old = Project.from_buffer_copy(bytes(project)); old.version = 1; old.seal()
+        self.add(project.id, 'project.a', bytes(old)); self.lib.reboot()
+        self.command(READ, project.id)
+        self.assertEqual(self.finish(), BAD)
+        self.assertEqual(self.file(project.id, 'project.a'), bytes(old))
 
 
 if __name__ == '__main__':

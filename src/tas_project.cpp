@@ -10,13 +10,15 @@ extern SavestateManager *gSavestateMgr;
 
 namespace TasProject {
 namespace {
-enum Phase { IDLE, CAPTURE, STARTING, BEGIN_SAVE, EXPORT, COMMIT, READ, PLAN_OPEN, IMPORT, LOAD, CATALOG, RENAME, DELETE };
+enum Phase { IDLE, CAPTURE, STARTING, BEGIN_SAVE, EXPORT, COMMIT, READ, PLAN_OPEN, IMPORT, LOAD, CATALOG, RENAME, DELETE, TAPE_EXPORT, TAPE_IMPORT };
 struct Ref { u32 slot, generation, key[2]; };
 Ref sRefs[3], sPlan[3];
 u32 sPublishedKeys[3][2], sSavedRevision;
 SusamuneTasManifest sSaved, sPending;
 u32 sPhase, sRole, sCurrent, sPreviousCrc;
-bool sActive, sDirty, sReplace, sNew, sSaving, sOpening, sCatalogReady, sOverwrite;
+bool sActive, sDirty, sReplace, sNew, sOpening, sCatalogReady, sOverwrite;
+bool sHaveCheckpoint;
+PracticeSession::SavestateData sLoadedCheckpoint;
 const char *sStatus = "New TAS captures your beginning automatically.";
 
 bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
@@ -29,7 +31,7 @@ bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
     return true;
 }
 void finish(const char *text) {
-    sPhase = IDLE; sReplace = sNew = sSaving = sOpening = sOverwrite = false; sStatus = text;
+    sPhase = IDLE; sReplace = sNew = sOpening = sOverwrite = false; sStatus = text;
 }
 void failed(u32 result) {
     finish(result == SUSAMUNE_STATE_FULL ? "Not enough room; existing saved TAS files are safe." :
@@ -74,6 +76,25 @@ SusamuneTasRequest context(u32 role, u32 component) {
     request.checksum = SusamuneTasRequestCrc(&request);
     return request;
 }
+void exportTape() {
+    SusamuneTasTakeData take;
+    StateCodec::ReadSpan spans[2];
+    if (!PracticeSession::captureTake(take, spans) ||
+        take.originKey[0] != sRefs[0].key[0] || take.originKey[1] != sRefs[0].key[1] ||
+        take.startScene != sPending.sceneKey) {
+        finish("This recording cannot be saved with its Beginning."); return;
+    }
+    SusamuneStateArchiveHeader identity = {};
+    identity.gameId = sPending.gameId; identity.buildCrc = sPending.buildCrc;
+    identity.configId = sPending.configId; identity.sceneKey = sPending.sceneKey;
+    memcpy(identity.name, sPending.name, sizeof(identity.name));
+    const auto request = context(SUSAMUNE_TAS_TAPE_ROLE, 0);
+    if (!StateStorage::startTapeExport(identity, take, spans[0].data, spans[1].data, request)) {
+        failed(SUSAMUNE_STATE_BAD_REQUEST); return;
+    }
+    sPending.tapeFrames = take.frames;
+    sPhase = TAPE_EXPORT; sStatus = "Saving TAS recording. Keep SD connected.";
+}
 void nextExport() {
     while (sRole < 3) {
         if (!valid(sRefs[sRole])) { ++sRole; continue; }
@@ -87,13 +108,7 @@ void nextExport() {
         break;
     }
     if (sRole == 3) {
-        sPending.generation = sSaved.generation + 1;
-        if (!sPending.generation) { finish("TAS save version limit reached; use a new project."); return; }
-        sPending.checksum = SusamuneTasManifestCrc(&sPending);
-        if (!SusamuneTasManifestValid(&sPending) ||
-            !StateStorage::projectCommit(sPending, sPreviousCrc)) { failed(SUSAMUNE_STATE_BAD_REQUEST); return; }
-        sPhase = COMMIT; sStatus = "Finishing TAS save...";
-        return;
+        exportTape(); return;
     }
     const SusamuneTasRequest request = context(sRole, 0);
     if (!gSavestateMgr->exportSlotExplicit(sRefs[sRole].slot, sRefs[sRole].generation, &request)) {
@@ -104,14 +119,24 @@ void nextExport() {
 void beginExports() {
     memset(sPending.components, 0, sizeof(sPending.components));
     sPending.componentCount = 0;
-    sPending.currentRole = sCurrent;
+    sPending.currentRole = valid(sRefs[sCurrent]) ? sCurrent : 0;
     sPending.startKey[0] = sRefs[0].key[0]; sPending.startKey[1] = sRefs[0].key[1];
     sRole = 0; nextExport();
+}
+void importTape() {
+    if (!StateStorage::startTapeImport(sPending)) { failed(SUSAMUNE_STATE_BAD_REQUEST); return; }
+    sPhase = TAPE_IMPORT; sStatus = "Opening TAS recording...";
 }
 void nextImport() {
     while (sRole < 3 && !sPending.components[sRole].componentId) ++sRole;
     if (sRole == 3) {
-        sRole = sPending.currentRole; sPhase = LOAD;
+        sHaveCheckpoint = false;
+        sRole = sPending.currentRole;
+        if (gSavestateMgr->slotSceneKey(sPlan[sRole].slot) != gSavestateMgr->currentSceneKey()) sRole = 0;
+        if (gSavestateMgr->slotSceneKey(sPlan[sRole].slot) != gSavestateMgr->currentSceneKey()) {
+            importTape(); return;
+        }
+        sPhase = LOAD;
         sStatus = "Opening the current TAS checkpoint..."; return;
     }
     const SusamuneTasComponent &component = sPending.components[sRole];
@@ -156,7 +181,8 @@ const char *roleName(u32 role) {
 Checkpoint checkpoint(u32 role) {
     PracticeSession::SavestateData data;
     const bool present = active() && role < 3 && valid(sRefs[role], &data);
-    return {present, present ? data.frames : 0};
+    return {present, present ? data.frames : 0,
+        present && gSavestateMgr->slotSceneKey(sRefs[role].slot) == gSavestateMgr->currentSceneKey()};
 }
 bool replacementNeeded() { return sReplace; }
 bool replacementAllowed(u32 slot) {
@@ -181,7 +207,7 @@ bool newProject() {
     if (!ready() || !PracticeSession::projectAvailable()) {
         sStatus = "Start a TAS when Mario can move in the level."; return false;
     }
-    sNew = true; sRole = 0; sPhase = CAPTURE; sSaving = false;
+    sNew = true; sRole = 0; sPhase = CAPTURE;
     if (active() && valid(sRefs[0])) sPlan[0] = sRefs[0];
     else chooseEmpty();
     return true;
@@ -192,7 +218,7 @@ static bool captureCheckpoint(u32 role, bool confirm) {
         sStatus = "Continue or open this TAS before saving a checkpoint."; return false;
     }
     PracticeSession::pauseForCheckpoint();
-    sRole = role; sPhase = CAPTURE; sNew = sSaving = false;
+    sRole = role; sPhase = CAPTURE; sNew = false;
     if (valid(sRefs[role])) {
         sPlan[role] = sRefs[role];
         sOverwrite = confirm;
@@ -231,9 +257,14 @@ bool dispatchShortcut(BindId id) {
 }
 bool loadCheckpoint(u32 role) {
     if (!ready() || !checkpoint(role).present) { sStatus = "This checkpoint has not been saved yet."; return false; }
+    if (!checkpoint(role).loadableHere) {
+        sStatus = role ? "This checkpoint is in another area. Return there to load it." :
+            "Return to the area where this TAS begins, then Go to Beginning.";
+        return false;
+    }
     if (!role) {
-        if (!PracticeSession::attachedTo(sRefs[0].key)) {
-            sStatus = "Load one of this TAS's checkpoints first."; return false;
+        if (!PracticeSession::takeBelongsTo(sRefs[0].key)) {
+            sStatus = "Open this TAS or load one of its checkpoints first."; return false;
         }
         if (!PracticeSession::requestBeginning()) { sStatus = PracticeSession::status(); return false; }
         sCurrent = 0; sStatus = nullptr; return true;
@@ -248,7 +279,10 @@ bool continueEditing() {
     sStatus = nullptr; return true;
 }
 bool replay() {
-    if (!active() || !PracticeSession::attachedTo(sRefs[0].key) || !PracticeSession::requestPlayback()) {
+    if (active() && !checkpoint(0).loadableHere) {
+        sStatus = "Return to the area where this TAS begins, then Replay."; return false;
+    }
+    if (!active() || !PracticeSession::takeBelongsTo(sRefs[0].key) || !PracticeSession::requestPlayback()) {
         sStatus = PracticeSession::status(); return false;
     }
     sStatus = nullptr; return true;
@@ -257,12 +291,19 @@ bool save(const char *text) {
     if (!text || !text[0] || !SusamuneStateNameValid(text) || !StateStorage::available()) {
         sStatus = "Enter a name and use the matching Moonshine launcher."; return false;
     }
-    if (!captureCheckpoint(sCurrent ? sCurrent : 1, false)) return false;
-    sSaving = true; sPending = sSaved;
+    if (!ready() || !active() || !PracticeSession::takeBelongsTo(sRefs[0].key)) {
+        sStatus = "Open this TAS or load one of its checkpoints before saving."; return false;
+    }
+    PracticeSession::pauseEditing();
+    sPending = sSaved;
     sPending.magic = SUSAMUNE_TAS_MAGIC; sPending.version = SUSAMUNE_TAS_VERSION;
     memset(sPending.name, 0, sizeof(sPending.name));
     for (u32 i = 0; i < 31 && text[i]; ++i) sPending.name[i] = text[i];
     sPreviousCrc = sSaved.checksum;
+    if (!sPending.projectId) {
+        if (!StateStorage::projectBegin(sPending.name)) { failed(SUSAMUNE_STATE_UNAVAILABLE); return false; }
+        sPhase = BEGIN_SAVE;
+    } else beginExports();
     return true;
 }
 bool open(u32 id, u32 checksum) {
@@ -308,11 +349,6 @@ void update() {
                 finish(PracticeSession::status()); return;
             }
             sPhase = STARTING; sStatus = "Release A to begin. Gameplay will stay paused.";
-        } else if (sSaving) {
-            if (!sPending.projectId) {
-                if (!StateStorage::projectBegin(sPending.name)) { failed(SUSAMUNE_STATE_UNAVAILABLE); return; }
-                sPhase = BEGIN_SAVE;
-            } else beginExports();
         } else finish("Checkpoint saved. Your TAS is paused here.");
         return;
     }
@@ -327,11 +363,12 @@ void update() {
         if (sPhase == EXPORT) {
             const SusamuneStateArchiveHeader &h = result.header;
             if (sRole && (h.gameId != sPending.gameId || h.buildCrc != sPending.buildCrc ||
-                h.configId != sPending.configId || h.sceneKey != sPending.sceneKey)) { failed(SUSAMUNE_STATE_WRONG_CONFIG); return; }
+                h.configId != sPending.configId)) { failed(SUSAMUNE_STATE_WRONG_CONFIG); return; }
             sPending.gameId = h.gameId; sPending.buildCrc = h.buildCrc;
-            sPending.configId = h.configId; sPending.sceneKey = h.sceneKey;
-            sPending.components[sRole] = {result.id, h.headerCrc, h.packedSize, sRole,
-                checkpoint(sRole).frames, 0};
+            sPending.configId = h.configId;
+            if (!sRole) sPending.sceneKey = h.sceneKey;
+            sPending.components[sRole] = {result.id, h.headerCrc, h.packedSize,
+                checkpoint(sRole).frames, h.sceneKey};
             ++sPending.componentCount; ++sRole; nextExport();
         } else {
             remember(sPlan[sRole], result.slot);
@@ -346,6 +383,48 @@ void update() {
         return;
     }
     StateStorage::Result result;
+    if (sPhase == TAPE_EXPORT || sPhase == TAPE_IMPORT) {
+        if (!StateStorage::takeResult(result)) return;
+        if (result.status != SUSAMUNE_STATE_OK) { failed(result.status); return; }
+        if (sPhase == TAPE_EXPORT) {
+            const auto &h = result.header;
+            if (h.gameId != sPending.gameId || h.buildCrc != sPending.buildCrc ||
+                h.configId != sPending.configId || h.sceneKey != sPending.sceneKey ||
+                !SusamuneTasTapeHeaderValid(&h)) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
+            sPending.tape = {result.id, h.headerCrc, h.packedSize};
+            sPending.generation = sSaved.generation + 1;
+            if (!sPending.generation) { finish("TAS save version limit reached; use a new project."); return; }
+            sPending.checksum = SusamuneTasManifestCrc(&sPending);
+            if (!SusamuneTasManifestValid(&sPending) || !StateStorage::projectCommit(sPending, sPreviousCrc)) {
+                failed(SUSAMUNE_STATE_BAD_REQUEST); return;
+            }
+            sPhase = COMMIT; sStatus = "Finishing TAS save...";
+        } else {
+            SusamuneTasTakeData take;
+            const void *frames, *transitions;
+            if (!StateStorage::tapePayload(result, take, frames, transitions) ||
+                take.frames != sPending.tapeFrames || take.startScene != sPending.sceneKey ||
+                take.originKey[0] != sPending.startKey[0] || take.originKey[1] != sPending.startKey[1]) {
+                failed(SUSAMUNE_STATE_BAD_FILE); return;
+            }
+            bool restored = sHaveCheckpoint && PracticeSession::restoreTake(take, frames, transitions, &sLoadedCheckpoint);
+            if (!restored) {
+                sHaveCheckpoint = false;
+                restored = PracticeSession::restoreTake(take, frames, transitions);
+            }
+            if (!restored) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
+            memcpy(sRefs, sPlan, sizeof(sRefs)); sSaved = sPending; sActive = true; sDirty = false;
+            sSavedRevision = PracticeSession::editRevision();
+            for (u32 role = 0; role < 3; ++role) {
+                sPublishedKeys[role][0] = sRefs[role].key[0];
+                sPublishedKeys[role][1] = sRefs[role].key[1];
+            }
+            sCurrent = sRole;
+            finish(sHaveCheckpoint ? "TAS opened at a checkpoint. Continue edits; Replay watches the full take." :
+                "TAS recording kept. Return to its beginning area to Replay.");
+        }
+        return;
+    }
     if (!StateStorage::takeProjectResult(result)) return;
     if (result.status != SUSAMUNE_STATE_OK) { failed(result.status); return; }
     if (sPhase == BEGIN_SAVE) {
@@ -356,7 +435,7 @@ void update() {
             sPublishedKeys[role][0] = sRefs[role].key[0];
             sPublishedKeys[role][1] = sRefs[role].key[1];
         }
-        finish("TAS saved to SD, with its beginning and checkpoints.");
+        finish("TAS recording, Beginning and checkpoints saved to SD.");
     } else if (sPhase == READ) {
         if (!SusamuneTasManifestValid(&result.project)) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
         if (!gSavestateMgr->projectCompatible(result.project)) { failed(SUSAMUNE_STATE_WRONG_CONFIG); return; }
@@ -377,21 +456,23 @@ void afterDraw() {
     if (sPhase != LOAD || sReplace) return;
     const Ref ref = sPlan[sRole];
     if (!valid(ref) || !gSavestateMgr->loadSlot(ref.slot, ref.generation)) {
+        if (sOpening) {
+            sHaveCheckpoint = false;
+            importTape(); return;
+        }
         finish("Checkpoint could not be loaded. Check the episode and settings."); return;
     }
     PracticeSession::pauseEditing();
-    const u32 expected[2] = {sOpening ? sPending.startKey[0] : sRefs[0].key[0],
-        sOpening ? sPending.startKey[1] : sRefs[0].key[1]};
+    if (sOpening) {
+        if (!gSavestateMgr->practiceData(ref.slot, &sLoadedCheckpoint)) {
+            failed(SUSAMUNE_STATE_BAD_FILE); return;
+        }
+        sHaveCheckpoint = true;
+        importTape(); return;
+    }
+    const u32 expected[2] = {sRefs[0].key[0], sRefs[0].key[1]};
     if (!PracticeSession::attachedTo(expected) || !PracticeSession::checkpointReady()) {
         finish("TAS checkpoint could not resume. Check its gameplay settings."); return;
-    }
-    if (sOpening) {
-        memcpy(sRefs, sPlan, sizeof(sRefs)); sSaved = sPending; sActive = true; sDirty = false;
-        sSavedRevision = PracticeSession::editRevision();
-        for (u32 role = 0; role < 3; ++role) {
-            sPublishedKeys[role][0] = sRefs[role].key[0];
-            sPublishedKeys[role][1] = sRefs[role].key[1];
-        }
     }
     sCurrent = sRole;
     finish("TAS is paused here. Continue to edit, or Replay to watch.");

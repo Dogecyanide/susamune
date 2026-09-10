@@ -114,7 +114,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.lib.set(128, 4)
         self.lib.set(129, 1)
         self.lib.stage()
-        self.assertEqual(self.lib.count(), 130)
+        self.assertEqual(self.lib.count(), 138)
         self.assertEqual([self.lib.read(i) for i in (128,129)], [4,1])
         self.assertEqual(bytes(self.lib.byteAt(i) for i in range(192,320)), b'\xa5'*128)
 
@@ -126,6 +126,20 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
             self.assertEqual(self.lib.cardRoundtrip(older), 1)
             self.assertEqual([self.lib.get(i) for i in (128,129)], [2,0] if older else [4,1])
             self.assertEqual(self.lib.corruptExtra(0), 0)
+
+    def test_new_shined_banks_survive_wire_and_card_with_old_count_defaults(self):
+        self.lib.reset(138)
+        for index in range(130, 138):
+            self.lib.set(index, 0x7f - index % 7)
+        self.lib.stage()
+        self.assertEqual([self.lib.read(i) for i in range(130, 138)],
+                         [0x7f - i % 7 for i in range(130, 138)])
+        self.assertEqual(self.lib.cardRoundtrip(0), 1)
+        self.assertEqual([self.lib.get(i) for i in range(130, 138)],
+                         [0x7f - i % 7 for i in range(130, 138)])
+        self.lib.reset(130)
+        self.lib.adopt()
+        self.assertEqual([self.lib.get(i) for i in range(130, 138)], [0] * 8)
 
     def test_header_publication_and_kernel_ack_remain_on_their_owned_lines(self):
         settings = (ROOT/'src/settings.cpp').read_text()

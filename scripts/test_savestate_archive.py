@@ -55,6 +55,7 @@ static bool validStore(){return StateSlotPoolValid(&sPool,100000);}
 static u32 metadataTag(const StoredState&s){return s.generation^s.rawSize^s.packedSize^s.adler32;}
 static u32 nextGeneration(){return 555;}
 static bool archiveCandidateMatches(const SusamuneStateArchiveHeader&){return candidateMatches;}
+static bool archiveProjectCandidateMatches(const SusamuneStateArchiveHeader&){return candidateMatches;}
 static const char*archiveStatusText(u32){return "rejected";}
 static void GXDrawDone(){}
 static bool OSDisableInterrupts(){interrupts=true;return true;}
@@ -79,6 +80,7 @@ namespace StateStorage{
 struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
 static Result result;
 void update(){}
+void discardCancelledResult(){if(ready && result.command==SUSAMUNE_STATE_CMD_CANCEL){ready=false;transportBusy=false;}}
 bool takeResult(Result&out){if(!ready)return false;out=result;ready=false;transportBusy=false;return true;}
 bool busy(){return transportBusy;}
 }
@@ -285,13 +287,18 @@ extern "C" __declspec(dllexport) u32 restorePayload(u32 slot,u32 direct,void*out
                 self.assertEqual([self.lib.get(i)for i in (2,3,4,8,9)],[1,0,0,1,1])
 
     def test_direct_sd_failed_validation_or_cancel_never_queues_restore_or_changes_slots(self):
-        for fault in (1,2,3,4,6,8,9,10):
+        for fault in (1,2,3,4,6,8,9):
             with self.subTest(fault=fault):
                 self.setupCandidate();self.lib.directRestore();self.lib.change(fault);self.lib.tick()
                 for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
                 self.assertEqual([self.lib.get(i)for i in (1,2,4,5,6,8,9,12,13,15)],
                                  [0,0,0,0,0,0,0,2,71,0])
                 self.assertEqual(self.lib.get(3),int(fault!=10))
+
+    def test_unowned_tape_receipt_is_left_for_project_coordinator(self):
+        self.setupCandidate();self.lib.directRestore();self.lib.change(10);self.lib.tick()
+        self.assertEqual([self.lib.get(i) for i in (2,3,4,8,9)], [1,0,0,0,0])
+        for slot in range(3):self.assertEqual(self.slot(slot),bytes([20+slot])*13000)
 
     def test_direct_sd_defers_stream_preflight_to_restore_and_bad_stream_writes_nothing(self):
         for corrupt in (False,True):

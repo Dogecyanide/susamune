@@ -14,7 +14,7 @@ Settings and binds are saved separately for JP, US and PAL. They belong to the d
 
 ## Where to find things
 
-Quick: your Shined favourites.
+Quick: your Shined favourites. Newer named settings can be Shined too, including all four free-camera settings. Existing stars stay.
 
 Practice: savestates, frame advance, free camera, TAS projects, RNG and gameplay options.
 
@@ -88,7 +88,7 @@ Large SD files can load with three full memory slots if one saved slot matches t
 
 If an SD read fails partway through, the game restores that recovery state and tells you its slot number. If there is no suitable recovery state and too little temporary space, loading is refused safely.
 
-Make fresh SD states with this build. Earlier SD states need resaving and cannot be loaded by this update. States are specific to their build and setup; use ghosts to share an attempt across game regions.
+Make fresh SD states and TAS projects with this build. Keep old files with their matching older build. States are specific to their build and setup; use ghosts to share an attempt across game regions.
 
 ## Pause and frame advance
 
@@ -136,9 +136,9 @@ Open Practice > TAS projects. Your recorded inputs, Beginning and two checkpoint
 
 4. Replay watches your inputs from the Beginning. B or Start stops playback. Continue stays paused until you Step or Resume.
 
-5. Save TAS asks for a name the first time. Confirm with Start and wait for the saved message. It saves your current point, Beginning and checkpoints together on SD. Later saves update the same TAS.
+5. Save TAS asks for a name the first time. Confirm with Start and wait for the saved message. It saves the full recording, Beginning and existing checkpoints. It does not make a new checkpoint or need another free memory slot. Later saves update the same TAS.
 
-6. After rebooting into the same build, game version, setup and episode, choose Open TAS and its name. The saved point opens paused. Continue to edit, or Replay to watch.
+6. Use the same build, game version and setup, then Open TAS by name. A matching checkpoint or Beginning opens paused and keeps the later inputs for Replay. If no point matches your current area and episode, the recording opens without moving Mario. Return to its Beginning area before Replay.
 
 Save Checkpoint keeps a retry point in memory. Save TAS keeps everything on SD, in /moonshine_tas. Only the SD save survives closing the game or rebooting. There is no need to import the Beginning and checkpoints separately.
 
@@ -150,7 +150,11 @@ Continue, Replay, Beginning and checkpoint actions have optional shortcuts. Sele
 
 In Open TAS, Start renames the highlighted file. X asks to delete its SD copy. Memory checkpoints stay; save again to keep that work after closing the game.
 
-A TAS holds up to 4096 game frames: about 137 seconds at 30 fps or 164 seconds at 25 fps. Changing scenes clears the live recording; return and open the saved TAS.
+Normal area changes keep the recording. It continues when Mario can move again; loading time uses no input frames. A TAS holds 4096 input frames and 32 area changes. That is about 137 seconds of recorded play at 30 fps, or 164 seconds at 25 fps. An unsupported transition or a reached limit stops recording but keeps the take for saving.
+
+Other area means the checkpoint is still saved, but you must enter its matching area and episode to load it. Replay and Go to Beginning need the area and episode where the TAS began. They do not warp there automatically.
+
+Opening a saved TAS at a checkpoint keeps its full recorded tail for Replay. Continue edits from that checkpoint. Manually choosing Go to Checkpoint 1 or 2 rewinds the local recording to that point. The full SD copy stays until Save TAS replaces it.
 
 Replay is experimental and stops if checked game state differs. Gameplay settings must match. Timer layout, metadata and camera presentation can still be adjusted. Use an exported ghost to share a finished attempt.
 
