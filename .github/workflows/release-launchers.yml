@@ -9,6 +9,8 @@ permissions:
 
 jobs:
   build-and-upload:
+    # A prepared release already carries its verified downloads and manifest.
+    if: ${{ !contains(github.event.release.assets.*.name, 'release-manifest.json') }}
     name: English and 日本語版 downloads
     runs-on: windows-2022
     env:
@@ -70,5 +72,5 @@ jobs:
           $releaseArchives = @(Get-ChildItem -LiteralPath build/release -Filter 'Moonshine_*.zip' -File)
           if ($releaseArchives.Count -ne 4) { throw 'Expected English and Japanese launcher and Dolphin downloads.' }
           $releaseFiles = @(Get-ChildItem -LiteralPath build/release -File | Where-Object { $_.Name -match '\.zip$|\.sha256$|manifest\.json$' } | ForEach-Object { $_.FullName })
-          gh release upload $env:RELEASE_TAG @releaseFiles --clobber
+          gh release upload $env:RELEASE_TAG @releaseFiles
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
