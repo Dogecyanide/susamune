@@ -18,6 +18,7 @@
 #include "susamune/warp_wheel.hxx"
 #include "Dolphin/math.h"
 #include "Dolphin/MTX.h"
+#include "Dolphin/PAD.h"
 #include "Dolphin/mem.h"
 #include "Dolphin/printf.h"
 #include "Dolphin/string.h"
@@ -95,6 +96,7 @@ TMarioGamePad *sReadPad;
 u32 sReadScene;
 SusamunePracticeInput sPhysical;
 SusamunePracticeInput sConsumed;
+s8 sCameraSticks[4];
 bool sHaveRead;
 bool sConsumedFrame;
 bool sPadHookReady;
@@ -645,8 +647,8 @@ void updateCamera() {
         sCameraWaitButtons = false;
     }
     f32 moveX, moveY, lookX, lookY;
-    cameraStick(sPhysical.stickX, sPhysical.stickY, moveX, moveY);
-    cameraStick(sPhysical.substickX, sPhysical.substickY, lookX, lookY);
+    cameraStick(sCameraSticks[0], sCameraSticks[1], moveX, moveY);
+    cameraStick(sCameraSticks[2], sCameraSticks[3], lookX, lookY);
     const f32 turn = 0.035f * cameraScale(SETTING_FREE_CAMERA_SENSITIVITY);
     sYaw -= lookX * turn;
     if (sYaw > 3.14159265f) sYaw -= 6.2831853f;
@@ -818,6 +820,12 @@ void queueTapeLoad(u8 kind, u32 slot, u32 generation) {
 }
 
 } // namespace
+
+extern "C" void susamunePracticeClampPad(PADStatus *pad) {
+    // Camera angles need the raw axes before retail's separate axis deadzones.
+    memcpy(sCameraSticks, &pad[0].mStickX, sizeof(sCameraSticks));
+    PADClamp(pad);
+}
 
 extern "C" u32 susamunePracticeReadPad() {
     restoreCamera();
@@ -1180,7 +1188,8 @@ void init() {
         if (table[i] != kCameraPerform) continue;
         table[i] = reinterpret_cast<u32>(&susamunePracticeCameraPerform);
         DCFlushRange(&table[i], sizeof(table[i]));
-        sCameraHookReady = sMovementHookReady;
+        sCameraHookReady = sMovementHookReady && installCall(kPadRead + 0x24,
+            reinterpret_cast<u32>(PADClamp), reinterpret_cast<void *>(susamunePracticeClampPad));
         break;
     }
 }

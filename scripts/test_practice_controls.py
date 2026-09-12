@@ -33,12 +33,12 @@ class PracticeControlsTests(unittest.TestCase):
         source = Path(cls.folder.name) / "controls.cpp"
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
-            "bool observerTransition()", "void cameraStick(",
+            'extern "C" void susamunePracticeClampPad(', "bool observerTransition()", "void cameraStick(",
             "f32 cameraScale(", "f32 cameraSpeedScale()", "void updateCamera()"))
         source.write_text(r'''
 #include "susamune/practice_input.h"
+#include "Dolphin/PAD.h"
 typedef unsigned char u8;
-typedef signed char s8;
 typedef float f32;
 extern "C" { int _fltused; }
 struct Vec { float x,y,z; void set(float a,float b,float c) { x=a;y=b;z=c; } };
@@ -51,6 +51,18 @@ typedef int SettingId;
 struct Settings { u8 choice,reverse,sensitivity; u8 get(int id) { return id==1?choice:id==2?reverse:sensitivity; } } gSettings;
 static CameraView sCameraView;
 static SusamunePracticeInput sPhysical;
+static s8 sCameraSticks[4];
+static unsigned clampCalls;
+extern "C" void *memcpy(void *d,const void *s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
+extern "C" void PADClamp(PADStatus *pad) {
+    ++clampCalls;
+    for(unsigned port=0;port<4;++port) {
+        if(pad[port].mCurError) continue;
+        s8 *axes=reinterpret_cast<s8*>(&pad[port].mStickX);
+        for(unsigned i=0;i<4;++i){int v=axes[i];axes[i]=(s8)(v>15?v-15:v<-15?v+15:0);}
+        pad[port].mTriggerLeft/=2;pad[port].mTriggerRight/=2;
+    }
+}
 static bool sFreeCamera,sModal,sCameraWaitButtons,sControl,sNormal,sPaused;
 static bool sStepQueued,sSpinClockwise;
 static u8 sSpinRemaining,sMenuAction;
@@ -73,12 +85,18 @@ bool observerLoading() { return loading; }
 bool observerCleanupPending() { return cleanup; }
 }
 ''' + functions + r'''
+extern "C" __declspec(dllexport) unsigned rawClamp(const SusamunePracticeInput *in,
+    SusamunePracticeInput *out,s8 *raw,unsigned wrapped) {
+    PADStatus pad[4];memcpy(pad,in,sizeof(pad));clampCalls=0;
+    if(wrapped)susamunePracticeClampPad(pad);else PADClamp(pad);
+    memcpy(out,pad,sizeof(pad));memcpy(raw,sCameraSticks,4);return clampCalls;
+}
 extern "C" __declspec(dllexport) void trig(float (*s)(float),float (*c)(float),float (*r)(float)) {
     sine=s;cosine=c;squareRoot=r;
 }
 extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned flags,
     const SusamunePracticeInput *input,float *out) {
-    sPhysical=*input;sYaw=yaw;sPitch=0;sFreeCamera=true;
+    sPhysical=*input;sCameraSticks[0]=input->stickX;sCameraSticks[1]=input->stickY;sCameraSticks[2]=input->substickX;sCameraSticks[3]=input->substickY;sYaw=yaw;sPitch=0;sFreeCamera=true;
     sModal=flags&1;sCameraWaitButtons=flags&2;sControl=!(flags&4);
     gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;
     gSettings.sensitivity=(flags&16)?(flags>>5):2;sCameraView.position.set(0,0,0);
@@ -102,6 +120,20 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
         cls.lib.trig(cls.sine, cls.cosine, cls.square_root)
         cls.lib.camera.argtypes = [C.c_float, C.c_uint, C.c_uint, C.POINTER(Input),
                                   C.POINTER(C.c_float)]
+
+    def test_raw_camera_capture_precedes_unchanged_retail_clamp_for_all_ports(self):
+        for error in (0, -1):
+            source = (Input * 4)(*[Input(buttons=0x1300 + i, stickX=70, stickY=5,
+                substickX=-6, substickY=-65, triggerL=120, triggerR=180,
+                error=error if i == 0 else 0) for i in range(4)])
+            expected, actual = (Input * 4)(), (Input * 4)()
+            raw = (C.c_byte * 4)()
+            self.assertEqual(self.lib.rawClamp(source, expected, raw, 0), 1)
+            self.assertEqual(self.lib.rawClamp(source, actual, raw, 1), 1)
+            self.assertEqual(bytes(actual), bytes(expected))
+            self.assertEqual(list(raw), [70, 5, -6, -65])
+            if not error:
+                self.assertEqual((actual[0].stickX, actual[0].stickY), (55, 0))
 
     def camera(self, yaw=0, choice=2, flags=0, **controls):
         raw = Input(**controls)
