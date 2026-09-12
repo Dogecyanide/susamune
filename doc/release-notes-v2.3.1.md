@@ -50,7 +50,13 @@ background video player is running.
 
 ## Updating
 
-Replace the Moonshine app files using the **English** or **日本語版** download.
+The **ENGLISH-MENUS** download supports **US, PAL and JP Sunshine**,
+with English Moonshine menus in every region. The **JAPANESE-MENUS**
+launcher also supports all three regions: its launcher is Japanese, its JP
+Moonshine menus are Japanese, and its US/PAL Moonshine menus are English.
+The **JAPANESE-MENUS** Dolphin download is for JP Sunshine only.
+
+Replace the Moonshine app files using your chosen download.
 Keep your settings, layout, theme, records, ghosts, achievements and playlists.
 Use the launcher and mod files from the same download.
 

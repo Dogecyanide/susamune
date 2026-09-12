@@ -278,7 +278,9 @@ def render_readme(kind, language, checksum, patches):
         title += " 日本語版"
         body = f"# {title}\n\nビルド {checksum}\n\n"
         if kind == "launcher":
-            body += ("ZIP内の `apps` をSDカードのルートにコピーしてください。既存のアプリは更新しますが、"
+            body += ("Supports US, PAL and JP Sunshine. The launcher is Japanese; Moonshine's in-game menus "
+                     "are Japanese on JP and English on US/PAL. The retail game's language is unchanged.\n\n"
+                     "ZIP内の `apps` をSDカードのルートにコピーしてください。既存のアプリは更新しますが、"
                      "設定、記録、ゴースト、保存したステート、TASプロジェクトは削除しないでください。"
                      "初回起動時に既存のデータを `/Moonshine data` に移行します。設定は `/Moonshine data/moonshine.ini` に保存されます。\n\n"
                      "日本国旗の背景を使う場合だけ `Moonshine data/theme/background.png` もコピーしてください。"
@@ -287,7 +289,8 @@ def render_readme(kind, language, checksum, patches):
                      "ランチャーは日本語、JP版SunshineのMoonshineメニューも日本語になります。"
                      "US/PALのゲーム内メニューは英語です。地域の選択で言語は切り替わりません。\n\n")
         else:
-            body += ("`moonshine_jp_ja.bps` を、ご自身の変更していないJP版Sunshine ISO（GMSJ01）に適用し、"
+            body += ("For JP Sunshine only, with Japanese Moonshine menus.\n\n"
+                     "`moonshine_jp_ja.bps` を、ご自身の変更していないJP版Sunshine ISO（GMSJ01）に適用し、"
                      "作成されたISOをDolphinで開いてください。元のISOは保存してください。"
                      "日本語フォントはパッチに含まれています。\n\n"
                      "SDステート・TASプロジェクトの保存機能にはWiiのMoonshine Launcherが必要です。"
@@ -297,19 +300,21 @@ def render_readme(kind, language, checksum, patches):
                  "一部の診断表示とランチャー内のガイド本文は英語です。\n")
     else:
         body = f"# {title}\n\nBuild {checksum}\n\n"
+        body += ("Supports US, PAL and JP Sunshine, with English Moonshine menus in all three regions. "
+                 "English refers to the mod's menu language; the retail game's language is unchanged.\n\n")
         if kind == "launcher":
             body += ("Copy `apps` to your SD card's root and replace the app files. Keep your settings, records, "
                      "ghosts, saved states, TAS projects and your theme. On first launch, existing data moves into "
                      "`/Moonshine data`; settings live in `/Moonshine data/moonshine.ini`. Open Moonshine Launcher from the Homebrew "
                      "Channel, then select your game region and disc or clean game image.\n\n"
-                     "This download keeps Moonshine menus English in every game region. The separate 日本語版 "
-                     "download selects Japanese menus and includes an optional Japanese flag background.\n\n"
+                     "The separate JAPANESE-MENUS launcher download has a Japanese launcher, Japanese Moonshine "
+                     "menus on JP, and English Moonshine menus on US/PAL. It includes an optional Japanese flag background.\n\n"
                      "Read `apps/moonshine_launcher/guide-en.md` for controls, `guide-ja.md` for the Japanese guide, "
                      "and `CHANGELOG.md` for release notes in the same folder.\n")
         else:
             body += ("Apply the matching BPS patch to your own clean retail Sunshine ISO, then open the patched copy "
-                     "in Dolphin. Keep your original ISO. All three patches keep Moonshine menus English, including JP. "
-                     "The separate 日本語版 download provides Japanese Moonshine menus for JP Sunshine.\n\n"
+                     "in Dolphin. Keep your original ISO. The separate JAPANESE-MENUS Dolphin download provides "
+                     "Japanese Moonshine menus for JP Sunshine only.\n\n"
                      "Use slot A for ordinary game saves and slot B for Moonshine settings. SD-state and TAS-project "
                      "file storage requires the Wii launcher and is unavailable in these standalone Dolphin builds.\n\n"
                      "Read `guide-en.md` for controls, `guide-ja.md` for the Japanese guide, and `CHANGELOG.md` for release notes.\n")
@@ -330,7 +335,7 @@ def archive_contents(args, report, patches):
     require(flag[:8] == b"\x89PNG\r\n\x1a\n" and struct.unpack(">II", flag[16:24]) == (1024, 480),
             "Japanese flag background is invalid")
     result = {}
-    for language, label in (("en", "English"), ("ja", "日本語版")):
+    for language in ("en", "ja"):
         app = package_launcher.launcher_files(args.launcher_boot,
             [args.build_dir/f"mod_{region}.bin" for region in REGIONS], version=VERSION,
             language=language, japanese_ui=args.build_dir/"ja_ui.bin")
@@ -341,13 +346,15 @@ def archive_contents(args, report, patches):
         app["README.md"] = render_readme("launcher", language, report["build_checksum"], {})
         if language == "ja":
             app["Moonshine data/theme/background.png"] = flag
-        name = f"Moonshine_Launcher_V2.3.1_Frame_By_Frame_{label}.zip"
+        label = "ENGLISH-MENUS" if language == "en" else "JAPANESE-MENUS"
+        name = f"Moonshine_{label}_Launcher_V2.3.1_US-PAL-JP.zip"
         result[name] = (language, "launcher", app)
         selected = {name: data for name, data in patches.items()
                     if (name == "moonshine_jp_ja.bps") == (language == "ja")}
         dolphin = {**common, **selected, "language.txt": (language+"\n").encode("ascii"),
                    "README.md": render_readme("dolphin", language, report["build_checksum"], selected)}
-        name = f"Moonshine_Dolphin_V2.3.1_Frame_By_Frame_{label}.zip"
+        regions = "US-PAL-JP" if language == "en" else "JP"
+        name = f"Moonshine_{label}_Dolphin_V2.3.1_{regions}.zip"
         result[name] = (language, "dolphin", {"moonshine_dolphin/"+n: d for n, d in dolphin.items()})
     return result
 

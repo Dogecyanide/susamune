@@ -162,9 +162,14 @@ class ReleasePackagingTests(unittest.TestCase):
                     prefix+"boot.dol": b"same binary", prefix+"language.txt": (kwargs["language"]+"\n").encode()}
         with patch.object(release.package_launcher, "launcher_files", side_effect=app):
             packages = release.archive_contents(args, {"build_checksum":"DEADBEEF"}, patches)
-        self.assertEqual(len(packages), 4)
+        self.assertEqual(set(packages), {
+            "Moonshine_ENGLISH-MENUS_Launcher_V2.3.1_US-PAL-JP.zip",
+            "Moonshine_JAPANESE-MENUS_Launcher_V2.3.1_US-PAL-JP.zip",
+            "Moonshine_ENGLISH-MENUS_Dolphin_V2.3.1_US-PAL-JP.zip",
+            "Moonshine_JAPANESE-MENUS_Dolphin_V2.3.1_JP.zip",
+        })
         for name, (language, kind, files) in packages.items():
-            self.assertIn("日本語版" if language == "ja" else "English", name)
+            self.assertTrue(name.isascii())
             self.assertFalse(any("FOXTROT" in n or "TESTING" in n or "RC1" in n for n in files))
             base = prefix if kind == "launcher" else "moonshine_dolphin/"
             self.assertEqual(files[base+"language.txt"], (language+"\n").encode())
@@ -182,10 +187,18 @@ class ReleasePackagingTests(unittest.TestCase):
                 self.assertEqual(actual, {"moonshine_jp_ja.bps"} if language == "ja" else
                                  {"moonshine_jp.bps", "moonshine_us.bps", "moonshine_pal.bps"})
                 self.assertNotIn("Moonshine data/theme/background.png", files)
-            if language == "ja":
-                readme = files["README.md" if kind == "launcher" else base+"README.md"].decode()
+            readme = files["README.md" if kind == "launcher" else base+"README.md"].decode()
+            if language == "en":
+                self.assertIn("Supports US, PAL and JP Sunshine, with English Moonshine menus in all three regions", readme)
+                self.assertIn("retail game's language is unchanged", readme)
+            else:
                 self.assertIn("日本語版", readme)
                 self.assertIn("してください", readme)
+                if kind == "launcher":
+                    self.assertIn("Supports US, PAL and JP Sunshine", readme)
+                    self.assertIn("Japanese on JP and English on US/PAL", readme)
+                else:
+                    self.assertIn("For JP Sunshine only, with Japanese Moonshine menus", readme)
 
     def test_zip_verifier_rejects_extra_duplicate_or_changed_files(self):
         path = self.root/"日本語版.zip"

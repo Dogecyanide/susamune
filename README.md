@@ -38,8 +38,11 @@ Features:
 
 ### Console (wii)
 
-Choose the **English** or **日本語版** launcher download from the Releases
-page. Copy its `apps` folder to the SD root, so the launcher is at
+Choose `Moonshine_ENGLISH-MENUS_Launcher_V2.3.1_US-PAL-JP.zip` for
+**English Moonshine menus on US, PAL or JP Sunshine**. The separate
+`Moonshine_JAPANESE-MENUS_Launcher_V2.3.1_US-PAL-JP.zip` selects the
+Japanese launcher and Japanese Moonshine menus when playing JP Sunshine.
+Both downloads support all three game regions. Copy its `apps` folder to the SD root, so the launcher is at
 `/apps/moonshine_launcher/boot.dol`. It lets you select JP, US or PAL Sunshine
 from SD, USB or a real disc, and configure Nintendont options such as
 progressive scan and the retail PAL language.
@@ -69,7 +72,10 @@ See [the folder guide](doc/guide-en.md#your-data-folder) for file locations.
 
 ### Emulator
 
-Choose the **English** or **日本語版** Dolphin download. Apply its matching BPS to a clean
+Choose `Moonshine_ENGLISH-MENUS_Dolphin_V2.3.1_US-PAL-JP.zip` for English
+Moonshine menus on **US, PAL or JP**, or
+`Moonshine_JAPANESE-MENUS_Dolphin_V2.3.1_JP.zip` for Japanese menus on JP.
+Apply its matching BPS to a clean
 ISO with a BPS patcher such as
 [Floating IPS](https://github.com/Alcaro/Flips/releases). The patch verifies
 the source image before writing the Moonshine ISO.
