@@ -5890,7 +5890,7 @@ public:
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
         const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
-            PracticeSession::manualPaused() ? "Resume gameplay" : "Pause gameplay";
+            (PracticeSession::manualPaused() || (PracticeSession::freeCamera() && PracticeSession::nativePaused())) ? "Resume gameplay" : "Pause gameplay";
         const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways",
                                      "Look sensitivity", "Hide all HUD", "Recenter camera"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
@@ -5903,7 +5903,7 @@ public:
         char status[80];
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
-                PracticeSession::manualPaused() ? "Paused" : "Live",
+                (PracticeSession::manualPaused() || PracticeSession::nativePaused()) ? "Paused" : "Live",
                 PracticeSession::freeCamera() ? "On" : "Off");
         menu->drawText(status, x + 4, y, 14, 14, cValue());
         const int listY = y + ROW_H;

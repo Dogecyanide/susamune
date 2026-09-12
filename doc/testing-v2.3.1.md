@@ -18,6 +18,8 @@ every check on every game version.
   gameplay** on that page. The world should move while you control the
   camera. Pause it again and advance a frame. Turning camera Off should
   restore the normal view without changing whether the game is paused.
+  Also try Resume after opening free camera from Sunshine's pause screen.
+  If you are recording a TAS, its frame count should keep moving in live freecam.
 - [ ] **Camera movement:** slowly circle each stick and try shallow diagonal
   angles. Movement and looking should follow the stick smoothly. Check your
   preferred speed, look sensitivity and X boost; letting go should stop it.

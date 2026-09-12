@@ -8,6 +8,8 @@ background video player is running.
 
 - Choose **Practice > Free camera > Resume gameplay** to run the game at
   normal speed while keeping free camera On. Pause gameplay stops it again.
+- Resume also works from Sunshine's normal pause screen. Active TAS
+  recordings keep the frames spent running in free camera.
 - Both sticks now follow all directions, including small angles between the
   main directions. A smooth response gives finer control near the centre.
 - Diagonal movement stays within the selected speed. Letting go stops the

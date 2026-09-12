@@ -22,6 +22,7 @@
 #include "Dolphin/printf.h"
 #include "Dolphin/string.h"
 #include "SMS/Camera/PolarSubCamera.hxx"
+#include "SMS/GC2D/PauseMenu2.hxx"
 #include "SMS/Manager/FlagManager.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/CardManager.hxx"
@@ -1218,6 +1219,8 @@ void beforeDirect(bool modalOwnsInput) {
     restoreCamera();
     sConsumedFrame = false;
     sStepping = false;
+    if (sMenuAction == 4) sMenuAction = 3;
+    if (sMenuAction == 3 && (!sFreeCamera || !nativePaused())) sMenuAction = 0;
     sModal = modalOwnsInput;
     if (sLoadHoldButtons && (sPhysical.error != 0 ||
         (sPhysical.buttons & sLoadHoldButtons) != sLoadHoldButtons))
@@ -1269,7 +1272,12 @@ void beforeDirect(bool modalOwnsInput) {
             message("Gameplay resumed");
             CrashReport::note(SUSAMUNE_CRASH_EVENT_PRACTICE, 0, sSteps);
         }
-        sMenuAction = 0;
+        if (sMenuAction == 3) {
+            TPauseMenu2 *pause = gpMarDirector->mPauseMenu;
+            if (nativePaused() && mem1(pause, sizeof(TPauseMenu2)) &&
+                pause->mState == TPauseMenu2::MENU_OPEN)
+                sMenuAction = 4;
+        } else sMenuAction = 0;
     }
     if (!sLoadHoldActive && !sLoadKind && sPaused && normalStage() && !sModal && !sMenuAction && sStepQueued &&
         !actionsFastForwardActive()) {
@@ -1286,7 +1294,9 @@ void beforeDirect(bool modalOwnsInput) {
     // Menu close can restore physical pad history after the early input hook.
     if (sFreeCamera && !sModal && !sReplay && sHaveRead &&
         sReadPad == gpApplication.mGamePads[0]) {
-        const SusamunePracticeInput neutral = {};
+        SusamunePracticeInput neutral = {};
+        // Let the retail pause menu close itself; never carry B into gameplay.
+        if (resumingNativePause()) neutral.buttons = JUTGamePad::B;
         inject(neutral, sReadPad);
         sReadPad->updateMeaning();
         sConsumed = neutral;
@@ -1302,6 +1312,7 @@ bool freezeRequested() { return sFreeze; }
 bool ownsGameplayInput() { return sPaused || sFreeCamera || sReplay || sLoadKind != 0 || sLoadHoldActive; }
 
 void afterDirect(s32 appState, bool retailAdvanced) {
+    if (sMenuAction == 4) sMenuAction = retailAdvanced ? 0 : 3;
     gQFTTimer.endPracticePause();
     if (sBorrowedPause) {
         if (stageReady() && gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2)
@@ -1545,6 +1556,15 @@ bool requestPauseToggle(bool fromMenu) {
     }
     if (!fromMenu)
         sStripButtons |= gBinds.get(BIND_PRACTICE_PAUSE);
+    if (sFreeCamera && nativePaused()) {
+        TPauseMenu2 *pause = gpMarDirector->mPauseMenu;
+        if (!mem1(pause, sizeof(TPauseMenu2)) || pause->mState > TPauseMenu2::MENU_OPEN)
+            return false;
+        sPaused = sPausePending = sStepQueued = false;
+        sMenuAction = 3;
+        message("Release A to resume gameplay");
+        return true;
+    }
     if (sPausePending) {
         sPausePending = false;
         message("Buffered frame pause canceled");
@@ -1828,6 +1848,8 @@ void releaseForDeparture() {
 
 bool paused() { return sPaused || sLoadHoldActive; }
 bool manualPaused() { return sPaused; }
+bool nativePaused() { return stageReady() && gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU; }
+bool resumingNativePause() { return sMenuAction == 4 && nativePaused(); }
 bool pausePending() { return sPausePending; }
 bool freeCamera() { return sFreeCamera; }
 bool hideHud() {
