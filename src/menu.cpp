@@ -5837,7 +5837,7 @@ public:
         return "Free camera";
     }
     const char *summary() const override {
-        return "Move the camera while gameplay or a ghost is paused.";
+        return "Move the camera with gameplay paused or running.";
     }
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
@@ -5938,8 +5938,8 @@ private:
         return camera[mSel];
     }
     const char *help() const {
-        if (mSel == 0) return "On pauses live gameplay. Off leaves it paused; choose Resume when ready.";
-        if (mSel == 1) return "Resume closes free camera in gameplay. Ghost Watch can keep its camera.";
+        if (mSel == 0) return "On pauses gameplay. Off restores the game camera without changing pause.";
+        if (mSel == 1) return "Resume runs the game at normal speed and keeps free camera on.";
         if (mSel == 2) return "C-stick left/right changes speed. Hold X while moving for a boost.";
         if (mSel == 3) return "Reverse only main-stick sideways movement. C-stick looking stays unchanged.";
         if (mSel == 4) return "Change how quickly the C-stick turns the camera, from 0.25x to 4x.";
@@ -5975,7 +5975,7 @@ public:
             {"FREE CAMERA", "Practice: Free camera pauses and explores.",
              "Main stick moves; C-stick turns the camera.", "L and R change height. Hold X for a boost.",
              "Movement speed changes how fast you travel.", "Look sensitivity changes how fast you turn.",
-             "Hide all HUD removes overlays for filming.", "Turn camera Off, then Resume to play."},
+             "Hide all HUD removes overlays for filming.", "Resume keeps the free camera running."},
             {"TAS PROJECTS", "Practice: TAS projects, then New TAS.", "The beginning is captured automatically.",
              "Continue edits while paused; Step or Resume.", "Checkpoints save places to return to.",
              "Save TAS keeps everything together on SD.", "Open TAS keeps the full saved recording.", "Replay warns if game state differs, and continues."},
@@ -5986,8 +5986,8 @@ public:
             {"LAYOUT EDITOR", "Display: Layout editor, then choose a group.",
              "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",
              "Metadata: field gap, row gap, columns, width.", "Practice feedback: wallkick, rollout and dust.",
-             "Hold Y while adjusting RGB for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
-            {"FRAME BY FRAME", "Moonshine V2.3.0 Frame By Frame", "Find Timer and splits in Runs or Display.",
+             "Hold Y while adjusting HSL for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
+            {"FRAME BY FRAME", "Moonshine V2.3.1 Frame By Frame", "Find Timer and splits in Runs or Display.",
              "Split comparison: Off, PB, SOB or Ghost.", "Report any missing or incorrect checkpoints.",
              "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
         };
@@ -6779,7 +6779,7 @@ void Menu::draw(J2DOrthoGraph *ortho) {
     // Title + accent underline.
     drawText("Moonshine", PANEL_X + PAD - 2, PANEL_Y + 12,
              TITLE_SZ, TITLE_SZ, cTitle());
-    drawText("V2.3.0 Frame By Frame", PANEL_X + PANEL_W - PAD - textWidth("V2.3.0 Frame By Frame", FOOT_SZ),
+    drawText("V2.3.1 Frame By Frame", PANEL_X + PANEL_W - PAD - textWidth("V2.3.1 Frame By Frame", FOOT_SZ),
              PANEL_Y + 21, FOOT_SZ, FOOT_SZ, col(255, 196, 90, 255));
     fillBox(PANEL_X + PAD, PANEL_Y + 12 + TITLE_SZ + 1, 260, 2, cAccent());
 

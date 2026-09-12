@@ -102,6 +102,11 @@ extern "C" __declspec(dllexport) unsigned request(unsigned kind,unsigned menu) {
     return result|(sPaused<<1)|(sPausePending<<2)|(sStepQueued<<3)|
         ((unsigned)sMenuAction<<4)|(invalidations<<8)|(stops<<16);
 }
+extern "C" __declspec(dllexport) unsigned resumeCamera(unsigned menu) {
+    sFreeCamera=true;sPaused=true;
+    requestPauseToggle(menu!=0);
+    return sFreeCamera|(sPaused<<1)|((unsigned)sMenuAction<<4);
+}
 extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePracticeInput *in,
                                                   SusamunePracticeInput *out) {
     sStripButtons|=(u16)add;sPhysical=*in;sConsumed=*in;
@@ -119,6 +124,10 @@ extern "C" __declspec(dllexport) unsigned filter(unsigned add,const SusamunePrac
 
     def setUp(self):
         self.lib.reset(5, 8)
+
+    def test_resume_keeps_free_camera_for_both_shortcut_and_menu(self):
+        self.assertEqual(self.lib.resumeCamera(0), 1)
+        self.assertEqual(self.lib.resumeCamera(1), 1 | 2 | 32)
 
     def filtered(self, add=0, **fields):
         raw, out = Input(**fields), Input()

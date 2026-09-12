@@ -1,4 +1,4 @@
-# Moonshine V2.3.0 Frame By Frame 日本語版
+# Moonshine V2.3.1 Frame By Frame 日本語版
 
 ユーザーガイド
 
@@ -68,9 +68,11 @@ Homebrew Channel から Moonshine Launcher を開きます。**Version** でゲ�
 
 **Practice > Free camera** で On にすると、通常のゲームプレイを自動で一時停止します。メインスティックで移動、C スティックで視点、L/R のアナログ入力で下降・上昇します。**Movement speed** で0.25～4倍の移動速度を保存できます。X は一時的な加速です。**Look sensitivity（視点移動の感度）** は別の設定で、Cスティックによる視点の回転を0.25～4倍に調整します。
 
+同じページの **Resume gameplay（ゲームを再開）** で、フリーカメラを使いながらゲームを通常速度で動かせます。**Pause gameplay（ゲームを一時停止）** で再び停止します。どちらの場合もスティックはカメラを操作します。両スティックとも全方向に対応し、中心付近はゆっくり、外側は速く動く滑らかな調整になりました。スティックを離すと移動はすぐ止まります。
+
 **Hide all HUD（すべてのHUDを隠す）** をOnにすると、フリーカメラ中のゲームとMoonshineの表示を隠します。modメニューは開けます。この設定かフリーカメラをOffにすると、元の表示に戻ります。
 
-メインスティックの左右が逆に感じる場合は、同じページの **Reverse sideways** を On にしてください。左右移動だけを反転し、C スティックの視点操作は変更しません。標準は Off です。Recenter でゲーム本来の視点へ戻せます。フリーカメラを Off にしても一時停止は続くため、再開するには Resume を選びます。
+メインスティックの左右が逆に感じる場合は、同じページの **Reverse sideways** を On にしてください。左右移動だけを反転し、C スティックの視点操作は変更しません。標準は Off です。Recenter でゲーム本来の視点へ戻せます。フリーカメラを Off にすると本来の視点へ戻り、ゲームの一時停止・再開の状態はそのままです。
 
 通常の Start ポーズ中にも使用できます。フリーカメラを使いながらコマ送りもできますが、**Camera On の間は Mario input Off** となり、A やスティックはマリオの操作に反映されません。ジャンプやスピンをコマ送りする前に Off にしてください。カメラの変更は一時的な描画状態で、ゲーム処理やステート操作前に復元されます。場面が変わると終了します。
 
@@ -183,11 +185,13 @@ Display > Layout editor は、Timers、Controller inputs、Metadata、Native HUD
 
 **Timers > Sunshine timer** で位置・サイズ・不透明度・明るさ、13文字、TIME/TEMPO、背景の帯を編集します。位置は画面全体に移動できます。
 
-最初の **Appearance** で **Original** または **Custom** を選びます。対象を All にするとタイマー全体に適用し、Start で文字や画像を一つずつ選べます。Original はゲーム本来の陰影を保ったまま色を調整し、Custom は指定した色をより直接的に表示します。RGB を変更しても、選択した Appearance は変わりません。タイマー全体を元の色に戻すには、**All > Appearance > Original** を選び、Red・Green・Blue をそれぞれ **Z** と確認操作でリセットします。位置・サイズなどの設定は保持します。
+最初の **Appearance** で **Original** または **Custom** を選びます。対象を All にするとタイマー全体に適用し、Start で文字や画像を一つずつ選べます。Original はゲーム本来の陰影を保ったまま色を調整し、Custom は指定した色をより直接的に表示します。色を変更しても、選択した Appearance は変わりません。タイマー全体を元の色に戻すには、**All > Appearance > Original** を選び、Hue・Saturation・Lightness をそれぞれ **Z** と確認操作でリセットします。位置・サイズなどの設定は保持します。
 
-**Native HUD colours** の Health counter colour と Underwater air colour は独立した色設定です。リセットすると元の色へ戻ります。RGB 編集中に **Y** を押しながら C スティックを操作すると、4ではなく1ずつ調整できます。A で保存、B で破棄、Z で選択項目のリセットを確認します。
+共通の色エディターは **Hue（色相）、Saturation（彩度）、Lightness（明度）の HSL** で調整します。色相は0～359度で色を選び、彩度は0%で灰色、100%で鮮やかな色になります。明度は0%で黒、100%で白です。更新しても既存の色は保持します。**Y** を押しながら C スティックを操作すると、4ではなく1ずつ調整できます。A で保存、B で破棄、Z で選択項目のリセットを確認します。
 
-**Display > Appearance > Mario appearance** にある **Mario colours** と **FLUDD colours** も、同じ Creation エディターを使います。Start で All または個別の部位を選び、それぞれ Original/Custom を切り替えられます。RGB を変更すると Custom になり、Original に戻してもカスタム RGB は後で使えるよう保持します。Keep・Discard・Reset と、Y による1ずつの RGB 調整も利用できます。
+**Native HUD colours** の Health counter colour と Underwater air colour は独立した色設定です。リセットすると元の色へ戻ります。
+
+**Display > Appearance > Mario appearance** にある **Mario colours** と **FLUDD colours** も、同じ Creation エディターを使います。Start で All または個別の部位を選び、それぞれ Original/Custom を切り替えられます。HSL を変更すると Custom になり、Original に戻してもカスタムカラーは後で使えるよう保持します。Keep・Discard・Reset と、Y による1ずつの HSL 調整も利用できます。
 
 | エディター | 対象 |
 |---|---|

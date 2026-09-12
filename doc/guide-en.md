@@ -1,4 +1,4 @@
-# Moonshine V2.3.0 Frame By Frame
+# Moonshine V2.3.1 Frame By Frame
 
 User guide · English
 
@@ -68,9 +68,11 @@ While practice is paused, Advance takes priority over overlapping shortcuts. Hol
 
 Open **Practice > Free camera** and turn it On. This automatically pauses live gameplay. Move with the main stick, look with the C-stick, and use L/R analog pressure to descend/ascend. **Movement speed** saves a speed from 0.25x to 4x; hold X for a temporary boost. **Look sensitivity** separately sets C-stick turning speed from 0.25x to 4x.
 
+Choose **Resume gameplay** on the same page to run the game at normal speed while keeping free camera On. **Pause gameplay** stops it again. The sticks control the camera in either mode. Both sticks follow every direction, with a gentle response near the centre and full speed at the edge; letting go stops camera movement immediately.
+
 **Hide all HUD** hides game and Moonshine overlays while free camera is On. You can still open the mod menu to change settings. Turn the option or free camera Off to show your normal overlays again.
 
-If main-stick left/right feels backwards, enable **Reverse sideways** on the same page. It changes sideways movement only, leaving C-stick look unchanged; the default is Off. Recenter returns to the retail camera's view. Turn free camera Off to restore that view; gameplay stays paused until you choose Resume.
+If main-stick left/right feels backwards, enable **Reverse sideways** on the same page. It changes sideways movement only, leaving C-stick look unchanged; the default is Off. Recenter returns to the retail camera's view. Turning free camera Off restores that view and leaves gameplay paused or running as you had it.
 
 Free camera also works in the ordinary Start pause. It remains usable while stepping, but **Camera On means Mario input Off**: A and the sticks will not control Mario on those steps. Turn it Off before stepping a jump or spin. The camera is temporary drawing state; it is restored before gameplay and savestate operations. It closes on a scene transition.
 
@@ -177,11 +179,13 @@ Display > Layout editor has separate groups for Timers, Controller inputs, Metad
 
 **Timers > Sunshine timer** opens the full editor: position, size, opacity, brightness, all 13 characters, TIME/TEMPO and the streak. Its position range spans the full screen.
 
-The first option, **Appearance**, lets you choose **Original** or **Custom**. Leave the target on All to change the whole timer, or press Start to choose one character or image. Original keeps the game's shading and lets you tint it; Custom uses your chosen colours more directly. RGB editing keeps the appearance mode you selected. To restore the whole timer's normal colours, choose **All > Appearance > Original**, then reset Red, Green and Blue individually with **Z** and confirmation. Position, size and the other style controls stay as they were.
+The first option, **Appearance**, lets you choose **Original** or **Custom**. Leave the target on All to change the whole timer, or press Start to choose one character or image. Original keeps the game's shading and lets you tint it; Custom uses your chosen colours more directly. Colour editing keeps the appearance mode you selected. To restore the whole timer's normal colours, choose **All > Appearance > Original**, then reset Hue, Saturation and Lightness individually with **Z** and confirmation. Position, size and the other style controls stay as they were.
 
-**Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours. In RGB controls, hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
+The shared colour editor uses **Hue, Saturation and Lightness (HSL)**. Hue chooses the colour around a 0–359 degree wheel. Saturation runs from grey at 0% to full colour at 100%; Lightness runs from black at 0% to white at 100%. Your existing colours are kept when you update. Hold **Y** while adjusting with the C-stick for increments of 1 instead of 4. A keeps edits, B discards, and Z resets the selected option, with confirmation.
 
-**Display > Appearance > Mario appearance** contains **Mario colours** and **FLUDD colours**, both using the same Creation editor. Press Start to select All or one part. Choose Original/Custom independently for each part; changing RGB selects Custom. Original keeps the stored custom RGB for later. Keep/Discard/Reset and Y for one-unit RGB adjustments work here too.
+**Native HUD colours** includes separate Health counter colour and Underwater air colour controls. Reset restores the retail colours.
+
+**Display > Appearance > Mario appearance** contains **Mario colours** and **FLUDD colours**, both using the same Creation editor. Press Start to select All or one part. Choose Original/Custom independently for each part; changing HSL selects Custom. Original keeps the stored custom colour for later. Keep/Discard/Reset and Y for one-unit HSL adjustments work here too.
 
 | Editor | Parts |
 |---|---|

@@ -166,6 +166,14 @@ extern "C" __declspec(dllexport) void physical(unsigned buttons,int error) {
 }
 extern "C" __declspec(dllexport) void loaded() {onSavestateLoaded();}
 extern "C" __declspec(dllexport) void before(unsigned modal) {beforeDirect(modal!=0);}
+extern "C" __declspec(dllexport) void cameraMode(unsigned paused,unsigned action,unsigned buttons) {
+    sFreeCamera=true;sPaused=paused!=0;sMenuAction=(u8)action;sHaveRead=true;sReadPad=&pad;
+    sPhysical.buttons=sConsumed.buttons=(u16)buttons;lastInjected=buttons;
+}
+extern "C" __declspec(dllexport) unsigned cameraStatus() {
+    return sFreeCamera|(sPaused<<1)|(sFreeze<<2)|(sStepping<<3)|
+        ((unsigned)sConsumed.buttons<<8)|(lastInjected<<20);
+}
 extern "C" __declspec(dllexport) void state(unsigned value) {director.mCurState=value;}
 extern "C" __declspec(dllexport) void gates(unsigned flags,int counter,unsigned game,unsigned demo) {
     pad.flags=(u16)flags;pad._E8=counter;director.mGameState=game;director.mDemoState=demo;
@@ -283,6 +291,45 @@ extern "C" __declspec(dllexport) const char*text(){return sStatus;}
 
     def arrive_zone(self, scene=0x2F000001, fingerprint=123):
         self.lib.arrival(scene, fingerprint)
+
+    def test_camera_menu_resume_waits_for_A_then_retains_live_camera(self):
+        self.lib.reset(4, 0)
+        self.lib.cameraMode(1, 2, 0x100)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1 | 2 | 4)
+        self.lib.physical(0, 0)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1)
+
+    def test_live_camera_records_neutral_gameplay_without_stealing_menu_input(self):
+        self.lib.reset(4, 0)
+        self.lib.cameraMode(0, 0, 0x300)
+        self.lib.before(1)
+        self.assertEqual(self.lib.cameraStatus(), 1 | (0x300 << 8) | (0x300 << 20))
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1)
+
+    def test_paused_camera_still_steps_once_and_load_hold_still_wins(self):
+        self.lib.reset(4, 0)
+        self.lib.cameraMode(1, 0, 0x100)
+        self.lib.step()
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1 | 2 | 8)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1 | 2 | 4)
+        self.start(buttons=2)
+        self.lib.cameraMode(0, 0, 2)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 1 | 4)
+
+    def test_camera_still_detaches_when_leaving_loaded_gameplay(self):
+        self.lib.reset(4, 0)
+        self.lib.cameraMode(0, 0, 0)
+        self.lib.state(9)
+        self.lib.before(0)
+        self.assertEqual(self.lib.cameraStatus(), 0)
 
     def test_zone_entry_input_recorded_before_loading_suspends_tape(self):
         self.lib.reset(4, 0); self.lib.depart(1)

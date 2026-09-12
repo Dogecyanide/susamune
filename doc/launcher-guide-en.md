@@ -1,4 +1,4 @@
-# Moonshine Launcher guide - V2.3.0 Frame By Frame
+# Moonshine Launcher guide - V2.3.1 Frame By Frame
 
 ## Getting started
 
@@ -112,13 +112,17 @@ The Sunshine timer and compact QFT use different decimal precision, so their las
 
 Open Practice > Free camera and turn it On. This also pauses live gameplay.
 
+Choose Resume gameplay here to run at normal speed while keeping free camera On. Pause gameplay stops it again. Camera controls do not move Mario.
+
+Both sticks follow every direction. The smooth response gives slower movement near the centre and full speed at the edge. Releasing the stick stops movement immediately.
+
 Main stick: move. C-stick: look. L/R analog pressure: move down/up. Hold X for a temporary speed boost.
 
 Movement speed saves a speed from 0.25x to 4x. Look sensitivity separately changes C-stick turning speed from 0.25x to 4x. Reverse sideways changes main-stick left/right movement.
 
 Hide all HUD hides game and Moonshine overlays while using free camera. You can still open the menu. Turn it or free camera Off to restore your overlays.
 
-Recenter returns to the game's camera view. Turning free camera Off also restores that view; gameplay stays paused until you choose Resume.
+Recenter returns to the game's camera view. Turning free camera Off also restores that view and keeps gameplay paused or running as you had it.
 
 Camera On means Mario input Off. Turn it Off before stepping a jump or spin.
 
@@ -214,13 +218,13 @@ Open Display > Layout editor. Choose Timers, Controller inputs, Metadata, Native
 
 In an editor, C-stick up/down chooses an option; left/right changes it. Start selects All or the next character/part. X + Start goes backwards.
 
-For Red, Green and Blue, hold Y to change by 1 instead of 4.
+Colours now use Hue, Saturation and Lightness (HSL). Hue chooses the colour from 0 to 359 degrees. Saturation goes from grey at 0 percent to full colour at 100. Lightness goes from black at 0 percent to white at 100. Your existing colours are kept. Hold Y to change by 1 instead of 4.
 
 A keeps your edits, B discards them, and Z resets the selected option. Each asks for confirmation.
 
 Timers > Sunshine timer edits position, size, opacity, brightness, the characters, TIME and the streak.
 
-Appearance has Original and Custom choices for All or individual parts. Original keeps the game's shading and can still be tinted. Custom uses the chosen colours more directly. Editing RGB does not switch this timer's appearance mode.
+Appearance has Original and Custom choices for All or individual parts. Original keeps the game's shading and can still be tinted. Custom uses the chosen colours more directly. Editing HSL does not switch this timer's appearance mode.
 
 Native HUD colours has separate controls for the normal health counter and underwater air meter.
 
@@ -236,9 +240,9 @@ Mario parts: cap, shirt, overalls, gloves, shoes, sunglasses and Sunshine shirt.
 
 FLUDD parts: body paint, metal, straps, tank, spray/hover/rocket/turbo nozzles, sprayed water and water highlights.
 
-Use the same editor controls: Start selects a part; C-stick chooses and adjusts an option; hold Y for one-unit RGB changes.
+Use the same editor controls: Start selects a part; C-stick chooses and adjusts an option; hold Y for one-unit HSL changes.
 
-Each part has its own Original/Custom choice. Here, editing RGB selects Custom. Choosing Original keeps your custom colour for later.
+Each part has its own Original/Custom choice. Here, editing HSL selects Custom. Choosing Original keeps your custom colour for later.
 
 Keep the edits to save the colours for your next boot. Mario's skin stays unchanged. Sprayed water colours affect the stream, its mist and splashes, while sea water and Yoshi juice keep their own colours.
 

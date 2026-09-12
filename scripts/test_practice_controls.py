@@ -33,7 +33,7 @@ class PracticeControlsTests(unittest.TestCase):
         source = Path(cls.folder.name) / "controls.cpp"
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
-            "bool observerTransition()", "f32 axis(s8 value)",
+            "bool observerTransition()", "void cameraStick(",
             "f32 cameraScale(", "f32 cameraSpeedScale()", "void updateCamera()"))
         source.write_text(r'''
 #include "susamune/practice_input.h"
@@ -57,9 +57,10 @@ static u8 sSpinRemaining,sMenuAction;
 static const u8 kSpinFrames=9;
 static unsigned invalidations;
 static float sYaw,sPitch;
-static float (*sine)(float),(*cosine)(float);
+static float (*sine)(float),(*cosine)(float),(*squareRoot)(float);
 float sinf(float x) { return sine(x); }
 float cosf(float x) { return cosine(x); }
+float retailSquareRoot(float x) { return squareRoot(x); }
 float Clamp(float x,float lo,float hi) { return x<lo?lo:(x>hi?hi:x); }
 bool controlStage() { return sControl; }
 bool normalStage() { return sNormal; }
@@ -72,8 +73,8 @@ bool observerLoading() { return loading; }
 bool observerCleanupPending() { return cleanup; }
 }
 ''' + functions + r'''
-extern "C" __declspec(dllexport) void trig(float (*s)(float),float (*c)(float)) {
-    sine=s;cosine=c;
+extern "C" __declspec(dllexport) void trig(float (*s)(float),float (*c)(float),float (*r)(float)) {
+    sine=s;cosine=c;squareRoot=r;
 }
 extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned flags,
     const SusamunePracticeInput *input,float *out) {
@@ -96,9 +97,9 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
         cls.lib = C.CDLL(str(library))
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         callback = C.CFUNCTYPE(C.c_float, C.c_float)
-        cls.sine, cls.cosine = callback(math.sin), callback(math.cos)
-        cls.lib.trig.argtypes = [callback, callback]
-        cls.lib.trig(cls.sine, cls.cosine)
+        cls.sine, cls.cosine, cls.square_root = callback(math.sin), callback(math.cos), callback(math.sqrt)
+        cls.lib.trig.argtypes = [callback, callback, callback]
+        cls.lib.trig(cls.sine, cls.cosine, cls.square_root)
         cls.lib.camera.argtypes = [C.c_float, C.c_uint, C.c_uint, C.POINTER(Input),
                                   C.POINTER(C.c_float)]
 
@@ -145,8 +146,8 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     def test_look_sensitivity_changes_both_angles_without_scaling_movement(self):
         for choice, scale in enumerate((.25, .5, 1, 2, 4)):
             out = self.camera(flags=16 | choice << 5, substickX=80, substickY=80, triggerR=255)
-            self.assertAlmostEqual(out[6], -.035 * scale, places=6)
-            self.assertAlmostEqual(out[7], .035 * scale, places=6)
+            self.assertAlmostEqual(out[6], -.035 * scale / math.sqrt(2), places=6)
+            self.assertAlmostEqual(out[7], .035 * scale / math.sqrt(2), places=6)
             self.assertAlmostEqual(out[1], 20)
         self.assertAlmostEqual(self.camera(flags=16 | 255 << 5, substickX=80)[6], -.035, places=6)
 
@@ -157,8 +158,37 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
         self.assertEqual(out[:3], [0, 0, 0])
         self.assertEqual(out[8], 1)
         self.assertNotEqual(self.camera(flags=2, stickX=80)[0], 0)
-        for value in range(-11, 12):
-            self.assertEqual(self.camera(stickX=value, stickY=value)[:3], [0, 0, 0])
+        for x in range(-12, 13):
+            for y in range(-12, 13):
+                if x*x + y*y <= 144:
+                    self.assertEqual(self.camera(stickX=x, stickY=y)[:3], [0, 0, 0])
+
+    def test_radial_input_preserves_shallow_angles_in_all_quadrants(self):
+        for x, y in ((1, 80), (11, 70), (30, 60), (60, 30), (80, 1)):
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    mx, _, mz, *_ = self.camera(stickX=x*sx, stickY=y*sy)
+                    self.assertNotEqual(mx, 0)
+                    self.assertAlmostEqual(-mx/mz, x*sx/(y*sy), places=5)
+                    look = self.camera(substickX=x*sx, substickY=y*sy)
+                    self.assertAlmostEqual(-look[6]/look[7], x*sx/(y*sy), places=5)
+
+    def test_radial_response_caps_diagonal_speed_and_eases_from_rest(self):
+        for x, y in ((80, 0), (0, 80), (80, 80), (-128, 127)):
+            out = self.camera(stickX=x, stickY=y, substickX=x, substickY=y)
+            self.assertAlmostEqual(math.hypot(out[0], out[2]), 20, places=5)
+            self.assertAlmostEqual(math.hypot(out[6], out[7]), .035, places=6)
+        speeds = [self.camera(stickY=y)[2] / 20 for y in range(12, 81)]
+        self.assertEqual(speeds[0], 0)
+        self.assertLess(speeds[1], .001)
+        self.assertAlmostEqual(speeds[-1], 1)
+        self.assertTrue(all(a < b for a, b in zip(speeds, speeds[1:])))
+        self.assertLess(speeds[17], .25)
+        self.assertGreater(speeds[51], .75)
+        self.assertEqual(self.camera(stickY=0)[:3], [0, 0, 0])
+
+    def test_disconnected_controller_cannot_move_the_camera(self):
+        self.assertEqual(self.camera(error=-1, stickY=80, triggerR=255)[:3], [0, 0, 0])
 
     def test_automated_spins_are_removed_but_wire_ids_stay_reserved(self):
         practice = (ROOT / "src/practice_session.cpp").read_text()

@@ -2,6 +2,15 @@
 
 A speedrun-practice mod for **Super Mario Sunshine** (JP GMSJ01, US GMSE01, and PAL GMSP01). The mod's code is injected into the game at runtime — the primary distribution is a **custom Nintendont** (Homebrew Channel app) that patches the selected disc revision in memory on boot, so end users need only a real disc (or their own ISO on SD) and **no patched ISO/DOL**. Dolphin remains the primary *development* environment (via a patched `main.dol`). The companion repo `../../src/sms` is the in-progress decompilation of the game and the source of truth for any game-side type layouts; refer to it freely when sizing a struct or tracing a code path.
 
+## V2.3.1 implementation notes
+
+- Free camera can remain active when gameplay resumes. Both sticks use a radial deadzone and smoothstep magnitude, preserving their full direction and limiting diagonal speed. Physical camera input stays neutral to Mario even on the menu-close frame. Existing speed, look sensitivity and reverse-strafe choices retain their settings IDs and wire layout.
+- The shared Creation editor exposes HSL while retaining exact RGB persistence until an edit. A bounded 257-entry HSL cache preserves hue/saturation through black, white and grey targets; it lives in upper MEM1 alongside the conversion helpers. The editor and configuration structures do not grow. Native Sunshine timer Original/Custom selection never changes implicitly; model colour edits retain their existing explicit custom-mode capability.
+- Intro Skip constructs the A/B/C TMarDirector while leaving application context at GAME_INTRO (4). RetailInput admits that case only for AREA_OPTION (15) and the exact regional TMarDirector vtable. Movie typing remains separate. Model, water, health and native-timer render guards use the same checked current director rather than requiring context 5.
+- State restore preserves the live retail THP allocation, including its DVD ring, YUV textures and decoder workspace, because the video's threads/queues/globals are not rewound. Capture and validate the current allocation under disabled interrupts before restore; compose the exclusion with the durable owner filter on every RAM/SD/recovery path. After saving, invalidate only the streamed DVD input ring before interrupts resume, never dirty decoder workspace. Snapshot 17, compressed pool capacity, MEM1 reserve and MEM2 ownership remain unchanged. See `doc/v2.3.1-live-video-state-fix.md`; emulator evidence is not Wii/Wii U verification.
+- A retained ghost challenger announces itself once. Mutating the challenger recording resets the notice latch; preserving it across a level restart does not.
+- V2.3.1 packaging uses `build/release-v2.3.1` and separate English/日本語版 downloads. Previous V2.3.0 artifacts and runtime evidence remain unchanged. New host and emulator receipts must identify their own source/build scope.
+
 ## V2.3.0 implementation notes
 
 The current release is **Moonshine V2.3.0 Frame By Frame**. The architecture plan in `doc/v2.3.0-frame-by-frame-plan.md` predates implementation; these concrete details supersede old capacity/menu descriptions below:
