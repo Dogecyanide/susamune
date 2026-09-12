@@ -171,13 +171,17 @@ class ReleasePackagingTests(unittest.TestCase):
             for entry in release.FILES:
                 self.assertIn(base+entry, files)
             if kind == "launcher":
-                self.assertEqual("Moonshine_Theme/background.png" in files, language == "ja")
+                self.assertEqual("Moonshine data/theme/background.png" in files, language == "ja")
                 self.assertIn("README.md", files)
+                data_files = {n for n in files if n.startswith("Moonshine data/")}
+                self.assertEqual(data_files, {"Moonshine data/theme/background.png"} if language == "ja" else set())
+                self.assertFalse(any(n.startswith("Moonshine_Theme/") for n in files))
+                self.assertIn("/Moonshine data/moonshine.ini", files["README.md"].decode())
             else:
                 actual = {n.split("/")[-1] for n in files if n.endswith(".bps")}
                 self.assertEqual(actual, {"moonshine_jp_ja.bps"} if language == "ja" else
                                  {"moonshine_jp.bps", "moonshine_us.bps", "moonshine_pal.bps"})
-                self.assertNotIn("Moonshine_Theme/background.png", files)
+                self.assertNotIn("Moonshine data/theme/background.png", files)
             if language == "ja":
                 readme = files["README.md" if kind == "launcher" else base+"README.md"].decode()
                 self.assertIn("日本語版", readme)

@@ -226,7 +226,7 @@ static bool SaveIfDirty(void)
 	{
 		// Non-fatal: the user's choices still apply to this boot.
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 SusamuneText("Settings were not saved: %s:/susamune.ini is not writable"),
+			 SusamuneText("Settings were not saved: %s:/Moonshine data/moonshine.ini is not writable"),
 			 LauncherDev);
 		return false;
 	}
@@ -234,7 +234,7 @@ static bool SaveIfDirty(void)
 	{
 		// Non-fatal: the user's choices still apply to this boot.
 		snprintf(ErrorLine, sizeof(ErrorLine),
-			 SusamuneText("Could not write %s:/susamune.ini"), LauncherDev);
+			 SusamuneText("Could not write %s:/Moonshine data/moonshine.ini"), LauncherDev);
 		CanSave = false;
 		return false;
 	}

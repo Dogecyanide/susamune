@@ -191,7 +191,7 @@ void CreationEditor::reset() {
     mEditing      = false;
 }
 
-#pragma clang section text=".foxtrot.text"
+#pragma clang section text=""
 void CreationEditor::begin(CreationStyle *style, u8 (*textRgb)[3],
                            u8 (*backupRgb)[3], u16 textSlots, u16 targetSlots,
                            const char *targetNames, u16 capabilities,

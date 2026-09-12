@@ -27,7 +27,7 @@ every check on every game version.
   Edit one Mario/FLUDD part and one timer or overlay using Hue, Saturation and
   Lightness. Try white or black, then bring the colour back. Check that Keep
   saves the edit and Discard restores the old colour. Hold Y for finer steps.
-- [ ] **Sunshine timer:** changing its colour should keep whichever
+- [ ] **Sunshine timer:** changing its colnoour should keep whichever
   Original/Custom appearance you selected. A short normal attempt should
   still time correctly, and Step should advance the QFT one frame.
 - [ ] **Ghost message:** if you use a retained challenger, restart your level

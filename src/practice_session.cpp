@@ -97,6 +97,9 @@ u32 sReadScene;
 SusamunePracticeInput sPhysical;
 SusamunePracticeInput sConsumed;
 s8 sCameraSticks[4];
+f32 sCameraMotion[5];
+u32 sCameraTick;
+bool sCameraTickValid;
 bool sHaveRead;
 bool sConsumedFrame;
 bool sPadHookReady;
@@ -352,6 +355,7 @@ bool replayPresentationSetting(SettingId id) {
     case SETTING_FREE_CAMERA_SPEED:
     case SETTING_FREE_CAMERA_STRAFE_REVERSE:
     case SETTING_FREE_CAMERA_SENSITIVITY:
+    case SETTING_FREE_CAMERA_SMOOTHING:
     case SETTING_FREE_CAMERA_HIDE_HUD:
     case SETTING_METADATA_HORIZONTAL:
     case SETTING_GHOST_INPUTS:
@@ -603,6 +607,50 @@ void applyCamera() {
     sCameraApplied = true;
 }
 
+#pragma clang section text=""
+void resetCameraMotion() {
+    memset(sCameraMotion, 0, sizeof(sCameraMotion));
+    sCameraTickValid = false;
+}
+
+void smoothCameraGroup(f32 *value, const f32 *target, u32 count, f32 step) {
+    f32 squared = 0.0f;
+    for (u32 i = 0; i < count; ++i) {
+        const f32 error = target[i] - value[i];
+        squared += error * error;
+    }
+    if (squared == 0.0f) return;
+    // Finite settling without restarting a tween when the stick jitters.
+    const f32 amount = Clamp(step / retailSquareRoot(retailSquareRoot(squared)), 0.0f, 1.0f);
+    f32 blend = amount * (2.0f - amount);
+    if (blend > 0.99999f) blend = 1.0f;
+    for (u32 i = 0; i < count; ++i) value[i] += (target[i] - value[i]) * blend;
+}
+
+bool smoothCameraInput(f32 *input) {
+    const u8 choice = gSettings.get(SETTING_FREE_CAMERA_SMOOTHING);
+    if (choice == 0 || choice > 15) {
+        resetCameraMotion();
+        return false;
+    }
+    const u32 now = OSGetTick();
+    u32 elapsed = now - sCameraTick;
+    if (!sCameraTickValid || elapsed > OS_TIMER_CLOCK / 4u) {
+        resetCameraMotion();
+        elapsed = 0;
+    }
+    sCameraTick = now;
+    sCameraTickValid = true;
+    const f32 step = static_cast<f32>(elapsed) /
+        (static_cast<f32>(OS_TIMER_CLOCK) * (choice * 0.1f));
+    smoothCameraGroup(sCameraMotion, input, 2, step);
+    smoothCameraGroup(sCameraMotion + 2, input + 2, 2, step);
+    smoothCameraGroup(sCameraMotion + 4, input + 4, 1, step);
+    memcpy(input, sCameraMotion, sizeof(sCameraMotion));
+    return true;
+}
+#pragma clang section text=".foxtrot.text"
+
 void cameraStick(s8 rawX, s8 rawY, f32 &x, f32 &y) {
     const f32 length = retailSquareRoot(static_cast<f32>(rawX) * rawX +
                              static_cast<f32>(rawY) * rawY);
@@ -641,32 +689,37 @@ void consumeControlInput() {
 }
 
 void updateCamera() {
-    if (!sFreeCamera || sModal || !controlStage() || sPhysical.error != 0) return;
+    if (!sFreeCamera || sModal || !controlStage() || sPhysical.error != 0) {
+        resetCameraMotion();
+        return;
+    }
     if (sCameraWaitButtons) {
-        if (sPhysical.buttons) return;
+        if (sPhysical.buttons) { resetCameraMotion(); return; }
         sCameraWaitButtons = false;
     }
     f32 moveX, moveY, lookX, lookY;
     cameraStick(sCameraSticks[0], sCameraSticks[1], moveX, moveY);
     cameraStick(sCameraSticks[2], sCameraSticks[3], lookX, lookY);
+    const f32 height = static_cast<int>(sPhysical.triggerR) - static_cast<int>(sPhysical.triggerL);
+    f32 input[5] = {moveX, moveY, lookX, lookY, height / 255.0f};
+    const bool smoothing = smoothCameraInput(input);
     const f32 turn = 0.035f * cameraScale(SETTING_FREE_CAMERA_SENSITIVITY);
-    sYaw -= lookX * turn;
+    sYaw -= input[2] * turn;
     if (sYaw > 3.14159265f) sYaw -= 6.2831853f;
     if (sYaw < -3.14159265f) sYaw += 6.2831853f;
-    sPitch += lookY * turn;
+    sPitch += input[3] * turn;
     sPitch = Clamp(sPitch, -1.45f, 1.45f);
     const f32 forwardX = sinf(sYaw);
     const f32 forwardZ = cosf(sYaw);
     const f32 speed = cameraSpeedScale() *
                      ((sPhysical.buttons & JUTGamePad::X) ? 75.0f : 20.0f);
-    const f32 advance = moveY * speed;
-    const f32 strafe = moveX * speed *
+    const f32 advance = input[1] * speed;
+    const f32 strafe = input[0] * speed *
         (gSettings.get(SETTING_FREE_CAMERA_STRAFE_REVERSE) ? -1.0f : 1.0f);
     // LookAt's screen-right is forward crossed with world-up.
     sCameraView.position.x += forwardX * advance - forwardZ * strafe;
     sCameraView.position.z += forwardZ * advance + forwardX * strafe;
-    sCameraView.position.y += (static_cast<int>(sPhysical.triggerR) -
-                              static_cast<int>(sPhysical.triggerL)) * speed / 255.0f;
+    sCameraView.position.y += smoothing ? input[4] * speed : height * speed / 255.0f;
     sCameraView.position.x = Clamp(sCameraView.position.x, -1000000.0f, 1000000.0f);
     sCameraView.position.y = Clamp(sCameraView.position.y, -1000000.0f, 1000000.0f);
     sCameraView.position.z = Clamp(sCameraView.position.z, -1000000.0f, 1000000.0f);
@@ -1195,6 +1248,7 @@ void init() {
 }
 
 void beforeStageSetup() {
+    resetCameraMotion();
     cancelLoadHold();
     sCameraWaitButtons = false;
     restoreCamera();
@@ -1238,6 +1292,7 @@ void beforeDirect(bool modalOwnsInput) {
     activatePendingPause();
     activatePendingLoadHold();
     if (!controlStage()) {
+        resetCameraMotion();
         if (!introStage()) cancelLoadHold();
         sPausePending = sPausePending || sPaused;
         sPaused = false;
@@ -1518,6 +1573,7 @@ void onSavestateCleared(u32 slot, u32 generation) {
 }
 
 void onSavestateLoaded() {
+    resetCameraMotion();
     sModalPadValid = false;
     sPendingReleases = 0;
     const bool held = !sOwnLoad && sLoadHoldButtons && sPhysical.error == 0 &&
@@ -1629,6 +1685,7 @@ bool requestStep(bool fromMenu) {
 }
 
 void recenterCamera() {
+    resetCameraMotion();
     restoreCamera();
     if (!controlStage() || !mem1(gpCamera, sizeof(CPolarSubCamera))) return;
     sCamera = gpCamera;
@@ -1649,6 +1706,7 @@ bool requestFreeCameraToggle() {
     if (gBinds.wasPressed(BIND_FREE_CAMERA))
         sStripButtons |= gBinds.get(BIND_FREE_CAMERA);
     if (sFreeCamera) {
+        resetCameraMotion();
         sCameraWaitButtons = false;
         restoreCamera();
         sFreeCamera = false;
@@ -1829,6 +1887,7 @@ void requestStop() {
 }
 
 void releaseForDeparture() {
+    resetCameraMotion();
     sModalPadValid = false;
     sPendingReleases = 0;
     cancelLoadHold();

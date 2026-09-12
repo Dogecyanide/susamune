@@ -1559,3 +1559,7 @@ Original: retail colours   Custom: your HSL   Colour edits select Custom	Origina
 Original: shaded tint   Custom: flat colour   HSL works in both	Original: 陰影あり   Custom: 指定色   どちらもHSLで調整
 On pauses gameplay. Off restores the game camera without changing pause.	オンでゲームを停止。オフは視点だけを戻し、停止状態は変えません。
 Resume runs the game at normal speed and keeps free camera on.	フリーカメラを保ったまま、ゲームを通常速度で再開します。
+
+# Optional camera movement and rotation easing.
+Camera smoothing	カメラの補間時間
+Ease moving and turning starts/stops. Off responds immediately.	移動と回転の開始・停止を滑らかにします。Offなら即座に反応します。

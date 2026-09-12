@@ -12,8 +12,11 @@ background video player is running.
   recordings keep the frames spent running in free camera.
 - Both sticks now follow all directions, including small angles between the
   main directions. A smooth response gives finer control near the centre.
-- Diagonal movement stays within the selected speed. Letting go stops the
-  camera immediately; movement speed and look sensitivity remain separate.
+- Diagonal movement stays within the selected speed. Movement speed and
+  look sensitivity remain separate.
+- Optional **Camera smoothing** eases movement and turning as you start,
+  change direction and stop. Choose 0.1–1.5 seconds in 0.1-second steps;
+  the default **Off** responds immediately.
 
 ## Colours
 
@@ -33,6 +36,17 @@ background video player is running.
 - **Ghost challenger ready** appears once for a retained challenger instead
   of appearing on every level reset.
 - Fixed Windows folder handling in the automatic release packaging checks.
+
+## One data folder
+
+- Settings and practice files now live in **/Moonshine data**. The launcher
+  moves existing Moonshine data there on first launch.
+- Themes use `theme/`; ghosts, SD states, TAS projects, crash reports and
+  backups each have their own folder. Settings are saved as `moonshine.ini`.
+- Crash history keeps up to 16 recent reports, with matching files for each
+  crash. Earlier reports are preserved during migration.
+- The app stays in `apps/moonshine_launcher`. The optional flag background
+  is included only in the Japanese download.
 
 ## Updating
 

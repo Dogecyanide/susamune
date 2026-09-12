@@ -279,8 +279,9 @@ def render_readme(kind, language, checksum, patches):
         body = f"# {title}\n\nビルド {checksum}\n\n"
         if kind == "launcher":
             body += ("ZIP内の `apps` をSDカードのルートにコピーしてください。既存のアプリは更新しますが、"
-                     "`susamune.ini`、記録、ゴースト、保存したステート、TASプロジェクトは削除しないでください。\n\n"
-                     "日本国旗の背景を使う場合だけ `Moonshine_Theme` もコピーしてください。"
+                     "設定、記録、ゴースト、保存したステート、TASプロジェクトは削除しないでください。"
+                     "初回起動時に既存のデータを `/Moonshine data` に移行します。設定は `/Moonshine data/moonshine.ini` に保存されます。\n\n"
+                     "日本国旗の背景を使う場合だけ `Moonshine data/theme/background.png` もコピーしてください。"
                      "既存のテーマを残す場合はコピーしないでください。音楽は含まれません。\n\n"
                      "Homebrew ChannelからMoonshine Launcherを起動し、ゲームの版と場所を選んでください。"
                      "ランチャーは日本語、JP版SunshineのMoonshineメニューも日本語になります。"
@@ -297,8 +298,9 @@ def render_readme(kind, language, checksum, patches):
     else:
         body = f"# {title}\n\nBuild {checksum}\n\n"
         if kind == "launcher":
-            body += ("Copy `apps` to your SD card's root and replace the app files. Keep `susamune.ini`, records, "
-                     "ghosts, saved states, TAS projects and your theme. Open Moonshine Launcher from the Homebrew "
+            body += ("Copy `apps` to your SD card's root and replace the app files. Keep your settings, records, "
+                     "ghosts, saved states, TAS projects and your theme. On first launch, existing data moves into "
+                     "`/Moonshine data`; settings live in `/Moonshine data/moonshine.ini`. Open Moonshine Launcher from the Homebrew "
                      "Channel, then select your game region and disc or clean game image.\n\n"
                      "This download keeps Moonshine menus English in every game region. The separate 日本語版 "
                      "download selects Japanese menus and includes an optional Japanese flag background.\n\n"
@@ -338,7 +340,7 @@ def archive_contents(args, report, patches):
                 "Launcher metadata branding differs")
         app["README.md"] = render_readme("launcher", language, report["build_checksum"], {})
         if language == "ja":
-            app["Moonshine_Theme/background.png"] = flag
+            app["Moonshine data/theme/background.png"] = flag
         name = f"Moonshine_Launcher_V2.3.1_Frame_By_Frame_{label}.zip"
         result[name] = (language, "launcher", app)
         selected = {name: data for name, data in patches.items()

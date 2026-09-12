@@ -138,6 +138,7 @@ void message(const char *text) {sStatus=text;}
 void invalidate() {++invalidations;sAssisted=true;}
 void restoreCamera() {}
 void updateCamera() {}
+void resetCameraMotion() {}
 void stopTape(const char *);
 void inject(const SusamunePracticeInput &input,TMarioGamePad *,u32 releases=0) {lastInjected=input.buttons;if(releases==0x1fffff)++neutralizations;}
 SusamunePracticeInput snapshot(const SusamunePracticeInput &input){return input;}

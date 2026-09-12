@@ -1299,7 +1299,7 @@ void SavestateManager::updateDisk() {
         PracticeSession::cancelLoadHold();
     }
     else if (result.command == SUSAMUNE_STATE_CMD_EXPORT) sDiskStatus = projectTransfer ?
-        "TAS checkpoint saved" : "State saved in /moonshine_states";
+        "TAS checkpoint saved" : "State saved in Moonshine data/states";
     else if (result.command == SUSAMUNE_STATE_CMD_CATALOG) sDiskStatus = "SD states ready";
     else if (result.command == SUSAMUNE_STATE_CMD_RENAME) {
         sDiskStatus = "SD state renamed";

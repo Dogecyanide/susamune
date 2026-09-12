@@ -34,7 +34,7 @@ class PracticeControlsTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
             'extern "C" void susamunePracticeClampPad(', "bool observerTransition()", "void cameraStick(",
-            "f32 cameraScale(", "f32 cameraSpeedScale()", "void updateCamera()"))
+            "f32 cameraScale(", "f32 cameraSpeedScale()", "void resetCameraMotion()", "void smoothCameraGroup(", "bool smoothCameraInput(", "void updateCamera()"))
         source.write_text(r'''
 #include "susamune/practice_input.h"
 #include "Dolphin/PAD.h"
@@ -47,11 +47,17 @@ struct JUTGamePad { enum { X=0x400 }; };
 static const int SETTING_FREE_CAMERA_SPEED=1;
 static const int SETTING_FREE_CAMERA_STRAFE_REVERSE=2;
 static const int SETTING_FREE_CAMERA_SENSITIVITY=3;
+static const int SETTING_FREE_CAMERA_SMOOTHING=4;
 typedef int SettingId;
-struct Settings { u8 choice,reverse,sensitivity; u8 get(int id) { return id==1?choice:id==2?reverse:sensitivity; } } gSettings;
+struct Settings { u8 choice,reverse,sensitivity,smoothing; u8 get(int id) { return id==1?choice:id==2?reverse:id==3?sensitivity:smoothing; } } gSettings;
 static CameraView sCameraView;
 static SusamunePracticeInput sPhysical;
 static s8 sCameraSticks[4];
+static f32 sCameraMotion[5];static u32 sCameraTick;static bool sCameraTickValid;
+static u32 mockTick;
+#define OS_TIMER_CLOCK 40000000u
+u32 OSGetTick(){return mockTick;}
+extern "C" void *memset(void *d,int v,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++=(u8)v;return d;}
 static unsigned clampCalls;
 extern "C" void *memcpy(void *d,const void *s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
 extern "C" void PADClamp(PADStatus *pad) {
@@ -85,6 +91,25 @@ bool observerLoading() { return loading; }
 bool observerCleanupPending() { return cleanup; }
 }
 ''' + functions + r'''
+extern "C" __declspec(dllexport) void smoothingStart(unsigned choice,unsigned tick) {
+    resetCameraMotion();mockTick=tick;gSettings.smoothing=(u8)choice;
+    gSettings.choice=gSettings.sensitivity=2;gSettings.reverse=0;
+    sYaw=sPitch=0;sCameraView.position.set(0,0,0);
+}
+extern "C" __declspec(dllexport) unsigned filterInput(float *input,unsigned tick,unsigned choice) {
+    mockTick=tick;gSettings.smoothing=(u8)choice;return smoothCameraInput(input);
+}
+extern "C" __declspec(dllexport) void vectorStep(float *value,const float *target,unsigned count,float step) {
+    smoothCameraGroup(value,target,count,step);
+}
+extern "C" __declspec(dllexport) void smoothingFrame(unsigned tick,const SusamunePracticeInput *input,
+    unsigned flags,float *out) {
+    mockTick=tick;sPhysical=*input;sCameraSticks[0]=input->stickX;sCameraSticks[1]=input->stickY;
+    sCameraSticks[2]=input->substickX;sCameraSticks[3]=input->substickY;
+    sFreeCamera=!(flags&1);sModal=flags&2;sControl=!(flags&4);sCameraWaitButtons=flags&8;
+    updateCamera();out[0]=sCameraView.position.x;out[1]=sCameraView.position.y;out[2]=sCameraView.position.z;
+    out[3]=sYaw;out[4]=sPitch;memcpy(out+5,sCameraMotion,sizeof(sCameraMotion));
+}
 extern "C" __declspec(dllexport) unsigned rawClamp(const SusamunePracticeInput *in,
     SusamunePracticeInput *out,s8 *raw,unsigned wrapped) {
     PADStatus pad[4];memcpy(pad,in,sizeof(pad));clampCalls=0;
@@ -98,7 +123,7 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     const SusamunePracticeInput *input,float *out) {
     sPhysical=*input;sCameraSticks[0]=input->stickX;sCameraSticks[1]=input->stickY;sCameraSticks[2]=input->substickX;sCameraSticks[3]=input->substickY;sYaw=yaw;sPitch=0;sFreeCamera=true;
     sModal=flags&1;sCameraWaitButtons=flags&2;sControl=!(flags&4);
-    gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;
+    gSettings.smoothing=0;gSettings.choice=(u8)choice;gSettings.reverse=(flags&8)!=0;
     gSettings.sensitivity=(flags&16)?(flags>>5):2;sCameraView.position.set(0,0,0);
     sCameraView.target.set(0,0,0);updateCamera();
     out[0]=sCameraView.position.x;out[1]=sCameraView.position.y;
@@ -118,8 +143,121 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
         cls.sine, cls.cosine, cls.square_root = callback(math.sin), callback(math.cos), callback(math.sqrt)
         cls.lib.trig.argtypes = [callback, callback, callback]
         cls.lib.trig(cls.sine, cls.cosine, cls.square_root)
+        cls.lib.vectorStep.argtypes = [C.POINTER(C.c_float), C.POINTER(C.c_float), C.c_uint, C.c_float]
+        cls.lib.filterInput.argtypes = [C.POINTER(C.c_float), C.c_uint, C.c_uint]
+        cls.lib.smoothingFrame.argtypes = [C.c_uint, C.POINTER(Input), C.c_uint, C.POINTER(C.c_float)]
         cls.lib.camera.argtypes = [C.c_float, C.c_uint, C.c_uint, C.POINTER(Input),
                                   C.POINTER(C.c_float)]
+
+    def vector_step(self, value, target, step):
+        out = (C.c_float * len(value))(*value)
+        self.lib.vectorStep(out, (C.c_float * len(target))(*target), len(value), step)
+        return list(out)
+
+    def filtered(self, target, seconds, choice):
+        values = (C.c_float * 5)(*target)
+        self.lib.filterInput(values, round(seconds * 40000000) & 0xffffffff, choice)
+        return list(values)
+
+    def test_smoothing_both_start_and_release_settle_for_ntsc_pal_and_irregular_frames(self):
+        for seconds in (.1, .3, 1.5):
+            for intervals in ([1 / 30], [1 / 25], [1 / 60], [.012, .024, .017, .029]):
+                value = [0.0, 0.0]
+                target = [.6, .8]
+                elapsed = 0
+                frame = 0
+                while elapsed < seconds + .001:
+                    dt = intervals[frame % len(intervals)]
+                    before = value
+                    value = self.vector_step(value, target, dt / seconds)
+                    self.assertTrue(all(a <= b + 1e-6 and b <= t + 1e-6 for a, b, t in zip(before, value, target)))
+                    if elapsed == 0 and dt < seconds:
+                        self.assertGreater(value[1], 0)
+                        self.assertLess(value[1], target[1])
+                    elapsed += dt
+                    frame += 1
+                for actual, expected in zip(value, target):
+                    self.assertAlmostEqual(actual, expected, places=6)
+                elapsed = 0
+                while elapsed < seconds + .001:
+                    dt = intervals[frame % len(intervals)]
+                    value = self.vector_step(value, [0, 0], dt / seconds)
+                    if value[1] > 1e-7:
+                        self.assertAlmostEqual(value[0] / value[1], .75, delta=1e-4)
+                    elapsed += dt
+                    frame += 1
+                self.assertEqual(value, [0, 0])
+
+    def test_smoothing_tracks_jitter_without_restarting_and_does_not_overshoot_reversal(self):
+        value = [0.0, 0.0]
+        for frame in range(90):
+            value = self.vector_step(value, [0, .99 + .01 * (frame & 1)], 1 / 90)
+        self.assertGreater(value[1], .97)
+        previous = value[1]
+        for frame in range(130):
+            value = self.vector_step(value, [0, -1], 1 / 90)
+            self.assertLessEqual(value[1], previous + 1e-6)
+            self.assertGreaterEqual(value[1], -1)
+            previous = value[1]
+        self.assertEqual(value, [0, -1])
+
+    def test_smoothing_setting_uses_real_seconds_for_every_displayed_duration(self):
+        target = [.6, .8, -.8, .6, 1]
+        for choice in range(1, 16):
+            self.lib.smoothingStart(choice, 0)
+            self.assertEqual(self.filtered(target, 0, choice), [0] * 5)
+            frames = choice * 4  # 25 ms increments: four frames per 0.1 s
+            for frame in range(1, frames + 1):
+                value = self.filtered(target, frame * .025, choice)
+                if frame == frames // 2:
+                    for actual, goal in zip(value, target):
+                        self.assertAlmostEqual(actual, .75 * goal, delta=2e-6)
+            for actual, goal in zip(value, target):
+                self.assertAlmostEqual(actual, goal, delta=1e-6)
+            for frame in range(1, frames + 1):
+                value = self.filtered([0] * 5, (frames + frame) * .025, choice)
+            self.assertEqual(value, [0] * 5)
+
+    def test_smoothing_clock_wrap_gap_reset_and_off_identity(self):
+        choice = 10
+        start = 0xffff0000
+        self.lib.smoothingStart(choice, start)
+        target = [1, 0, 0, 1, .5]
+        first = (C.c_float * 5)(*target)
+        self.lib.filterInput(first, start, choice)
+        self.assertEqual(list(first), [0] * 5)
+        second = (C.c_float * 5)(*target)
+        self.lib.filterInput(second, (start + 1333333) & 0xffffffff, choice)
+        self.assertGreater(second[0], 0)
+        self.assertLess(second[0], 1)
+        stalled = (C.c_float * 5)(*target)
+        self.lib.filterInput(stalled, (start + 1333333 + 10000001) & 0xffffffff, choice)
+        self.assertEqual(list(stalled), [0] * 5)
+        for mode in (0, 255):
+            original = (C.c_float * 5)(.3125, -.625, .75, -.875, .375)
+            before = bytes(original)
+            self.assertEqual(self.lib.filterInput(original, 123, mode), 0)
+            self.assertEqual(bytes(original), before)
+
+    def test_smoothing_height_and_rotation_start_gently_and_reset_without_drift(self):
+        full = Input(stickX=80, substickX=60, substickY=30, triggerR=255)
+        zero = Input()
+        for flags, error in ((1, 0), (2, 0), (4, 0), (8, 0), (0, -1)):
+            self.lib.smoothingStart(10, 100)
+            out = (C.c_float * 10)()
+            self.lib.smoothingFrame(100, C.byref(full), 0, out)
+            self.assertEqual(list(out), [0] * 10)
+            self.lib.smoothingFrame(1333433, C.byref(full), 0, out)
+            self.assertTrue(0 < out[1] < 20)
+            self.assertTrue(-.035 < out[3] < 0)
+            self.assertGreater(out[4], 0)
+            before = list(out)[:5]
+            rejected = Input(buttons=0x100 if flags == 8 else 0, error=error)
+            self.lib.smoothingFrame(2666766, C.byref(rejected), flags, out)
+            self.assertEqual(list(out)[:5], before)
+            self.assertEqual(list(out)[5:], [0] * 5)
+            self.lib.smoothingFrame(4000099, C.byref(zero), 0, out)
+            self.assertEqual(list(out)[:5], before)
 
     def test_raw_camera_capture_precedes_unchanged_retail_clamp_for_all_ports(self):
         for error in (0, -1):

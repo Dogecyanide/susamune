@@ -70,7 +70,7 @@ First make a memory savestate. Under Practice > Savestates, set Save to to that 
 
 Open SD states > Save memory state to SD. Give it a name, then press Start to finish. X + Start cancels naming.
 
-Wait until saving finishes before removing the storage device. Files live in /moonshine_states on the launcher's device.
+Wait until saving finishes before removing the storage device. Files live in /Moonshine data/states on the launcher's device.
 
 To use a saved file after rebooting, launch the same mod build, game region and setup. Enter the same level and episode. A secret also needs the same parent episode.
 
@@ -114,7 +114,9 @@ Open Practice > Free camera and turn it On. This also pauses live gameplay.
 
 Choose Resume gameplay here to run at normal speed while keeping free camera On. Pause gameplay stops it again. Camera controls do not move Mario.
 
-Both sticks follow every direction. The smooth response gives slower movement near the centre and full speed at the edge. Releasing the stick stops movement immediately.
+Both sticks follow every direction. The smooth response gives slower movement near the centre and full speed at the edge.
+
+Camera smoothing eases movement and turning when you press or release the sticks. Choose 0.1 to 1.5 seconds in 0.1-second steps. Longer times give slower starts and stops. Off is the default and responds immediately.
 
 Main stick: move. C-stick: look. L/R analog pressure: move down/up. Hold X for a temporary speed boost.
 
@@ -144,7 +146,7 @@ Open Practice > TAS projects. Your recorded inputs, Beginning and two checkpoint
 
 6. Use the same build, game version and setup, then Open TAS by name. A matching checkpoint or Beginning opens paused and keeps the later inputs for Replay. If no point matches your current area and episode, the recording opens without moving Mario. Return to its Beginning area before Replay.
 
-Save Checkpoint keeps a retry point in memory. Save TAS keeps everything on SD, in /moonshine_tas. Only the SD save survives closing the game or rebooting. There is no need to import the Beginning and checkpoints separately.
+Save Checkpoint keeps a retry point in memory. Save TAS keeps everything on SD, in /Moonshine data/tas. Only the SD save survives closing the game or rebooting. There is no need to import the Beginning and checkpoints separately.
 
 TAS projects share the three memory slots with ordinary states. If an occupied ordinary state needs replacing, you choose which one or cancel. The TAS screen names its own Beginning and checkpoints for you.
 
@@ -186,7 +188,7 @@ Ghosts > Ghost inputs turns on the ghost's controller display. Both ghosts shows
 
 Older ghosts may have no recorded inputs to display. Ghost input displays teach you the movement; they do not control Mario.
 
-Shared .smsghost files go in susamune_ghosts/import. Import them from Ghosts. Your exported files appear in susamune_ghosts/share.
+Shared .smsghost files go in Moonshine data/ghosts/import. Import them from Ghosts. Your exported files appear in Moonshine data/ghosts/share.
 
 ## TAS ghosts and splits
 
@@ -250,12 +252,12 @@ Keep the edits to save the colours for your next boot. Mario's skin stays unchan
 
 Keep your settings, theme, records and ghosts when updating. Replace the packaged launcher files together; do not mix a new launcher with old mod files.
 
-Put background.png and bgm.mp3 in Moonshine_Theme at the root of the SD card. A launcher opened from USB uses Moonshine_Theme on USB. The old theme folder beside boot.dol is no longer used.
+Put background.png and bgm.mp3 in /Moonshine data/theme. A launcher opened from USB uses that folder on USB.
 
-Keep existing susamune.ini and susamune_ghosts names. The launcher still uses them.
+On first launch, existing Moonshine files move into /Moonshine data. Keep your old data when updating; no manual rename is needed. Settings are in moonshine.ini; ghosts, states, tas, crashes and backups have their own folders. The app stays in apps/moonshine_launcher.
 
 When reporting a problem, include the build checksum shown on the launcher's home screen, game region, level/episode and the steps that caused it.
 
-For a crash, keep its text and any .bin/.core reports together.
+The crashes folder keeps up to 16 recent reports. Send the matching text and .bin/.core files from the same report. Older reports are preserved during migration.
 
-The longer foxtrot-guide-en.md is included beside boot.dol. This Guide works even without that file.
+The longer guide-en.md is included beside boot.dol. This Guide works even without that file.
