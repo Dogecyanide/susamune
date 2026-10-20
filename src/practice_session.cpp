@@ -190,6 +190,7 @@ struct CameraView {
 };
 CameraView sCameraSaved;
 CameraView sCameraView;
+bool sCameraUpdatePending __attribute__((section(".bss.practice_camera_update_pending")));
 u8 sCameraRenderSaved[0x138];
 static_assert(__builtin_offsetof(CPolarSubCamera, mWorldTranslation) == 0x124 &&
               __builtin_offsetof(CPolarSubCamera, mProjectionMatrix) == 0x16c &&
@@ -619,6 +620,7 @@ void applyCamera() {
 __attribute__((noinline)) void resetCameraMotion() {
     memset(sCameraMotion, 0, sizeof(sCameraMotion));
     sCameraTickValid = false;
+    sCameraUpdatePending = false;
 }
 
 void smoothCameraGroup(f32 *value, const f32 *target, u32 count, f32 step) {
@@ -696,8 +698,15 @@ void consumeControlInput() {
     sStripButtons &= held;
 }
 
+#pragma clang section text=""
+__attribute__((noinline)) bool cameraUpdateStage() {
+    return controlStage() || (sCameraUpdatePending && sFreeze && stageReady() &&
+        gpMarDirector->mCurState == TMarDirector::STATE_STAGE_EXIT_2);
+}
+#pragma clang section text=".foxtrot.text"
+
 void updateCamera() {
-    if (!sFreeCamera || sModal || !controlStage() || sPhysical.error != 0) {
+    if (!sFreeCamera || sModal || !cameraUpdateStage() || sPhysical.error != 0) {
         resetCameraMotion();
         return;
     }
@@ -736,6 +745,22 @@ void updateCamera() {
                           sCameraView.position.z + forwardZ * cosf(sPitch) * 1000.0f);
     sCameraView.up.set(0.0f, 1.0f, 0.0f);
 }
+
+#pragma clang section text=""
+__attribute__((noinline)) void scheduleCameraUpdate() {
+    sCameraUpdatePending = sFreeCamera && !sModal && controlStage() &&
+        sHaveRead && sPhysical.error == 0;
+    if (!sCameraUpdatePending) resetCameraMotion();
+}
+
+__attribute__((noinline)) void prepareCameraUpdate(TMarDirector *director) {
+    if (!sCameraUpdatePending || !director || !(director->mGameState & 0x4000u)) return;
+    // The initial DRAW consumes last frame's viewCalc; advance only for the next one.
+    if (director == gpMarDirector && stageReady() && sCamera == gpCamera &&
+        sCameraGeneration == sStageGeneration) updateCamera();
+    sCameraUpdatePending = false;
+}
+#pragma clang section text=".foxtrot.text"
 
 bool installEntry(u32 address, void *target, u32 *tail) {
     const u32 original = *reinterpret_cast<const u32 *>(address);
@@ -963,6 +988,7 @@ extern "C" void susamunePracticeTalkPerform(JDrama::TViewObj *talk,
 extern "C" void susamunePracticeMovement(TMarDirector *director) {
     restoreCamera();
     reinterpret_cast<void (*)(TMarDirector *)>(sMovementTail)(director);
+    prepareCameraUpdate(director);
 }
 
 extern "C" void susamunePracticeHitCheck(void *checker) {
@@ -1288,6 +1314,11 @@ void afterStageSetup() {
     activateTimelineArrival();
 }
 
+// Charge the vacated camera prefix to preserve timer-called helper offsets.
+__attribute__((naked, used)) static void practiceCameraTimerOffsetReserve() {
+    asm volatile(".space 1124, 0");
+}
+
 void beforeDirect(bool modalOwnsInput) {
     restoreCamera();
     sConsumedFrame = false;
@@ -1379,7 +1410,7 @@ void beforeDirect(bool modalOwnsInput) {
     if (sFreeze && !sModal && sHaveRead && sReadPad == gpApplication.mGamePads[0]) {
         retainPausedReleases(sReadPad);
     }
-    updateCamera();
+    scheduleCameraUpdate();
 }
 
 bool freezeRequested() { return sFreeze; }
@@ -1991,3 +2022,391 @@ void draw(Menu *menu) {
 }
 
 } // namespace PracticeSession
+
+// Keep the timer-facing owner and its existing globals in their original order.
+#pragma clang section text="" rodata="" data="" bss=""
+
+#include "SMS/MarioUtil/MathUtil.hxx"
+
+namespace {
+u16 sPhysicalPressed, sSpeedPresses, sSpeedPriorButtons;
+u8 sRaisedTriggerL, sRaisedTriggerR, sSpeedPriorTriggerL, sSpeedPriorTriggerR;
+u8 sSpeedTriggerL, sSpeedTriggerR, sSpeedPhase, sSpeedChoice;
+
+struct SpeedStickHistory {
+    TMario *owner;
+    s16 *retail;
+    s16 samples[60];
+    u16 facing;
+    u8 count, limit;
+} sSpeedStick;
+
+static_assert(__builtin_offsetof(TMario, _530) == 0x530 &&
+              __builtin_offsetof(TMario, _534) == 0x534 &&
+              __builtin_offsetof(TMario, _536) == 0x536 &&
+              __builtin_offsetof(TMario, _A0) == 0xa0 &&
+              __builtin_offsetof(TMario, _368) == 0x368 &&
+              __builtin_offsetof(TMarioGamePad, _A8) == 0xa8 &&
+              __builtin_offsetof(TMarioGamePad, _AC) == 0xac,
+              "retail stick history and compensated controller layout");
+
+void updateSpeedStickHistory(bool held) {
+    TMario *mario = gpMarioOriginal;
+    // A TAS stores simulation samples only. Do not introduce unrecorded history.
+    if (sRecord || sReplay || Ghost::observerActive() ||
+        !mem1(mario, sizeof(TMario)) || mario->mController != sReadPad ||
+        !mem1(gpCamera, sizeof(CPolarSubCamera)) || static_cast<s16>(mario->_A0) > 0) {
+        sSpeedStick.owner = nullptr;
+        return;
+    }
+    s16 *retail = reinterpret_cast<s16 *>(mario->_530);
+    const s16 limit = mario->mControllerParams.mStickRotateTime.get();
+    if (!mem1(retail, sizeof(sSpeedStick.samples)) || limit < 2 || limit >= 60 ||
+        mario->_534 >= limit) {
+        sSpeedStick.owner = nullptr;
+        return;
+    }
+    if (sSpeedStick.owner != mario || sSpeedStick.retail != retail ||
+        sSpeedStick.limit != limit) {
+        sSpeedStick.owner = nullptr;
+        if (!held) return;
+        sSpeedStick.owner = mario;
+        sSpeedStick.retail = retail;
+        sSpeedStick.limit = limit;
+        sSpeedStick.count = mario->_534;
+        sSpeedStick.facing = mario->_536;
+        for (u32 i = 0; i < sSpeedStick.count; ++i) sSpeedStick.samples[i] = retail[i];
+    }
+    if (!held) {
+        for (u32 i = 0; i < sSpeedStick.count; ++i) retail[i] = sSpeedStick.samples[i];
+        mario->_534 = sSpeedStick.count;
+        mario->_536 = sSpeedStick.facing;
+        sSpeedStick.owner = nullptr;
+        return;
+    }
+
+    // updateMeaning already applied retail camera modes and neutral-key scaling.
+    const f32 stickX = sReadPad->_A8, stickY = sReadPad->_AC;
+    if (!(stickX >= -1.0f && stickX <= 1.0f && stickY >= -1.0f && stickY <= 1.0f)) {
+        sSpeedStick.owner = nullptr;
+        return;
+    }
+    s16 x = static_cast<s16>(128.0f * stickX);
+    s16 y = static_cast<s16>(128.0f * stickY);
+    if (mario->_368 > 0.0f) {
+        const s16 sinkTime = mario->mGraffitoParams.mSinkTime.get();
+        if (sinkTime <= 0) { sSpeedStick.owner = nullptr; return; }
+        const f32 minimum = mario->mGraffitoParams.mSinkMoveMin.get();
+        const f32 scale = (mario->mGraffitoParams.mSinkMoveMax.get() - minimum) *
+                         (1.0f - mario->_368 / sinkTime) + minimum;
+        if (!(scale >= 0.0f && scale <= 1.0f)) { sSpeedStick.owner = nullptr; return; }
+        x = static_cast<s16>(x * scale);
+        y = static_cast<s16>(y * scale);
+    }
+    x = x < -7 ? x + 6 : x > 7 ? x - 6 : 0;
+    y = y < -7 ? y + 6 : y > 7 ? y - 6 : 0;
+    if (!x && !y) { sSpeedStick.count = 0; return; }
+    if (!sSpeedStick.count) sSpeedStick.facing = mario->mAngle.y;
+    sSpeedStick.samples[sSpeedStick.count++] = matan(-static_cast<f32>(y), x) + gpCamera->mAngleYaw;
+    if (sSpeedStick.count >= limit) {
+        --sSpeedStick.count;
+        for (u32 i = 0; i < sSpeedStick.count; ++i)
+            sSpeedStick.samples[i] = sSpeedStick.samples[i + 1];
+    }
+}
+}
+
+namespace PracticeSession {
+
+void resetGameplaySpeed() {
+    sSpeedPhase = sSpeedChoice = 0;
+    sSpeedPresses = 0;
+    sSpeedTriggerL = sSpeedTriggerR = 0;
+    sSpeedStick.owner = nullptr;
+}
+
+void prepareGameplaySpeed() {
+    sPhysicalPressed = sPhysical.buttons & ~sSpeedPriorButtons;
+    sRaisedTriggerL = sPhysical.triggerL > sSpeedPriorTriggerL ? sPhysical.triggerL : 0;
+    sRaisedTriggerR = sPhysical.triggerR > sSpeedPriorTriggerR ? sPhysical.triggerR : 0;
+    sSpeedPriorButtons = sPhysical.buttons;
+    sSpeedPriorTriggerL = sPhysical.triggerL;
+    sSpeedPriorTriggerR = sPhysical.triggerR;
+    if (!sHaveRead || sPhysical.error) {
+        resetGameplaySpeed();
+        sPhysicalPressed = 0;
+        sRaisedTriggerL = sRaisedTriggerR = 0;
+    }
+}
+
+void applyGameplaySpeed() {
+    const u8 percent = gSettings.get(SETTING_GAMEPLAY_SPEED);
+    if (!percent || percent >= 100 || sModal || sFreeze || sStepping ||
+        sFreeCamera || !PracticeSession::available() || !sCollisionHooksReady ||
+        !sStateHookReady || !actionableStage() ||
+        actionsFastForwardActive() || !sHaveRead ||
+        sReadPad != gpApplication.mGamePads[0] || sConsumed.error) {
+        resetGameplaySpeed();
+        return;
+    }
+    if (!sAssisted) invalidate();
+    if (sSpeedChoice != percent) {
+        resetGameplaySpeed();
+        sSpeedChoice = percent;
+        sSpeedPhase = 100 - percent;
+    }
+    const u32 phase = sSpeedPhase + percent;
+    sSpeedPhase = phase >= 100 ? phase - 100 : phase;
+    updateSpeedStickHistory(phase < 100);
+    if (phase < 100) {
+        sFreeze = true;
+        if (!sReplay) {
+            sSpeedPresses |= sPhysicalPressed & sConsumed.buttons;
+            if (sRaisedTriggerL > sSpeedTriggerL) sSpeedTriggerL = sRaisedTriggerL;
+            if (sRaisedTriggerR > sSpeedTriggerR) sSpeedTriggerR = sRaisedTriggerR;
+        }
+        // beforeDirect already handled other holds; this hold was just created.
+        retainPausedReleases(sReadPad);
+    } else if (!sReplay && (sSpeedPresses || sSpeedTriggerL || sSpeedTriggerR)) {
+        sConsumed.buttons |= sSpeedPresses;
+        if (sSpeedTriggerL > sConsumed.triggerL) sConsumed.triggerL = sSpeedTriggerL;
+        if (sSpeedTriggerR > sConsumed.triggerR) sConsumed.triggerR = sSpeedTriggerR;
+        inject(sConsumed, sReadPad);
+        sReadPad->updateMeaning();
+        sSpeedPresses = 0;
+        sSpeedTriggerL = sSpeedTriggerR = 0;
+    }
+}
+
+} // namespace PracticeSession
+
+// TAS seek extension: keep every original mixed-section function above intact.
+namespace {
+struct SeekState {
+    PracticeSession::SeekOutcome phase;
+    u32 slot, generation, key[2], target, position, frameHash, transitionHash, wait;
+    u16 release;
+} sSeek;
+
+TMarDirector *sFrozenDirector;
+s32 sFrozenTickBudget;
+static_assert(__builtin_offsetof(TMarDirector, mTickBudget) == 0x54,
+              "retail simulation phase offset");
+
+const char kSeekLoading[] = "Seeking: restoring a matching checkpoint...";
+const char kSeekPlaying[] = "Seeking through recorded inputs - B cancels";
+const char kSeekArrived[] = "Frame reached. Choose Continue to edit from here.";
+const char kSeekCanceled[] = "Seek canceled. Recorded inputs were kept.";
+const char kSeekInvalid[] = "No matching checkpoint in this area before that frame.";
+const char kSeekChanged[] = "Seek stopped: checkpoint, inputs or settings changed.";
+const char kSeekLoadFailed[] = "Seek could not restore its checkpoint. Take kept.";
+const char kSeekDiverged[] = "Seek stopped at a desync. Return to a matching checkpoint.";
+const char kSeekUnavailable[] = "This frame cannot be paused safely. Choose a gameplay frame.";
+const char kSeekTimedOut[] = "Seek stopped waiting for gameplay. Recorded inputs were kept.";
+
+bool seekTapeValid() {
+    return tapeStorageReady() && sCount <= kMaxFrames &&
+        (sOriginKey[0] | sOriginKey[1]) && settingsHash() == sSettingsHash &&
+        (sRecord || hashBytes(2166136261u, sFrames, sCount * sizeof(Frame)) == sTapeHash) &&
+        validTransitions(sTransitions, sTransitionCount, sCount, sStartScene,
+            sTransitionCount ? sTransitions[sTransitionCount - 1].toScene : sStartScene);
+}
+
+void finishSeek(PracticeSession::SeekOutcome outcome, const char *text, bool attached) {
+    stopTape(nullptr);
+    sSeek.phase = outcome;
+    sSeek.position = sTakePosition;
+    sTakeAttached = attached && normalStage() && sDesyncFrame < 0 &&
+        PracticeSession::atRecordedScene();
+    sEditArmed = false;
+    sPaused = normalStage();
+    sPausePending = !sPaused;
+    sStepQueued = sStepping = false;
+    sFreeze = sPaused;
+    sMenuAction = 0;
+    gBinds.suppressUntilRelease();
+    message(text);
+}
+}
+
+namespace PracticeSession {
+void beginFrozenDirector(bool frozen) {
+    sFrozenDirector = frozen && normalStage() ? gpMarDirector : nullptr;
+    if (sFrozenDirector) sFrozenTickBudget = sFrozenDirector->mTickBudget;
+}
+
+void endFrozenDirector() {
+    // PAL's fractional tick budget otherwise advances while movement is held.
+    if (sFrozenDirector && sFrozenDirector == gpMarDirector && normalStage())
+        sFrozenDirector->mTickBudget = sFrozenTickBudget;
+    sFrozenDirector = nullptr;
+}
+
+bool attemptLabelVisible() {
+    if (!stageReady()) return false;
+    const u32 state = gpMarDirector->mCurState;
+    return state >= TMarDirector::STATE_GAME_STARTING &&
+        state != TMarDirector::STATE_STAGE_EXIT && state != TMarDirector::STATE_STAGE_EXIT_2;
+}
+
+bool seekBusy() { return sSeek.phase == SEEK_LOADING || sSeek.phase == SEEK_PLAYING; }
+SeekOutcome seekOutcome() { return sSeek.phase; }
+u32 seekTarget() { return sSeek.target; }
+u32 seekPosition() { return seekBusy() && sSeek.phase == SEEK_PLAYING ? sTakePosition : sSeek.position; }
+
+bool seekAnchorValid(u32 slot, u32 generation, u32 target) {
+    SavestateData saved;
+    if (!gSavestateMgr || slot >= SavestateManager::kSlotCount || !generation ||
+        target > sCount || !seekTapeValid() ||
+        gSavestateMgr->slotInfo(slot).generation != generation ||
+        !gSavestateMgr->practiceData(slot, &saved) || !validSavedTake(saved) ||
+        (saved.flags & (SAVED_PAD | SAVED_RNG)) != (SAVED_PAD | SAVED_RNG) ||
+        saved.frames > target ||
+        gSavestateMgr->slotSceneKey(slot) != currentSceneKey()) return false;
+    const u32 prefix = transitionsThrough(saved.frames);
+    if (currentSceneKey() != (prefix ? sTransitions[prefix - 1].toScene : sStartScene)) return false;
+    if (!(saved.flags & SAVED_TAKE))
+        return !saved.frames && saved.stateKey[0] == sOriginKey[0] &&
+            saved.stateKey[1] == sOriginKey[1] && saved.savedFingerprint == sTapeStart;
+    const bool atArrival = prefix && sTransitions[prefix - 1].frame == saved.frames;
+    const u32 expected = atArrival ? sTransitions[prefix - 1].startFingerprint :
+        saved.frames ? sFrames[saved.frames - 1].fingerprint : sTapeStart;
+    const u32 mask = atArrival || !saved.frames ? 0xffffffffu : kFrameFingerprintMask;
+    // Equal frame numbers do not establish that a checkpoint belongs to this branch.
+    return (saved.savedFingerprint & mask) == (expected & mask) &&
+        saved.originKey[0] == sOriginKey[0] && saved.originKey[1] == sOriginKey[1] &&
+        saved.settingsHash == sSettingsHash && saved.startFingerprint == sTapeStart &&
+        saved.frameHash == hashBytes(2166136261u, sFrames, saved.frames * sizeof(Frame)) &&
+        saved.transitionCount == prefix && saved.transitionHash ==
+            hashBytes(2166136261u, sTransitions, prefix * sizeof(SusamuneTasTransition));
+}
+
+bool requestSeek(u32 slot, u32 generation, u32 target) {
+    if (seekBusy() || starting() || !projectAvailable() || SavestateManager::diskBusy() ||
+        !gSavestateMgr || gSavestateMgr->loadPending() ||
+        !seekAnchorValid(slot, generation, target)) {
+        message(kSeekInvalid); return false;
+    }
+    SavestateData saved;
+    if (!gSavestateMgr->practiceData(slot, &saved)) return false;
+    stopTape(nullptr);
+    cancelLoadHold();
+    restoreCamera();
+    sFreeCamera = false;
+    sPaused = sFreeze = true;
+    sPausePending = sStepQueued = sStepping = false;
+    sMenuAction = 0;
+    sSeek = {SEEK_LOADING, slot, generation, {saved.stateKey[0], saved.stateKey[1]},
+        target, sTakePosition, sTapeHash,
+        hashBytes(2166136261u, sTransitions, sTransitionCount * sizeof(SusamuneTasTransition)),
+        0, static_cast<u16>(sPhysical.buttons & (JUTGamePad::A | JUTGamePad::B | JUTGamePad::START))};
+    message(kSeekLoading);
+    return true;
+}
+
+void cancelSeek() {
+    if (seekBusy()) finishSeek(SEEK_CANCELED, kSeekCanceled, sTakeAttached);
+}
+
+void seekBeforeDirect() {
+    if (!seekBusy()) return;
+    if (sPhysical.error || Ghost::observerStatsSuppressed() || settingsHash() != sSettingsHash) {
+        finishSeek(SEEK_FAILED, kSeekChanged, false); return;
+    }
+    if (sSeek.phase == SEEK_LOADING) {
+        sPaused = sFreeze = normalStage();
+        sStepQueued = sStepping = false;
+        return;
+    }
+    if (sDesyncFrame >= 0) {
+        finishSeek(SEEK_FAILED, kSeekDiverged, false); return;
+    }
+    if (sModal || WarpWheel::shown() || WarpWheel::promptPending() ||
+        StageLoader::resultOwnsInput() || (!sReplay && sCursor < sSeek.target)) {
+        finishSeek(SEEK_CANCELED, kSeekCanceled, sTakeAttached); return;
+    }
+    // Arrival can happen in PADRead while a recorded loading-zone boundary completes.
+    if (sCursor >= sSeek.target && !sTransitionMode) seekAfterDirect();
+}
+
+void seekAfterDirect() {
+    if (sSeek.phase != SEEK_PLAYING) return;
+    if (sDesyncFrame >= 0) {
+        finishSeek(SEEK_FAILED, kSeekDiverged, false); return;
+    }
+    if (sCursor == sSeek.target && !sTransitionMode) {
+        if (normalStage() && sTakeAttached && atRecordedScene())
+            finishSeek(SEEK_ARRIVED, kSeekArrived, true);
+        else finishSeek(SEEK_FAILED, kSeekUnavailable, false);
+        return;
+    }
+    if (!sReplay || sCursor > sSeek.target) {
+        finishSeek(SEEK_FAILED, kSeekChanged, false); return;
+    }
+    if (sSeek.position == sTakePosition) {
+        if (++sSeek.wait >= 3600) finishSeek(SEEK_FAILED, kSeekTimedOut, false);
+    } else {
+        sSeek.position = sTakePosition;
+        sSeek.wait = 0;
+    }
+}
+
+void seekAfterDraw() {
+    if (sSeek.phase != SEEK_LOADING) return;
+    sSeek.release &= sPhysical.buttons;
+    if (sSeek.release || (gMenu && gMenu->shown()) || SavestateManager::diskBusy() ||
+        (gpCardManager && gpCardManager->getLastStatus() == CARD_ERROR_BUSY)) {
+        if (++sSeek.wait >= 600) finishSeek(SEEK_FAILED, kSeekTimedOut, sTakeAttached);
+        return;
+    }
+    SavestateData saved;
+    if (!normalStage() || !seekAnchorValid(sSeek.slot, sSeek.generation, sSeek.target) ||
+        !gSavestateMgr->practiceData(sSeek.slot, &saved) ||
+        saved.stateKey[0] != sSeek.key[0] || saved.stateKey[1] != sSeek.key[1] ||
+        sTapeHash != sSeek.frameHash || hashBytes(2166136261u, sTransitions,
+            sTransitionCount * sizeof(SusamuneTasTransition)) != sSeek.transitionHash) {
+        finishSeek(SEEK_FAILED, kSeekChanged, false); return;
+    }
+    // The ordinary owned restore skips tape/transition writes but restores pad history.
+    sOwnRestoreValid = false;
+    sOwnLoad = true;
+    const bool loaded = gSavestateMgr->loadSlot(sSeek.slot, sSeek.generation);
+    sOwnLoad = false;
+    if (!loaded || !sOwnRestoreValid) {
+        finishSeek(SEEK_FAILED, kSeekLoadFailed, false); return;
+    }
+    sHaveRead = sFrameInjected = sConsumedFrame = false;
+    sCursor = sTakePosition = saved.frames;
+    sTransitionCursor = transitionsThrough(saved.frames);
+    sTransitionMode = 0;
+    sTransitionSetup = false;
+    sTapeStage = sStageGeneration;
+    sTakeAttached = true;
+    sEditArmed = sRecord = sPaused = sFreeze = false;
+    sPausePending = sStepQueued = sStepping = false;
+    sStripButtons = sStartRelease = 0;
+    sPriorButtons = sPhysical.buttons;
+    sDesyncFrame = -1;
+    sSeek.phase = SEEK_PLAYING;
+    sSeek.position = saved.frames;
+    sSeek.wait = 0;
+    sReplay = true;
+    invalidate();
+    gBinds.suppressUntilRelease();
+    if (fingerprint() != saved.savedFingerprint) {
+        warnDesync(saved.frames);
+        finishSeek(SEEK_FAILED, kSeekDiverged, false); return;
+    }
+    message(kSeekPlaying);
+    if (sCursor == sSeek.target) seekAfterDirect();
+}
+} // namespace PracticeSession
+
+namespace PracticeSession {
+__attribute__((section(".text.practice_recorded_input")))
+bool recordedInput(u32 index, SusamunePracticeInput *out) {
+    if (!out || sCount > kMaxFrames || index >= sCount || !tapeStorageReady()) return false;
+    *out = frameInput(sFrames[index]);
+    return true;
+}
+}

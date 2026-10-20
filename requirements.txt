@@ -1,6 +1,7 @@
 git+https://github.com/JoshuaMKW/dolreader.git
 git+https://github.com/JoshuaMKW/geckocode-libs.git
 pyelftools
+lz4==4.4.5
 chardet
 sortedcontainers
 git+https://github.com/JoshuaMKW/pyisotools.git

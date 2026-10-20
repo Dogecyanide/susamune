@@ -24,6 +24,7 @@ class SplitStatsMemoryTests(unittest.TestCase):
 #include "susamune/split_stats.hxx"
 #include "susamune/susamune_cfg.h"
 #include "susamune/ghost_storage.h"
+#include "susamune/hoverless.h"
 extern "C" void *memset(void*d,int v,__SIZE_TYPE__ n){u8*p=(u8*)d;while(n--)*p++=(u8)v;return d;}
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){u8*p=(u8*)d;const u8*q=(const u8*)s;while(n--)*p++=*q++;return d;}
 extern "C" int snprintf(char*d,__SIZE_TYPE__ n,const char*,...){if(n)*d=0;return 0;}
@@ -52,7 +53,9 @@ static void DCStoreRange(void*,u32){++stores;}
 #define SUSAMUNE_SPLIT_STATS_RUNTIME_PPC_BASE ((__UINTPTR_TYPE__)(memory+32+SUSAMUNE_SPLIT_STATS_RUNTIME_OFFSET))
 struct Timer{u32 serial;s32 qf;u32 attemptSerial(){return serial;}bool currentQf(s32*out){*out=qf;return true;}}gQFTTimer;
 namespace StageLoader{bool activeRouteMatches(int,int){return false;}}
-namespace ILing{int pbProfile(){return 0;}s32 pbQf(int){return -1;}const char*label(int){return "route";}}
+static int activeProfile; static bool hoverEmission;
+namespace ILing{int pbProfile(){return activeProfile;}s32 pbQf(int){return -1;}const char*label(int){return "route";}}
+namespace GhostFludd{bool hoverEmitted(){return hoverEmission;}}
 namespace Ghost{bool comparisonDelta(u16,u8,s32,s32*){return false;}void captureSplit(u16,u8,s32){}}
 enum{SETTING_SPLIT_COMPARISON,SETTING_TIMER_FREEZE_DURATION,SETTING_LEVEL_SPLITS};
 struct Settings{u8 get(int){return 0;}bool getBool(int){return true;}}gSettings;
@@ -97,6 +100,7 @@ API void setup(u32 fault,u32 persistent){
   if(fault==4)config.flags&=~SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED;
   if(fault==5)ghost.response.responseMagic=0;
   if(fault==6)--ghost.response.protocolVersion;if(fault==7)++ghost.response.protocolVersion;
+  activeProfile=0;hoverEmission=false;
   gQFTTimer.serial=1;gQFTTimer.qf=0;invalidations=stores=0;badInvalidate=false;
   sState=nullptr;SplitStats::init();
 }
@@ -115,6 +119,19 @@ API void finish_attempt(){
   gQFTTimer.qf=480;SplitStats::onILResult(5,480);SplitStats::onILAttemptEnded();
 }
 API void load_state(){SplitStats::onSavestateLoaded();}
+API u32 history_pb(){return sState->payload.pbQf[0][0];}
+API void hoverless_attempt(u32 profile,u32 emissionAt,u32 emit){
+  activeProfile=profile; ++gQFTTimer.serial;gQFTTimer.qf=0;hoverEmission=false;
+  SplitStats::onILAttemptStarted(5,true);
+  for(u8 event=0;event<3;event++){
+    if(event==emissionAt)hoverEmission=emit;
+    SplitStats::onRouteEvent(0,event,60*(event+1));
+    SplitStats::update(); hoverEmission=false;
+  }
+  if(emissionAt==3)hoverEmission=emit;
+  gQFTTimer.qf=240;SplitStats::onILResult(5,240);SplitStats::onILAttemptEnded();
+  hoverEmission=false;
+}
 API void delete_gold(){SplitStats::deleteGold(5,0);SplitStats::update();}
 API void bad_handoff(){config.magic=0;ghost.response.protocolVersion=0;}
 API u32 get(u32 key){SplitStats::Summary result={};SplitStats::summary(5,&result);
@@ -150,6 +167,27 @@ API const void*bytes(){return memory;}
         data = C.string_at(lib.bytes(), TAIL_SIZE + 64)
         self.assertEqual(data[:32 + OFFSET], bytes([0xa5]) * (32 + OFFSET))
         self.assertEqual(data[32 + OFFSET + USED:], bytes([0xa5]) * (TAIL_SIZE + 32 - OFFSET - USED))
+
+    def test_hoverless_emission_rejects_current_golds_without_erasing_history(self):
+        for lib in self.libs:
+            for event in range(4):
+                with self.subTest(event=event):
+                    lib.setup(0, 0)
+                    lib.finish_attempt()
+                    old = [lib.get(6), lib.get(8), lib.history_pb()]
+                    lib.hoverless_attempt(4, event, 1)
+                    self.assertEqual([lib.get(6), lib.get(8), lib.history_pb()], old)
+                    self.assert_untouched_neighbors(lib)
+
+    def test_other_profiles_and_unaccepted_hover_keep_split_eligibility(self):
+        for lib in self.libs:
+            for profile, emitted in ((0, 1), (1, 1), (2, 1), (3, 1), (4, 0)):
+                with self.subTest(profile=profile, emitted=emitted):
+                    lib.setup(0, 0)
+                    lib.hoverless_attempt(profile, 1, emitted)
+                    self.assertEqual(lib.get(6), 4)
+                    self.assertEqual(lib.get(8), 60)
+                    self.assert_untouched_neighbors(lib)
 
     def test_unsupported_handoffs_leave_the_entire_bank_untouched_for_every_api(self):
         lib = self.libs[0]

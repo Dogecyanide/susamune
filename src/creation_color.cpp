@@ -61,4 +61,27 @@ u16 display(const Hsl &hsl, int channel) {
     return (u16)((hsl.channel[channel] + (channel ? 50 : 0)) / 100);
 }
 
+void gradient(u8 preset, u16 index, u16 count, const u8 *first,
+              const u8 *last, u8 *rgb) {
+    static const u8 endpoints[2][2][3] = {
+        {{255, 180, 55}, {210, 65, 170}},
+        {{70, 245, 205}, {85, 115, 255}},
+    };
+    if (!first || !last || !rgb || count == 0) return;
+    if (index >= count) index = count - 1;
+    const unsigned span = count > 1 ? count - 1 : 1;
+    if (preset == 3) {
+        const Hsl hsl = {{static_cast<u16>(30000u * index / span), 10000, 6000}};
+        toRgb(hsl, rgb);
+        return;
+    }
+    if (preset == 1 || preset == 2) {
+        first = endpoints[preset - 1][0];
+        last = endpoints[preset - 1][1];
+    }
+    if (preset == 5) last = first;
+    for (unsigned channel = 0; channel < 3; ++channel)
+        rgb[channel] = (first[channel] * (span - index) + last[channel] * index + span / 2) / span;
+}
+
 }  // namespace CreationColor

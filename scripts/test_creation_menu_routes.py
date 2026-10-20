@@ -25,7 +25,7 @@ class CreationMenuRouteTests(unittest.TestCase):
                                 "int pageFirst() const", "int pageEnd() const",
                                 "void moveSelection(", "void activate(",
                                 "static int inputRow(", "static int metadataRow(",
-                                "static int extraRow("))
+                                "static int extraRow(", "static int rowSetting(", "static int rowFavorite("))
         rows = function(creation, "enum Row") + ";"
         raw = (ROOT / "include/susamune/raw_prompt_input.hxx").read_text()
         raw = raw[raw.index("class RawPromptInput"):raw.index("#endif")]
@@ -35,11 +35,11 @@ class CreationMenuRouteTests(unittest.TestCase):
 #include "susamune/settings_list.h"
 typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
 #define ID(name,key) name,
-enum SettingId { SUSAMUNE_SETTING_LIST(ID) SETTING_BUTTSLIDE_DISPLAY };
+enum SettingId { SUSAMUNE_SETTING_LIST(ID) SETTING_COUNT, SETTING_BUTTSLIDE_DISPLAY = SETTING_COUNT };
 #undef ID
 enum { SUSAMUNE_CREATION_TIMER_BG=1,SUSAMUNE_CREATION_TIMER_LABEL=2 };
 #define SUSAMUNE_GLYPH_SLASH "/"
-struct JUTGamePad { enum {A=0x100,B=0x200};struct Status{u16 mButton;};static Status mPadStatus[1]; };
+struct JUTGamePad { enum {A=0x100,B=0x200,X=0x400};struct Status{u16 mButton;};static Status mPadStatus[1]; };
 JUTGamePad::Status JUTGamePad::mPadStatus[1];
 struct TMarioGamePad { enum{CSTICK_UP=1,CSTICK_DOWN=2,CSTICK_LEFT=4,CSTICK_RIGHT=8};u32 nav; };
 struct Menu { u32 navigationInput(TMarioGamePad *pad) {return pad->nav;} };
@@ -54,10 +54,11 @@ struct Editor {
     void toggleLeadingZero() {hit(id,98);}
     void adjustMenuRow(int r,int d) {hit(id,r,d);}
 };
+namespace FinishBreakdown { bool editing(){return false;} void updateEditor(Menu*,TMarioGamePad*){} void beginEditor(){hit(7,99);} }
 struct InputDisplay:Editor {enum{MENU_ROW_COUNT=6};};
 struct MetadataDisplay:Editor {enum{FIELD_COUNT=11};static constexpr int menuRowCount(){return 20;} };
 struct CreationExtras:Editor {
-    enum{MENU_ROW_COUNT=24};
+    enum{MENU_ROW_COUNT=25};
     void beginNativeTimerEditor(){hit(4,100);}
     void beginTimerCharacterEditor(){hit(4,101);}
     void beginColorEditor(int c,int,const char*){hit(4,102+c);}
@@ -71,14 +72,17 @@ struct CreationExtras:Editor {
     void beginRecentIlEditor(){hit(4,112);}
 };
 Editor gQftDisplay;InputDisplay gInputDisplay;MetadataDisplay gMetadataDisplay;CreationExtras gCreationExtras;
-struct Settings{void cycle(int id,int d){hit(5,id,d);}}gSettings;
+struct Settings{void cycle(int id,int d){hit(5,id,d);}static bool favoriteable(int id){return id>=0;}}gSettings;
+void toggleMenuFavorite(Menu*,int id){hit(6,id);}
 void reset() {owner=row=direction=actions=0;JUTGamePad::mPadStatus[0].mButton=0;
     gQftDisplay.id=1;gInputDisplay.id=2;gMetadataDisplay.id=3;gCreationExtras.id=4;}
 '''
+        shim += "namespace DisplayFavorites {" + function(src[src.index("namespace DisplayFavorites"):], "enum Item") + ";}"
+        shim += "const int kDisplayFavoriteFirst=SETTING_COUNT+1;"
         more = r'''
 class CreationTab {
 public:
-    CreationTab():mSel(0),mPage(0){mInput.begin(JUTGamePad::A);}
+    CreationTab():mSel(0),mPage(0){mInput.begin(JUTGamePad::A | JUTGamePad::X);}
 ROWS
 METHODS
     u8 mSel,mPage;RawPromptInput mInput;
@@ -138,7 +142,12 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
 
     def test_page_ranges_include_every_new_row_and_no_headers(self):
         self.assertEqual([self.lib.range(p, 1) - self.lib.range(p, 0) for p in range(7)],
-                         [7, 7, 20, 9, 9, 8, 5])
+                         [11, 7, 20, 9, 9, 16, 10])
+
+    def test_breakdown_toggle_and_editor_are_adjacent(self):
+        self.assertEqual(self.route(0, 3)[1][0], 5)
+        self.assertEqual(self.route(0, 4)[1][:2], [7, 99])
+        self.assertEqual(self.route(0, 4, held=0x400)[0], 0)
 
     def test_health_air_and_shifted_custom_notification_editors(self):
         for page, local, row in ((3, 7, 106), (3, 8, 107), (4, 0, 9),
@@ -146,18 +155,35 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
             count, out = self.route(page, local)
             self.assertEqual((count, out[:3]), (1, [4, row, 1]))
         for local, row in enumerate((108, 113, 114, 115, 109, 110, 111, 112)):
-            self.assertEqual(self.route(5, local)[1][:2], [4, row])
+            self.assertEqual(self.route(5, 2 * local + 1)[1][:2], [4, row])
 
-    def test_metadata_style_first_mapping_preserves_all_twenty_actions(self):
-        expected = [14] + list(range(14)) + list(range(15, 20))
+    def test_metadata_visibility_and_style_share_page_with_all_twenty_actions(self):
+        expected = [0, 14, 13, 16, 19, 17, 18] + list(range(1, 13)) + [15]
         for local, row in enumerate(expected):
             self.assertEqual(self.route(2, local)[1][:3], [3, row, 1])
 
+    def test_display_visibility_and_style_are_adjacent(self):
+        for page, local, owner, action in ((1, 0, 2, 0), (1, 1, 2, 4),
+                                         (2, 0, 3, 0), (2, 1, 3, 14)):
+            self.assertEqual(self.route(page, local)[1][:2], [owner, action])
+        for local in range(0, 16, 2):
+            self.assertEqual(self.route(5, local)[1][0], 5)
+            self.assertEqual(self.route(5, local + 1)[1][0], 4)
+
+    def test_x_shines_display_options_without_toggling_or_opening_editor(self):
+        for page, local in ((1, 0), (1, 2), (1, 3), (1, 4), (2, 0),
+                            (2, 2), (2, 3), (2, 14), (2, 16), (2, 4),
+                            (4, 2), (4, 5), (4, 8), (5, 0), (5, 6)):
+            count, out = self.route(page, local, held=0x400)
+            self.assertEqual((count, out[0]), (1, 6), (page, local))
+        for page, local in ((1, 1), (1, 5), (2, 1), (2, 19), (5, 1)):
+            self.assertEqual(self.route(page, local, held=0x400)[0], 0)
+
     def test_new_metadata_geometry_has_bidirectional_controls_without_opening_editors(self):
-        for local in range(16, 20):
+        for local, row in ((3, 16), (4, 19), (5, 17), (6, 18)):
             for nav, direction in ((4, -1), (8, 1)):
-                self.assertEqual(self.route(2, local, nav, 0), (1, [3, local, direction, local]))
-        for local in (0, 15):
+                self.assertEqual(self.route(2, local, nav, 0), (1, [3, row, direction, local]))
+        for local in (0, 19):
             self.assertEqual(self.route(2, local, 4, 0)[0], 0)
 
     def test_navigation_wraps_within_each_group(self):

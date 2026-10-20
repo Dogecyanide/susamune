@@ -25,9 +25,10 @@ typedef long long OSTime;
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){unsigned char*p=(unsigned char*)d;while(n--)*p++=(unsigned char)c;return d;}
 extern "C" char *strncpy(char*d,const char*s,__SIZE_TYPE__ n){char*out=d;while(n--)*d++=*s?*s++:0;return out;}
 static int snprintf(char*d,__SIZE_TYPE__ n,const char*,...){if(n)*d=0;return 0;}
-enum { BIND_SAVESTATE_SAVE, BIND_SAVESTATE_LOAD, BIND_SAVESTATE_CYCLE,
+enum BindId { BIND_SAVESTATE_SAVE, BIND_SAVESTATE_LOAD, BIND_SAVESTATE_CYCLE,
        BIND_ATTEMPT_SHOW, BIND_ATTEMPT_ADD, BIND_SAVESTATE_CYCLE_SAVE,
-       BIND_SAVESTATE_CYCLE_LOAD, BIND_COUNT };
+       BIND_SAVESTATE_CYCLE_LOAD, BIND_SAVESTATE_SAVE_2, BIND_SAVESTATE_LOAD_2,
+       BIND_SAVESTATE_SAVE_3, BIND_SAVESTATE_LOAD_3, BIND_COUNT };
 enum { SETTING_ATTEMPT_COUNTER, SETTING_ATTEMPT_IN_STAGE_CONTROLS };
 enum { CARD_ERROR_BUSY = -1 };
 static u32 sActiveSlot, sLoadSlot, sPendingSlot, sPendingGeneration;
@@ -35,6 +36,13 @@ static bool sAwaitingLoadApproval, sBusy;
 struct Selection {u32 id,headerCrc,packedSize;char name[32];};
 static Selection sSelectedSD,sPendingSD;
 static bool diskOwned,sDiskLoadReady,sDiskRecovered,restoreSucceeds,importSucceeds;
+namespace StateStorage {
+struct ResultToken {u32 generation;};
+static bool borrowed;static u32 consumed,released,ownershipErrors;
+static bool consumeResult(ResultToken token){if(!borrowed||token.generation!=123){++ownershipErrors;return false;}borrowed=false;++consumed;return true;}
+static bool releaseOwner(){if(borrowed){++ownershipErrors;return false;}++released;return true;}
+}
+static StateStorage::ResultToken sDiskBorrow;
 namespace PracticeSession {
 static u32 heldMask,cancelled;
 void armLoadHold(u32 mask){heldMask=mask;}
@@ -82,7 +90,10 @@ public:
     struct SlotInfo { u32 generation; bool valid; };
     SlotInfo slotInfo(u32 slot) { return { generations[slot],true }; }
     bool saveState() { ++saveCalls; savedSlot=sActiveSlot; return true; }
+    bool saveSlotExplicit(u32 slot){++saveCalls;savedSlot=slot;return true;}
+    bool loadOrdinarySlot(u32 slot,u32 generation){return loadSlot(slot,generation);}
     bool loadSlot(u32 slot, u32 generation) {
+        if(slot==kSlotCount&&!StateStorage::borrowed)++StateStorage::ownershipErrors;
         ++loadCalls; loadedSlot = slot; loadedGeneration = generation;
         pendingAtLoad = mLoadPending; return restoreSucceeds;
     }
@@ -101,6 +112,7 @@ public:
 '''
         path = ROOT / "src/savestate.cpp"
         source += function_source(path, "void SavestateManager::updateHook()")
+        source += function_source(path, "void finishDiskBorrow()")
         source += function_source(path, "void SavestateManager::processPendingLoad()")
         for method in ("selectSlot", "selectSaveSlot", "selectLoadSlot", "cycleSaveSlot",
                        "cycleLoadSlot", "selectSDForLoad"):
@@ -111,6 +123,7 @@ API void reset() {
     sActiveSlot = sLoadSlot = sPendingSlot = sPendingGeneration = 0;
     sAwaitingLoadApproval = sBusy = manager.mLoadPending = false;
     sSelectedSD={};sPendingSD={};sDiskStatus="";
+    StateStorage::borrowed=false;StateStorage::consumed=StateStorage::released=StateStorage::ownershipErrors=0;sDiskBorrow={};
     diskOwned = sDiskLoadReady = sDiskRecovered = false;restoreSucceeds=importSucceeds=true;
     PracticeSession::heldMask=PracticeSession::cancelled=0;
     imports=importId=importCrc=importSize=rebased=savedSlot=0;sDiskStarted=123;
@@ -131,7 +144,7 @@ API bool selectLoad(u32 value) { return manager.selectLoadSlot(value); }
 API bool selectSD(u32 id) { return manager.selectSDForLoad(id,id+100,id+1000,"named"); }
 API void replaceSD(u32 id) { sSelectedSD.id=id;sSelectedSD.headerCrc=id+100;sSelectedSD.packedSize=id+1000; }
 API void transferReady(u32 generation) { diskOwned=false;sDiskLoadReady=manager.mLoadPending=true;
-    sPendingSlot=3;sPendingGeneration=generation;manager.mLoadWaitFrames=0; }
+    StateStorage::borrowed=true;sDiskBorrow={123};sPendingSlot=3;sPendingGeneration=generation;manager.mLoadWaitFrames=0; }
 API void restoreResult(u32 value) { restoreSucceeds=value!=0; }
 API void importResult(u32 value) { importSucceeds=value!=0; }
 API void generation(u32 slot, u32 value) { generations[slot] = value; }
@@ -171,6 +184,7 @@ API u32 get(u32 key) {
     case 21: return SavestateManager::diskBusy();
     case 22: return PracticeSession::heldMask;
     case 23: return PracticeSession::cancelled;
+    case 24:return StateStorage::borrowed;case 25:return StateStorage::consumed;case 26:return StateStorage::ownershipErrors;
     }
     return 0;
 }
@@ -209,6 +223,23 @@ API u32 get(u32 key) {
         self.assertEqual(self.lib.get(10), 0, "Queue must clear before the restore callback")
         self.lib.process()
         self.assertEqual(self.lib.get(5), 1, "A request must restore only once")
+
+    def test_fixed_save_ignores_both_slot_selections_and_sd_source(self):
+        for bind, slot in ((7, 1), (9, 2)):
+            self.lib.reset();self.lib.selectSave(0);self.lib.selectLoad(2);self.lib.selectSD(81)
+            self.lib.press(1 << bind);self.lib.update()
+            self.assertEqual([self.lib.get(i) for i in (0, 4, 11, 12, 20)], [0, 1, 2, 81, slot])
+
+    def test_fixed_load_pins_ram_generation_across_prompt_and_card_wait(self):
+        for bind, slot in ((8, 1), (10, 2)):
+            self.lib.reset();self.lib.selectSave(0);self.lib.selectLoad(0);self.lib.selectSD(81)
+            self.lib.promptMode(1);self.lib.press(1 << bind);self.lib.update()
+            self.assertEqual([self.lib.get(i) for i in (0, 2, 11, 12, 19)], [0, 1, 0, 81, 0])
+            self.lib.generation(slot, 999);self.lib.replaceSD(82);self.lib.approve();self.lib.update()
+            self.lib.busy(1);self.lib.process();self.assertEqual(self.lib.get(5), 0)
+            self.lib.busy(0);self.lib.process()
+            self.assertEqual([self.lib.get(i) for i in (0, 5, 8, 9, 11, 12, 13)],
+                             [0, 1, slot, 101 + slot, 0, 82, 0])
 
     def test_direct_load_pins_slot_and_generation_until_post_render(self):
         self.lib.select(1)
@@ -416,15 +447,15 @@ API u32 get(u32 key) {
                 self.lib.reset(); self.lib.transferReady(456); self.lib.busy(1)
                 self.lib.restoreResult(not failure)
                 for _ in range(7): self.lib.process()
-                self.assertEqual([self.lib.get(i) for i in (1, 3, 5, 17, 21)], [1, 7, 0, 1, 1])
+                self.assertEqual([self.lib.get(i) for i in (1, 3, 5, 17, 21, 24, 25, 26)], [1, 7, 0, 1, 1, 1, 0, 0])
                 self.lib.busy(0); self.lib.process()
                 self.assert_loaded(3, 456)
-                self.assertEqual([self.lib.get(i) for i in (17, 18, 21)], [0, int(failure), 0])
+                self.assertEqual([self.lib.get(i) for i in (17, 18, 21, 24, 25, 26)], [0, int(failure), 0, 0, 1, 0])
         self.lib.reset(); self.lib.transferReady(456); self.lib.busy(1)
         for _ in range(599): self.lib.process()
-        self.assertEqual([self.lib.get(i) for i in (1, 17, 18, 21)], [1, 1, 0, 1])
+        self.assertEqual([self.lib.get(i) for i in (1, 17, 18, 21, 24, 25, 26)], [1, 1, 0, 1, 1, 0, 0])
         self.lib.process()
-        self.assertEqual([self.lib.get(i) for i in (1, 3, 5, 7, 17, 18, 21)], [0, 0, 0, 1, 0, 1, 0])
+        self.assertEqual([self.lib.get(i) for i in (1, 3, 5, 7, 17, 18, 21, 24, 25, 26)], [0, 0, 0, 1, 0, 1, 0, 0, 1, 0])
         self.lib.busy(0); self.lib.process()
         self.assertTrue(self.lib.selectSave(1))
         self.assertEqual(self.lib.get(5), 0)

@@ -1,4 +1,5 @@
 #include "susamune/settings.hxx"
+#include "susamune/finish_breakdown.hxx"
 
 #if IS_EMULATOR
 
@@ -49,6 +50,7 @@ void Settings::save() {
         gCreationExtras.clearDirty();
         MarioColors::clearDirty();
         FluddColors::clearDirty();
+        FinishBreakdown::clearDirty();
         return;
     }
 
@@ -80,7 +82,7 @@ SettingsSaveState Settings::pollSave() {
         mSaveState = SETTINGS_SAVE_OK;
         if (mDirty || gBinds.dirty() || gInputDisplay.dirty() ||
             gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-            gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
+            gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty() || FinishBreakdown::dirty()) {
             save();
         }
         break;

@@ -11,6 +11,11 @@ REGIONS = {
     "us": (0x802CB6D4, 0x802CBBFC, (0x803E0598, 0x803E05C8, 0x803E0720)),
     "pal": (0x802C3768, 0x802C3C90, (0x803D7F50, 0x803D7F80, 0x803D80D8)),
 }
+PICTURE_ABI = {
+    "jp": (0x8001587C, 0x800AC064, 0x800AC0BC, 0x800D82C8),
+    "us": (0x802CC7C0, 0x80361744, 0x8036179C, 0x800D8D08),
+    "pal": (0x802C4854, 0x80359964, 0x803599BC, 0x800D8CC8),
+}
 
 
 def verify(region, path):
@@ -30,6 +35,12 @@ def verify(region, path):
            "parent/global/local matrix offsets")
     expect(draw + 0x290, [0x38790034, 0x389E0034], "parent clip intersection")
     expect(draw + 0x394, [0x833900D0], "bounded child list ABI")
+    picture, swap, table, gx_load = PICTURE_ABI[region]
+    expect(vtables[1] + 0x20, [picture], "picture drawSelf matrix overload")
+    expect(draw + 0x384, [0x818C0020], "drawSelf virtual dispatch")
+    expect(swap, [0x5463103A, gx_load, 0x38E30170], "GX stage swap shadow offset")
+    expect(table, [0x5469083C, gx_load, 0x54631838, 0x396301B0],
+           "GX swap table shadow offset")
     print(f"{region}: native timer draw ABI passed")
 
 

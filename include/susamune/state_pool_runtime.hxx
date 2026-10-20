@@ -2,6 +2,8 @@
 #define SUSAMUNE_STATE_POOL_RUNTIME_HXX
 #include "susamune/state_pool_memory.h"
 #include "susamune/susamune_cfg.h"
+#include "susamune/transfer_lease.hxx"
+#include "susamune/transfer_layout.h"
 
 // Capabilities select the pool and scratch together; latch this at boot.
 inline StatePoolMemory statePoolMemory() {
@@ -22,6 +24,36 @@ inline StatePoolMemory statePoolMemory() {
          expanded ? SUSAMUNE_STATE_POOL_EXTRA_SIZE : 0}};
 #endif
     return memory;
+}
+
+// Upgrade the boot-latched map only after both workers acknowledge activation.
+inline bool statePoolSharedMemory(StatePoolMemory &memory) {
+#if IS_EMULATOR
+    (void)memory;
+    return false;
+#else
+    if (!TransferLease::sharedMap() || !StatePoolMemoryValid(&memory) ||
+        memory.banks[0] != reinterpret_cast<unsigned char *>(SUSAMUNE_MEM2_SNAPSHOT_PPC_BASE) ||
+        memory.banks[1] != reinterpret_cast<unsigned char *>(SUSAMUNE_STATE_POOL_EXTRA_PPC_BASE) ||
+        memory.sizes[0] != SUSAMUNE_STATE_POOL_SIZE ||
+        memory.sizes[1] != SUSAMUNE_STATE_POOL_EXTRA_SIZE ||
+        (memory.sizes[2] && (memory.sizes[2] != SUSAMUNE_TRANSFER_POOL_THIRD_SIZE ||
+            memory.banks[2] != reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_THIRD_PPC_BASE))) ||
+        (memory.sizes[3] && (memory.sizes[3] != SUSAMUNE_TRANSFER_POOL_FOURTH_SIZE ||
+            memory.banks[3] != reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_FOURTH_PPC_BASE))) ||
+        (memory.sizes[4] && (memory.sizes[4] != SUSAMUNE_TRANSFER_POOL_FIFTH_SIZE ||
+            memory.banks[4] != reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_FIFTH_PPC_BASE)))) return false;
+    StatePoolMemory shared = memory;
+    shared.banks[2] = reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_THIRD_PPC_BASE);
+    shared.sizes[2] = SUSAMUNE_TRANSFER_POOL_THIRD_SIZE;
+    shared.banks[3] = reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_FOURTH_PPC_BASE);
+    shared.sizes[3] = SUSAMUNE_TRANSFER_POOL_FOURTH_SIZE;
+    shared.banks[4] = reinterpret_cast<unsigned char *>(SUSAMUNE_TRANSFER_POOL_FIFTH_PPC_BASE);
+    shared.sizes[4] = SUSAMUNE_TRANSFER_POOL_FIFTH_SIZE;
+    if (!StatePoolMemoryValid(&shared)) return false;
+    memory = shared;
+    return true;
+#endif
 }
 
 inline void *stateCodecWorkspace(const StatePoolMemory &memory) {

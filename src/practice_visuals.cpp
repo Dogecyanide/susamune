@@ -15,7 +15,9 @@
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/native_timer_layout.hxx"
+#include "susamune/native_timer_color.hxx"
 #include "susamune/practice_session.hxx"
+#include "susamune/ghost_camera.hxx"
 #include "susamune/creation_extras.hxx"
 #include "susamune/settings.hxx"
 
@@ -68,24 +70,17 @@ struct Projection {
 
     Projection() : valid(false) {
         if (!gpCamera) return;
-        const f32 fovy = gpCamera->mProjectionFovy;
-        aspect = gpCamera->mProjectionAspect;
-        nearPlane = gpCamera->mProjectionNear;
-        farPlane = gpCamera->mProjectionFar;
-        if (!(fovy > 1.0f && fovy < 170.0f && aspect > 0.5f &&
+        Mtx44 projection;
+        if (!GhostCamera::renderMatrices(view, projection)) return;
+        cot = projection[1][1];
+        aspect = cot / projection[0][0];
+        nearPlane = projection[2][3] / (projection[2][2] - 1.0f);
+        farPlane = projection[2][3] / projection[2][2];
+        if (!(cot > 0.0f && cot < 100.0f && aspect > 0.5f &&
               aspect < 2.0f && nearPlane > 0.0f && farPlane > nearPlane)) {
             return;
         }
-
-        Vec cameraPos = {gpCamera->mTranslation.x, gpCamera->mTranslation.y,
-                         gpCamera->mTranslation.z};
-        Vec cameraUp = {gpCamera->mUpVector.x, gpCamera->mUpVector.y,
-                        gpCamera->mUpVector.z};
-        Vec cameraTarget = {gpCamera->mTargetPos.x, gpCamera->mTargetPos.y,
-                            gpCamera->mTargetPos.z};
-        C_MTXLookAt(view, &cameraPos, &cameraUp, &cameraTarget);
-        cot = 1.0f / tanf(fovy * 0.00872664626f);
-        valid = cot > 0.0f && cot < 100.0f;
+        valid = true;
     }
 
     bool viewPoint(const TVec3f &world, Vec *viewPosition) const {
@@ -119,7 +114,7 @@ struct Projection {
             return false;
         }
         *x = static_cast<s16>((ndcX * 0.5f + 0.5f) * 640.0f);
-        *y = static_cast<s16>((0.5f - ndcY * 0.5f) * 480.0f);
+        *y = static_cast<s16>((0.5f - ndcY * 0.5f) * 448.0f);
         return true;
     }
 };
@@ -503,7 +498,7 @@ void drawClippedRaceFace(Menu *menu, const Projection &projection,
                          (projection.aspect * depthB[i].depth);
         const f32 ndcY = depthB[i].y * projection.cot / depthB[i].depth;
         screenA[i].x = (ndcX * 0.5f + 0.5f) * kScreenWidth;
-        screenA[i].y = (0.5f - ndcY * 0.5f) * kScreenHeight;
+        screenA[i].y = (0.5f - ndcY * 0.5f) * 448.0f;
     }
 
     count = clipRaceScreen(screenA, count, screenB, true, 1.0f, true);
@@ -677,9 +672,11 @@ void drawHudScreen(J2DScreen *screen, int x, int y,
     if (PracticeSession::hideHud()) return;
     const PaneShift shift = shiftPinnaTimerPanel(screen);
     const bool timerLayout = NativeTimerLayout::beginDraw(screen);
+    const bool timerColor = timerLayout && NativeTimerColor::beginDraw(screen);
     const bool healthColour = gCreationExtras.beginHudDraw(screen);
     screen->draw(x, y, context);
     if (healthColour) gCreationExtras.endHudDraw();
+    if (timerColor) NativeTimerColor::endDraw();
     if (timerLayout) NativeTimerLayout::endDraw();
     if (shift.pane) shift.pane->add(0, -shift.y);
 }

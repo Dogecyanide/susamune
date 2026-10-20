@@ -63,25 +63,76 @@ struct QuickWorkspace {
     LZ4_stream_t state;
     unsigned char raw[kQuickBlock];
     unsigned char packed[LZ4_COMPRESSBOUND(kQuickBlock)];
+    bool zero;
 };
+
+bool zeroBlock(const unsigned char *bytes, unsigned int size) {
+    typedef unsigned int Word __attribute__((__may_alias__));
+    while (size && (reinterpret_cast<Address>(bytes) & 3u)) {
+        if (*bytes++) return false;
+        --size;
+    }
+    while (size >= 16) {
+        const Word *words = reinterpret_cast<const Word *>(bytes);
+        if (words[0] | words[1] | words[2] | words[3]) return false;
+        bytes += 16; size -= 16;
+    }
+    while (size--) if (*bytes++) return false;
+    return true;
+}
+unsigned int zeroAdler(unsigned int adler, unsigned int size) {
+    const unsigned int low = (adler & 65535u) % 65521u;
+    return low | ((((adler >> 16) + (size % 65521u) * low) % 65521u) << 16);
+}
+bool packedZero(const unsigned char *bytes, unsigned int size, unsigned int raw) {
+    if (raw < 32 || size != (raw - 25) / 255 + 11 ||
+        bytes[0] != 0x1f || bytes[1] || bytes[2] != 1 || bytes[3]) return false;
+    bytes += 4;
+    unsigned int left = raw - 25;
+    while (left >= 255) { if (*bytes++ != 255) return false; left -= 255; }
+    return bytes[0] == left && bytes[1] == 0x50 && zeroBlock(bytes + 2, 5);
+}
+void fillZero(unsigned char *bytes, unsigned int size) {
+    typedef unsigned int Word __attribute__((__may_alias__));
+    while (size && (reinterpret_cast<Address>(bytes) & 3u)) { *bytes++ = 0; --size; }
+    while (size >= 16) {
+        // Keep the bounded word stores instead of lowering this to byte memset.
+        volatile Word *words = reinterpret_cast<volatile Word *>(bytes);
+        words[0] = words[1] = words[2] = words[3] = 0;
+        bytes += 16; size -= 16;
+    }
+    while (size--) *bytes++ = 0;
+}
 
 // This workspace always reserves LZ4's complete worst-case output. Keep the
 // same compressor/table selection as LZ4_compress_fast_extState, without
 // linking its two additional limited-output compressor specializations.
 __attribute__((noinline, section(".text.moonshineQuickLz4")))
 int quickLz4Block(QuickWorkspace *work, const unsigned char *bytes, unsigned int raw) {
+    work->zero = false;
     if (!raw || raw > kQuickBlock) return 0;
+    if (raw >= 32 && zeroBlock(bytes, raw)) {
+        // Exactly LZ4's one literal, offset-one run and five trailing literals.
+        work->zero = true;
+        unsigned char *out = work->packed;
+        *out++ = 0x1f; *out++ = 0; *out++ = 1; *out++ = 0;
+        unsigned int left = raw - 25;
+        while (left >= 255) { *out++ = 255; left -= 255; }
+        *out++ = left; *out++ = 0x50;
+        for (unsigned int i = 0; i < 5; ++i) *out++ = 0;
+        return out - work->packed;
+    }
     LZ4_stream_t_internal *ctx =
         &LZ4_initStream(&work->state, sizeof(work->state))->internal_donotuse;
     const char *source = reinterpret_cast<const char *>(bytes);
     char *dest = reinterpret_cast<char *>(work->packed);
     if (raw < LZ4_64Klimit)
         return LZ4_compress_generic(ctx, source, dest, raw, NULL, 0,
-            notLimited, byU16, noDict, noDictIssue, 1);
+            notLimited, byU16, noDict, noDictIssue, 8);
     const tableType_t table = sizeof(void *) == 4 && (uptrval)source > LZ4_DISTANCE_MAX
         ? byPtr : byU32;
     return LZ4_compress_generic(ctx, source, dest, raw, NULL, 0,
-        notLimited, table, noDict, noDictIssue, 1);
+        notLimited, table, noDict, noDictIssue, 8);
 }
 const unsigned int kWorkSize =
     ((sizeof(tdefl_compressor) > sizeof(InflateWorkspace)
@@ -108,7 +159,7 @@ __attribute__((noinline)) Status checkSource(void *workspace, unsigned int works
     *total = 0;
     if (!workspace || (reinterpret_cast<Address>(workspace) & 31u) ||
         !rangeValid(workspace, workspaceBytes) || !source ||
-        !count || count > kMaxSpans ||
+        !count || count > kMaxReadSpans ||
         !rangeValid(source, count * sizeof(ReadSpan))) return INVALID_ARGUMENT;
     if (workspaceBytes < kWorkSize) return WORKSPACE_TOO_SMALL;
     if (overlaps(source, count * sizeof(ReadSpan), workspace, workspaceBytes))
@@ -221,6 +272,30 @@ bool deflateBytes(void *context, const void *bytes, unsigned int size) {
                                 bytes, size, TDEFL_NO_FLUSH) == TDEFL_STATUS_OKAY;
 }
 
+ZeroRange zeroIntersection(ZeroRange zero, unsigned int offset, unsigned int size) {
+    // Both ranges have already been checked against the complete raw length.
+    if (!zero.size || zero.offset >= offset + size || offset >= zero.offset + zero.size)
+        return {};
+    const unsigned int begin = zero.offset > offset ? zero.offset : offset;
+    const unsigned int end = zero.offset + zero.size < offset + size
+        ? zero.offset + zero.size : offset + size;
+    return {begin - offset, end - begin};
+}
+
+bool deflateSpan(tdefl_compressor *state, const ReadSpan &span, ZeroRange zero) {
+    if (!zero.size) return !span.size || deflateBytes(state, span.data, span.size);
+    const unsigned char *bytes = static_cast<const unsigned char *>(span.data);
+    if (zero.offset && !deflateBytes(state, bytes, zero.offset)) return false;
+    static const unsigned char zeros[256] = {};
+    for (unsigned int left = zero.size; left;) {
+        const unsigned int amount = left < sizeof(zeros) ? left : sizeof(zeros);
+        if (!deflateBytes(state, zeros, amount)) return false;
+        left -= amount;
+    }
+    const unsigned int end = zero.offset + zero.size;
+    return end == span.size || deflateBytes(state, bytes + end, span.size - end);
+}
+
 struct SpanReader {
     const ReadSpan *spans;
     unsigned int count, index, offset;
@@ -272,6 +347,18 @@ struct SpanReader {
     }
 };
 
+const unsigned char *quickInput(SpanReader &reader, QuickWorkspace *work,
+                               unsigned int offset, unsigned int size, ZeroRange zero) {
+    const unsigned char *bytes = reader.take(size, work->raw);
+    zero = zeroIntersection(zero, offset, size);
+    if (bytes && zero.size) {
+        if (bytes != work->raw) memcpy(work->raw, bytes, size);
+        memset(work->raw + zero.offset, 0, zero.size);
+        bytes = work->raw;
+    }
+    return bytes;
+}
+
 unsigned int readWord(const unsigned char *p) {
     return (unsigned(p[0]) << 24) | (unsigned(p[1]) << 16) | (unsigned(p[2]) << 8) | p[3];
 }
@@ -285,7 +372,7 @@ bool packWord(PackSink &sink, unsigned int value) {
 
 Result quickPack(void *workspace, const ReadSpan *source, unsigned int sourceCount,
                  const WriteSpan *output, unsigned int outputCount,
-                 unsigned int rawBytes, unsigned int capacity) {
+                 unsigned int rawBytes, unsigned int capacity, ZeroRange zero) {
     QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
     SpanReader reader = {source, sourceCount, 0, 0};
     PackSink sink = {output, outputCount, 0};
@@ -294,11 +381,11 @@ Result quickPack(void *workspace, const ReadSpan *source, unsigned int sourceCou
         return {CODEC_ERROR, 0, rawBytes, 0};
     for (unsigned int done = 0; done < rawBytes;) {
         const unsigned int raw = rawBytes - done < kQuickBlock ? rawBytes - done : kQuickBlock;
-        const unsigned char *bytes = reader.take(raw, work->raw);
+        const unsigned char *bytes = quickInput(reader, work, done, raw, zero);
         if (!bytes) return {CODEC_ERROR, 0, rawBytes, 0};
         const int packed = quickLz4Block(work, bytes, raw);
         if (packed <= 0) return {CODEC_ERROR, 0, rawBytes, 0};
-        adler = mz_adler32(adler, bytes, raw);
+        adler = work->zero ? zeroAdler(adler, raw) : mz_adler32(adler, bytes, raw);
         const bool plain = static_cast<unsigned int>(packed) >= raw;
         if (!packWord(sink, raw) || !packWord(sink, plain ? raw | 0x80000000u : static_cast<unsigned int>(packed)))
             return {CODEC_ERROR, 0, rawBytes, 0};
@@ -316,7 +403,7 @@ Status quickPass(void *workspace, const ReadSpan *source, unsigned int sourceCou
                  unsigned int expectedAdler, CopyBytes copy, void *copyContext,
                  const StreamSource *stream = NULL,
                  EmitBytes emit = NULL, void *emitContext = NULL,
-                 DirectBytes directPolicy = NULL) {
+                 DirectBytes directPolicy = NULL, bool verifyAdler = true) {
     QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
     SpanReader reader = {source, sourceCount, 0, 0, stream, 0};
     ScatterSink sink = {output, outputCount, 0, 0, copy, copyContext};
@@ -342,21 +429,23 @@ Status quickPass(void *workspace, const ReadSpan *source, unsigned int sourceCou
         // Only a checked whole block with no retained/redirected owner bytes may
         // bypass the copy policy. The permission callback never sees split spans.
         unsigned char *direct = output && !plain ? sink.reserve(raw, directPolicy) : NULL;
+        const bool zero = !plain && packedZero(bytes, packed, raw);
         if (!plain) {
-            if (LZ4_decompress_safe(reinterpret_cast<const char *>(bytes),
+            if (zero) fillZero(direct ? direct : work->raw, raw);
+            else if (LZ4_decompress_safe(reinterpret_cast<const char *>(bytes),
                     reinterpret_cast<char *>(direct ? direct : work->raw), packed, raw) != static_cast<int>(raw))
                 return CORRUPT_STREAM;
             bytes = direct ? direct : work->raw;
         }
         // Repacking validates the same complete raw Adler in the destination
         // encoder. Avoid hashing each decoded Quick block twice on that path.
-        if (!emit) adler = mz_adler32(adler, bytes, raw);
+        if (!emit && verifyAdler) adler = zero ? zeroAdler(adler, raw) : mz_adler32(adler, bytes, raw);
         if (emit && !emit(emitContext, bytes, raw)) return CODEC_ERROR;
         if (output && !direct && !sink.put(bytes, raw)) return CODEC_ERROR;
         consumed += packed;
         decoded += raw;
     }
-    return consumed == compressedBytes && (emit || adler == expectedAdler) ? SUCCESS : CORRUPT_STREAM;
+    return consumed == compressedBytes && (emit || !verifyAdler || adler == expectedAdler) ? SUCCESS : CORRUPT_STREAM;
 }
 
 Status inflatePass(void *workspace, const ReadSpan *source,
@@ -419,11 +508,14 @@ unsigned int workspaceSize() { return kWorkSize; }
 
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
-                const WriteSpan *output, unsigned int outputCount, bool compact, bool quick) {
+                const WriteSpan *output, unsigned int outputCount, bool compact, bool quick,
+                ZeroRange zero) {
     Result result = {INVALID_ARGUMENT, 0, 0, 0};
     result.status = checkSource(workspace, workspaceBytes, source, sourceCount,
                                 &result.rawBytes);
     if (result.status != SUCCESS) return result;
+    if (zero.offset > result.rawBytes || zero.size > result.rawBytes - zero.offset)
+        return {INVALID_ARGUMENT, 0, result.rawBytes, 0};
     unsigned int capacity = 0;
     if (output) {
         result.status = checkOutput(workspace, workspaceBytes, source, sourceCount,
@@ -431,18 +523,18 @@ Result compress(void *workspace, unsigned int workspaceBytes,
         if (result.status != SUCCESS) return result;
     }
     if (quick) return quickPack(workspace, source, sourceCount, output, outputCount,
-                                result.rawBytes, capacity);
+                                result.rawBytes, capacity, zero);
     tdefl_compressor *state = static_cast<tdefl_compressor *>(workspace);
     PackSink sink = {output, outputCount, 0};
     const unsigned int probes = compact ? 8 : 1 | TDEFL_GREEDY_PARSING_FLAG;
     if (tdefl_init(state, packOutput, &sink, TDEFL_WRITE_ZLIB_HEADER | probes) !=
         TDEFL_STATUS_OKAY) { result.status = CODEC_ERROR; return result; }
-    for (unsigned int i = 0; i < sourceCount; ++i) {
-        if (source[i].size && tdefl_compress_buffer(state, source[i].data,
-                source[i].size, TDEFL_NO_FLUSH) != TDEFL_STATUS_OKAY) {
+    for (unsigned int i = 0, offset = 0; i < sourceCount; ++i) {
+        if (!deflateSpan(state, source[i], zeroIntersection(zero, offset, source[i].size))) {
             result.status = CODEC_ERROR;
             return result;
         }
+        offset += source[i].size;
     }
     if (tdefl_compress_buffer(state, NULL, 0, TDEFL_FINISH) != TDEFL_STATUS_DONE) {
         result.status = CODEC_ERROR;
@@ -452,6 +544,127 @@ Result compress(void *workspace, unsigned int workspaceBytes,
     result.adler32 = tdefl_get_adler32(state);
     result.status = output && sink.written > capacity ? OUTPUT_FULL : SUCCESS;
     return result;
+}
+
+__attribute__((section(".text.moonshineQuickBlocks")))
+Result compressQuickBlocks(void *workspace, unsigned int workspaceBytes,
+                const ReadSpan *source, unsigned int sourceCount,
+                const WriteSpan *destinations, unsigned int destinationCount,
+                QuickBlock emit, void *context, ZeroRange zero) {
+    Result result = {INVALID_ARGUMENT, 0, 0, 0};
+    if (!emit) return result;
+    result.status = checkSource(workspace, workspaceBytes, source, sourceCount, &result.rawBytes);
+    if (result.status != SUCCESS) return result;
+    if (zero.offset > result.rawBytes || zero.size > result.rawBytes - zero.offset)
+        return {INVALID_ARGUMENT, 0, result.rawBytes, 0};
+    unsigned int capacity;
+    result.status = checkOutput(workspace, workspaceBytes, source, sourceCount,
+                                destinations, destinationCount, &capacity);
+    if (result.status != SUCCESS) return result;
+    if (!capacity) return {INVALID_ARGUMENT, 0, result.rawBytes, 0};
+    QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
+    SpanReader reader = {source, sourceCount, 0, 0};
+    unsigned int written = 8, adler = MZ_ADLER32_INIT;
+    for (unsigned int done = 0; done < result.rawBytes;) {
+        const unsigned int raw = result.rawBytes - done < kQuickBlock ? result.rawBytes - done : kQuickBlock;
+        const unsigned char *bytes = quickInput(reader, work, done, raw, zero);
+        if (!bytes) return {CODEC_ERROR, 0, result.rawBytes, 0};
+        const int packed = quickLz4Block(work, bytes, raw);
+        if (packed <= 0) return {CODEC_ERROR, 0, result.rawBytes, 0};
+        adler = work->zero ? zeroAdler(adler, raw) : mz_adler32(adler, bytes, raw);
+        const bool plain = static_cast<unsigned int>(packed) >= raw;
+        const unsigned int length = plain ? raw : static_cast<unsigned int>(packed);
+        if (written > kMaxSize - 8 - length) return {CODEC_ERROR, 0, result.rawBytes, 0};
+        const unsigned int word = plain ? raw | 0x80000000u : length;
+        const unsigned char header[8] = {
+            static_cast<unsigned char>(raw >> 24), static_cast<unsigned char>(raw >> 16),
+            static_cast<unsigned char>(raw >> 8), static_cast<unsigned char>(raw),
+            static_cast<unsigned char>(word >> 24), static_cast<unsigned char>(word >> 16),
+            static_cast<unsigned char>(word >> 8), static_cast<unsigned char>(word)};
+        const ReadSpan block[2] = {{header, sizeof(header)}, {plain ? bytes : work->packed, length}};
+        if (!emit(context, block)) return {OUTPUT_FULL, 0, result.rawBytes, 0};
+        written += 8 + length;
+        done += raw;
+    }
+    return {SUCCESS, written, result.rawBytes, adler};
+}
+
+Status prepareQuickSource(void *workspace, unsigned int workspaceBytes,
+                const ReadSpan *source, unsigned int sourceCount,
+                const WriteSpan *destinations, unsigned int destinationCount,
+                PreparedQuickSource &prepared, ZeroRange zero) {
+    unsigned int raw, capacity;
+    Status status = checkSource(workspace, workspaceBytes, source, sourceCount, &raw);
+    if (status != SUCCESS) return status;
+    if (raw > 0x2000000u || zero.offset > raw || zero.size > raw - zero.offset)
+        return INVALID_ARGUMENT;
+    status = checkOutput(workspace, workspaceBytes, source, sourceCount,
+                         destinations, destinationCount, &capacity);
+    if (status != SUCCESS) return status;
+    if (!capacity || !rangeValid(&prepared, sizeof(prepared)) ||
+        overlaps(&prepared, sizeof(prepared), workspace, workspaceBytes) ||
+        overlaps(&prepared, sizeof(prepared), source, sourceCount * sizeof(*source)) ||
+        overlaps(&prepared, sizeof(prepared), destinations, destinationCount * sizeof(*destinations)))
+        return INVALID_ARGUMENT;
+    for (unsigned int i = 0; i < sourceCount; ++i)
+        if (overlaps(&prepared, sizeof(prepared), source[i].data, source[i].size))
+            return INVALID_ARGUMENT;
+    for (unsigned int i = 0; i < destinationCount; ++i)
+        if (overlaps(&prepared, sizeof(prepared), destinations[i].data, destinations[i].size))
+            return INVALID_ARGUMENT;
+    prepared = {source, sourceCount, raw, zero};
+    return SUCCESS;
+}
+
+static void encodePreparedQuickBlockImpl(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, PreparedQuickBlock &block, bool checksum) {
+    QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
+    const unsigned int offset = blockIndex * kQuickBlock;
+    const unsigned int remaining = prepared.rawBytes - offset;
+    const unsigned int raw = remaining < kQuickBlock ? remaining : kQuickBlock;
+    SpanReader reader = {prepared.spans, prepared.spanCount, 0, offset};
+    while (reader.offset >= reader.spans[reader.index].size) {
+        reader.offset -= reader.spans[reader.index].size;
+        ++reader.index;
+    }
+    const unsigned char *bytes = quickInput(reader, work, offset, raw, prepared.zero);
+    const int packed = quickLz4Block(work, bytes, raw);
+    const bool plain = static_cast<unsigned int>(packed) >= raw;
+    const unsigned int length = plain ? raw : static_cast<unsigned int>(packed);
+    const unsigned int word = plain ? raw | 0x80000000u : length;
+    for (unsigned int i = 0; i < 4; ++i) {
+        block.header[i] = static_cast<unsigned char>(raw >> (24 - 8 * i));
+        block.header[i + 4] = static_cast<unsigned char>(word >> (24 - 8 * i));
+    }
+    block.payload = plain ? bytes : work->packed;
+    block.payloadBytes = length;
+    block.rawBytes = raw;
+    block.adler32 = work->zero ? zeroAdler(MZ_ADLER32_INIT, raw) :
+        checksum ? mz_adler32(MZ_ADLER32_INIT, bytes, raw) : 0;
+}
+
+void encodePreparedQuickBlock(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, PreparedQuickBlock &block) {
+    encodePreparedQuickBlockImpl(workspace, prepared, blockIndex, block, true);
+}
+
+void encodePreparedQuickBlockDeferred(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, PreparedQuickBlock &block) {
+    encodePreparedQuickBlockImpl(workspace, prepared, blockIndex, block, false);
+}
+
+unsigned int checksumPreparedQuickBlock(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, const PreparedQuickBlock &block) {
+    if (block.adler32) return block.adler32;
+    QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
+    const unsigned int offset = blockIndex * kQuickBlock;
+    SpanReader reader = {prepared.spans, prepared.spanCount, 0, offset};
+    while (reader.offset >= reader.spans[reader.index].size) {
+        reader.offset -= reader.spans[reader.index].size;
+        ++reader.index;
+    }
+    const unsigned char *bytes = quickInput(reader, work, offset, block.rawBytes, prepared.zero);
+    return mz_adler32(MZ_ADLER32_INIT, bytes, block.rawBytes);
 }
 
 Result repack(void *workspace, unsigned int workspaceBytes,
@@ -562,6 +775,23 @@ Status decompressVerified(void *workspace, unsigned int workspaceBytes,
     status = inflatePass(workspace, source, sourceCount, compressedBytes,
                          output, outputCount, expectedRaw, expectedAdler, copy, copyContext,
                          NULL, NULL, NULL, direct);
+    return status == SUCCESS ? SUCCESS : COMMIT_FAILED;
+}
+
+Status decompressExperimental(void *workspace, unsigned int workspaceBytes,
+                  const ReadSpan *source, unsigned int sourceCount,
+                  const WriteSpan *output, unsigned int outputCount,
+                  unsigned int expectedRaw, unsigned int expectedAdler,
+                  CopyBytes copy, void *copyContext, DirectBytes direct) {
+    unsigned int compressedBytes, capacity;
+    Status status = checkSource(workspace, workspaceBytes, source, sourceCount, &compressedBytes);
+    if (status != SUCCESS) return status;
+    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity);
+    if (status != SUCCESS) return status;
+    if (!expectedRaw || capacity != expectedRaw) return INVALID_ARGUMENT;
+    status = quickPass(workspace, source, sourceCount, compressedBytes,
+                      output, outputCount, expectedRaw, expectedAdler, copy, copyContext,
+                      NULL, NULL, NULL, direct, false);
     return status == SUCCESS ? SUCCESS : COMMIT_FAILED;
 }
 

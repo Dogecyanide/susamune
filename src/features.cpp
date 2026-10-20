@@ -22,9 +22,11 @@
 #include "susamune/addresses.hxx"  // SUSAMUNE_MEM1_ADDR
 #include "susamune/mem2_map.h"
 #include "Dolphin/OS.h"            // DCFlushRange, ICInvalidateRange
+#include "SMS/Player/Mario.hxx"
 
 extern "C" void retailSetupTextBox(void *, const void *, const u32 *)
     asm("setupTextBox__8TTalk2D2FPCvP12JMSMesgEntry");
+extern "C" bool retailDivingMap() asm("SMS_isDivingMap__Fv");
 
 namespace {
 
@@ -417,9 +419,9 @@ u32 gAsmCaves[] = {
     // winDemo+0xA4.
     0x80030064u, 0x5400003Cu, 0x90030064u, 0x00000000u,
 
-    // winDemo+0xAC.
-    0x3C000C40u, 0x60000201u, 0x901F007Cu,
-    0x38000000u, 0x901F0084u, 0x00000000u,
+    // winDemo+0xAC: mr r3,r31; bl releaseShineMario; return.
+    0x7FE3FB78u, 0x00000000u, 0x60000000u,
+    0x60000000u, 0x60000000u, 0x00000000u,
 
     // Stage Intro Skip: direct+0x158.
     0x899A0064u, 0x2C0C0001u, 0x40A20040u, 0x819A0074u,
@@ -467,7 +469,7 @@ static_assert(ASM_CAVE_END == 139, "asm cave pool shape changed");
 //   winDemo, phase 0, "landed" branch:
 //     +0x88  gpMarDirector->fireGetStar(shine)   -> touch frame = dir->unk58
 //     +0xA4  shine->receiveMessage(mario, TAKE)  -> shine->unk64 &= ~1
-//     +0xAC  mario->mSubState = 1                -> mState = IDLE, mSubState = 0
+//     +0xAC  mario->mSubState = 1                -> resume idle or underwater
 //   TShine::touchPlayer entry:
 //            (prologue)                          -> return early unless more
 //                                                   than 4 frames since the
@@ -587,6 +589,17 @@ u8 gPiantissimoMode;
 bool featureEnabled(SettingId id) {
     return gSettings.getBool(id) &&
            (id != SETTING_FAST_TEXT || !StageLoader::fastTextSuppressed());
+}
+
+void releaseShineMario(TMario *mario) {
+    // Ground idle is forbidden in diving maps; use their native transition.
+    if (retailDivingMap()) {
+        mario->changePlayerStatus(0x00000891u, 0, true);
+    } else {
+        mario->mState = TMario::STATE_IDLE;
+        mario->mSubState = 0;
+        mario->mSubStateTimer = 0;
+    }
 }
 
 constexpr u8 kHookIdMask = 0x7Fu;
@@ -755,6 +768,10 @@ void applyHooks() {
             // The cave already holds the asm (loaded with the blob); patch its
             // trailing placeholder to `b -> site+4` in place, then flush the
             // whole cave so the core can execute it.
+            if (h.cave == &gAsmCaves[ASM_CAVE_SHINE_RELEASE]) {
+                h.cave[1] = branchWord(reinterpret_cast<u32>(&h.cave[1]),
+                    reinterpret_cast<u32>(releaseShineMario)) | 1u;
+            }
             u32 backAddr    = reinterpret_cast<u32>(&h.cave[h.n - 1]);
             h.cave[h.n - 1] = branchWord(backAddr, h.site + 4);
 

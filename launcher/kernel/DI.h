@@ -49,7 +49,9 @@ enum GameRegion
 };
 
 extern u8 *const DI_READ_BUFFER;
-extern const u32 DI_READ_BUFFER_LENGTH;
+u32 GetDIBufferLimit(void);
+// Main thread only. False leaves tail ownership unpublished; no reset widens it.
+bool DIReserveScratchTail(void);
 
 extern vu32 SDisInit;
 extern u32 DiscChangeIRQ;

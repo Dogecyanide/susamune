@@ -23,6 +23,8 @@
 namespace {
 
 typedef JUtility::TColor Color;
+const char kCompletedTotalLabel[]
+    __attribute__((section(".rodata.stage_loader_completed_total"))) = "Total time";
 
 enum SessionState {
     STATE_INACTIVE,
@@ -946,7 +948,12 @@ void drawFinalModal(Menu *menu) {
         drawModalRow(menu, rowY, "Average time", value);
     }
     rowY += 34;
-    drawModalRow(menu, rowY, "Golds", "--");
+    if (loader) {
+        formatDuration(sRuntime.completedQfTotal, value, sizeof(value));
+        drawModalRow(menu, rowY, kCompletedTotalLabel, value);
+    } else {
+        drawModalRow(menu, rowY, "Golds", "--");
+    }
 
     const char *hint = "A / B / START  Continue";
     menu->drawText(hint, 320 - Menu::textWidth(hint, 12) / 2,

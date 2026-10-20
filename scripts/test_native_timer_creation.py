@@ -14,7 +14,7 @@ def function(source, name):
     match = re.search(r"(?:^|\n)[^\n]*\b" + re.escape(name) + r"\([^;]*?\)\s*(?:const\s*)?\{", source)
     if not match:
         raise AssertionError(name)
-    start = source.index("{", match.start())
+    start = match.end() - 1
     depth = 1
     end = start + 1
     while depth:
@@ -42,6 +42,7 @@ class NativeTimerCreationTests(unittest.TestCase):
         layout = (ROOT / "src/layout_editor.cpp").read_text()
         prelude = r'''
 #include "susamune/susamune_cfg.h"
+#include "susamune/hoverless.h"
 #define private public
 #include "susamune/creation.hxx"
 #include "susamune/creation_color.hxx"
@@ -63,10 +64,10 @@ struct TMarioGamePad {
         cfgfuncs += function(kernel, "ApplyNativeTimerModesKey")
         record = persistence[persistence.index("constexpr u32 kRecordMagic"):persistence.index("struct RecordV1")]
         persistfuncs = "\n".join(function(persistence, n) for n in (
-            "initBlank", "checksum", "valid", "validV6", "migrateRecordV6"))
+            "initBlank", "initHoverless", "checksum", "valid", "validV6", "migrateRecordV6"))
         enums = creation[creation.index("enum EditOption"):creation.index("inline int clampi")]
         editorfuncs = "\n".join(function(creation, n) for n in (
-            "clampi", "adjustTextChannel", "resetOption", "CreationEditor::reset",
+            "clampi", "adjustTextChannel", "gradientRange", "applyGradient", "resetOption", "CreationEditor::reset",
             "CreationEditor::begin", "CreationEditor::optionEnabled", "CreationEditor::moveOption",
             "CreationEditor::repeatInput", "CreationEditor::update"))
         layoutfunc = function(layout, "updatePositionScale")
@@ -110,6 +111,7 @@ API int migration() {
  for(unsigned i=kCfgSizeV6;i<sizeof(migrated);i++)if(b[i])return 3;
  if(migrated.flags!=(0x4000|SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE|SUSAMUNE_CFG_FLAG_MARIO_COLORS|SUSAMUNE_CFG_FLAG_FLUDD_COLORS))return 4;
  old.cfg=migrated; old.version=kRecordVersion; old.payloadSize=kRecordPayloadSize;
+ initHoverless(&old.hoverless);
  old.checksum=checksum(&old); if(!valid(&old)||validV6(&old))return 5;
  ((u8*)&old.cfg.nativeTimerStyle)[0]^=1; if(valid(&old))return 6;
  return 0;

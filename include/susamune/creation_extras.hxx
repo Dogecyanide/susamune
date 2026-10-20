@@ -61,6 +61,7 @@ public:
     void endHudDraw();
     const CreationStyle &nativeTimerStyle() const { return mNativeTimerStyle; }
     bool nativeTimerColorsEnabled() const;
+    bool nativeTimerGradient(const J2DPane *pane, u8 colors[2][3]) const;
     const u8 *nativeTimerRgb(const J2DPane *pane, bool *custom = nullptr) const;
     bool editingNativeTimer() const {
         return mEditMode == EDIT_NATIVE_TIMER && mEditor.editing();
@@ -114,6 +115,10 @@ public:
     void updateEditor(TMarioGamePad *pad);
     void drawEditor(Menu *menu) const;
     bool editing() const { return mEditor.editing() || mKeyboard; }
+    bool editingMenuBackground() const {
+        return mEditMode == EDIT_COLOR && mEditFirst == SUSAMUNE_CREATION_MENU_BG &&
+            mEditor.editing();
+    }
 
     bool dirty() const { return mDirty; }
     void clearDirty() { mDirty = false; }

@@ -45,6 +45,8 @@ bool copySavestateBytes(void*d,const void*,u32 n){++practiceCalls;return ownRepl
 }
 namespace StateArchiveProfile{void copyGameBytes(void*,void*d,const void*s,unsigned int n){++policyCalls;memcpy(d,s,n);}}
 static u32 poolCapacity(){return 192;}
+namespace TransferLease {static bool sharedMap(){return false;}}
+static bool sharedStoreValid(){return false;}
 SavestateManager::SavestateManager(){}
 '''
 

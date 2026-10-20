@@ -1,4 +1,5 @@
 #include "susamune/crash_report.hxx"
+#include "susamune/build_branding.hxx"
 
 #include "Dolphin/OS.h"
 #include "JSystem/JUtility/JUTException.hxx"
@@ -114,9 +115,9 @@ bool captureCore(u16 exception, OSContext *context, u32 dsisr, u32 dar,
         core->lastArg0 = last.arg0;
         core->lastArg1 = last.arg1;
     }
-    static const char build[] = MOONSHINE_CRASH_BUILD;
-    for (u32 i = 0; i < sizeof(build) - 1 && i < sizeof(core->build) - 1; ++i)
-        core->build[i] = build[i];
+    const char *buildTitle = BuildBranding::title(MOONSHINE_CRASH_BUILD);
+    for (u32 i = 0; buildTitle[i] && i < sizeof(core->build) - 1; ++i)
+        core->build[i] = buildTitle[i];
     core->state = SUSAMUNE_CRASH_STATE_READY;
     core->checksum = Checksum::crc32(core, sizeof(*core),
         __builtin_offsetof(SusamuneCrashCore, checksum), sizeof(core->checksum));
@@ -295,13 +296,13 @@ void printPhotoReport(u16 exception, OSContext *context, u32 dsisr, u32 dar) {
     // Retail calls this with a live console after its exception pages.
     // Keep the core independent: optional rendering may itself be damaged.
     jutConsolePrint(jutExceptionConsole,
-        "\nMOONSHINE V2.3.3 FRAME BY FRAME\n"
+        BuildBranding::crashFormat("\nMOONSHINE V2.3.3 FRAME BY FRAME\n"
         "REPORT %08X-%08X\n%s  MOD %08X\n"
         "EXCEPTION %u  CONTEXT %u\n"
         "PC %08X  LR %08X\nSP %08X  DAR %08X\n"
         "DSISR %08X  SRR1 %08X\n"
         "SCENE %08X  LAST %u\nSAVE: %s\n"
-        "Photo this block; share .core/.bin/.txt\n",
+        "Photo this block; share .core/.bin/.txt\n"),
         core->captureSeq, core->checksum, region, core->modFileCrc32,
         core->exception, core->contextValid, core->srr0, core->lr,
         core->gpr[1], core->dar, core->dsisr, core->srr1,

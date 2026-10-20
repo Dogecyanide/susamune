@@ -85,6 +85,8 @@ static bool sTransitionSetup,sTransitionPaused,sArrivalResume;
 static u32 liveScene,liveFingerprint,neutralizations,changeMovieDuring;
 static u32 sTakePosition,sOriginKey[2],sPendingReleases;
 static u16 sLoadHoldButtons,sStripButtons,sBeforeRead,sPriorButtons;
+static u16 sPhysicalPressed;
+static u8 sRaisedTriggerL,sRaisedTriggerR;
 static u8 sMenuAction,sLoadKind;
 static u32 sSteps,sSettingsHash,sCount,sCursor,sTapeSeed,sStageGeneration;
 static unsigned invalidations,retailCalls,begins,ends;
@@ -137,8 +139,10 @@ u32 currentSceneKey(){return liveScene;}
 void message(const char *text) {sStatus=text;}
 void invalidate() {++invalidations;sAssisted=true;}
 void restoreCamera() {}
-void updateCamera() {}
+void scheduleCameraUpdate() {}
 void resetCameraMotion() {}
+void resetGameplaySpeed() {}
+void applyGameplaySpeed() {}
 void stopTape(const char *);
 void inject(const SusamunePracticeInput &input,TMarioGamePad *,u32 releases=0) {lastInjected=input.buttons;if(releases==0x1fffff)++neutralizations;}
 SusamunePracticeInput snapshot(const SusamunePracticeInput &input){return input;}

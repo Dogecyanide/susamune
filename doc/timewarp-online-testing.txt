@@ -1,0 +1,157 @@
+Moonshine Timewarp Online Prototype 10 - 3.0.0 Timewarp
+
+PRIVATE TEST. Both online players need this same ZIP and Relay Server 5.
+JP, US and PAL are included; use PAL 60 Hz. Each player uses their own game.
+New features and timing changes still need Wii verification.
+
+INSTALL
+Extract the ZIP into the SD root, keeping its apps folder. Replace files in
+apps/moonshine_timewarp_test3 when prompted. In the Homebrew Channel choose
+"Moonshine Timewarp Online Prototype 10". Keep your existing settings and
+ordinary Moonshine app. No game ISO is included.
+
+WHAT CHANGED
+- Collision viewer: Display > HUD and displays > Practice visuals.
+  Floor highlights Mario's floor in yellow. Nearby adds nearby static
+  triangles in cyan, visible through walls. This is a bounded view, not
+  every moving object or enemy's collision. It marks the attempt assisted.
+- Hoverless: Runs > ILs > PB profile > Hoverless. It has separate overall
+  IL PBs and personal ghosts. An accepted Hover spray disqualifies that
+  attempt; equipping Hover alone does not. Choose the profile before a
+  fresh attempt. Ordinary profiles stay separate. Gold segments and general
+  statistics retain their shared history; there is no fifth segment-PB bank.
+- TAS projects now has Scrub recording. Seeking replays from an eligible
+  Beginning/checkpoint and arrives paused; Continue explicitly replaces
+  the recorded future. The TAS fallback label hides during loading/reset,
+  while the actual practice-assistance status stays intact.
+- Practice > Practice tools > Slowdown preset: enter the desired percent.
+  System > Binds > Slowdown: toggle preset: assign a button combination.
+  It starts unbound. Press it to switch between the preset and 100%.
+  The preset defaults to 50%. A slowed attempt stays assisted after toggling
+  back; start a fresh attempt at 100% for ordinary PB eligibility.
+- A Windows state-sharing helper is included in the app's "State sharing"
+  folder. It copies files to unused names and keeps originals unchanged.
+
+SAVESTATE SPEED TEST
+Practice > Savestates > Fast RAM loads (test) defaults to On. For ordinary
+Quick RAM loads from this boot, it skips the full compressed-payload CRC
+and decoded-data Adler checksum. Structural and metadata checks remain,
+but detection of silent payload corruption is reduced. Off restores the
+fully checked path for comparison. SD/imported states, TAS restores and
+other compression formats retain their checks.
+
+The first save optimization measured roughly 22-30% less save work than
+Prototype 9. Reusing verified checksums for identical blocks then saved
+another 9% on saves 2/3 and 15% on occupied overwrites in the Pinna test.
+The first save computes fresh checksums. Both save checksums remain intact;
+the cache uses 1,664 bytes already inside the reserved directory.
+These measurements exclude Wii/display/ARM costs and do not predict freeze-to-visible
+times. Goals remain saves below 0.400s and loads below 0.200s for all slots;
+neither goal is claimed as verified. The three slots, memory reservations
+and ten-minute ghost recording limit are unchanged by these PR10 features.
+
+SHORT SOLO TEST LIST
+There is no need to repeat the full old test matrix.
+1. Check PAL 60 Hz boots into gameplay. In Pinna 3, with all three RAM slots
+   occupied, time one save/overwrite and
+   load per slot with Fast RAM loads On. Then set Off and compare one
+   representative load from the same state. Measure load from timer freeze
+   until Mario first appears. Report each time, wrong restores or freezes.
+2. Choose a 50% Slowdown preset, bind the toggle and switch on/off twice.
+   Try a spin while slowed. The digit editor uses D-pad Left/Right to choose
+   a digit, Up/Down to change it, A/Start to keep and B to cancel.
+3. Turn Collision viewer to Floor, then Nearby; move and turn the camera.
+   Check that lines track the surfaces and text fits. Turn it Off afterward.
+4. In Hoverless, finish one short IL without Hover, then retry using Hover.
+   Only the first should be eligible for Hoverless PB credit. Check ordinary PBs stay
+   separate, then relaunch once to check the new profile/PB persists.
+5. In Practice > TAS projects, make a short New TAS and optionally save a
+   checkpoint. Open Scrub recording, seek backward, then forward. The game
+   should arrive paused with the future intact. Choose Continue, change a
+   few frames and replay. Check loading/reset no longer shows a stale TAS
+   fallback label. Assisted attempts must still remain ineligible.
+6. Export one SD state and try the sharing helper below. This also checks
+   the fully checked SD path. A cross-person restore is not yet verified.
+
+TAS SCRUB CONTROLS
+D-pad/C-stick Left/Right: 1 frame; Up/Down: 30; L/R: 300.
+X: beginning; Y: end; A: seek; B: back or cancel a running seek.
+Green marks are checkpoints in this area; gray marks are in another area.
+Seeking can take time because it runs the recorded inputs. It needs a valid
+earlier anchor in the current area; otherwise return to the Beginning area.
+Targets inside an unpausable transition may be refused. A divergence stops
+the seek. Cancellation keeps the take. Choose Continue only when ready to
+discard the old future and edit from the reached frame.
+
+SHARE ONE SAVESTATE
+Create a fresh state in Prototype 10; the helper does not import older
+snapshot-17 states. Existing files on your SD are kept.
+1. Save the state to SD in Moonshine. On the PC open
+   apps/moonshine_timewarp_test3/State sharing/Share a state.cmd.
+2. Choose its .mss file from Moonshine data\states, a NEW ZIP filename, and add
+   your level/episode, Moonshine build and launcher/setup notes.
+3. Send the ZIP. The recipient opens Import a state.cmd from the same helper
+   folder, selects the ZIP, then their SD root. No Python install is needed.
+4. On Wii enter the matching stage/episode and refresh the SD states list.
+   Select the new state with Y, then use the normal Load bind. This keeps
+   the three RAM slots. A imports into the selected RAM slot instead.
+
+Use the same game region, compatible build and matching setup. The helper
+checks snapshot-18 metadata and file integrity; the Wii still checks heap
+and resource ownership. It does not convert PAL/JP states or bypass any
+restore guard. Keep the sender's original. Later rename sidecars and whole
+TAS projects are not included. Details are in State sharing/README.txt.
+
+ONLINE SETUP
+1. The organiser runs Relay Server 5 and Playit on the PC. Stop the old
+   relay before starting another; keep the PC awake. Playit's local target
+   stays 127.0.0.1:38400. Neither Wii uses that local address.
+2. Both Wiis use 147.185.221.213:48222, already filled in on Online.
+   Change it only if Playit's public endpoint changes. The guest needs
+   only the Wii package, with no PC agent or router changes.
+3. Open Online and enter a name. Host chooses Mode/settings, then Create
+   room. Guest enters the six-digit code and chooses Join room. Wait for
+   Connected and the peer name on both Wiis. If networking fails, check
+   the Wii's ordinary Internet Connection Test first.
+4. Both choose Ready for each race. The IL picker uses C-stick Up/Down
+   through entries, Left/Right between worlds, A to choose and B to cancel.
+
+Manual IL racing uses the chosen IL and Best of 1/3/5/7. Draft set uses a
+Bo3 or Bo5 set, with a Bo3 match on each selected IL:
+- First five candidates: host bans one, guest bans two, host picks one.
+- After each IL match: previous winner bans one of five new candidates;
+  previous loser picks one of the remaining four. Both Ready starts play.
+- Win two IL matches for Bo3 or three for Bo5. The loser counterpicks even
+  when the winner changes. Use the Draft IL list when asked to ban/pick.
+
+Any% contains the exact route plus Secret-only variants. All is the entire
+IL catalogue. Non Any% excludes Any% shines and Any% movement. Every pool
+bans Noki 5, Pianta 2, Gelato 5, Bianco II Enter and Noki Enter.
+
+Free roam has ghosts without starts or points. After a match/set, the host
+can change setup and choose Apply next setup without leaving the room.
+Both Ready starts another race. Shine exits may still return to Delfino.
+Scores compare eligible local IL times, not packet arrival; ties replay and
+assisted results void the round. Local controls never wait for remote input.
+Opponent inputs follows the delayed ghost; enable it on the Online page.
+
+WHEN A PARTNER IS AVAILABLE
+Try PAL60/JP free roam, a short match, then Apply next setup and race again.
+Check both scores agree and load/overwrite a state with the peer visible.
+If time permits, check one draft's strike/counterpick order. Both players
+must use Prototype 10. Relay Server 5 supports protocol 3; do not mix client
+prototypes in a room. No new full online test matrix is requested.
+
+IF SOMETHING FAILS / CURRENT LIMITS
+Send the last action, game region, exact error and any SD crash report.
+For network trouble enable Online diagnostics and photograph both screens.
+A misdirected PAL/US ghost call from Prototype 9 is fixed. The reported PAL
+Wii boot failure still needs a hardware retest; its cause is unconfirmed.
+
+Recorded ghost cameras remain feasibility work, not an implemented track.
+Watch-only boss/enemy RNG reconstruction is not implemented. Loading or
+racing a ghost does not seed the live world; online retains each local RNG.
+Yoshi/burst visuals from Prototype 9 still need hardware feedback.
+Friends, accounts, rankings, public matchmaking, playlists, four players,
+standalone Dolphin networking and a synchronized countdown remain future
+work. Names/room codes are not accounts or ranked anti-cheat.

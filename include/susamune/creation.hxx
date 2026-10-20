@@ -37,6 +37,8 @@ public:
         CAP_OFFSET_POSITION = 1 << 7,
         CAP_COLOR_MODE = 1 << 8,
         CAP_RGB_ENABLES_CUSTOM = 1 << 9,
+        CAP_GRADIENT = 1 << 10,
+        CAP_TIMER_GRADIENT = 1 << 11,
     };
 
     enum UpdateResult {
@@ -49,6 +51,8 @@ public:
     };
 
     void reset();
+    void setGradientDirectionSetting(u16 setting);
+    void setScaleLimits(u8 minimum, u8 maximum);
     void begin(CreationStyle *style, u8 (*textRgb)[3], u8 (*backupRgb)[3],
                u16 textSlots, u16 targetSlots = 0,
                const char *targetNames = nullptr,

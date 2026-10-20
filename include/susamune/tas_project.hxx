@@ -27,6 +27,7 @@ bool dispatchShortcut(BindId id);
 bool loadCheckpoint(u32 role);
 bool continueEditing();
 bool replay();
+bool seek(u32 frame);
 bool save(const char *name);
 bool open(u32 id, u32 checksum);
 bool refresh(u32 afterId = 0);

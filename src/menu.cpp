@@ -12,10 +12,13 @@
 // =====================================================================
 
 #include "susamune/menu.hxx"
+#include "susamune/menu_search.hxx"
+#include "susamune/build_branding.hxx"
 #include "susamune/japanese_ui.hxx"
 #include <Dolphin/mem.h>
 #include "susamune/practice_session.hxx"
 #include "susamune/tas_project.hxx"
+#include "susamune/tas_scrub.hxx"
 #include "susamune/mem2_map.h"
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
@@ -29,9 +32,12 @@
 #include "susamune/attempt_counter.hxx"
 #include "susamune/qft_timer.hxx"
 #include "susamune/ghost.hxx"
+#include "susamune/ghost_scrub.hxx"
+#include "susamune/finish_breakdown.hxx"
 #include "susamune/ghost_storage.hxx"
 #include "susamune/qft_display.hxx"
 #include "susamune/raw_prompt_input.hxx"
+#include "susamune/gameplay_speed_editor.hxx"
 #include "susamune/records.hxx"
 #include "susamune/records_persistence.hxx"
 #include "susamune/rng_control.hxx"
@@ -43,6 +49,8 @@
 #include "susamune/susamune_cfg.h"
 #include "susamune/wallkick_display.hxx"
 #include "susamune/layout_profiles.hxx"
+#include "susamune/live_race.hxx"
+#include "susamune/live_ghost.hxx"
 #include "susamune/movement_timing_display.hxx"
 #include "susamune/movement_display.hxx"
 #include "susamune/warp_wheel.hxx"
@@ -205,22 +213,22 @@ const int HELP_H    = 32;
 
 // Common label styles share call setup; keep palette and font constants here.
 __attribute__((noinline)) void drawFooterText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, FOOT_SZ, FOOT_SZ, cFooter());
+    menu->drawMenuText(text, x, y, FOOT_SZ, FOOT_SZ, cFooter());
 }
 __attribute__((noinline)) void drawSelectedText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, ROW_SZ, ROW_SZ, cRowSel());
+    menu->drawMenuText(text, x, y, ROW_SZ, ROW_SZ, cRowSel());
 }
 __attribute__((noinline)) void drawDimFooterText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, FOOT_SZ, FOOT_SZ, cRowDim());
+    menu->drawMenuText(text, x, y, FOOT_SZ, FOOT_SZ, cRowDim());
 }
 __attribute__((noinline)) void drawSmallRowText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, 12, 12, cRow());
+    menu->drawMenuText(text, x, y, 12, 12, cRow());
 }
 __attribute__((noinline)) void drawSmallFooterText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, 12, 12, cFooter());
+    menu->drawMenuText(text, x, y, 12, 12, cFooter());
 }
 __attribute__((noinline)) void drawRowValueText(Menu *menu, const char *text, int x, int y) {
-    menu->drawText(text, x, y, ROW_SZ, ROW_SZ, cValue());
+    menu->drawMenuText(text, x, y, ROW_SZ, ROW_SZ, cValue());
 }
 
 const int TAB_GAP   = 12;  // space between tabs
@@ -309,14 +317,14 @@ __attribute__((noinline)) int listScrollStart(int sel, int count, int maxRows) {
 
 // Draw the selection highlight bar behind a row.
 __attribute__((noinline)) void drawRowHighlight(Menu *menu, int x, int y, int w, int rowH) {
-    menu->fillBox(x - 6, y - (rowH - 12) / 2, w + 12, rowH, cRowSelBg());
+    menu->fillMenuBox(x - 6, y - (rowH - 12) / 2, w + 12, rowH, cRowSelBg());
 }
 
 __attribute__((noinline)) void drawSectionHeader(Menu *menu, int x, int y, int w,
                                                  const char *label) {
-    menu->drawText(label, x + 4, y + 3, 13, 13, cAccent());
+    menu->drawMenuText(label, x + 4, y + 3, 13, 13, cAccent());
     const int lineX = x + 14 + Menu::textWidth(label, 13);
-    menu->fillBox(lineX, y + 11, x + w - lineX - 8, 1, cRowDim());
+    menu->fillMenuBox(lineX, y + 11, x + w - lineX - 8, 1, cRowDim());
 }
 
 // Wrap helper for a cursor over [0, n).
@@ -369,6 +377,7 @@ static void drawHelpLine(Menu *menu, int x, int y, int w, int h,
 // IL and travel practice
 // ---------------------------------------------------------------------
 class ILingTab : public MenuTab {
+    friend class Menu;
 public:
     ILingTab()
         : mSel(0), mConfirmDelete(false), mEditingName(false),
@@ -593,8 +602,8 @@ public:
             const char *question = "Delete PB?";
             const char *entry = ILing::label(selectedEntry());
             const char *hint = SUSAMUNE_GLYPH_A " Yes    " SUSAMUNE_GLYPH_B " No";
-            menu->fillBox(x, y + 34, w, 104, JUtility::TColor(36, 30, 20, 245));
-            menu->fillBox(x, y + 34, w, 3, cAccent());
+            menu->fillMenuBox(x, y + 34, w, 104, JUtility::TColor(36, 30, 20, 245));
+            menu->fillMenuBox(x, y + 34, w, 3, cAccent());
             drawSelectedText(menu, question, x + (w - Menu::textWidth(question, ROW_SZ)) / 2, y + 52);
             drawRowValueText(menu, entry, x + (w - Menu::textWidth(entry, ROW_SZ)) / 2, y + 78);
             drawFooterText(menu, hint, x + (w - Menu::textWidth(hint, FOOT_SZ)) / 2, y + 112);
@@ -738,9 +747,9 @@ public:
             const int width = plaza ? 232 : 172;
             const int dx = x + w - width - 4;
             const int dy = y + 8;
-            menu->fillBox(dx, dy, width, 10 * ROW_H, cPanel());
-            menu->fillBox(dx, dy, width, 3, cAccent());
-            menu->drawText(plaza ? "PLAZA STATE" : "START EPISODE", dx + 12, dy + 9,
+            menu->fillMenuBox(dx, dy, width, 10 * ROW_H, cPanel());
+            menu->fillMenuBox(dx, dy, width, 3, cAccent());
+            menu->drawMenuText(plaza ? "PLAZA STATE" : "START EPISODE", dx + 12, dy + 9,
                            FOOT_SZ, FOOT_SZ, cTitle());
             for (int i = 0; i < 8; ++i) {
                 char name[32];
@@ -931,10 +940,10 @@ private:
         const int y = 40;
         const int w = 536;
         const int h = mShowingSegments ? 360 : 320;
-        menu->fillBox(0, 0, 640, 480, cBackdrop());
-        menu->fillBox(x, y, w, h, cPanel());
-        menu->fillBox(x, y, w, 3, cAccent());
-        menu->drawText(mShowingSegments ? "IL SEGMENTS" : "IL STATS",
+        menu->fillMenuBox(0, 0, 640, 480, cBackdrop());
+        menu->fillMenuBox(x, y, w, h, cPanel());
+        menu->fillMenuBox(x, y, w, 3, cAccent());
+        menu->drawMenuText(mShowingSegments ? "IL SEGMENTS" : "IL STATS",
                        x + 20, y + 16, TITLE_SZ, TITLE_SZ, cTitle());
         drawSelectedText(menu, stats.routeName, x + 20, y + 47);
 
@@ -986,7 +995,7 @@ private:
                 "SD-backed",
             };
             const char *storage = kStorageNames[storageState];
-            menu->drawText(storage,
+            menu->drawMenuText(storage,
                            x + w - 20 - Menu::textWidth(storage, FOOT_SZ),
                            y + 71, FOOT_SZ, FOOT_SZ,
                            storageState == SplitStats::STORAGE_FAILED
@@ -1033,9 +1042,9 @@ private:
                      (int)mStatsSegment + 1);
             const char *confirm =
                 SUSAMUNE_GLYPH_A " Yes    " SUSAMUNE_GLYPH_B " No";
-            menu->fillBox(x + 78, y + 132, w - 156, 104,
+            menu->fillMenuBox(x + 78, y + 132, w - 156, 104,
                           JUtility::TColor(36, 30, 20, 250));
-            menu->fillBox(x + 78, y + 132, w - 156, 3, cAccent());
+            menu->fillMenuBox(x + 78, y + 132, w - 156, 3, cAccent());
             drawSelectedText(menu, question, x + (w - Menu::textWidth(question, ROW_SZ)) / 2, y + 153);
             drawFooterText(menu, confirm, x + (w - Menu::textWidth(confirm, FOOT_SZ)) / 2, y + 205);
         }
@@ -1062,7 +1071,18 @@ private:
 // ---------------------------------------------------------------------
 // Ghost library -- paged, console-only asynchronous SD storage.
 // ---------------------------------------------------------------------
+namespace GhostVisualMenu {
+extern const char kOpen[];
+const char *entryLabel(const char *label);
+const char *entryHelp(const char *help);
+bool hiddenSelection(int selection);
+int compactRow(int row);
+int expandedRow(int row);
+bool update(Menu *menu, TMarioGamePad *pad, int &selected, u16 pressed);
+void draw(Menu *menu, int x, int y, int w, int h, int selected);
+}
 class GhostsTab : public MenuTab {
+    friend class Menu;
 public:
     GhostsTab()
         : mSel(0), mConfirmDelete(false), mDeleteImported(false),
@@ -1117,6 +1137,23 @@ public:
     }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
+        if (mChoice == CHOICE_TIMELINE) {
+            if (GhostScrub::update(menu, menu->navigationInput(pad), mPromptInput.update())) {
+                GhostScrub::end();
+                mChoice = CHOICE_NONE;
+                mSel = TARGET_ROW;
+                mPromptInput.clear();
+            }
+            return;
+        }
+        if (mChoice == CHOICE_VISUALS) {
+            if (GhostVisualMenu::update(menu, pad, mSel, mPromptInput.update())) {
+                mChoice = CHOICE_NONE;
+                mSel = DISPLAY_ROW;
+                mPromptInput.clear();
+            }
+            return;
+        }
         if (mProtectedPBToken != 0 && !mConfirmSave) {
             updateProtectedPBSave(menu, pad);
             return;
@@ -1202,9 +1239,11 @@ public:
         }
         const u32 rapid = menu->navigationInput(pad);
         if (rapid & TMarioGamePad::CSTICK_UP) {
-            mSel = wrap(mSel - 1, SELECTION_COUNT);
+            do { mSel = wrap(mSel - 1, SELECTION_COUNT); }
+            while (GhostVisualMenu::hiddenSelection(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            mSel = wrap(mSel + 1, SELECTION_COUNT);
+            do { mSel = wrap(mSel + 1, SELECTION_COUNT); }
+            while (GhostVisualMenu::hiddenSelection(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
             if (onPageRow()) changePage(menu, -1); else jumpSection(-1);
         } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
@@ -1260,6 +1299,14 @@ public:
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
+        if (mChoice == CHOICE_TIMELINE) {
+            GhostScrub::draw(menu, x, y, w, h);
+            return;
+        }
+        if (mChoice == CHOICE_VISUALS) {
+            GhostVisualMenu::draw(menu, x, y, w, h, mSel);
+            return;
+        }
         if (mProtectedPBToken != 0 && !mConfirmSave) {
             drawProtectedPBSave(menu, x, y, w);
             return;
@@ -1287,50 +1334,52 @@ public:
 
         const int listH = h - ROW_H - HELP_H;
         const int maxRows = listH / ROW_H;
-        const int selectedRow = selectionRow(mSel);
-        const int start = listScrollStart(selectedRow, DISPLAY_ROW_COUNT,
+        const int selectedRow = GhostVisualMenu::compactRow(selectionRow(mSel));
+        const int displayCount = DISPLAY_ROW_COUNT - 3;
+        const int start = listScrollStart(selectedRow, displayCount,
                                           maxRows);
         int end = start + maxRows;
-        if (end > DISPLAY_ROW_COUNT) end = DISPLAY_ROW_COUNT;
+        if (end > displayCount) end = displayCount;
 
         int ry = y;
-        for (int row = start; row < end; row++, ry += ROW_H) {
+        for (int visible = start; visible < end; visible++, ry += ROW_H) {
+            const int row = GhostVisualMenu::expandedRow(visible);
             if (row == 0) {
                 drawSectionHeader(menu, x, ry, w, "GHOST LIBRARY");
             } else if (row == 1) {
-                drawValueRow(menu, x, ry, w, "Ghost display",
-                             gSettings.valueLabel(SETTING_GHOST_DISPLAY),
+                drawValueRow(menu, x, ry, w, rowName(DISPLAY_ROW),
+                             GhostVisualMenu::kOpen,
                              mSel == DISPLAY_ROW, false, true);
             } else if (row == 2) {
-                drawValueRow(menu, x, ry, w, "Ghost opacity",
+                drawValueRow(menu, x, ry, w, rowName(OPACITY_ROW),
                              gSettings.valueLabel(SETTING_GHOST_OPACITY),
                              mSel == OPACITY_ROW, false, true);
             } else if (row == 3) {
-                drawValueRow(menu, x, ry, w, "Ghost appearance",
+                drawValueRow(menu, x, ry, w, rowName(APPEARANCE_ROW),
                              gSettings.valueLabel(SETTING_GHOST_APPEARANCE),
                              mSel == APPEARANCE_ROW, false, true);
             } else if (row == 4) {
                 drawValueRow(
-                    menu, x, ry, w, "Auto race target",
+                    menu, x, ry, w, rowName(AUTO_TARGET_ROW),
                     gSettings.getBool(SETTING_GHOST_LAST_SUCCESS)
                         ? "Last success" : "Last attempt",
                     mSel == AUTO_TARGET_ROW, false, true);
             } else if (row == 5) {
                 drawValueRow(
-                    menu, x, ry, w, "PB ghost save",
+                    menu, x, ry, w, rowName(PB_SAVE_ROW),
                     gSettings.valueLabel(SETTING_PB_GHOST_SAVE_POLICY),
                     mSel == PB_SAVE_ROW, false, true);
             } else if (row == 6) {
-                drawValueRow(menu, x, ry, w, "PB profile",
+                drawValueRow(menu, x, ry, w, rowName(PROFILE_ROW),
                              ILing::pbProfileName(ILing::pbProfile()),
                              mSel == PROFILE_ROW, false, true);
             } else if (row == 7) {
                 char target[24];
                 targetValue(target, sizeof(target));
-                drawValueRow(menu, x, ry, w, "Race target", target,
+                drawValueRow(menu, x, ry, w, rowName(TARGET_ROW), target,
                              mSel == TARGET_ROW, false, true);
             } else if (row == 8) {
-                drawValueRow(menu, x, ry, w, "Ghost inputs",
+                drawValueRow(menu, x, ry, w, rowName(INPUTS_ROW),
                              gSettings.valueLabel(SETTING_GHOST_INPUTS),
                              mSel == INPUTS_ROW, false, true);
             } else if (row == PERSONAL_SUMMARY_DISPLAY) {
@@ -1341,10 +1390,10 @@ public:
                 const bool imported = row == IMPORTED_PAGE_DISPLAY;
                 char page[40];
                 pageValue(imported, page, sizeof(page));
-                drawValueRow(menu, x, ry, w, imported ? "Imported page" : "Personal page", page,
+                drawValueRow(menu, x, ry, w, rowName(imported ? IMPORTED_PAGE_SELECTION : PERSONAL_PAGE_SELECTION), page,
                     mSel == (imported ? IMPORTED_PAGE_SELECTION : PERSONAL_PAGE_SELECTION), false, true);
             } else if (row == SAVE_NEW_DISPLAY) {
-                drawValueRow(menu, x, ry, w, "Save latest ghost", "New file",
+                drawValueRow(menu, x, ry, w, rowName(SAVE_NEW_SELECTION), "New file",
                     mSel == SAVE_NEW_SELECTION, false, true);
             } else if (row >= PERSONAL_DISPLAY_FIRST &&
                        row < IMPORTED_SUMMARY_DISPLAY) {
@@ -1360,7 +1409,7 @@ public:
                 importedSummary(summary, sizeof(summary));
                 drawSectionHeader(menu, x, ry, w, summary);
             } else if (row == IMPORT_SCAN_DISPLAY) {
-                drawValueRow(menu, x, ry, w, "Scan import folder",
+                drawValueRow(menu, x, ry, w, rowName(IMPORT_SCAN_SELECTION),
                              "drag and drop .smsghost",
                              mSel == IMPORT_SCAN_SELECTION, false, true);
             } else {
@@ -1375,13 +1424,17 @@ public:
         }
 
         drawScrollHints(menu, x, y, w, listH, start, end,
-                        DISPLAY_ROW_COUNT);
-        drawHelpLine(menu, x, y, w, h - ROW_H, selectionHelp());
+                        displayCount);
+        const char *help = selectionHelp();
+        drawHelpLine(menu, x, y, w, h - ROW_H,
+                     mSel == DISPLAY_ROW ? GhostVisualMenu::entryHelp(help) : help);
         const bool settingRow = mSel == DISPLAY_ROW || mSel == OPACITY_ROW ||
                                 mSel == APPEARANCE_ROW ||
                                 mSel == AUTO_TARGET_ROW ||
                                 mSel == PB_SAVE_ROW || mSel == INPUTS_ROW;
-        const char *footer = mChoice == CHOICE_SECOND
+        const char *footer = mSel == TARGET_ROW && Ghost::observerActive()
+            ? SUSAMUNE_GLYPH_A " Watch timeline    " SUSAMUNE_GLYPH_X " Stop Watch"
+            : mChoice == CHOICE_SECOND
             ? SUSAMUNE_GLYPH_A " Choose ghost 2  " SUSAMUNE_GLYPH_C
               " L" SUSAMUNE_GLYPH_SLASH "R Section  "
               SUSAMUNE_GLYPH_B " Back"
@@ -1414,7 +1467,9 @@ private:
         if (mSel == PROFILE_ROW)
             return "Selects which IL profile supplies PBs and ghost names.";
         if (mSel == TARGET_ROW)
-            return "Shows the pinned race ghost; press A or X to clear it.";
+            return Ghost::observerActive()
+                ? "Pause, scrub and compare Watch. X stops watching."
+                : "Shows the pinned race ghost; press A or X to clear it.";
         if (mSel == IMPORT_SCAN_SELECTION)
             return "Finds .smsghost files copied into the import folder.";
         if (isPersonalSlot())
@@ -1428,6 +1483,8 @@ private:
         CHOICE_NONE,
         CHOICE_ACTION,
         CHOICE_SECOND,
+        CHOICE_VISUALS,
+        CHOICE_TIMELINE,
     };
 
     enum Launch : u8 {
@@ -1493,6 +1550,17 @@ private:
         SECTION_COUNT = 1 + PERSONAL_RANGE_COUNT + 1 +
                         IMPORTED_RANGE_COUNT,
     };
+
+    static const char *rowName(int selection) {
+        if (selection == DISPLAY_ROW) return GhostVisualMenu::entryLabel("Ghost display");
+        if (selection == TARGET_ROW) return Ghost::observerActive() ? "Watch timeline" : "Race target";
+        if (selection == SAVE_NEW_SELECTION) return "Save latest ghost";
+        if (selection == IMPORT_SCAN_SELECTION) return "Scan import folder";
+        if (selection == PERSONAL_PAGE_SELECTION) return "Personal page";
+        if (selection == IMPORTED_PAGE_SELECTION) return "Imported page";
+        static const char names[] = "Ghost display\0Ghost opacity\0Ghost appearance\0Auto race target\0PB ghost save\0PB profile\0\0Ghost inputs";
+        return PackedText::at(names, selection);
+    }
 
     bool isPersonalSlot() const {
         return mSel >= PERSONAL_SELECTION_FIRST &&
@@ -1964,7 +2032,9 @@ private:
             return;
         }
         if (mSel == DISPLAY_ROW) {
-            gSettings.cycle(SETTING_GHOST_DISPLAY, 1);
+            mChoice = CHOICE_VISUALS;
+            mSel = 0;
+            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B);
             return;
         }
         if (mSel == OPACITY_ROW) {
@@ -1994,8 +2064,11 @@ private:
         }
         if (mSel == TARGET_ROW) {
             if (Ghost::observerActive()) {
-                Ghost::stopObserver();
-                menu->toast("Ghost watch ended");
+                if (GhostScrub::begin()) {
+                    mChoice = CHOICE_TIMELINE;
+                    mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X |
+                        JUTGamePad::Y | JUTGamePad::L | JUTGamePad::R | JUTGamePad::Z);
+                } else menu->toast("Watch is still loading");
             } else if (Ghost::playbackPinned()) {
                 Ghost::unpinPlayback();
                 menu->toast("Library ghost unpinned");
@@ -2237,9 +2310,9 @@ private:
             SUSAMUNE_GLYPH_X " Watch 2";
         const char *note = "Watch is visual-only for this loaded area";
         const char *cancel = SUSAMUNE_GLYPH_B " Cancel";
-        menu->fillBox(x, y + 24, w, 150,
+        menu->fillMenuBox(x, y + 24, w, 150,
                       JUtility::TColor(18, 32, 46, 245));
-        menu->fillBox(x, y + 24, w, 3, cAccent());
+        menu->fillMenuBox(x, y + 24, w, 3, cAccent());
         drawSelectedText(menu, title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2, y + 42);
         drawRowValueText(menu, name, x + (w - Menu::textWidth(name, ROW_SZ)) / 2, y + 68);
         drawSelectedText(menu, actions, x + (w - Menu::textWidth(actions, ROW_SZ)) / 2, y + 100);
@@ -2252,16 +2325,16 @@ private:
         const char *note = "The selected ghost action will destroy it.";
         const char *hint = SUSAMUNE_GLYPH_A " Discard and continue    "
                            SUSAMUNE_GLYPH_B " Cancel";
-        menu->fillBox(x, y + 24, w, 150,
+        menu->fillMenuBox(x, y + 24, w, 150,
                       JUtility::TColor(36, 30, 20, 245));
-        menu->fillBox(x, y + 24, w, 3, cAccent());
+        menu->fillMenuBox(x, y + 24, w, 3, cAccent());
         drawSelectedText(menu, title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2, y + 42);
         int nameSize = ROW_SZ;
         while (nameSize > 12 &&
                Menu::textWidth(mPBName, nameSize) > w - 16) {
             nameSize--;
         }
-        menu->drawText(mPBName,
+        menu->drawMenuText(mPBName,
                        x + (w - Menu::textWidth(mPBName, nameSize)) / 2,
                        y + 70, nameSize, nameSize, cValue());
         drawDimFooterText(menu, note, x + (w - Menu::textWidth(note, FOOT_SZ)) / 2, y + 104);
@@ -2276,9 +2349,9 @@ private:
                 : "Loading visual ghost...";
         const char *note = "Recording is paused while Watch prepares";
         const char *cancel = SUSAMUNE_GLYPH_B " Cancel";
-        menu->fillBox(x, y + 34, w, 112,
+        menu->fillMenuBox(x, y + 34, w, 112,
                       JUtility::TColor(18, 32, 46, 245));
-        menu->fillBox(x, y + 34, w, 3, cAccent());
+        menu->fillMenuBox(x, y + 34, w, 3, cAccent());
         drawSelectedText(menu, title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2, y + 56);
         drawDimFooterText(menu, note, x + (w - Menu::textWidth(note, FOOT_SZ)) / 2, y + 88);
         drawFooterText(menu, cancel, x + (w - Menu::textWidth(cancel, FOOT_SZ)) / 2, y + 116);
@@ -2294,8 +2367,8 @@ private:
         const char *question = mDeleteImported
             ? "Delete imported file from SD?" : "Delete ghost from SD?";
         const char *hint = SUSAMUNE_GLYPH_A " Yes    " SUSAMUNE_GLYPH_B " No";
-        menu->fillBox(x, y + 34, w, 104, JUtility::TColor(36, 30, 20, 245));
-        menu->fillBox(x, y + 34, w, 3, cAccent());
+        menu->fillMenuBox(x, y + 34, w, 104, JUtility::TColor(36, 30, 20, 245));
+        menu->fillMenuBox(x, y + 34, w, 3, cAccent());
         drawSelectedText(menu, question, x + (w - Menu::textWidth(question, ROW_SZ)) / 2, y + 52);
         drawRowValueText(menu, name, x + (w - Menu::textWidth(name, ROW_SZ)) / 2, y + 78);
         drawFooterText(menu, hint, x + (w - Menu::textWidth(hint, FOOT_SZ)) / 2, y + 112);
@@ -2311,9 +2384,9 @@ private:
         }
         const char *destination = "New file in your personal library";
         const char *hint = SUSAMUNE_GLYPH_A " Yes    " SUSAMUNE_GLYPH_B " No";
-        menu->fillBox(x, y + 34, w, 104, JUtility::TColor(22, 34, 42, 245));
-        menu->fillBox(x, y + 34, w, 3, cAccent());
-        menu->drawText(question,
+        menu->fillMenuBox(x, y + 34, w, 104, JUtility::TColor(22, 34, 42, 245));
+        menu->fillMenuBox(x, y + 34, w, 3, cAccent());
+        menu->drawMenuText(question,
                        x + (w - Menu::textWidth(question, textSize)) / 2,
                        y + 52, textSize, textSize, cRowSel());
         drawRowValueText(menu, destination, x + (w - Menu::textWidth(destination, ROW_SZ)) / 2, y + 80);
@@ -2323,8 +2396,8 @@ private:
     void drawProtectedPBSave(Menu *menu, int x, int y, int w) const {
         const char *title = mProtectedSavePending ? "Saving protected PB ghost..." : "Preparing protected PB save...";
         const char *hint = SUSAMUNE_GLYPH_B " Back to PB protection";
-        menu->fillBox(x, y + 34, w, 112, JUtility::TColor(22, 34, 42, 245));
-        menu->fillBox(x, y + 34, w, 3, cAccent());
+        menu->fillMenuBox(x, y + 34, w, 112, JUtility::TColor(22, 34, 42, 245));
+        menu->fillMenuBox(x, y + 34, w, 3, cAccent());
         drawSelectedText(menu, title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2, y + 54);
         drawDimFooterText(menu, storageStatus(), x + 8, y + 86);
         drawFooterText(menu, hint, x + (w - Menu::textWidth(hint, FOOT_SZ)) / 2, y + 116);
@@ -2386,6 +2459,7 @@ int fittedRecordTextSize(const char *text, int maxWidth, int largest,
 }  // namespace
 
 class RecordsTab : public MenuTab {
+    friend class Menu;
 public:
     RecordsTab()
         : mPage(PAGE_ROOT), mSel(0), mCategory(0), mAchievement(0), mWorld(0),
@@ -2678,7 +2752,7 @@ private:
                         : "Shows a popup and chime when an achievement unlocks.";
         drawHelpLine(menu, x, y, w, h - 52, help);
         drawDimFooterText(menu, "Moonshine", x + 4, y + h - 44);
-        menu->drawText(storageStatus(), x + 4, y + h - 24,
+        menu->drawMenuText(storageStatus(), x + 4, y + h - 24,
                        FOOT_SZ, FOOT_SZ,
                        RecordsPersistence::lastError() ?
                            col(255, 130, 100, 255) : cFooter());
@@ -2709,7 +2783,7 @@ private:
                           recordText(Records::categoryName(category),
                                      "Achievements"));
         if (count <= 0) {
-            menu->drawText("(none)", x + 4, y + ROW_H,
+            menu->drawMenuText("(none)", x + 4, y + ROW_H,
                            ROW_SZ, ROW_SZ, cRowDim());
             drawFooterText(menu, SUSAMUNE_GLYPH_B " Back", x + 4, y + h - FOOT_SZ);
             return;
@@ -2780,13 +2854,13 @@ private:
         const Color color = recordTierColor(desc->tier);
         const char *name = recordText(desc->name, "Unnamed achievement");
         const bool isUnlocked = Records::unlocked(id);
-        menu->fillBox(x, y + 4, w, 3, color);
+        menu->fillMenuBox(x, y + 4, w, 3, color);
         const int nameSize = fittedRecordTextSize(name, w - 8, 22, 13);
-        menu->drawText(name, x + 4, y + 20, nameSize, nameSize, cRowSel());
-        menu->drawText(recordTierName(desc->tier), x + 4, y + 56,
+        menu->drawMenuText(name, x + 4, y + 20, nameSize, nameSize, cRowSel());
+        menu->drawMenuText(recordTierName(desc->tier), x + 4, y + 56,
                        ROW_SZ, ROW_SZ, color);
         const char *state = isUnlocked ? "UNLOCKED" : "LOCKED";
-        menu->drawText(state,
+        menu->drawMenuText(state,
                        x + w - Menu::textWidth(state, ROW_SZ) - 8,
                        y + 56, ROW_SZ, ROW_SZ,
                        isUnlocked ? cValue() : cRowDim());
@@ -2795,7 +2869,7 @@ private:
                                              "Description unavailable.");
         const int descriptionSize = fittedRecordTextSize(
             description, w - 8, 14, 10);
-        menu->drawText(description, x + 4, y + 88,
+        menu->drawMenuText(description, x + 4, y + 88,
                        descriptionSize, descriptionSize, cRow());
 
         drawFooterText(menu, SUSAMUNE_GLYPH_B " Back", x + 4, y + h - FOOT_SZ);
@@ -2996,9 +3070,9 @@ public:
             const bool selected = i == mSel;
             if (selected) {
                 drawRowHighlight(menu, x, ry, w, ROW_H);
-                menu->drawText(">", x - 2, ry, ROW_SZ, ROW_SZ, cAccent());
+                menu->drawMenuText(">", x - 2, ry, ROW_SZ, ROW_SZ, cAccent());
             }
-            menu->drawText(Warp::kPresets[i].name, x + 22, ry, ROW_SZ, ROW_SZ,
+            menu->drawMenuText(Warp::kPresets[i].name, x + 22, ry, ROW_SZ, ROW_SZ,
                            selected ? cRowSel() : cRow());
         }
         drawScrollHints(menu, x, y, w, h, start, end, Warp::kNumPresets);
@@ -3044,11 +3118,11 @@ public:
         for (int i = start; i < end; i++, ry += ROW_H) {
             const bool selected = i == mArea;
             if (selected) drawRowHighlight(menu, x, ry, w, ROW_H);
-            menu->drawText(Warp::kStageNames[i], x + 4, ry, ROW_SZ, ROW_SZ,
+            menu->drawMenuText(Warp::kStageNames[i], x + 4, ry, ROW_SZ, ROW_SZ,
                            selected ? cRowSel() : cRow());
             for (int e = 0; e < WARP_NUM_EPISODES; e++) {
                 digit[0] = (char)('1' + e);
-                menu->drawText(digit, epX + e * 26, ry, ROW_SZ, ROW_SZ,
+                menu->drawMenuText(digit, epX + e * 26, ry, ROW_SZ, ROW_SZ,
                                selected && e == mEpisode ? cAccent()
                                : selected ? cRow() : cRowDim());
             }
@@ -3065,6 +3139,7 @@ private:
 // PB Safety
 // ---------------------------------------------------------------------
 class PBSafetyTab final : public MenuTab {
+    friend class Menu;
 public:
     PBSafetyTab() : mSel(0) {}
 
@@ -3163,7 +3238,7 @@ namespace {
 
 const char kCategoryTitles[] =
     "Gameplay and QoL\0Savestates\0Practice tools\0Appearance\0"
-    "HUD and displays\0Timer and splits\0RNG controls\0Quick";
+    "HUD and displays\0Timer and splits\0RNG controls\0Shined";
 
 enum CategoryTitleOffset {
     TITLE_QOL       = 0,
@@ -3176,7 +3251,7 @@ enum CategoryTitleOffset {
     TITLE_STARRED   = TITLE_RNG + sizeof("RNG controls"),
 };
 
-static_assert(TITLE_STARRED + sizeof("Quick") == sizeof(kCategoryTitles),
+static_assert(TITLE_STARRED + sizeof("Shined") == sizeof(kCategoryTitles),
               "category title offsets changed");
 static_assert(SETTING_COUNT <= 0x100, "setting ids no longer fit in a byte");
 static_assert(SETTING_CAT_COUNT <= 0x100, "setting categories no longer fit in a byte");
@@ -3228,6 +3303,7 @@ const u8 kTimerDisplaySettings[] = {
     SETTING_TIMER_SECTIONS,
     SETTING_LEVEL_SPLITS,
     SETTING_SPLIT_COMPARISON,
+    SETTING_FINISH_BREAKDOWN,
 };
 const u8 kTimerFreezeSettings[] = {
     SETTING_TIMER_FREEZE_DURATION,
@@ -3310,6 +3386,8 @@ const u8 kDisplayPracticeSettings[] = {
     SETTING_ENEMY_HURTBOXES,
     SETTING_HURTBOX_TARGET,
     SETTING_RICCO_RACE_CHECKPOINTS,
+    SETTING_COLLISION_VIEWER,
+    SETTING_COLLISION_LEGEND,
 };
 const u8 kDisplayNativeSettings[] = {
     SETTING_TIMER_SUNSHINE_VISIBILITY,
@@ -3319,6 +3397,7 @@ const u8 kDisplayOtherSettings[] = {
     SETTING_GHOST_INPUTS,
     SETTING_SHOW_BGM_SLOTS,
     SETTING_RESTART_QUEUED_FEEDBACK,
+    SETTING_FINISH_BREAKDOWN,
 };
 const SettingPage kDisplayPages[] = {
     {"Sunshine timer", "Visibility and the full native timer layout editor.",
@@ -3364,6 +3443,29 @@ const u8 kSettingSectionStarts[] = {
 };
 const char kSettingSectionNames[] =
     "LEVEL RULES\0MENU CONTROLS\0COUNTERS\0BOX GAME\0STATE\0FEEDBACK";
+
+const char kGameplaySpeedHelp[] = "Practice at 1-100 pct speed. Slowed attempts cannot set records or win races.";
+const char kSlowdownPresetHelp[] = "Speed used by Slowdown: toggle preset in Binds. Press it again for 100 pct.";
+const char kCollisionViewerHelp[] = "Floor or coloured World collision; Wireframe adds game mesh edges underneath. Marks the attempt assisted.";
+const char kCollisionLegendHelp[] = "Show the collision colours and surface types.";
+const char kFastRamLoadHelp[] = "Skip payload checks for this boot's RAM states. Off restores full checks.";
+const char kFastRamLoadLabel[] = "Fast RAM loads (test)";
+__attribute__((noinline, section(".text.experimental_state_help")))
+const char *experimentalStateHelp(bool experimental, const char *standard) {
+    return experimental ? kFastRamLoadHelp : standard;
+}
+// The UI alias moves as settings append; keep the pinned help table's ordinal stable.
+const SettingId kLegacyButtslideHelpId = static_cast<SettingId>(SETTING_FAVORITES_EXTRA_9 + 1);
+
+__attribute__((noinline, section(".text.additional_setting_help"))) const char *additionalSettingHelp(SettingId id) {
+    if (id == SETTING_GAMEPLAY_SPEED) return kGameplaySpeedHelp;
+    if (id == SETTING_SLOWDOWN_PRESET) return kSlowdownPresetHelp;
+    if (id == SETTING_FINISH_BREAKDOWN) return "End-only stage segments and actual load times. Edit rows and appearance below.";
+    if (id == SETTING_COLLISION_VIEWER) return kCollisionViewerHelp;
+    if (id == SETTING_COLLISION_LEGEND) return kCollisionLegendHelp;
+    if (id == SETTING_EXPERIMENTAL_RAM_LOAD) return kFastRamLoadHelp;
+    return nullptr;
+}
 
 const char *settingHelp(SettingId id) {
     if ((id >= SETTING_TIMER_FREEZE_YELLOW_COIN &&
@@ -3446,7 +3548,7 @@ const char *settingHelp(SettingId id) {
     case SETTING_WALLKICK_DISPLAY: return "Shows the timing of Mario's last wall kick.";
     case SETTING_GB_SKIP_DISPLAY: return "B timing after a full A jump: target 9f, Y404, V6. Edit its style below.";
     case SETTING_JUMP_DISPLAY: return "Jump timing after landing.";
-    case SETTING_BUTTSLIDE_DISPLAY: return "When a buttslide jump is ready.";
+    case kLegacyButtslideHelpId: return "When a buttslide jump is ready.";
     case SETTING_ROLLOUT_DISPLAY: return "Shows the effective A-hold frames of a rollout.";
     case SETTING_DUST_DISPLAY: return "Shows frames from landing until the rollout input.";
     case SETTING_SHOW_BGM_SLOTS: return "Shows free music slots for audio diagnostics.";
@@ -3463,10 +3565,84 @@ const char *settingHelp(SettingId id) {
 
 }  // namespace
 
+// New helpers stay outside the section containing pinned drawing primitives.
+#pragma clang section text=""
+namespace DisplayFavorites {
+// These bit identities are independent of SettingId and stay append-only.
+enum Item {
+    INPUT_VISIBLE, INPUT_VALUES, INPUT_SOURCE, INPUT_PLACEMENT,
+    METADATA_VISIBLE, METADATA_LABELS, METADATA_X, METADATA_Y, METADATA_Z,
+    METADATA_ANGLE, METADATA_HSPD, METADATA_VSPD, METADATA_QF, METADATA_CANGLE,
+    METADATA_INVINC, METADATA_GOOP, METADATA_SPIN, METADATA_LAYOUT,
+    METADATA_FIELD_GAP, METADATA_ROW_GAP, METADATA_COLUMNS, METADATA_COMPACT,
+    WORD_1, WORD_2, WORD_3, QFT_LEADING_ZERO, TIMER_LABEL,
+    METADATA_VALUE_GAP, COUNT
+};
+static_assert(COUNT <= 4 * 7, "display favourites need another dedicated bank");
+static_assert(SETTING_DISPLAY_FAVORITES_3 == SETTING_DISPLAY_FAVORITES_0 + 3 &&
+              MetadataDisplay::FIELD_COUNT == 11,
+              "display favourite wire mapping changed");
+static SettingId bank(unsigned item) { return (SettingId)(SETTING_DISPLAY_FAVORITES_0 + item / 7); }
+bool favorite(unsigned item) {
+    return item < COUNT && (gSettings.get(bank(item)) & (1u << (item % 7))) != 0;
+}
+void toggle(unsigned item) {
+    if (item < COUNT) gSettings.set(bank(item), gSettings.get(bank(item)) ^ (1u << (item % 7)));
+}
+int metadataRow(unsigned item) {
+    if (item == METADATA_VALUE_GAP) return 20;
+    const int local = item - METADATA_VISIBLE;
+    return local < 14 ? local : local + 2;
+}
+const char *name(unsigned item) {
+    if (item < METADATA_VISIBLE) return InputDisplay::menuRowName(item);
+    if (item < WORD_1 || item == METADATA_VALUE_GAP)
+        return MetadataDisplay::menuRowName(metadataRow(item));
+    if (item < QFT_LEADING_ZERO) return CreationExtras::menuRowName(11 + 3 * (item - WORD_1));
+    return item == QFT_LEADING_ZERO ? "QFT leading zero" : "Show TIME label";
+}
+const char *value(unsigned item) {
+    if (item < METADATA_VISIBLE) return gInputDisplay.menuRowValue(item);
+    if (item < WORD_1 || item == METADATA_VALUE_GAP)
+        return gMetadataDisplay.menuRowValue(metadataRow(item));
+    if (item < QFT_LEADING_ZERO) return gCreationExtras.menuRowValue(11 + 3 * (item - WORD_1));
+    return (item == QFT_LEADING_ZERO ? gQftDisplay.leadingZero() : gCreationExtras.timerLabelVisible()) ? "On" : "Off";
+}
+void adjust(unsigned item, int direction) {
+    if (item < METADATA_VISIBLE) gInputDisplay.adjustMenuRow(item, direction);
+    else if (item < WORD_1 || item == METADATA_VALUE_GAP)
+        gMetadataDisplay.adjustMenuRow(metadataRow(item), direction);
+    else if (item < QFT_LEADING_ZERO) gCreationExtras.adjustMenuRow(11 + 3 * (item - WORD_1), direction);
+    else if (item == QFT_LEADING_ZERO) gQftDisplay.toggleLeadingZero();
+    else if (item == TIMER_LABEL) gCreationExtras.toggleTimerLabel();
+}
+}
+
+namespace {
+const int kDisplayFavoriteFirst = SETTING_COUNT + 1;
+const int kMenuSettingCount = kDisplayFavoriteFirst + DisplayFavorites::COUNT;
+static_assert(kMenuSettingCount <= 256, "menu setting ids no longer fit in a byte");
+bool displayFavoriteId(int id) { return id >= kDisplayFavoriteFirst && id < kMenuSettingCount; }
+bool menuFavoriteable(int id) { return displayFavoriteId(id) || Settings::favoriteable((SettingId)id); }
+bool menuFavorite(int id) {
+    return displayFavoriteId(id) ? DisplayFavorites::favorite(id - kDisplayFavoriteFirst) : gSettings.favorite((SettingId)id);
+}
+void toggleMenuFavorite(Menu *menu, int id) {
+    if (displayFavoriteId(id)) DisplayFavorites::toggle(id - kDisplayFavoriteFirst);
+    else gSettings.toggleFavorite((SettingId)id);
+    menu->toast(menuFavorite(id) ? "Added to Shined" : "Removed from Shined");
+}
+}
+#pragma clang section text=".foxtrot.text"
+
 class CategorySettingsTab : public MenuTab {
+    friend class Menu;
 public:
     CategorySettingsTab(u8 titleOffset, u8 cat)
         : mSel(0), mCat(cat), mTitleOffset(titleOffset), mMode(0) {}
+
+    __attribute__((section(".text.speed_editor_focus")))
+    void focus() override { GameplaySpeedEditor::cancel(this); }
 
     const char *title() const override { return kCategoryTitles + mTitleOffset; }
     const char *summary() const override {
@@ -3482,10 +3658,10 @@ public:
     }
     bool favoriteHint() const override {
         if (pageRoot()) return false;
-        u8 ids[SETTING_COUNT + 1];
+        u8 ids[kMenuSettingCount];
         const int settings = buildList(ids);
         return mSel < settings &&
-               Settings::favoriteable((SettingId)ids[mSel]);
+               menuFavoriteable(ids[mSel]);
     }
     bool suppressesBinds() const override {
         if (grabsInput()) return true;
@@ -3499,13 +3675,18 @@ public:
         return true;
     }
     bool grabsInput() const override {
-        return resetConfirm() ||
+        return FinishBreakdown::editing() || GameplaySpeedEditor::active(this) || resetConfirm() ||
                (hasVisualEditor() && (gCreationExtras.editing() || gQftDisplay.editing())) ||
                (hasMarioColorsEditor() && (MarioColors::editing() || FluddColors::editing()));
     }
     bool fullScreen() const override { return grabsInput(); }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
+        if (FinishBreakdown::editing()) { FinishBreakdown::updateEditor(menu, pad); return; }
+        if (GameplaySpeedEditor::active(this)) {
+            GameplaySpeedEditor::update(menu);
+            return;
+        }
         if (resetConfirm()) {
             const u32 rapid = pad->mButtons.mRapidInput;
             if (rapid & TMarioGamePad::B) {
@@ -3542,7 +3723,7 @@ public:
             updatePageRoot(menu, pad);
             return;
         }
-        u8  ids[SETTING_COUNT + 1];
+        u8  ids[kMenuSettingCount];
         const int settings = buildList(ids);
         const int n = settings + extraRows();
         if (n == 0) {
@@ -3565,7 +3746,8 @@ public:
         }
         if (mSel >= settings) {
             if (rapid & TMarioGamePad::A) {
-                if (hasTimerEditors()) {
+                if (hasBreakdownEditor()) FinishBreakdown::beginEditor();
+                else if (hasTimerEditors()) {
                     if (mSel == settings) gCreationExtras.beginNativeTimerEditor();
                     else gQftDisplay.beginEditor();
                 } else if (hasFeedbackEditor())
@@ -3589,18 +3771,23 @@ public:
             return;
         }
         SettingId id = (SettingId)ids[mSel];
-        if ((rapid & TMarioGamePad::X) && Settings::favoriteable(id)) {
-            gSettings.toggleFavorite(id);
-            menu->toast(gSettings.favorite(id)
-                            ? "Added to Shined"
-                            : "Removed from Shined");
+        if ((rapid & TMarioGamePad::X) && menuFavoriteable(id)) {
+            toggleMenuFavorite(menu, id);
             if (isStarred() && mSel >= settings - 1 && mSel > 0) mSel--;
         } else if (rapid & TMarioGamePad::A) {
-            gSettings.cycle(id, +1);
+            if (displayFavoriteId(id)) DisplayFavorites::adjust(id - kDisplayFavoriteFirst, 1);
+            else if (id == SETTING_GAMEPLAY_SPEED || id == SETTING_SLOWDOWN_PRESET)
+                GameplaySpeedEditor::begin(this, id == SETTING_SLOWDOWN_PRESET);
+            else gSettings.cycle(id, +1);
         }
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
+        if (FinishBreakdown::editing()) { FinishBreakdown::drawEditor(menu); return; }
+        if (GameplaySpeedEditor::active(this)) {
+            GameplaySpeedEditor::draw(menu);
+            return;
+        }
         if (resetConfirm()) {
             const bool records = mMode >= 3;
             const bool first = mMode & 1;
@@ -3617,9 +3804,9 @@ public:
             const char *hint = first
                 ? SUSAMUNE_GLYPH_A " Continue    " SUSAMUNE_GLYPH_B " Cancel"
                 : SUSAMUNE_GLYPH_A " Reset    " SUSAMUNE_GLYPH_B " Cancel";
-            menu->fillBox(88, 176, 464, 128, Color(8, 11, 20, 245));
-            menu->fillBox(88, 176, 464, 3, cAccent());
-            menu->drawText(title, 320 - Menu::textWidth(title, 15) / 2,
+            menu->fillMenuBox(88, 176, 464, 128, Color(8, 11, 20, 245));
+            menu->fillMenuBox(88, 176, 464, 3, cAccent());
+            menu->drawMenuText(title, 320 - Menu::textWidth(title, 15) / 2,
                            200, 15, 15, cRowSel());
             drawSmallRowText(menu, detail, 320 - Menu::textWidth(detail, 12) / 2, 232);
             drawSmallFooterText(menu, hint, 320 - Menu::textWidth(hint, 12) / 2, 270);
@@ -3642,11 +3829,11 @@ public:
             drawPageRoot(menu, x, y, w, h);
             return;
         }
-        u8  ids[SETTING_COUNT + 1];
+        u8  ids[kMenuSettingCount];
         const int settings = buildList(ids);
         const int n = settings + extraRows();
         if (n == 0) {
-            menu->drawText(isStarred() ? "Nothing Shined yet" : "(none)",
+            menu->drawMenuText(isStarred() ? "Nothing Shined yet" : "(none)",
                            x + 4, y, ROW_SZ, ROW_SZ, cRowDim());
             if (isStarred())
                 drawFooterText(menu, "Press X on a setting to add it here.", x + 4, y + ROW_H);
@@ -3682,22 +3869,15 @@ public:
             const char *val;
             if (i < settings) {
                 const SettingId id = (SettingId)ids[i];
-                name = Settings::name(id);
-                val = gSettings.valueLabel(id);
+                name = displayFavoriteId(id) ? DisplayFavorites::name(id - kDisplayFavoriteFirst) : Settings::name(id);
+                val = displayFavoriteId(id) ? DisplayFavorites::value(id - kDisplayFavoriteFirst) : gSettings.valueLabel(id);
             } else {
-                name = hasTimerEditors() ? (i == settings ? "Sunshine timer" : "QFT")
-                     : hasFeedbackEditor() ? "Feedback display"
-                     : hasNativeTimerEditor() ? "Sunshine timer editor"
-                     : hasMarioColorsEditor() ? (i == settings ? "Mario colours" : "FLUDD colours")
-                     : hasMovementEditors()
-                           ? movementEditorName(i - settings)
-                     : i == settings ? "Factory reset"
-                                     : "Reset Records";
+                name = extraRowName(i - settings);
                 val = hasVisualEditor() ? "Edit" : "Reset";
             }
             const bool starred = i < settings &&
-                gSettings.favorite((SettingId)ids[i]);
-            const bool pbSetting = i < settings &&
+                menuFavorite(ids[i]);
+            const bool pbSetting = i < settings && !displayFavoriteId(ids[i]) &&
                 Settings::affectsIlPb((SettingId)ids[i]);
             const bool pbBlocked = pbSetting &&
                 gSettings.blocksIlPb((SettingId)ids[i]);
@@ -3708,7 +3888,7 @@ public:
                 const char *tag = pbBlocked ? "PB OFF" : "PB";
                 const int valueX = x + w - Menu::textWidth(val, ROW_SZ) - 8;
                 const int tagSize = 10;
-                menu->drawText(tag,
+                menu->drawMenuText(tag,
                     valueX - Menu::textWidth(tag, tagSize) - 10,
                     ry + 2, tagSize, tagSize,
                     pbBlocked ? col(255, 72, 72, 255) : cRowDim());
@@ -3746,8 +3926,12 @@ private:
                currentPage().ids == kDisplayNativeSettings;
     }
     bool hasTimerEditors() const { return isTimer() && mMode == 1; }
+    bool hasBreakdownEditor() const {
+        return (isTimer() && mMode == 2) ||
+               (isDisplay() && mMode && currentPage().ids == kDisplayOtherSettings);
+    }
     bool hasVisualEditor() const {
-        return hasTimerEditors() || hasFeedbackEditor() || hasMovementEditors() || hasNativeTimerEditor() ||
+        return hasBreakdownEditor() || hasTimerEditors() || hasFeedbackEditor() || hasMovementEditors() || hasNativeTimerEditor() ||
                hasMarioColorsEditor();
     }
     bool hasMarioColorsEditor() const {
@@ -3757,7 +3941,7 @@ private:
     bool hasFactoryReset() const { return mCat == SETTING_CAT_MISC; }
     int extraRows() const {
         return (hasFactoryReset() || hasMarioColorsEditor() || hasTimerEditors()) ? 2 : hasMovementEditors() ? 6
-             : (hasFeedbackEditor() || hasNativeTimerEditor()) ? 1 : 0;
+             : (hasBreakdownEditor() || hasFeedbackEditor() || hasNativeTimerEditor()) ? 1 : 0;
     }
 
     const SettingPage *pages() const {
@@ -3776,6 +3960,16 @@ private:
         return sizeof(kAppearancePages) / sizeof(kAppearancePages[0]);
     }
     const SettingPage &currentPage() const { return pages()[mMode - 1]; }
+
+    const char *extraRowName(int extra) const {
+        return hasBreakdownEditor() ? "Finish breakdown editor"
+             : hasTimerEditors() ? (extra == 0 ? "Sunshine timer" : "QFT")
+             : hasFeedbackEditor() ? "Feedback display"
+             : hasNativeTimerEditor() ? "Sunshine timer editor"
+             : hasMarioColorsEditor() ? (extra == 0 ? "Mario colours" : "FLUDD colours")
+             : hasMovementEditors() ? movementEditorName(extra)
+             : extra == 0 ? "Factory reset" : "Reset Records";
+    }
 
     const char *movementEditorName(int editor) const {
         return editor == 0 ? "Wallkick display style"
@@ -3832,7 +4026,14 @@ private:
     }
 
     const char *selectionHelp(const u8 *ids, int settings) const {
-        if (mSel < settings) return settingHelp((SettingId)ids[mSel]);
+        if (mSel < settings) {
+            const SettingId id = (SettingId)ids[mSel];
+            if (displayFavoriteId(id)) return "Changes this display option. X removes it from Shined.";
+            const char *extra = additionalSettingHelp(id);
+            const SettingId legacyId = id == SETTING_BUTTSLIDE_DISPLAY ? kLegacyButtslideHelpId : id;
+            return extra ? extra : settingHelp(legacyId);
+        }
+        if (hasBreakdownEditor()) return "Choose rows, duration, position, size and colours.";
         if (hasTimerEditors()) return "Move, resize and recolour this timer.";
         if (hasFeedbackEditor()) return "Changes the savestate status popup layout.";
         if (hasNativeTimerEditor()) return "Move, resize and style the original Sunshine timer.";
@@ -3853,12 +4054,11 @@ private:
             return page.count;
         }
         int n = 0;
-        const int count = SETTING_COUNT + 1;
+        const int count = isStarred() ? kMenuSettingCount : SETTING_COUNT + 1;
         for (int i = 0; i < count; i++) {
             const SettingId id = (SettingId)i;
             const bool include = isStarred()
-                    ? Settings::favoriteable(id) &&
-                          gSettings.favorite(id)
+                    ? menuFavoriteable(id) && menuFavorite(id)
                     : Settings::category(id) == (SettingCategory)mCat;
             if (include) {
                 out[n++] = (u8)i;
@@ -3889,6 +4089,7 @@ private:
             }
             return nullptr;
         }
+        if (hasBreakdownEditor()) return "BREAKDOWN STYLE";
         if (hasFeedbackEditor()) return "FEEDBACK STYLE";
         if (hasNativeTimerEditor()) return "LAYOUT AND STYLE";
         if (hasMovementEditors())
@@ -3933,6 +4134,7 @@ static_assert(sizeof(CategorySettingsTab) == 8, "category tab must stay one slot
 // ---------------------------------------------------------------------
 #pragma clang section text="" rodata="" data="" bss=""
 class LayoutProfilesTab final : public MenuTab {
+    friend class Menu;
 public:
     LayoutProfilesTab() : mSel(0), mMode(0), mLength(0), mPage(0), mCursor(0),
         mUpper(false), mGeneration(0) { mName[0] = 0; mInput.begin(JUTGamePad::A | JUTGamePad::Y); }
@@ -3995,9 +4197,9 @@ public:
             return;
         }
         if (mMode == 1) {
-            menu->fillBox(70, 170, 500, 128, cPanel());
-            menu->drawText("Replace this layout profile?", 100, 194, 16, 16, cRowSel());
-            menu->drawText(LayoutProfiles::name(mSel), 100, 222, 14, 14, cRow());
+            menu->fillMenuBox(70, 170, 500, 128, cPanel());
+            menu->drawMenuText("Replace this layout profile?", 100, 194, 16, 16, cRowSel());
+            menu->drawMenuText(LayoutProfiles::name(mSel), 100, 222, 14, 14, cRow());
             drawFooterText(menu, SUSAMUNE_GLYPH_A " Replace    " SUSAMUNE_GLYPH_B " Cancel", 100, 260);
             return;
         }
@@ -4034,34 +4236,37 @@ private:
 };
 
 class CreationTab final : public MenuTab {
+    friend class Menu;
 public:
-    CreationTab() : mSel(0), mPage(0) { mInput.begin(JUTGamePad::A); }
+    CreationTab() : mSel(0), mPage(0) { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
 
-    const char *title() const override { return "Layout editor"; }
+    const char *title() const override { return "Displays and styles"; }
     const char *summary() const override {
-        return "Move, resize and recolour Moonshine HUD elements.";
+        return "Visibility and appearance together for each display.";
     }
 
     bool grabsInput() const override {
-        return gQftDisplay.editing() || gInputDisplay.editing() ||
+        return FinishBreakdown::editing() || gQftDisplay.editing() || gInputDisplay.editing() ||
                gMetadataDisplay.editing() || gCreationExtras.editing();
     }
     bool suppressesBinds() const override {
         if (grabsInput()) return true;
-        return (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::A) != 0;
+        return (JUTGamePad::mPadStatus[0].mButton & (JUTGamePad::A | JUTGamePad::X)) != 0;
     }
+    bool favoriteHint() const override { return mPage && rowFavorite(mSel) >= 0; }
     bool fullScreen() const override { return grabsInput(); }
 
-    void focus() override { mInput.begin(JUTGamePad::A); }
+    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool back() override {
         if (!mPage) return false;
         mSel = mPage - 1;
         mPage = 0;
-        mInput.begin(JUTGamePad::A | JUTGamePad::B);
+        mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X);
         return true;
     }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
+        if (FinishBreakdown::editing()) { FinishBreakdown::updateEditor(menu, pad); return; }
         if (gQftDisplay.editing()) {
             gQftDisplay.updateEditor(pad);
             return;
@@ -4086,7 +4291,7 @@ public:
             if (pressed & JUTGamePad::A) {
                 mPage = mSel + 1;
                 mSel = pageFirst();
-                mInput.begin(JUTGamePad::A);
+                mInput.begin(JUTGamePad::A | JUTGamePad::X);
             }
             return;
         }
@@ -4097,10 +4302,13 @@ public:
             if (rapid & TMarioGamePad::CSTICK_LEFT) activate(-1);
             else if (rapid & TMarioGamePad::CSTICK_RIGHT) activate(+1);
         }
-        if (pressed & JUTGamePad::A) activate(+1);
+        if ((pressed & JUTGamePad::X) && rowFavorite(mSel) >= 0)
+            toggleMenuFavorite(menu, rowFavorite(mSel));
+        else if (pressed & JUTGamePad::A) activate(+1);
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
+        if (FinishBreakdown::editing()) { FinishBreakdown::drawEditor(menu); return; }
         if (gQftDisplay.editing()) {
             gQftDisplay.drawEditor(menu);
             return;
@@ -4140,7 +4348,7 @@ public:
         for (int local = start; local < end; local++) {
             const int row = pageFirst() + local;
             drawValueRow(menu, x, ry, w, rowName(row), rowValue(row),
-                         row == mSel, false, false);
+                         row == mSel, rowFavorite(row) >= 0 && menuFavorite(rowFavorite(row)), false);
             ry += ROW_H;
         }
         drawScrollHints(menu, x, y, w, listH, start, end, count);
@@ -4152,8 +4360,12 @@ public:
 private:
     enum Row {
         ROW_QFT_HEADER,
+        ROW_QFT_VISIBLE,
         ROW_QFT_EDITOR,
         ROW_QFT_LEADING_ZERO,
+        ROW_FINISH_BREAKDOWN,
+        ROW_FINISH_BREAKDOWN_EDITOR,
+        ROW_SUNSHINE_TIMER_VISIBLE,
         ROW_SUNSHINE_TIMER_EDITOR,
         ROW_SUNSHINE_TIMER_CHARACTERS,
         ROW_SUNSHINE_TIMER_STREAK,
@@ -4170,13 +4382,26 @@ private:
         ROW_HEALTH_EDITOR = ROW_EXTRAS_FIRST + 8,
         ROW_AIR_EDITOR,
         ROW_EXTRAS_END = ROW_EXTRAS_FIRST + CreationExtras::MENU_ROW_COUNT + 2,
-        ROW_WALLKICK_EDITOR = ROW_EXTRAS_END,
+        ROW_SYSTEM_VISIBLE = ROW_EXTRAS_END,
+        ROW_PB_VISIBLE,
+        ROW_SESSION_VISIBLE,
+        ROW_FAILURE_VISIBLE,
+        ROW_NOTIFICATIONS_END,
+        ROW_WALLKICK_VISIBLE = ROW_NOTIFICATIONS_END,
+        ROW_WALLKICK_EDITOR,
+        ROW_GB_TIMING_VISIBLE,
         ROW_GB_TIMING_EDITOR,
+        ROW_JUMP_TIMING_VISIBLE,
         ROW_JUMP_TIMING_EDITOR,
+        ROW_BUTTSLIDE_VISIBLE,
         ROW_BUTTSLIDE_EDITOR,
+        ROW_ROLLOUT_VISIBLE,
         ROW_ROLLOUT_EDITOR,
+        ROW_DUST_VISIBLE,
         ROW_DUST_EDITOR,
+        ROW_SAVESTATE_VISIBLE,
         ROW_SAVESTATE_EDITOR,
+        ROW_RECENT_IL_VISIBLE,
         ROW_RECENT_IL_EDITOR,
         ROW_COUNT,
         PAGE_COUNT = 7,
@@ -4188,15 +4413,15 @@ private:
         return PackedText::at(names, page);
     }
     int pageFirst() const {
-        const u8 first[] = {ROW_QFT_EDITOR, ROW_INPUT_FIRST, ROW_METADATA_FIRST,
+        const u8 first[] = {ROW_QFT_VISIBLE, ROW_INPUT_FIRST, ROW_METADATA_FIRST,
             ROW_EXTRAS_FIRST + 1, ROW_EXTRAS_FIRST + 11,
-            ROW_WALLKICK_EDITOR, ROW_EXTRAS_FIRST + 21};
+            ROW_WALLKICK_VISIBLE, ROW_EXTRAS_FIRST + 21};
         return first[mPage - 1];
     }
     int pageEnd() const {
         const u8 end[] = {ROW_INPUT_HEADER, ROW_METADATA_HEADER, ROW_METADATA_END,
             ROW_EXTRAS_FIRST + 10, ROW_EXTRAS_FIRST + 20,
-            ROW_COUNT, ROW_EXTRAS_END};
+            ROW_COUNT, ROW_NOTIFICATIONS_END};
         return end[mPage - 1];
     }
     void moveSelection(int dir) {
@@ -4204,7 +4429,11 @@ private:
     }
 
     void activate(int dir) {
-        if (mSel == ROW_QFT_EDITOR) {
+        const int setting = rowSetting(mSel);
+        if (setting >= 0) { gSettings.cycle((SettingId)setting, dir); return; }
+        if (mSel == ROW_FINISH_BREAKDOWN_EDITOR) {
+            FinishBreakdown::beginEditor();
+        } else if (mSel == ROW_QFT_EDITOR) {
             gQftDisplay.beginEditor();
         } else if (mSel == ROW_QFT_LEADING_ZERO) {
             gQftDisplay.toggleLeadingZero();
@@ -4232,7 +4461,7 @@ private:
         } else if (mSel == ROW_WALLKICK_EDITOR) {
             gCreationExtras.beginWallkickEditor();
         } else if (mSel >= ROW_GB_TIMING_EDITOR && mSel <= ROW_BUTTSLIDE_EDITOR) {
-            gCreationExtras.beginPracticeDisplayEditor(mSel - ROW_GB_TIMING_EDITOR);
+            gCreationExtras.beginPracticeDisplayEditor((mSel - ROW_GB_TIMING_EDITOR) / 2);
         } else if (mSel == ROW_ROLLOUT_EDITOR) {
             gCreationExtras.beginRolloutEditor();
         } else if (mSel == ROW_DUST_EDITOR) {
@@ -4247,6 +4476,9 @@ private:
     }
 
     const char *rowName(int row) const {
+        const int setting = rowSetting(row);
+        if (setting >= 0) return Settings::name((SettingId)setting);
+        if (row == ROW_FINISH_BREAKDOWN_EDITOR) return "Finish breakdown editor";
         if (row == ROW_QFT_EDITOR) return "QFT timer";
         if (row == ROW_SUNSHINE_TIMER_EDITOR) return "Sunshine timer";
         if (row == ROW_HEALTH_EDITOR) return "Health counter colour";
@@ -4254,7 +4486,7 @@ private:
         if (row == ROW_GHOST_INPUTS) return Settings::name(SETTING_GHOST_INPUTS);
         if (row == ROW_WALLKICK_EDITOR) return "Wallkick display";
         if (row >= ROW_GB_TIMING_EDITOR && row <= ROW_BUTTSLIDE_EDITOR)
-            return practiceDisplayName(row - ROW_GB_TIMING_EDITOR);
+            return practiceDisplayName((row - ROW_GB_TIMING_EDITOR) / 2);
         if (row == ROW_ROLLOUT_EDITOR) return "Rollout display";
         if (row == ROW_DUST_EDITOR) return "Dust display";
         if (row == ROW_SAVESTATE_EDITOR) return "Savestate feedback";
@@ -4276,7 +4508,9 @@ private:
     }
 
     const char *rowValue(int row) const {
-        if (row == ROW_QFT_EDITOR || row == ROW_SUNSHINE_TIMER_EDITOR ||
+        const int setting = rowSetting(row);
+        if (setting >= 0) return gSettings.valueLabel((SettingId)setting);
+        if (row == ROW_FINISH_BREAKDOWN_EDITOR || row == ROW_QFT_EDITOR || row == ROW_SUNSHINE_TIMER_EDITOR ||
             row == ROW_HEALTH_EDITOR || row == ROW_AIR_EDITOR ||
             row >= ROW_WALLKICK_EDITOR) return "Edit";
         if (row == ROW_GHOST_INPUTS) return gSettings.valueLabel(SETTING_GHOST_INPUTS);
@@ -4295,6 +4529,8 @@ private:
     }
 
     const char *rowHelp(int row) const {
+        if (rowSetting(row) >= 0) return "Change visibility here; edit this display on the same page. X adds it to Shined.";
+        if (row == ROW_FINISH_BREAKDOWN_EDITOR) return "Choose rows, duration, position, size and colours.";
         if (row == ROW_QFT_EDITOR)
             return "Moves, resizes and recolours the compact QFT display.";
         if (row == ROW_SUNSHINE_TIMER_EDITOR)
@@ -4336,13 +4572,15 @@ private:
             if (local == 3 + MetadataDisplay::FIELD_COUNT)
                 return "Moves, resizes and recolours the metadata overlay.";
             if (local == 5 + MetadataDisplay::FIELD_COUNT)
-                return "C-stick left/right decreases/increases the horizontal field gap.";
+                return "Space between horizontal fields.";
             if (local == 6 + MetadataDisplay::FIELD_COUNT)
                 return "C-stick left/right adjusts the space between metadata rows.";
             if (local == 7 + MetadataDisplay::FIELD_COUNT)
                 return "C-stick left/right sets fields per row; Auto wraps at the screen edge.";
             if (local == 8 + MetadataDisplay::FIELD_COUNT)
-                return "C-stick left/right: Compact fits current values; Stable keeps fields steady.";
+                return "Compact follows the value width; Stable keeps space after it for larger values.";
+            if (local == 9 + MetadataDisplay::FIELD_COUNT)
+                return "Space between each label and its value.";
             return "Restores the metadata overlay's default layout.";
         }
         const int local = extraRow(row);
@@ -4362,19 +4600,64 @@ private:
         return "Changes this HUD element's layout or appearance.";
     }
 
+    static int rowSetting(int row) {
+        switch (row) {
+        case ROW_QFT_VISIBLE: return SETTING_TIMER_QFT_VISIBILITY;
+        case ROW_FINISH_BREAKDOWN: return SETTING_FINISH_BREAKDOWN;
+        case ROW_SUNSHINE_TIMER_VISIBLE: return SETTING_TIMER_SUNSHINE_VISIBILITY;
+        case ROW_GHOST_INPUTS: return SETTING_GHOST_INPUTS;
+        case ROW_WALLKICK_VISIBLE: return SETTING_WALLKICK_DISPLAY;
+        case ROW_GB_TIMING_VISIBLE: return SETTING_GB_SKIP_DISPLAY;
+        case ROW_JUMP_TIMING_VISIBLE: return SETTING_JUMP_DISPLAY;
+        case ROW_BUTTSLIDE_VISIBLE: return SETTING_BUTTSLIDE_DISPLAY;
+        case ROW_ROLLOUT_VISIBLE: return SETTING_ROLLOUT_DISPLAY;
+        case ROW_DUST_VISIBLE: return SETTING_DUST_DISPLAY;
+        case ROW_SAVESTATE_VISIBLE: return SETTING_SAVESTATE_FEEDBACK;
+        case ROW_RECENT_IL_VISIBLE: return SETTING_ILING_RECENT;
+        case ROW_SYSTEM_VISIBLE: return SETTING_SYSTEM_MESSAGES;
+        case ROW_PB_VISIBLE: return SETTING_ILING_POPUP;
+        case ROW_SESSION_VISIBLE: return SETTING_STAGE_SESSION_DISPLAY;
+        case ROW_FAILURE_VISIBLE: return SETTING_STREAK_FAILURE_BANNER;
+        default: return -1;
+        }
+    }
+    static int rowFavorite(int row) {
+        const int setting = rowSetting(row);
+        if (setting >= 0) return Settings::favoriteable((SettingId)setting) ? setting : -1;
+        int item = -1;
+        if (row == ROW_QFT_LEADING_ZERO) item = DisplayFavorites::QFT_LEADING_ZERO;
+        else if (row == ROW_SUNSHINE_TIMER_LABEL_VISIBLE) item = DisplayFavorites::TIMER_LABEL;
+        else if (row >= ROW_INPUT_FIRST && row < ROW_INPUT_END) {
+            const int local = inputRow(row);
+            if (local < 4) item = DisplayFavorites::INPUT_VISIBLE + local;
+        } else if (row >= ROW_METADATA_FIRST && row < ROW_METADATA_END) {
+            const int local = metadataRow(row);
+            if (local < 14) item = DisplayFavorites::METADATA_VISIBLE + local;
+            else if (local >= 16 && local < 20) item = DisplayFavorites::METADATA_FIELD_GAP + local - 16;
+            else if (local == 20) item = DisplayFavorites::METADATA_VALUE_GAP;
+        } else if (row >= ROW_EXTRAS_FIRST && row < ROW_EXTRAS_END) {
+            const int local = extraRow(row);
+            if (local >= 11 && local <= 17 && (local - 11) % 3 == 0)
+                item = DisplayFavorites::WORD_1 + (local - 11) / 3;
+        }
+        return item < 0 ? -1 : kDisplayFavoriteFirst + item;
+    }
+
     static int inputRow(int row) {
         const int local = row - ROW_INPUT_FIRST;
-        if (local == 0) return 4;
-        if (local <= 4) return local - 1;
+        if (local == 0) return 0;
+        if (local == 1) return 4;
+        if (local >= 2 && local <= 4) return local - 1;
         return 5;
     }
 
     static int metadataRow(int row) {
         const int local = row - ROW_METADATA_FIRST;
-        const int style = 3 + MetadataDisplay::FIELD_COUNT;
-        if (local == 0) return style;
-        if (local <= style) return local - 1;
-        return local;
+        static const u8 order[] = {
+            0, 14, 13, 20, 16, 19, 17, 18, 1, 2, 3,
+            4, 5, 6, 7, 8, 9, 10, 11, 12, 15
+        };
+        return order[local];
     }
 
     static int extraRow(int row) {
@@ -4399,40 +4682,68 @@ private:
 // ---------------------------------------------------------------------
 namespace {
 
-const u8 kBindSectionStarts[] = {
-    BIND_REGRAB_OBJECT,
-    BIND_MENU_TOGGLE,
-    BIND_SAVESTATE_SAVE,
-    BIND_WARP_WHEEL,
-    BIND_TOGGLE_INPUT_DISPLAY,
-    BIND_ATTEMPT_SHOW,
-    BIND_POSITION_SAVE,
-    BIND_PRACTICE_PAUSE,
-    BIND_TAS_BEGINNING,
+struct BindPage { const char *name; u8 first, count; };
+constexpr u8 kBindPageIds[] = {
+    BIND_MENU_TOGGLE, BIND_TOGGLE_INPUT_DISPLAY,
+    BIND_SAVESTATE_SAVE, BIND_SAVESTATE_LOAD,
+    BIND_SAVESTATE_SAVE_2, BIND_SAVESTATE_LOAD_2,
+    BIND_SAVESTATE_SAVE_3, BIND_SAVESTATE_LOAD_3,
+    BIND_SAVESTATE_CYCLE_SAVE, BIND_SAVESTATE_CYCLE_LOAD, BIND_SAVESTATE_CYCLE,
+    BIND_WARP_WHEEL, BIND_FULL_RESTART, BIND_INSTANT_RESTART, BIND_WARP_LAST,
+    BIND_PRACTICE_PAUSE, BIND_PRACTICE_STEP, BIND_FREE_CAMERA,
+    BIND_SLOWDOWN_TOGGLE, BIND_FAST_FORWARD_4X, BIND_FAST_FORWARD_8X,
+    BIND_POSITION_SAVE, BIND_POSITION_LOAD,
+    BIND_TAS_BEGINNING, BIND_TAS_SAVE_CHECKPOINT1, BIND_TAS_LOAD_CHECKPOINT1,
+    BIND_TAS_SAVE_CHECKPOINT2, BIND_TAS_LOAD_CHECKPOINT2, BIND_TAS_CONTINUE,
+    BIND_TAS_REPLAY, BIND_PRACTICE_RECORD, BIND_PRACTICE_REPLAY, BIND_PRACTICE_STOP,
+    BIND_REGRAB_OBJECT, BIND_SPAWN_YOSHI_GREEN, BIND_SPAWN_YOSHI_ORANGE,
+    BIND_SPAWN_YOSHI_PURPLE, BIND_SPAWN_YOSHI_PINK,
+    BIND_ATTEMPT_SHOW, BIND_ATTEMPT_ADD, BIND_ATTEMPT_DEC,
+    BIND_ATTEMPT_INC, BIND_SUCCESS_DEC, BIND_SUCCESS_INC,
+    BIND_FEATURE_FAST_TEXT,
+    BIND_FEATURE_FLUDD_SECRETS,
+    BIND_FEATURE_AREA_LOCK,
+    BIND_FEATURE_INFINITE_JUICE,
+    BIND_FEATURE_NOZZLE_LOCK,
+    BIND_FEATURE_STAGE_INTRO,
+    BIND_FEATURE_SHINE_ANIMATION,
+    BIND_FEATURE_FRUIT_TIMEOUT,
+    BIND_FEATURE_MUTE_BGM,
+    BIND_FEATURE_SHADOW_HP,
+    BIND_FEATURE_UNLOCK_YOSHI,
+    BIND_FEATURE_UNLOCK_NOZZLES,
 };
-const char kBindSectionNames[] =
-    "ACTIONS\0MENU\0SAVESTATES\0WARPS AND RESTARTS\0DISPLAY\0ATTEMPT COUNTER\0POSITION\0FRAME AND CAMERA\0TAS PROJECTS";
-enum {
-    kBindSectionCount =
-        sizeof(kBindSectionStarts) / sizeof(kBindSectionStarts[0]),
+constexpr BindPage kBindPages[] = {
+    {"Menu and displays", 0, 2},
+    {"Savestates", 2, 9},
+    {"Warps and restarts", 11, 4},
+    {"Practice tools", 15, 8},
+    {"TAS projects", 23, 10},
+    {"Objects and Yoshi", 33, 5},
+    {"Attempt counter", 38, 6},
+    {"Feature toggles", 44, 12},
 };
-static_assert(kBindSectionCount == 9,
-              "bind section metadata must be validated together");
-static_assert(BIND_REGRAB_OBJECT == 0 &&
-                  BIND_REGRAB_OBJECT < BIND_MENU_TOGGLE &&
-                  BIND_MENU_TOGGLE < BIND_SAVESTATE_SAVE &&
-                  BIND_SAVESTATE_SAVE < BIND_WARP_WHEEL &&
-                  BIND_WARP_WHEEL < BIND_TOGGLE_INPUT_DISPLAY &&
-                  BIND_TOGGLE_INPUT_DISPLAY < BIND_ATTEMPT_SHOW &&
-                  BIND_ATTEMPT_SHOW < BIND_POSITION_SAVE &&
-                  BIND_POSITION_SAVE < BIND_PRACTICE_PAUSE &&
-                  BIND_PRACTICE_PAUSE < BIND_TAS_BEGINNING &&
-                  BIND_TAS_BEGINNING < BIND_COUNT,
-              "bind section starts must be ordered and in bounds");
+constexpr bool bindPagesValid() {
+    unsigned next = 0;
+    for (const BindPage &page : kBindPages) {
+        if (page.first != next || !page.count) return false;
+        next += page.count;
+    }
+    if (next != sizeof(kBindPageIds) || next != BIND_COUNT - 2) return false;
+    for (unsigned i = 0; i < next; ++i) {
+        if (kBindPageIds[i] >= BIND_COUNT || kBindPageIds[i] == BIND_PRACTICE_SPIN_CW ||
+            kBindPageIds[i] == BIND_PRACTICE_SPIN_CCW) return false;
+        for (unsigned j = 0; j < i; ++j)
+            if (kBindPageIds[i] == kBindPageIds[j]) return false;
+    }
+    return true;
+}
+static_assert(bindPagesValid(), "every visible bind needs exactly one submenu");
 
 }  // namespace
 
 class SavestatesTab : public MenuTab {
+    friend class Menu;
 public:
     SavestatesTab() : mSel(0), mSDsel(0), mSD(false), mConfirmClear(false),
         mConfirmLoad(false), mConfirmDelete(false), mNameMode(NAME_NONE),
@@ -4448,7 +4759,7 @@ public:
         return grabsInput() || (JUTGamePad::mPadStatus[0].mButton &
             (JUTGamePad::A | JUTGamePad::X)) != 0;
     }
-    bool favoriteHint() const override { return !mSD && (mSel == ROW_RNG || mSel == ROW_FEEDBACK || mSel == ROW_ERRORS); }
+    bool favoriteHint() const override { return !mSD && (mSel == ROW_RNG || mSel == ROW_FEEDBACK || mSel == ROW_ERRORS || mSel == ROW_FAST); }
     void update(Menu *menu, TMarioGamePad *pad) override {
         if (gCreationExtras.editing()) {
             gCreationExtras.updateEditor(pad);
@@ -4479,7 +4790,7 @@ public:
             return;
         }
         if ((pressed & JUTGamePad::X) && favoriteHint()) {
-            const SettingId setting = mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : mSel == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK;
+            const SettingId setting = mSel == ROW_FAST ? SETTING_EXPERIMENTAL_RAM_LOAD : mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : mSel == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK;
             gSettings.toggleFavorite(setting);
             menu->toast(gSettings.favorite(setting) ? "Added to Shined" : "Removed from Shined");
             return;
@@ -4505,7 +4816,7 @@ public:
                 !gSavestateMgr->sdCatalogReady() && !SavestateManager::diskBusy())
                 gSavestateMgr->refreshSD();
         } else {
-            gSettings.cycle(mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : mSel == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK, 1);
+            gSettings.cycle(mSel == ROW_FAST ? SETTING_EXPERIMENTAL_RAM_LOAD : mSel == ROW_RNG ? SETTING_SAVE_RNG_STATE : mSel == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK, 1);
         }
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
@@ -4514,8 +4825,8 @@ public:
         if (mConfirmClear) {
             char question[48];
             snprintf(question, sizeof(question), "Clear state %lu?", mClearSlot + 1);
-            menu->fillBox(88, 176, 464, 128, Color(8, 11, 20, 245));
-            menu->drawText(question, 320 - Menu::textWidth(question, 16) / 2, 198, 16, 16, cRowSel());
+            menu->fillMenuBox(88, 176, 464, 128, Color(8, 11, 20, 245));
+            menu->drawMenuText(question, 320 - Menu::textWidth(question, 16) / 2, 198, 16, 16, cRowSel());
             const char *detail = "Other states stay saved.";
             drawSmallRowText(menu, detail, 320 - Menu::textWidth(detail, 12) / 2, 230);
             const char *buttons = SUSAMUNE_GLYPH_A " Clear    " SUSAMUNE_GLYPH_B " Cancel";
@@ -4531,9 +4842,11 @@ public:
         const int start = listScrollStart(mSel, ROW_COUNT, listH / ROW_H);
         const int end = clampi(start + listH / ROW_H, 0, ROW_COUNT);
         for (int row = start; row < end; ++row) {
-            const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK || row == ROW_ERRORS) &&
-                gSettings.favorite(row == ROW_RNG ? SETTING_SAVE_RNG_STATE : row == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK);
-            drawValueRow(menu, x, y + (row - start) * ROW_H, w, labels[row], values[row], row == mSel, starred, false);
+            const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK || row == ROW_ERRORS || row == ROW_FAST) &&
+                gSettings.favorite(row == ROW_FAST ? SETTING_EXPERIMENTAL_RAM_LOAD : row == ROW_RNG ? SETTING_SAVE_RNG_STATE : row == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK);
+            drawValueRow(menu, x, y + (row - start) * ROW_H, w,
+                row == ROW_FAST ? kFastRamLoadLabel : labels[row],
+                row == ROW_FAST ? gSettings.valueLabel(SETTING_EXPERIMENTAL_RAM_LOAD) : values[row], row == mSel, starred, false);
         }
         drawScrollHints(menu, x, y, w, listH, start, end, ROW_COUNT);
         const int statusY = y + listH + 4;
@@ -4541,7 +4854,7 @@ public:
             const SavestateManager::SlotInfo info = gSavestateMgr ? gSavestateMgr->slotInfo(slot) : SavestateManager::SlotInfo{};
             char status[48];
             snprintf(status, sizeof(status), "State %lu: %s", slot + 1, info.valid ? "Saved" : "Empty");
-            menu->drawText(status, x + 4 + slot * (w / SavestateManager::kSlotCount), statusY, FOOT_SZ, FOOT_SZ,
+            menu->drawMenuText(status, x + 4 + slot * (w / SavestateManager::kSlotCount), statusY, FOOT_SZ, FOOT_SZ,
                 gSavestateMgr && gSavestateMgr->saveSlot() == slot ? cAccent() : cRow());
         }
         const char *help = mSel == ROW_SAVE ? "Save writes to this slot. Load keeps its own selection."
@@ -4552,10 +4865,10 @@ public:
             : mSel == ROW_ERRORS ? "Show errors when a state cannot be saved or loaded."
             : mSel == ROW_SD ? "Save states to SD and bring them back after restarting."
             : "Change the savestate message's position and appearance.";
-        drawHelpLine(menu, x, y, w, h, help);
+        drawHelpLine(menu, x, y, w, h, experimentalStateHelp(mSel == ROW_FAST, help));
     }
 private:
-    enum { ROW_SAVE, ROW_LOAD, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_ERRORS, ROW_EDITOR, ROW_SD, ROW_COUNT };
+    enum { ROW_SAVE, ROW_LOAD, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_ERRORS, ROW_EDITOR, ROW_SD, ROW_FAST, ROW_COUNT };
     enum { SD_SAVE_SLOT, SD_LOAD_SLOT, SD_SAVE, SD_REFRESH, SD_NEXT, SD_FILES };
     enum { NAME_NONE, NAME_SAVE, NAME_RENAME };
     void formatSources(char *save, u32 saveSize, char *load, u32 loadSize) const {
@@ -4564,6 +4877,11 @@ private:
         if (gSavestateMgr->loadSourceIsSD())
             snprintf(load, loadSize, "SD: %.23s", gSavestateMgr->selectedSDName());
         else snprintf(load, loadSize, "State %lu", gSavestateMgr->loadSlot() + 1);
+    }
+    static const char *rowName(int row, bool sd = false) {
+        static const char *const main[] = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", "SD states"};
+        static const char disk[] = "Save to\0Load from\0Save memory state to SD\0Refresh / first page\0Next page";
+        return sd ? PackedText::at(disk, row) : row == ROW_FAST ? kFastRamLoadLabel : main[row];
     }
     u32 sdCount() const {
         if (!gSavestateMgr || !gSavestateMgr->sdCatalogReady()) return 0;
@@ -4698,11 +5016,11 @@ private:
     }
     void drawSD(Menu *menu) {
         const int x = 80, y = 72, w = 480, h = 336;
-        menu->fillBox(0, 0, 640, 480, cBackdrop());
-        menu->fillBox(x, y, w, h, cPanel());
-        menu->drawText("SD savestates", x + 16, y + 16, 18, 18, cTitle());
+        menu->fillMenuBox(0, 0, 640, 480, cBackdrop());
+        menu->fillMenuBox(x, y, w, h, cPanel());
+        menu->drawMenuText("SD savestates", x + 16, y + 16, 18, 18, cTitle());
         if (SavestateManager::diskBusy()) {
-            menu->drawText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Working...",
+            menu->drawMenuText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Working...",
                 x + 16, y + 76, 14, 14, cRowSel());
             drawSmallRowText(menu, "Keep the SD card connected until this finishes.", x + 16, y + 106);
             drawSmallFooterText(menu, mMetadataPending ? "Finishing the SD update..."
@@ -4718,8 +5036,8 @@ private:
             char question[48];
             if (mConfirmDelete) strcpy(question, "Delete this SD state?");
             else snprintf(question, sizeof(question), "Import into state %lu?", mClearSlot + 1);
-            menu->drawText(question, x + 16, y + 66, 16, 16, cRowSel());
-            menu->drawText(mArchiveName, x + 16, y + 100, 12, 12, cAccent());
+            menu->drawMenuText(question, x + 16, y + 66, 16, 16, cRowSel());
+            menu->drawMenuText(mArchiveName, x + 16, y + 100, 12, 12, cAccent());
             drawSmallRowText(menu, mConfirmDelete ? "Removes this file from SD. Memory states stay saved."
                 : "Replaces the Save to memory slot. The SD file stays saved.", x + 16, y + 138);
             if (!mConfirmDelete) drawSmallRowText(menu, "Select that slot under Load from to use it.", x + 16, y + 164);
@@ -4730,7 +5048,7 @@ private:
         char save[24], load[32], sources[72];
         formatSources(save, sizeof(save), load, sizeof(load));
         snprintf(sources, sizeof(sources), "Save: %s   Load: %s", save, load);
-        menu->drawText(sources, x + 16, y + 42, 11, 11, cAccent());
+        menu->drawMenuText(sources, x + 16, y + 42, 11, 11, cAccent());
         const int rows = SD_FILES + sdCount();
         if (mSDsel >= rows) mSDsel = rows - 1;
         const int listY = y + 68, listH = 7 * ROW_H;
@@ -4738,11 +5056,11 @@ private:
         const int end = clampi(start + 7, 0, rows);
         for (int row = start; row < end; ++row) {
             char name[48], value[32];
-            if (row == SD_SAVE_SLOT) { strcpy(name, "Save to"); strcpy(value, save); }
-            else if (row == SD_LOAD_SLOT) { strcpy(name, "Load from"); strcpy(value, load); }
-            else if (row == SD_SAVE) { strcpy(name, "Save memory state to SD"); strcpy(value, "Name..."); }
-            else if (row == SD_REFRESH) { strcpy(name, "Refresh / first page"); strcpy(value, "Open"); }
-            else if (row == SD_NEXT) { strcpy(name, "Next page"); strcpy(value,
+            if (row == SD_SAVE_SLOT) { strcpy(name, rowName(row, true)); strcpy(value, save); }
+            else if (row == SD_LOAD_SLOT) { strcpy(name, rowName(row, true)); strcpy(value, load); }
+            else if (row == SD_SAVE) { strcpy(name, rowName(row, true)); strcpy(value, "Name..."); }
+            else if (row == SD_REFRESH) { strcpy(name, rowName(row, true)); strcpy(value, "Open"); }
+            else if (row == SD_NEXT) { strcpy(name, rowName(row, true)); strcpy(value,
                 gSavestateMgr && gSavestateMgr->sdCatalogReady() && gSavestateMgr->sdCatalog().more ? "Open" : "--"); }
             else {
                 const SusamuneStateCatalogEntry &entry = gSavestateMgr->sdCatalog().entries[row - SD_FILES];
@@ -4761,7 +5079,7 @@ private:
             : mSDsel >= SD_FILES ? "Y chooses this file for your Load bind; A copies it to memory."
             : "SD files stay saved after the console restarts.";
         drawSmallRowText(menu, help, x + 16, y + h - 50);
-        menu->drawText(mSDsel >= SD_FILES
+        menu->drawMenuText(mSDsel >= SD_FILES
             ? SUSAMUNE_GLYPH_A " Import  " SUSAMUNE_GLYPH_Y " Load from  " SUSAMUNE_GLYPH_X " Delete  Start Rename  " SUSAMUNE_GLYPH_B " Back"
             : SUSAMUNE_GLYPH_A " Select    " SUSAMUNE_GLYPH_B " Back",
             x + 16, y + h - 26, 11, 11, cFooter());
@@ -4790,186 +5108,111 @@ private:
 };
 
 class BindsTab : public MenuTab {
+    friend class Menu;
 public:
-    BindsTab() : mSel(0) {}
-
+    BindsTab() : mSel(0), mPage(0) {}
     const char *title() const override { return "Button binds"; }
-    const char *summary() const override {
-        return "Choose the controller combo for each Moonshine action.";
-    }
-
+    const char *summary() const override { return "Controller shortcuts grouped by action."; }
     bool grabsInput() const override { return gBinds.recording(); }
     bool suppressesBinds() const override {
-        if (grabsInput()) return true;
-        const u16 held = JUTGamePad::mPadStatus[0].mButton;
-        return (held & (JUTGamePad::A | JUTGamePad::X)) != 0;
+        return grabsInput() || (JUTGamePad::mPadStatus[0].mButton &
+            (JUTGamePad::A | JUTGamePad::X)) != 0;
     }
-
+    bool back() override {
+        if (!mPage) return false;
+        mSel = mPage - 1;
+        mPage = 0;
+        return true;
+    }
     void update(Menu *menu, TMarioGamePad *pad) override {
         if (gBinds.recording()) {
-            const u32 rapid = pad->mButtons.mRapidInput;
-            // Only the C-stick is safe to react to here: every real button is
-            // a candidate for the combo being recorded.
-            if (rapid & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT |
-                         TMarioGamePad::CSTICK_UP | TMarioGamePad::CSTICK_DOWN)) {
+            // All real buttons belong to the recorder until its commit frame.
+            if (pad->mButtons.mRapidInput & (TMarioGamePad::CSTICK_LEFT |
+                TMarioGamePad::CSTICK_RIGHT | TMarioGamePad::CSTICK_UP | TMarioGamePad::CSTICK_DOWN))
                 gBinds.cancelRecord();
-            }
             return;
         }
-
         const u32 rapid = menu->navigationInput(pad);
-        if (rapid & TMarioGamePad::CSTICK_UP) {
-            mSel = bindAt(wrap(displayIndex(mSel) - 1, visibleCount()));
-        } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            mSel = bindAt(wrap(displayIndex(mSel) + 1, visibleCount()));
-        } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
-            jumpSection(-1);
-        } else if (rapid & TMarioGamePad::CSTICK_RIGHT) {
-            jumpSection(+1);
+        const int count = mPage ? kBindPages[mPage - 1].count : pageCount();
+        if (rapid & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, count);
+        else if (rapid & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, count);
+        if (!mPage) {
+            if (rapid & TMarioGamePad::A) { mPage = mSel + 1; mSel = 0; }
+            return;
         }
-        if (rapid & TMarioGamePad::A) {
-            gBinds.beginRecord((BindId)mSel);
-        } else if (rapid & TMarioGamePad::X) {
-            gBinds.set((BindId)mSel, 0);  // clear
-        }
+        if (rapid & TMarioGamePad::CSTICK_LEFT) jumpSection(-1);
+        else if (rapid & TMarioGamePad::CSTICK_RIGHT) jumpSection(+1);
+        if (rapid & TMarioGamePad::A) gBinds.beginRecord(selectedBind());
+        else if (rapid & TMarioGamePad::X) gBinds.set(selectedBind(), 0);
     }
-
     void draw(Menu *menu, int x, int y, int w, int h) override {
-        // Last line of the content area is this tab's own hint: its controls
-        // differ enough from the rest of the menu to be worth spelling out.
+        if (!mPage) {
+            for (int i = 0; i < pageCount(); ++i)
+                drawValueRow(menu, x, y + i * ROW_H, w, kBindPages[i].name,
+                             nullptr, i == mSel, false, true);
+            drawHelpLine(menu, x, y, w, h, "Choose an action group to set or clear its shortcuts.");
+            return;
+        }
+        const BindPage &page = kBindPages[mPage - 1];
+        drawSectionHeader(menu, x, y, w, sectionName(selectedBind()));
+        y += ROW_H; h -= ROW_H;
         const int hintY = y + h - FOOT_SZ;
-        h -= ROW_H;
-
-        const u32 metrics = displayMetrics();
-        const int rows = metrics >> 16;
-        int maxRows = h / ROW_H;
-        int start   = listScrollStart((u16)metrics, rows, maxRows);
-        int end     = start + maxRows;
-        if (end > rows) {
-            end = rows;
+        const int listH = h - ROW_H - HELP_H;
+        const int start = listScrollStart(mSel, page.count, listH / ROW_H);
+        int end = start + listH / ROW_H;
+        if (end > page.count) end = page.count;
+        for (int row = start; row < end; ++row) {
+            const BindId id = bindAt(page.first + row);
+            char text[kBindTextMax];
+            const bool recording = gBinds.recording() && gBinds.recordTarget() == id;
+            Binds::format(recording ? gBinds.recordPreview() : gBinds.get(id), text);
+            const char *value = recording && !gBinds.recordPreview() ? "press buttons..." : text;
+            drawValueRowColored(menu, x, y + (row - start) * ROW_H, w,
+                Binds::name(id), value, row == mSel, false, false,
+                recording ? cAccent() : cValue());
         }
-
-        char text[kBindTextMax];
-        int  ry = y;
-        int row = 0;
-        for (int item = 0; item < visibleCount() && row < end; item++) {
-            const int i = bindAt(item);
-            const char *section = sectionName(i);
-            if (section) {
-                if (row >= start) {
-                    drawSectionHeader(menu, x, ry, w, section);
-                    ry += ROW_H;
-                }
-                row++;
-                if (row >= end) break;
-            }
-            if (row < start) {
-                row++;
-                continue;
-            }
-            BindId id       = (BindId)i;
-            bool   selected = (i == mSel);
-            if (selected) {
-                drawRowHighlight(menu, x, ry, w, ROW_H);
-            }
-            menu->drawText(Binds::name(id), x + 4, ry, ROW_SZ, ROW_SZ,
-                           selected ? cRowSel() : cRow());
-
-            const char *val;
-            Color       valCol = cValue();
-            if (gBinds.recording() && gBinds.recordTarget() == id) {
-                if (gBinds.recordPreview() != 0) {
-                    Binds::format(gBinds.recordPreview(), text);
-                    val = text;
-                } else {
-                    val = "press buttons...";
-                }
-                valCol = cAccent();
-            } else {
-                Binds::format(gBinds.get(id), text);
-                val = text;
-            }
-            int vx = x + w - Menu::textWidth(val, ROW_SZ) - 8;
-            menu->drawText(val, vx, ry, ROW_SZ, ROW_SZ, valCol);
-            ry += ROW_H;
-            row++;
-        }
-
-        drawScrollHints(menu, x, y, w, h, start, end, rows);
-
+        drawScrollHints(menu, x, y, w, listH, start, end, page.count);
+        const BindId id = selectedBind();
+        const char *help = id >= BIND_SAVESTATE_SAVE_2 && id <= BIND_SAVESTATE_LOAD_3
+            ? "Always uses this RAM state; selected save/load slots stay unchanged."
+            : id >= BIND_FEATURE_FAST_TEXT
+                ? "Toggle on/off; multi-choice features cycle through their options."
+                : "C-stick left/right changes groups. Shortcuts accept up to four buttons.";
+        drawHelpLine(menu, x, y, w, h - ROW_H, help);
         drawFooterText(menu, gBinds.recording()
-                           ? "Release a button to set, or " SUSAMUNE_GLYPH_C " to cancel"
-                           : SUSAMUNE_GLYPH_A " Set bind    "
-                             SUSAMUNE_GLYPH_X " Clear", x + 4, hintY);
+            ? "Release a button to set, or " SUSAMUNE_GLYPH_C " to cancel"
+            : SUSAMUNE_GLYPH_A " Set bind    " SUSAMUNE_GLYPH_X " Clear    " SUSAMUNE_GLYPH_B " Back",
+            x + 4, hintY);
     }
-
 private:
-    static int visibleCount() { return BIND_COUNT - 2; }
-    static BindId bindAt(int row) {
-        for (int id = 0; id < BIND_COUNT; ++id) {
-            if (id == BIND_PRACTICE_SPIN_CW || id == BIND_PRACTICE_SPIN_CCW ||
-                id == BIND_SAVESTATE_CYCLE || id == BIND_SAVESTATE_CYCLE_SAVE ||
-                id == BIND_SAVESTATE_CYCLE_LOAD) continue;
-            if (row-- == 0) return (BindId)id;
-            if (id == BIND_SAVESTATE_LOAD) {
-                if (row-- == 0) return BIND_SAVESTATE_CYCLE_SAVE;
-                if (row-- == 0) return BIND_SAVESTATE_CYCLE_LOAD;
-                if (row-- == 0) return BIND_SAVESTATE_CYCLE;
-            }
-        }
-        return BIND_REGRAB_OBJECT;
+    static int pageCount() { return sizeof(kBindPages) / sizeof(kBindPages[0]); }
+    __attribute__((noinline)) static BindId bindAt(int row) {
+        return (BindId)kBindPageIds[row];
     }
-    static int displayIndex(int id) {
-        for (int row = 0; row < visibleCount(); ++row)
-            if (bindAt(row) == id) return row;
-        return 0;
+    __attribute__((noinline)) static int displayIndex(int id) {
+        for (unsigned row = 0; row < sizeof(kBindPageIds); ++row)
+            if (kBindPageIds[row] == id) return row;
+        return -1;
     }
-
-    const char *sectionName(int bind) const {
-        for (int i = 0; i < kBindSectionCount; i++) {
-            if (kBindSectionStarts[i] == bind)
-                return PackedText::at(kBindSectionNames, i);
-        }
-        return nullptr;
+    __attribute__((noinline)) const char *sectionName(int bind) const {
+        const int row = displayIndex(bind);
+        for (const BindPage &page : kBindPages)
+            if (row >= page.first && row < page.first + page.count) return page.name;
+        return "Button binds";
     }
-
-    __attribute__((always_inline)) u32 displayMetrics() const {
-        const int selectedItem = displayIndex(mSel);
-        int selectedRow = selectedItem;
-        for (int i = 0; i < kBindSectionCount; i++) {
-            if (displayIndex(kBindSectionStarts[i]) <= selectedItem) selectedRow++;
-        }
-        return ((u32)(visibleCount() + kBindSectionCount) << 16) |
-               (u16)selectedRow;
+    __attribute__((noinline)) void jumpSection(int direction) {
+        mPage = wrap(mPage - 1 + direction, pageCount()) + 1;
+        mSel = 0;
     }
-
-    void jumpSection(int direction) {
-        if (direction > 0) {
-            for (int i = 0; i < kBindSectionCount; i++) {
-                if (displayIndex(kBindSectionStarts[i]) > displayIndex(mSel)) {
-                    mSel = kBindSectionStarts[i];
-                    return;
-                }
-            }
-            mSel = kBindSectionStarts[0];
-        } else if (direction < 0) {
-            for (int i = kBindSectionCount - 1; i >= 0; i--) {
-                if (displayIndex(kBindSectionStarts[i]) < displayIndex(mSel)) {
-                    mSel = kBindSectionStarts[i];
-                    return;
-                }
-            }
-            mSel = kBindSectionStarts[kBindSectionCount - 1];
-        }
-    }
-
-    int mSel;
+    BindId selectedBind() const { return bindAt(kBindPages[mPage - 1].first + mSel); }
+    u8 mSel, mPage;
 };
 
 // ---------------------------------------------------------------------
 // Stage Loader -- the IL catalogue with an optional repeated-finish session.
 // ---------------------------------------------------------------------
 class StageLoaderTab final : public MenuTab {
+    friend class Menu;
 public:
     explicit StageLoaderTab(bool streaking = false)
         : mSel(0), mGoal(5), mTargetQf(-1), mStreakEntry(0),
@@ -5061,15 +5304,11 @@ public:
             gCreationExtras.drawEditor(menu);
             return;
         }
+        if (mEditor == EDIT_FINISHES) { NumberEditor::draw(menu); return; }
         if (mEditor != EDIT_NONE) {
             drawCreationKeyboard(
                 menu,
-                mEditor == EDIT_FINISHES ? "Set streak finishes"
-                                         : "Set streak target time",
-                mText[0] ? mText
-                         : mEditor == EDIT_FINISHES
-                               ? "(enter 1-999)"
-                               : "(blank = any finish)",
+                "Set streak target time", mText[0] ? mText : "(blank = any finish)",
                 mTextPage, mTextUpper, mTextCursor);
             return;
         }
@@ -5103,25 +5342,19 @@ public:
             if (row < start || row >= end) continue;
             const Option option = optionAt(optionRow);
             const SettingId setting = optionSetting(option);
-            const char *name;
+            const char *name = optionName(option);
             const char *value;
             if (setting != SETTING_COUNT) {
-                name = Settings::name(setting);
                 value = gSettings.valueLabel(setting);
             } else if (option == OPTION_RUN) {
-                name = mStreaking ? "Start streak" : "Run playlist";
                 value = mStreaking ? ILing::shortLabel(mStreakEntry) : "Start";
             } else if (option == OPTION_FINISHES) {
-                name = mStreaking ? "Finishes" : "Playlist entries";
                 value = mStreaking ? goal : queued;
             } else if (option == OPTION_TARGET) {
-                name = mStreaking ? "Target time" : "Clear playlist";
                 value = mStreaking ? target : "Clear";
             } else if (option == OPTION_BUILTIN) {
-                name = "Built-in preset";
                 value = StageLoader::builtinPlaylistName(mBuiltinPlaylist);
             } else if (option == OPTION_FAILURE_STYLE) {
-                name = "Failure banner appearance";
                 value = "Edit";
             } else {
                 const int saved =
@@ -5135,8 +5368,6 @@ public:
                     snprintf(custom, sizeof(custom), "Custom %u (empty)",
                              (unsigned)mCustomSlot + 1);
                 }
-                name = option == OPTION_LOAD ? "Load playlist"
-                                             : "Save playlist";
                 value = custom;
             }
             drawValueRow(menu, x, ry, w, name, value, mSel == optionRow,
@@ -5154,7 +5385,7 @@ public:
             const int count = StageLoader::queueCount();
             if (!count) {
                 if (row >= start && row < end) {
-                    menu->drawText("(empty - add levels below)", x + 4, ry + 3,
+                    menu->drawMenuText("(empty - add levels below)", x + 4, ry + 3,
                                    13, 13, cRowDim());
                     ry += ROW_H;
                 }
@@ -5264,6 +5495,18 @@ private:
             option == OPTION_FAILURE_DURATION ? SETTING_STREAK_FAILURE_DURATION : SETTING_COUNT;
     }
 
+    const char *optionName(Option option) const {
+        const SettingId setting = optionSetting(option);
+        if (setting != SETTING_COUNT) return Settings::name(setting);
+        switch (option) {
+        case OPTION_RUN: return mStreaking ? "Start streak" : "Run playlist";
+        case OPTION_FINISHES: return mStreaking ? "Finishes" : "Playlist entries";
+        case OPTION_TARGET: return mStreaking ? "Target time" : "Clear playlist";
+        case OPTION_BUILTIN: return "Built-in preset";
+        case OPTION_FAILURE_STYLE: return "Failure banner appearance";
+        default: return option == OPTION_LOAD ? "Load playlist" : "Save playlist";
+        }
+    }
     int optionCount() const {
         return mStreaking ? 8 : OPTION_AUTO_RESET;
     }
@@ -5441,10 +5684,13 @@ private:
     }
 
     void beginTextEditor(Editor editor) {
-        mText[0] = '\0';
         if (editor == EDIT_FINISHES) {
-            snprintf(mText, sizeof(mText), "%u", (unsigned)mGoal);
-        } else if (mTargetQf >= 0) {
+            NumberEditor::begin(this, "Set streak finishes", mGoal, 1, 999, "");
+            mEditor = editor;
+            return;
+        }
+        mText[0] = '\0';
+        if (mTargetQf >= 0) {
             ILing::formatTime(mTargetQf, mText, sizeof(mText));
         }
         mTextLength = (u8)strlen(mText);
@@ -5456,33 +5702,31 @@ private:
     }
 
     void updateTextEditor(Menu *menu) {
+        if (mEditor == EDIT_FINISHES) {
+            unsigned value;
+            const int result = NumberEditor::update(menu, &value, mText);
+            if (result == 1)
+                menu->toast(parseFinishes(mText, &mGoal) ? "Finish count set"
+                                                        : "Enter a number from 1 to 999");
+            if (result) mEditor = EDIT_NONE;
+            return;
+        }
         const u16 pressed = mTextInput.update();
         if (pressed & JUTGamePad::START) {
             if (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::X) {
                 mEditor = EDIT_NONE;
                 return;
             }
-            if (mEditor == EDIT_FINISHES) {
-                u16 parsed;
-                if (!parseFinishes(mText, &parsed)) {
-                    menu->toast("Enter a number from 1 to 999");
-                    return;
-                }
-                mGoal = parsed;
-                mEditor = EDIT_NONE;
-                menu->toast("Finish count set");
-            } else {
-                s32 parsed;
-                if (!parseTarget(mText, &parsed)) {
-                    menu->toast("Use M:SS.mmm, or leave blank");
-                    return;
-                }
-                mTargetQf = parsed;
-                StageTargets::set(mStreakEntry, mTargetQf);
-                mEditor = EDIT_NONE;
-                menu->toast(parsed < 0 ? "Any finish counts"
-                                       : "Target time set");
+            s32 parsed;
+            if (!parseTarget(mText, &parsed)) {
+                menu->toast("Use M:SS.mmm, or leave blank");
+                return;
             }
+            mTargetQf = parsed;
+            StageTargets::set(mStreakEntry, mTargetQf);
+            mEditor = EDIT_NONE;
+            menu->toast(parsed < 0 ? "Any finish counts"
+                                   : "Target time set");
             return;
         }
         if (pressed & JUTGamePad::Z) {
@@ -5632,6 +5876,8 @@ private:
 
 // The top level stays small while existing stateful pages remain persistent.
 class NestedMenuTab final : public MenuTab {
+    friend class Menu;
+    friend class MenuSoundsDisplayTab;
 public:
     enum SectionStyle {
         SECTIONS_NONE,
@@ -5870,6 +6116,7 @@ static_assert(sizeof(NestedMenuTab) <= 64,
               "nested menu router grew unexpectedly");
 
 class PracticeControlsTab final : public MenuTab {
+    friend class Menu;
 public:
     PracticeControlsTab() : mSel(0), mBinding(false) { focus(); }
     const char *title() const override {
@@ -5928,30 +6175,25 @@ public:
         menu->toast(PracticeSession::status());
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
-        const char *pause = PracticeSession::pausePending() ? "Cancel armed pause" :
-            (PracticeSession::manualPaused() || (PracticeSession::freeCamera() && PracticeSession::nativePaused())) ? "Resume gameplay" : "Pause gameplay";
-        const char *cameraLabels[] = {"Free camera", pause, "Movement speed", "Reverse sideways",
-                                     "Look sensitivity", "Hide all HUD", "Camera smoothing", "Recenter camera"};
         const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE),
             gSettings.valueLabel(SETTING_FREE_CAMERA_SENSITIVITY),
             gSettings.valueLabel(SETTING_FREE_CAMERA_HIDE_HUD),
             gSettings.valueLabel(SETTING_FREE_CAMERA_SMOOTHING), "Reset view"};
-        const char *const *labels = cameraLabels;
         const char *const *values = cameraValues;
         char status[80];
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
                 (PracticeSession::manualPaused() || PracticeSession::nativePaused()) ? "Paused" : "Live",
                 PracticeSession::freeCamera() ? "On" : "Off");
-        menu->drawText(status, x + 4, y, 14, 14, cValue());
+        menu->drawMenuText(status, x + 4, y, 14, 14, cValue());
         const int listY = y + ROW_H;
         const int listH = h - HELP_H - 2 * ROW_H;
         const int start = listScrollStart(mSel, rowCount(), listH / ROW_H);
         const int end = clampi(start + listH / ROW_H, 0, rowCount());
         for (int i = start; i < end; ++i)
-            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, labels[i], values[i], i == mSel,
+            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, rowName(i), values[i], i == mSel,
                 i >= 2 && i <= 6 && gSettings.favorite(cameraSetting(i)), true);
         drawScrollHints(menu, x, listY, w, listH, start, end, rowCount());
         const BindId bind = selectedBind();
@@ -5959,12 +6201,18 @@ public:
             char combo[kBindTextMax], line[kBindTextMax + 48];
             Binds::format(gBinds.recording() ? gBinds.recordPreview() : gBinds.get(bind), combo);
             snprintf(line, sizeof(line), gBinds.recording() ? "New bind: %s" : "Shortcut: %s   X: change bind", combo);
-            menu->drawText(line, x + 4, listY + listH, 13, 13, cValue());
+            menu->drawMenuText(line, x + 4, listY + listH, 13, 13, cValue());
         }
         drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
             "Hold your new buttons, then release to save. C-stick cancels." : help());
     }
 private:
+    static const char *rowName(int row) {
+        if (row == 1) return PracticeSession::pausePending() ? "Cancel armed pause" :
+            (PracticeSession::manualPaused() || (PracticeSession::freeCamera() && PracticeSession::nativePaused())) ? "Resume gameplay" : "Pause gameplay";
+        static const char names[] = "Free camera\0\0Movement speed\0Reverse sideways\0Look sensitivity\0Hide all HUD\0Camera smoothing\0Recenter camera";
+        return PackedText::at(names, row);
+    }
     static SettingId cameraSetting(int row) {
         static const SettingId ids[] = {SETTING_FREE_CAMERA_SPEED,
             SETTING_FREE_CAMERA_STRAFE_REVERSE, SETTING_FREE_CAMERA_SENSITIVITY,
@@ -5998,6 +6246,7 @@ static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
 class GuideTab final : public MenuTab {
+    friend class Menu;
 public:
     GuideTab() : mPage(0) {}
     const char *title() const override { return "Moonshine guide"; }
@@ -6008,6 +6257,18 @@ public:
         if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_UP)) mPage = (u8)wrap(mPage - 1, 6);
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
+        const char *heading = mPage == 5 ? BuildBranding::codename(pageLine(mPage, 0)) : pageLine(mPage, 0);
+        drawSectionHeader(menu, x, y, w, heading);
+        for (int i = 1; i < 8; ++i) {
+            const char *line = mPage == 5 && i == 1 ? BuildBranding::title(pageLine(mPage, i)) : pageLine(mPage, i);
+            int size = 16;
+            while (size > 13 && Menu::textWidth(line, size) > w - 8) --size;
+            menu->drawMenuText(line, x + 4, y + 28 + (i - 1) * 24, size, size, cRow());
+        }
+        drawHelpLine(menu, x, y, w, h, "C-stick: previous or next page");
+    }
+private:
+    static const char *pageLine(int page, int line) {
         static const char *const pages[][8] = {
             {"FRAME CONTROLS", "Practice: TAS projects pauses or steps.",
              "Your shortcut appears below the list.", "Press X on an action to change its shortcut.",
@@ -6024,7 +6285,7 @@ public:
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",
              "TAS ghosts cannot earn ordinary PB credit.", "Ghosts: Ghost inputs: Both ghosts for Watch2."},
-            {"LAYOUT EDITOR", "Display: Layout editor, then choose a group.",
+            {"DISPLAYS AND STYLES", "Display: Displays and styles, then choose a group.",
              "Timers includes the full Sunshine timer editor.", "Native HUD colours includes health and air.",
              "Metadata: field gap, row gap, columns, width.", "Practice feedback: wallkick, rollout and dust.",
              "Hold Y while adjusting HSL for steps of 1.", "A: keep. B: discard. Z: reset selected option."},
@@ -6032,15 +6293,9 @@ public:
              "Split comparison: Off, PB, SOB or Ghost.", "Report any missing or incorrect checkpoints.",
              "Full English and Japanese guides are in the ZIP.", "Keep crash reports when reporting a problem.", "Settings and records survive updates."},
         };
-        drawSectionHeader(menu, x, y, w, pages[mPage][0]);
-        for (int i = 1; i < 8; ++i) {
-            int size = 16;
-            while (size > 13 && Menu::textWidth(pages[mPage][i], size) > w - 8) --size;
-            menu->drawText(pages[mPage][i], x + 4, y + 28 + (i - 1) * 24, size, size, cRow());
-        }
-        drawHelpLine(menu, x, y, w, h, "C-stick: previous or next page");
+        return pages[page][line];
     }
-private:
+    static const char *pageName(int page) { return pageLine(page, 0); }
     u8 mPage;
 };
 static_assert(sizeof(GuideTab) <= 16, "guide menu storage");
@@ -6164,6 +6419,10 @@ void drawAchievementBanner(Menu *menu) {
 
 }  // namespace
 
+#if TIMEWARP_LIVE_RACING
+#include "live_race_menu.inc"
+#endif
+
 // Static tab instances (constructed via placement new in Menu::Menu so their
 // vtables are set without relying on C++ static-init, which the injected mod
 // does not run).
@@ -6198,6 +6457,11 @@ struct __attribute__((aligned(8))) MenuRuntime {
     u8 displayHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 systemHub[sizeof(NestedMenuTab)] __attribute__((aligned(8)));
     u8 menu[sizeof(Menu)] __attribute__((aligned(8)));
+#if TIMEWARP_LIVE_RACING
+    u8 online[sizeof(OnlineTab)] __attribute__((aligned(8)));
+#endif
+    u8 soundDisplay[16] __attribute__((aligned(8)));
+    MenuSearch::State search;
 };
 
 MenuRuntime &sMenuRuntime = *reinterpret_cast<MenuRuntime *>(
@@ -6241,6 +6505,7 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     mNumTabs     = 0;
     mTabFirst    = 0;
     mToastBuf[0] = '\0';
+    sMenuRuntime.search = {};
     mToastFrames = 0;
     mSaveWatch   = false;
     mCRepeatFrames = 0;
@@ -6414,6 +6679,17 @@ void Menu::drawText(const char *s, int x, int y, int sizeX, int sizeY, Color col
     mText.draw(x, baseline);
 }
 
+#pragma clang section text=""
+void Menu::drawTextVertical(const char *text, int x, int y, int size,
+                            Color top, Color bottom) {
+    mText.mCharSizeX = mText.mCharSizeY = size;
+    mText.mGradientTop = top;
+    mText.mGradientBottom = bottom;
+    mText.mStrPtr = const_cast<char *>(text);
+    mText.draw(x, y + mFontAscent * size / mFontHeight);
+}
+#pragma clang section text=".foxtrot.text"
+
 #if ENABLE_SAVESTATE_DBG
 void Menu::drawTextBaseline(const char *s, int x, int y, int sizeX, int sizeY,
                             Color color) {
@@ -6562,9 +6838,9 @@ __attribute__((noinline)) static void drawValueRowColored(
     bool selected, bool starred, bool arrow, Color valueColor) {
     if (selected) drawRowHighlight(menu, x, y, w, ROW_H);
     if (selected && arrow)
-        menu->drawText(">", x - 2, y, ROW_SZ, ROW_SZ, cAccent());
+        menu->drawMenuText(">", x - 2, y, ROW_SZ, ROW_SZ, cAccent());
     if (starred)
-        menu->drawText(SUSAMUNE_GLYPH_SHINED, x + (arrow ? 8 : 4), y,
+        menu->drawMenuText(SUSAMUNE_GLYPH_SHINED, x + (arrow ? 8 : 4), y,
                        ROW_SZ, ROW_SZ, cAccent());
     const int nameX = x + (arrow ? 12 : 4) + (starred ? (arrow ? 12 : 16) : 0);
     int nameSize = ROW_SZ;
@@ -6573,34 +6849,64 @@ __attribute__((noinline)) static void drawValueRowColored(
         (value ? Menu::textWidth(value, ROW_SZ) + 12 : 0);
     while (nameSize > 10 && Menu::textWidth(name, nameSize) > available) --nameSize;
 #endif
-    menu->drawText(name, nameX, y, nameSize, nameSize,
+    menu->drawMenuText(name, nameX, y, nameSize, nameSize,
                    selected ? cRowSel() : cRow());
     if (value)
-        menu->drawText(value, x + w - Menu::textWidth(value, ROW_SZ) - 8,
+        menu->drawMenuText(value, x + w - Menu::textWidth(value, ROW_SZ) - 8,
                        y, ROW_SZ, ROW_SZ, valueColor);
+}
+
+static const char *fitHelpLine(const char *text, char *out, int width, int size) {
+    int bytes = 0, space = 0;
+    while (text[bytes] && bytes < 252) {
+        const int glyph = sFont && sFont->isLeadByte((u8)text[bytes]) && text[bytes + 1] ? 2 : 1;
+        if (text[bytes] == ' ') space = bytes;
+        for (int i = 0; i < glyph; ++i) out[bytes + i] = text[bytes + i];
+        out[bytes + glyph] = 0;
+        if (Menu::textWidth(out, size) > width) {
+            if (space) bytes = space;
+            break;
+        }
+        bytes += glyph;
+    }
+    out[bytes] = 0;
+    text += bytes;
+    while (*text == ' ') ++text;
+    return text;
 }
 
 __attribute__((noinline)) static void drawHelpLine(
     Menu *menu, int x, int y, int w, int h, const char *text) {
     if (!text || !text[0]) return;
     const int top = y + h - HELP_H;
-    menu->fillBox(x + 4, top, w - 8, 1, cRowDim());
-    int size = FOOT_SZ;
+    menu->fillMenuBox(x + 4, top, w - 8, 1, cRowDim());
+    char first[256], second[256];
 #if defined(SUSAMUNE_VERSION_JP)
     const char *translated = JapaneseUi::text(text);
     if (JapaneseUi::width(translated, 14) >= 0) {
-        char first[256], second[256];
         const char *tail = JapaneseUi::fitLine(translated, first, sizeof(first), w - 12, 14);
         const char *end = JapaneseUi::fitLine(tail, second, sizeof(second), w - 12, 14);
         if (!*end) {
-            menu->drawText(first, x + 6, top + (*tail ? 2 : 8), 14, 14, cRow());
-            if (*tail) menu->drawText(second, x + 6, top + 17, 14, 14, cRow());
+            menu->drawMenuText(first, x + 6, top + (*tail ? 2 : 8), 14, 14, cRow());
+            if (*tail) menu->drawMenuText(second, x + 6, top + 17, 14, 14, cRow());
             return;
         }
     }
-    while (size > 10 && Menu::textWidth(text, size) > w - 12) --size;
 #endif
-    menu->drawText(text, x + 6, top + 10, size, size, cFooter());
+    int size = 14;
+    const char *tail, *end;
+    do {
+        tail = fitHelpLine(text, first, w - 12, size);
+        end = fitHelpLine(tail, second, w - 12, size);
+        if (!*end || size == 11) break;
+        --size;
+    } while (true);
+    if (*end) {
+        int n = strlen(second);
+        if (n >= 3) { second[n - 3] = '.'; second[n - 2] = '.'; second[n - 1] = '.'; }
+    }
+    menu->drawMenuText(first, x + 6, top + (*tail ? 2 : 8), size, size, cFooter());
+    if (*tail) menu->drawMenuText(second, x + 6, top + 17, size, size, cFooter());
 }
 
 void Menu::factoryReset() {
@@ -6620,7 +6926,7 @@ void Menu::hide() {
     mShown = false;
     if (gSettings.dirty() || gBinds.dirty() || gInputDisplay.dirty() ||
         gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-        gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
+        gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty() || FinishBreakdown::dirty()) {
         requestSettingsSave();
     }
 }
@@ -6649,7 +6955,7 @@ void Menu::pollSettingsSave() {
         // stale snapshot and leaving the dirty correction only in RAM.
         if (gSettings.dirty() || gBinds.dirty() ||
             gInputDisplay.dirty() || gMetadataDisplay.dirty() ||
-            gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
+            gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty() || FinishBreakdown::dirty()) {
             requestSettingsSave();
         } else {
             toast("Settings saved");
@@ -6674,65 +6980,13 @@ void Menu::pollSettingsSave() {
     }
 }
 
-void Menu::drawTabStrip(int x, int y, int w) {
-    const int stripX = x + TAB_CHEV;
-    const int visW   = w - TAB_CHEV * 2;
-
-    // The strip scrolls by whole tabs, not by pixels: mTabFirst is the leftmost
-    // one drawn and it always sits flush at stripX. Scrolling by pixels instead
-    // leaves a ragged part-tab-wide gap on the left, since a tab that does not
-    // fit entirely is skipped.
-    // Derive the window from the selected tab so navigation history and
-    // regional font widths cannot leave different tabs visible.
-    mTabFirst = 0;
-    // Advance the window until the selected tab fits at its right end.
-    while (mTabFirst < mCurTab) {
-        int span = 0;
-        for (int i = mTabFirst; i <= mCurTab; i++) {
-            span += tabWidth(i) + (i > mTabFirst ? TAB_GAP : 0);
-        }
-        if (span <= visW) {
-            break;
-        }
-        mTabFirst++;
-    }
-
-    int cursor = stripX;
-    int last   = mTabFirst;
-    for (int i = mTabFirst; i < mNumTabs; i++) {
-        int tw = tabWidth(i);
-        if (i > mTabFirst && cursor + tw > stripX + visW) {
-            break;  // no room for this one; the rest are further right still
-        }
-        bool active = (i == mCurTab);
-        if (active) {
-            fillBox(cursor, y, tw, TAB_STRIP_H, cAccent());
-        }
-        drawText(mTabs[i]->title(), cursor + TAB_INNER, y + 6, TAB_SZ, TAB_SZ,
-                 active ? cTabOnText() : cTabIdle());
-        cursor += tw + TAB_GAP;
-        last = i;
-    }
-
-    // Scroll chevrons when tabs overflow either edge.
-    if (mTabFirst > 0) {
-        drawText(SUSAMUNE_GLYPH_LEFT, x - 2, y + 6, TAB_SZ, TAB_SZ, cAccent());
-    }
-    if (last < mNumTabs - 1) {
-        drawText(SUSAMUNE_GLYPH_RIGHT, x + w - TAB_CHEV + 2, y + 6,
-                 TAB_SZ, TAB_SZ, cAccent());
-    }
-}
-
-int Menu::tabWidth(int i) const {
-    return textWidth(mTabs[i]->title(), TAB_SZ) + TAB_INNER * 2;
-}
-
 bool Menu::suppressesBinds() const {
     if (WarpWheel::promptPending()) return true;
     if (gBinds.wasPressedRaw(BIND_MENU_TOGGLE)) return true;
     if (!mShown) return false;
+    if (searchActive()) return true;
     const u16 held = JUTGamePad::mPadStatus[0].mButton;
+    if (searchAvailable() && (held & JUTGamePad::Y)) return true;
     return (held & (JUTGamePad::L | JUTGamePad::R)) != 0 ||
            mTabs[mCurTab]->suppressesBinds();
 }
@@ -6755,6 +7009,10 @@ void Menu::update(TMarioGamePad *pad) {
     }
 
     u32 rapid = pad->mButtons.mRapidInput;
+    if (mShown && searchActive()) {
+        updateSearch(pad);
+        return;
+    }
 
     // A tab recording a button combo owns the pad outright: the close combo and
     // the tab-switch buttons are all bindable, so nothing else may look at them.
@@ -6771,13 +7029,17 @@ void Menu::update(TMarioGamePad *pad) {
         // dirty() so merely opening and closing the menu never touches storage.
         if (!mShown && (gSettings.dirty() || gBinds.dirty() ||
                         gInputDisplay.dirty() || gMetadataDisplay.dirty() ||
-                        gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty())) {
+                        gQftDisplay.dirty() || gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty() || FinishBreakdown::dirty())) {
             requestSettingsSave();
         }
         return;
     }
     if (!mShown) {
         mCRepeatFrames = 0;
+        return;
+    }
+    if (searchAvailable() && (rapid & TMarioGamePad::Y)) {
+        openSearch();
         return;
     }
 
@@ -6799,11 +7061,14 @@ void Menu::draw(J2DOrthoGraph *ortho) {
         gInputDisplay.draw(this);
         gMetadataDisplay.draw(this);
         gQftDisplay.beginOverlayFrame();
-        if (!SplitStats::draw(this)) gQFTTimer.draw(this);
-        gQftDisplay.drawTasFallback(this);
+        const bool showAttempt = PracticeSession::attemptLabelVisible();
+        if (showAttempt || (!PracticeSession::assisted() && !gQFTTimer.practiceAssisted()))
+            if (!SplitStats::draw(this)) gQFTTimer.draw(this);
+        if (showAttempt) gQftDisplay.drawTasFallback(this);
         gAttemptCounter.draw(this);
         gCreationExtras.draw(this);
-        if (!MovementTimingDisplay::draw(this)) WallkickDisplay::draw(this);
+        MovementTimingDisplay::draw(this);
+        WallkickDisplay::draw(this);
         MovementDisplay::draw(this);
         drawToast();  // still visible with the menu closed
         drawAchievementBanner(this);
@@ -6818,52 +7083,7 @@ void Menu::draw(J2DOrthoGraph *ortho) {
         return;
     }
 
-    // Dim the whole frame, then the panel on top.
-    fillBox(0, 0, 640, 480, cBackdrop());
-    fillBox(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, cPanel());
-    // Accent rule at the top edge of the panel.
-    fillBox(PANEL_X, PANEL_Y, PANEL_W, 3, cAccent());
-
-    // Title + accent underline.
-    drawText("Moonshine", PANEL_X + PAD - 2, PANEL_Y + 12,
-             TITLE_SZ, TITLE_SZ, cTitle());
-    drawText("V2.3.3 Frame By Frame", PANEL_X + PANEL_W - PAD - textWidth("V2.3.3 Frame By Frame", FOOT_SZ),
-             PANEL_Y + 21, FOOT_SZ, FOOT_SZ, col(255, 196, 90, 255));
-    fillBox(PANEL_X + PAD, PANEL_Y + 12 + TITLE_SZ + 1, 260, 2, cAccent());
-
-    drawTabStrip(PANEL_X + PAD, TAB_STRIP_Y, PANEL_W - PAD * 2);
-
-    int cx = PANEL_X + PAD;
-    int cy = CONTENT_Y;
-    int cw = PANEL_W - PAD * 2;
-    int ch = FOOTER_Y - CONTENT_Y - 8;
-    mTabs[mCurTab]->draw(this, cx, cy, cw, ch);
-
-    // The close hint names the live menu bind rather than a fixed combo, since
-    // it is user-configurable (and re-bindable to something unguessable).
-    {
-        const char *hint = mTabs[mCurTab]->favoriteHint()
-            ? SUSAMUNE_GLYPH_L SUSAMUNE_GLYPH_SLASH SUSAMUNE_GLYPH_R " Tabs  "
-              SUSAMUNE_GLYPH_C " Move  " SUSAMUNE_GLYPH_A " Select  "
-              SUSAMUNE_GLYPH_X " Shine  "
-            : SUSAMUNE_GLYPH_L SUSAMUNE_GLYPH_SLASH SUSAMUNE_GLYPH_R " Tabs    "
-              SUSAMUNE_GLYPH_C " Move    "
-              SUSAMUNE_GLYPH_A " Select    ";
-        int hx = PANEL_X + PAD;
-        drawText(hint, hx, FOOTER_Y, FOOT_SZ, FOOT_SZ, cFooter());
-        hx += textWidth(hint, FOOT_SZ);
-
-        char combo[kBindTextMax];
-        Binds::format(gBinds.get(BIND_MENU_TOGGLE), combo);
-        drawText(combo, hx, FOOTER_Y, FOOT_SZ, FOOT_SZ, cFooter());
-        hx += textWidth(combo, FOOT_SZ);
-        drawText(" Close", hx, FOOTER_Y, FOOT_SZ, FOOT_SZ, cFooter());
-    }
-
-    // Last, so it sits above the panel rather than under the backdrop.
-    drawToast();
-    drawAchievementBanner(this);
-    bgmStatsDraw(this);
+    drawGuidebook(ortho);
 }
 
 
@@ -6873,4 +7093,22 @@ void Menu::draw(J2DOrthoGraph *ortho) {
 
 Menu *gMenu = nullptr;
 
-void menuInit() { gMenu = new (sMenuBuf) Menu(); }
+#if TIMEWARP_LIVE_RACING
+// Keep the original constructor and timer-facing render helpers fixed.
+#pragma clang section text=""
+#endif
+void menuInit() {
+    gMenu = new (sMenuBuf) Menu();
+#if TIMEWARP_LIVE_RACING
+    static_assert(Menu::kMaxTabs >= 10, "online tab exceeds debug menu capacity");
+    gMenu->mTabs[gMenu->mNumTabs++] = new (sMenuRuntime.online) OnlineTab();
+#endif
+}
+
+// Emit new callers after the fixed timer-facing menu helpers.
+#include "ghost_visual_menu.inc"
+
+#pragma clang section text="" rodata="" data="" bss=""
+#include "menu_sounds.inc"
+#include "menu_search.inc"
+#include "menu_theme.inc"

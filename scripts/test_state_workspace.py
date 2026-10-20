@@ -26,6 +26,8 @@ static SusamuneCfg testCfg;
 #define SUSAMUNE_CFG_PPC_PTR (&testCfg)
 #include "susamune/state_pool_runtime.hxx"
 static StatePoolMemory sPoolMemory;
+static bool sharedMapEnabled;
+namespace TransferLease { bool sharedMap() { return sharedMapEnabled; } }
 static_assert(SUSAMUNE_STATE_POOL_SIZE==0xFF0000u,"full primary");
 static_assert(SUSAMUNE_STATE_POOL_LEGACY_SIZE==0xFA2000u,"legacy primary");
 static_assert(SUSAMUNE_STATE_POOL_EXPANDED_SIZE==0x11F0000u,"two-bank capacity");
@@ -50,6 +52,11 @@ __declspec(dllexport) unsigned value(unsigned key){switch(key){
  case 4:return SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED;case 5:return SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION;
  case 6:return SUSAMUNE_CFG_MAGIC;case 7:return SUSAMUNE_CFG_VERSION;}return 0;}
 __declspec(dllexport) unsigned unknownLayout(){sPoolMemory.sizes[0]=0;return codecWorkspace()==nullptr;}
+__declspec(dllexport) unsigned upgrade(unsigned enabled){sharedMapEnabled=enabled;return statePoolSharedMemory(sPoolMemory);}
+__declspec(dllexport) unsigned capacity(){return StatePoolMemoryCapacity(&sPoolMemory);}
+__declspec(dllexport) unsigned bank(unsigned index){return (__UINTPTR_TYPE__)sPoolMemory.banks[index];}
+__declspec(dllexport) unsigned bankSize(unsigned index){return sPoolMemory.sizes[index];}
+__declspec(dllexport) void damageBank(){sPoolMemory.banks[3]=(unsigned char *)0x1000;sPoolMemory.sizes[3]=32;}
 }
 '''
         cls.libs=[]
@@ -62,6 +69,9 @@ __declspec(dllexport) unsigned unknownLayout(){sPoolMemory.sizes[0]=0;return cod
             if compiled.returncode:raise RuntimeError(compiled.stdout+compiled.stderr)
             lib=C.CDLL(str(dll));cls.libs.append(lib)
             lib.value.argtypes=[C.c_uint];lib.value.restype=C.c_uint
+            for name in ('bank', 'bankSize'):
+                getattr(lib, name).argtypes = [C.c_uint]
+                getattr(lib, name).restype = C.c_uint
             lib.select.argtypes=lib.change.argtypes=[C.c_uint]*3
             cls.addClassCleanup(lambda handle=lib._handle:C.windll.kernel32.FreeLibrary(C.c_void_p(handle)))
         cls.magic,cls.version,cls.relocated,cls.extra=(cls.libs[0].value(i)for i in (6,7,4,5))
@@ -104,10 +114,40 @@ __declspec(dllexport) unsigned unknownLayout(){sPoolMemory.sizes[0]=0;return cod
         self.assertLess(init.index('if (!SusamuneCfgStorageAvailable())'),
                         init.index('SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED'))
 
+    def test_shared_upgrade_requires_full_latched_legacy_map_and_activation(self):
+        lib = self.libs[0]
+        for flags in (0, self.extra, self.relocated, self.extra | self.relocated):
+            lib.select(self.magic, self.version, flags)
+            before = lib.capacity()
+            self.assertEqual(lib.upgrade(0), 0)
+            self.assertEqual(lib.capacity(), before)
+            fits = flags == self.extra | self.relocated
+            self.assertEqual(bool(lib.upgrade(1)), fits)
+            self.assertEqual(lib.capacity(), 0x1660000 if fits else before)
+            if fits:
+                self.assertEqual([lib.bank(i) for i in range(5)],
+                                 [0x91F00000, 0x9193F000, 0x9143E000, 0x91CFF000, 0x91710000])
+                self.assertEqual([lib.bankSize(i) for i in range(5)],
+                                 [0xFF0000, 0x200000, 0x2C2000, 0x13E000, 0x70000])
+                lib.change(0, 0, 0)
+                self.assertEqual(lib.upgrade(1), 1)
+                self.assertEqual(lib.capacity(), 0x1660000)
+                self.assertEqual(lib.value(3), 0x91891000)
+                lib.damageBank()
+                self.assertEqual(lib.upgrade(1), 0)
+                self.assertEqual(lib.bank(3), 0x1000)
+
+    def test_dolphin_cannot_claim_console_shared_banks(self):
+        lib = self.libs[1]
+        lib.select(0, 0, 0)
+        self.assertEqual(lib.upgrade(1), 0)
+        self.assertEqual(lib.capacity(), 0x11F0000)
+        self.assertEqual([lib.bankSize(i) for i in (2, 3, 4)], [0, 0, 0])
+
     def test_ghost_worker_only_initializes_doorbells_and_uses_separate_payload_bank(self):
         source=(ROOT/'launcher/kernel/SusamuneGhost.c').read_text()
         init=function_source(ROOT/'launcher/kernel/SusamuneGhost.c','void SusamuneGhostInit(')
-        self.assertIn('memset((void*)mailbox, 0, SUSAMUNE_GHOST_STORAGE_HEADER_SIZE)',init)
+        self.assertIn('memset((void*)mailbox, 0, sizeof(mailbox->request) + sizeof(mailbox->response))',init)
         self.assertNotIn('mailbox->payload',source)
         self.assertIn('SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR',source)
         header=(ROOT/'include/susamune/ghost_storage.h').read_text()

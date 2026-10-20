@@ -10,6 +10,7 @@
 // =====================================================================
 
 #include "susamune/settings.hxx"
+#include "susamune/finish_breakdown.hxx"
 
 #include "Dolphin/mem.h"
 #include "Dolphin/OS.h"  // DCInvalidateRange, DCStoreRange
@@ -56,6 +57,12 @@ enum ChoiceSet {
     CHOICES_FREE_CAMERA_SPEED,
     CHOICES_CAMERA_SMOOTHING,
     CHOICES_JUMP_DISPLAY,
+    CHOICES_GAMEPLAY_SPEED,
+    CHOICES_COLLISION_VIEWER,
+    CHOICES_SLOWDOWN_PRESET,
+    CHOICES_GHOST_CAMERA,
+    CHOICES_GRADIENT_MOTION,
+    CHOICES_GRADIENT_SPEED,
     CHOICES_COUNT,
 };
 
@@ -92,7 +99,7 @@ const char kChoiceLabels[] =
     "0.25x\0" "0.5x\0" "1x\0" "2x\0" "4x\0"
     "0.1 s\0" "0.2 s\0" "0.3 s\0" "0.4 s\0" "0.6 s\0" "0.7 s\0"
     "0.8 s\0" "0.9 s\0" "1.1 s\0" "1.2 s\0" "1.3 s\0" "1.4 s\0" "1.5 s\0"
-    "Landing\0Buttslide\0Mario";
+    "Landing\0Buttslide\0Mario\0Floor\0World\0Free\0Recorded\0Flow\0Pulse\0Normal";
 
 const u8 kChoiceMap[] = {
     0, 1,              // bool
@@ -121,13 +128,17 @@ const u8 kChoiceMap[] = {
     57, 58, 59, 60, 61,  // free camera speed
     0, 62, 63, 64, 65, 13, 66, 67, 68, 69, 14, 70, 71, 72, 73, 74, // smoothing
     0, 75, 76, 45, // jump display: Off, Landing, Buttslide, Both
+    0, 78, 79, 48, // collision viewer
+    80, 81, // ghost camera
+    0, 82, 83, // gradient animation
+    37, 84, 39, // gradient speed
 };
 const u8 kChoiceFirst[CHOICES_COUNT + 1] = {
     0, 2, 5, 9, 12, 15, 21, 24, 27, 31, 34, 37, 40, 43, 45, 51, 53, 58,
-    62, 66, 68, 71, 75, 108, 133, 144, 149, 165, 169
+    62, 66, 68, 71, 75, 108, 133, 144, 149, 165, 169, 169, 173, 173, 175, 178, 181
 };
 
-static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 169,
+static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 181,
               "choice map size changed");
 static_assert(SETTING_FREE_CAMERA_SMOOTHING == SETTING_TAS_BANNER + 1 &&
               SETTING_COUNT <= SUSAMUNE_CFG_TOTAL_SETTINGS,
@@ -152,10 +163,13 @@ static_assert(SETTING_HELMET_APPEARANCE == SETTING_GHOST_OPACITY + 1 &&
               "append-only V2 setting ids moved");
 
 u8 choiceCount(const SettingDesc &desc) {
+    if (desc.choices == CHOICES_GAMEPLAY_SPEED || desc.choices == CHOICES_SLOWDOWN_PRESET) return 100;
     return kChoiceFirst[desc.choices + 1] - kChoiceFirst[desc.choices];
 }
 
-u8 defaultValue(const SettingDesc &desc) { return desc.config >> kDefaultShift; }
+u8 defaultValue(const SettingDesc &desc) {
+    return desc.choices == CHOICES_SLOWDOWN_PRESET ? 50 : desc.config >> kDefaultShift;
+}
 
 SettingCategory settingCategory(const SettingDesc &desc) {
     return (SettingCategory)(desc.config & kCategoryMask);
@@ -185,6 +199,8 @@ const IlPbSetting kIlPbSettings[] = {
     {SETTING_PINNA_HIDDEN_ITEMS, 0, 1},
     {SETTING_ENEMY_HURTBOXES, 0, 1},
     {SETTING_RICCO_RACE_CHECKPOINTS, 0, 1},
+    {SETTING_GAMEPLAY_SPEED, 0, 1},
+    {SETTING_COLLISION_VIEWER, 0, 1},
 };
 
 int ilPbSettingIndex(SettingId id) {
@@ -239,6 +255,8 @@ void Settings::resetDefaults() {
     gCreationExtras.resetDefaults();
     MarioColors::resetDefaults();
     FluddColors::resetDefaults();
+    FinishBreakdown::resetDefaults();
+    FinishBreakdown::clearDirty();
     ILing::resetEpisodeChoices();
 
     for (int i = 0; i < SETTING_COUNT; i++) {
@@ -315,6 +333,7 @@ void Settings::save() {
         gCreationExtras.clearDirty();
         MarioColors::clearDirty();
         FluddColors::clearDirty();
+        FinishBreakdown::clearDirty();
         return;
     }
 
@@ -341,6 +360,8 @@ void Settings::save() {
     if (cfg->flags & SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE)
         DCStoreRange(SUSAMUNE_PRACTICE_DISPLAY_STYLE_LIVE_PTR, sizeof(SusamunePracticeDisplayStyleCfg));
 
+    if (cfg->flags & SUSAMUNE_FINISH_BREAKDOWN_FLAG)
+        DCStoreRange(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR, sizeof(SusamuneFinishBreakdownCfg));
     if (cfg->flags & SUSAMUNE_CFG_FLAG_SETTINGS_TAIL)
         DCStoreRange((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
     mSaveSeq     = cfg->saveSeq + 1;
@@ -393,7 +414,7 @@ SettingsSaveState Settings::pollSave() {
             // longer owned by the old transaction.
             if (mDirty || gBinds.dirty() || gInputDisplay.dirty() ||
                 gMetadataDisplay.dirty() || gQftDisplay.dirty() ||
-                gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty()) {
+                gCreationExtras.dirty() || MarioColors::dirty() || FluddColors::dirty() || FinishBreakdown::dirty()) {
                 save();
             }
         }
@@ -497,6 +518,14 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
         gCreationExtras.adoptPracticeDisplays(SUSAMUNE_PRACTICE_DISPLAY_STYLE_LIVE_PTR);
     }
 
+    if (cfg->flags & SUSAMUNE_FINISH_BREAKDOWN_FLAG) {
+#if !IS_EMULATOR
+        DCInvalidateRange(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR, sizeof(SusamuneFinishBreakdownCfg));
+#endif
+        FinishBreakdown::adopt(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR);
+    }
+    FinishBreakdown::clearDirty();
+
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
     mSaveState = SETTINGS_SAVE_IDLE;
@@ -532,8 +561,11 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
         ILing::stageEpisodes(SUSAMUNE_IL_EPISODES_LIVE_PTR);
     if (cfg->flags & SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE)
         gCreationExtras.stagePracticeDisplaysInto(SUSAMUNE_PRACTICE_DISPLAY_STYLE_LIVE_PTR);
+    if (cfg->flags & SUSAMUNE_FINISH_BREAKDOWN_FLAG)
+        FinishBreakdown::stageInto(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR);
     MarioColors::clearDirty();
     FluddColors::clearDirty();
+    FinishBreakdown::clearDirty();
 }
 
 #pragma clang section text=".foxtrot.text"
@@ -541,7 +573,8 @@ void Settings::set(SettingId id, u8 value) {
     if ((id >= SETTING_FAVORITES_0 && id <= SETTING_FAVORITES_10) ||
         (id >= SETTING_FAVORITES_EXTRA_0 && id <= SETTING_FAVORITES_EXTRA_7) ||
         id == SETTING_RNG_FAVORITES || id == SETTING_FAVORITES_EXTRA_8 ||
-        id == SETTING_FAVORITES_EXTRA_9) {
+        id == SETTING_FAVORITES_EXTRA_9 ||
+        (id >= SETTING_FAVORITES_EXTRA_10 && id <= SETTING_DISPLAY_FAVORITES_3)) {
         value &= 0x7F;
     } else {
         value = value % choiceCount(kSettingDescs[id]);
@@ -564,8 +597,10 @@ static int extraFavoriteIndex(SettingId id) {
     return wire - (SETTING_FAVORITES_10 + 1);
 }
 static SettingId extraFavoriteBank(int index) {
-    return (SettingId)(index / 7 < 8 ? SETTING_FAVORITES_EXTRA_0 + index / 7 :
-                                      SETTING_FAVORITES_EXTRA_8 + index / 7 - 8);
+    const int bank = index / 7;
+    return (SettingId)(bank < 8 ? SETTING_FAVORITES_EXTRA_0 + bank :
+                       bank < 10 ? SETTING_FAVORITES_EXTRA_8 + bank - 8 :
+                                   SETTING_FAVORITES_EXTRA_10 + bank - 10);
 }
 
 static unsigned favoriteLocation(SettingId id) {
@@ -601,7 +636,7 @@ void Settings::toggleFavorite(SettingId id) {
 }
 
 static_assert(SETTING_BUTTSLIDE_DISPLAY + 1 - (SETTING_FAVORITES_10 + 1) <=
-              10 * 7,
+              12 * 7,
               "new settings need more Shined storage");
 static_assert(SETTING_SYSTEM_MESSAGES == 142 && SETTING_FAVORITES_EXTRA_7 == 137,
               "existing Shined bits must retain their wire identities");
@@ -629,6 +664,10 @@ void Settings::cycle(SettingId id, int dir) {
 
 const char *Settings::valueLabel(SettingId id) const {
     static char numeric[16];
+    if (id == SETTING_GAMEPLAY_SPEED || id == SETTING_SLOWDOWN_PRESET) {
+        snprintf(numeric, sizeof(numeric), "%d pct", mValues[id] ? mValues[id] : 100);
+        return numeric;
+    }
     if (id == SETTING_JUMP_DISPLAY || id == SETTING_BUTTSLIDE_DISPLAY)
         return PackedText::at(kChoiceLabels, (mValues[SETTING_JUMP_DISPLAY] &
             (id == SETTING_JUMP_DISPLAY ? 1u : 2u)) != 0);

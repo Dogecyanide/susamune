@@ -54,7 +54,7 @@ struct ipcmessage DI_CallbackMsg;
 u32 DI_MessageQueue = 0xFFFFFFFF;
 static u8 *DI_MessageHeap = NULL;
 bool DI_IRQ = false;
-u32 DI_Thread = 0;
+static u32 DI_Thread = 0;
 s32 DI_Handle = -1;
 u64 ISOShift64 = 0;
 static u32 Streaming = 0; //internal
@@ -72,7 +72,50 @@ u32 WaitForRealDisc = 0;
 u32 DiscRequested = 0;
 
 u8 *const DI_READ_BUFFER = (u8*)NIN_MEM2_DI_SCRATCH_PHYS_BASE;
-const u32 DI_READ_BUFFER_LENGTH = NIN_MEM2_DI_SCRATCH_SIZE;
+static volatile u32 DIReadBufferLimit = NIN_MEM2_DI_SCRATCH_SIZE;
+#define DI_IOCTL_RESERVE_SCRATCH_TAIL 0x53555344u
+
+u32 GetDIBufferLimit(void)
+{
+	return DIReadBufferLimit;
+}
+
+static bool DIHandleScratchReservation(struct ipcmessage *message)
+{
+	if (message->ioctl.command != DI_IOCTL_RESERVE_SCRATCH_TAIL)
+		return false;
+	if (message->ioctl.buffer_in || message->ioctl.length_in ||
+		message->ioctl.buffer_io || message->ioctl.length_io)
+		mqueue_ack(message, -4);
+	else
+	{
+		// This consumer cannot change the limit during an earlier wide read.
+		DIReadBufferLimit = NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE;
+		sync_after_write(DI_READ_BUFFER + NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE,
+			NIN_MEM2_DI_SCRATCH_SIZE - NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE);
+		sync_before_read(DI_READ_BUFFER + NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE,
+			NIN_MEM2_DI_SCRATCH_SIZE - NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE);
+		mqueue_ack(message, 0);
+	}
+	return true;
+}
+
+bool DIReserveScratchTail(void)
+{
+	if (DI_Handle < 0 || thread_get_id() == DI_Thread)
+		return false;
+	if (GetDIBufferLimit() == NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE)
+		return true;
+	DIFinishAsync();
+	if (DI_IRQ)
+	{
+		DIInterrupt();
+		if (DI_IRQ) return false; // Preserve a delayed guest completion.
+	}
+	return IOS_Ioctl(DI_Handle, DI_IOCTL_RESERVE_SCRATCH_TAIL,
+		NULL, 0, NULL, 0) == 0 &&
+		GetDIBufferLimit() == NIN_MEM2_DI_SCRATCH_RUNTIME_SIZE;
+}
 
 extern u32 GAME_ID;
 extern u16 GAME_ID6;
@@ -836,6 +879,7 @@ static u32 di_length = 0;
 static u32 di_offset = 0;
 u32 DIReadThread(void *arg)
 {
+	DI_Thread = thread_get_id();
 	//dbgprintf("DI Thread Running\r\n");
 	struct ipcmessage *di_msg = NULL;
 	while(1)
@@ -878,6 +922,8 @@ u32 DIReadThread(void *arg)
 				break;
 
 			case IOS_IOCTL:
+				if (DIHandleScratchReservation(di_msg))
+					break;
 				if(di_msg->ioctl.command == 2)
 				{
 					// This synchronous keepalive returns before any disc read can

@@ -118,6 +118,12 @@ class BpsUiLanguageTests(unittest.TestCase):
         self.assertNotEqual(self.english_patch[-8:-4], self.japanese_patch[-8:-4])
         self.assertEqual(self.english_patch[-12:-8], self.japanese_patch[-12:-8])
 
+    def test_cold_manifest_cannot_silently_omit_its_boot_copy(self):
+        for field in ('cold_image', 'pinned_link_receipt'):
+            manifest = dict(self.manifest, **{field: {}})
+            with self.assertRaisesRegex(ValueError, 'early-copy'):
+                build_patch(self.layout, manifest)
+
     def test_language_does_not_change_sections_hooks_or_relocated_file(self):
         for output in (self.english, self.japanese):
             self.assertEqual(output[0x21000:0x21004], bytes.fromhex('48000001'))

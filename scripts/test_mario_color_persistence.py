@@ -44,6 +44,7 @@ class MarioColorPersistenceTests(unittest.TestCase):
         code = r'''
 #define IS_EMULATOR 1
 #include "susamune/susamune_cfg.h"
+#include "susamune/hoverless.h"
 typedef unsigned char u8;typedef signed char s8;typedef unsigned short u16;
 typedef unsigned int u32;typedef int s32;
 #define API extern "C" __declspec(dllexport)
@@ -77,10 +78,18 @@ SusamuneMarioColorsCfg liveColors;SusamuneFluddColorsCfg liveFluddColors;Susamun
 #define SUSAMUNE_IL_EPISODES_LIVE_PTR (&liveEpisodes)
 #undef SUSAMUNE_PRACTICE_DISPLAY_STYLE_LIVE_PTR
 #define SUSAMUNE_PRACTICE_DISPLAY_STYLE_LIVE_PTR (&livePracticeDisplays)
+static SusamuneFinishBreakdownCfg liveBreakdown,stagedBreakdown;
+#undef SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE
+#define SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE (&stagedBreakdown)
+#undef SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR
+#define SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR (&liveBreakdown)
+static SusamuneHoverlessCfg liveHoverless;
+#undef SUSAMUNE_HOVERLESS_PPC_PTR
+#define SUSAMUNE_HOVERLESS_PPC_PTR (&liveHoverless)
 static u8 liveSettingsTail[SUSAMUNE_CFG_SETTINGS_TAIL_SIZE];
 #undef SUSAMUNE_CFG_SETTINGS_TAIL
 #define SUSAMUNE_CFG_SETTINGS_TAIL(cfg) (liveSettingsTail)
-void DCStoreRange(void*p,u32 n){if((p==&liveColors&&n==32)||(p==&liveFluddColors&&n==64)||(p==&liveEpisodes&&n==64)||(p==&livePracticeDisplays&&n==128)||(p==liveSettingsTail&&n==32))flushes++;else mutexErrors++;}
+void DCStoreRange(void*p,u32 n){if((p==&liveColors&&n==32)||(p==&liveFluddColors&&n==64)||(p==&liveEpisodes&&n==64)||(p==&livePracticeDisplays&&n==128)||(p==liveSettingsTail&&n==32)||(p==&liveBreakdown&&n==32)||(p==&liveHoverless&&n==sizeof(liveHoverless)))flushes++;else mutexErrors++;}
 '''
         code += keys + records + state + offsets
         code += r'''
@@ -100,10 +109,10 @@ int CARDRead(CARDFileInfo*,void*out,unsigned n,unsigned offset){memcpy(out,&card
 int CARDWrite(CARDFileInfo*,void*in,unsigned n,unsigned offset){if(writeFails)return CARD_ERROR_IOERROR;memcpy(&card[offset/8192],in,n);return 0;}
 int CARDClose(CARDFileInfo*){return 0;}
 '''
-        for name in ("initBlank", "migrateLegacyPBs", "validPBValue", "migrateProfilesV1",
-                     "migrateRecordCfg", "initMarioColors", "publishMarioColors", "initFluddColors", "publishFluddColors", "initILEpisodes", "publishILEpisodes", "publishPracticeDisplays", "checksum",
+        for name in ("stagedFinishBreakdown", "initBlank", "migrateLegacyPBs", "validPBValue", "migrateProfilesV1",
+                     "migrateRecordCfg", "initMarioColors", "publishMarioColors", "initFluddColors", "publishFluddColors", "initILEpisodes", "publishILEpisodes", "initHoverless", "publishHoverless", "publishPracticeDisplays", "checksum",
                      "valid", "validV1", "validV2", "validV3", "validV4", "validV5", "validV6",
-                     "validV7", "validV8", "validV9", "validV10", "validV11", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
+                     "validV7", "validV8", "validV9", "validV10", "validV11", "validV12", "validV13", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
                      "writeRecordLocked", "loadRecords", "lock", "commit"):
             code += function(emulator, name)
         for name in ("ParseU16", "ParseQftU8", "ParseQftRgb", "InitMarioColorsDefaults",
@@ -134,15 +143,15 @@ API int migrate(){
  SusamuneMarioColorsCfg expected;InitMarioColorsDefaults(&expected);
  a=(const u8*)&colors;b=(const u8*)&expected;for(unsigned i=0;i<32;i++)if(a[i]!=b[i])return 4;
  old.version=kRecordVersion;old.payloadSize=kRecordPayloadSize;old.cfg=cfg;old.marioColors=colors;
- old.marioColors.enabled=0x45;old.marioColors.rgb[6][2]=17;old.checksum=checksum(&old);
+ initHoverless(&old.hoverless);old.marioColors.enabled=0x45;old.marioColors.rgb[6][2]=17;old.checksum=checksum(&old);
  if(!valid(&old)||validV7(&old))return 5;
  old.marioColors.rgb[6][2]^=1;if(valid(&old))return 6;
  return 0;
 }
 void makeRecord(Record*r,unsigned version,unsigned generation,unsigned enabled){
  memset(r,0,sizeof(*r));r->magic=kRecordMagic;r->version=version;
- r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:version==9?kRecordPayloadSizeV9:version==10?kRecordPayloadSizeV10:version==11?kRecordPayloadSizeV11:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
- initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);initILEpisodes(&r->ilEpisodes);SusamunePracticeDisplayStyleInit(&r->practiceDisplays);r->marioColors.enabled=enabled;
+ r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:version==9?kRecordPayloadSizeV9:version==10?kRecordPayloadSizeV10:version==11?kRecordPayloadSizeV11:version==12?kRecordPayloadSizeV12:version==13?kRecordPayloadSizeV13:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
+ SusamuneFinishBreakdownInit(&r->finishBreakdown);initHoverless(&r->hoverless);initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);initILEpisodes(&r->ilEpisodes);SusamunePracticeDisplayStyleInit(&r->practiceDisplays);r->marioColors.enabled=enabled;
  if(version<10)r->cfg.flags&=~SUSAMUNE_CFG_FLAG_IL_EPISODES;
  if(version<11)r->cfg.flags&=~SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE;
  r->marioColors.rgb[4][1]=91;r->cfg.values[12]=37;r->cfg.nativeTimerStyle.scale=123;
@@ -156,7 +165,7 @@ API int cardRead(int test){
  if(test==3){makeRecord(&card[1],kRecordVersion,11,5);card[1].gameVersion=2;card[1].checksum=checksum(&card[1]);}
  if(test==4){makeRecord(&card[1],8,11,5);memset(&card[1].fluddColors,0xa5,64);card[1].checksum=checksum(&card[1]);}
  static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishMarioColors();publishFluddColors();
- if(mutexErrors||flushes!=7||state.cfg.values[12]!=37||state.cfg.nativeTimerStyle.scale!=123)return 2;
+ if(mutexErrors||flushes!=9||state.cfg.values[12]!=37||state.cfg.nativeTimerStyle.scale!=123)return 2;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_MARIO_COLORS))return 3;
  if(test==4){if(state.generation!=11||!state.initialSave||liveColors.enabled!=5||liveColors.rgb[4][1]!=91)return 6;
   if(liveFluddColors.enabled||liveFluddColors.rgb[9][2]!=255||liveFluddColors.magic!=SUSAMUNE_FLUDD_COLORS_MAGIC)return 7;
@@ -173,7 +182,7 @@ API int cardCommit(){
  if(ticket!=1||!copyBeforeUnlock||state.mutex.held||mutexErrors)return 2;
  if(state.fluddColors.enabled!=0x301||state.fluddColors.rgb[9][2]!=83)return 9;
  if(writeRecordLocked()!=0||!valid(&card[0])||card[0].marioColors.enabled!=0x65||card[0].marioColors.rgb[6][2]!=17)return 3;
- if(card[0].version!=12||card[0].payloadSize!=sizeof(SusamuneCfg)+320||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
+ if(card[0].version!=14||card[0].payloadSize!=sizeof(SusamuneCfg)+352+sizeof(SusamuneHoverlessFile)||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
  if(!lock())return 5;liveColors.enabled=2;commit();writeFails=true;
  if(writeRecordLocked()!=CARD_ERROR_IOERROR||state.activeRecord!=0||state.generation!=1||!valid(&card[0]))return 6;
  writeFails=false;if(writeRecordLocked()!=0||state.activeRecord!=1||!valid(&card[1])||card[1].marioColors.enabled!=2)return 7;
@@ -202,10 +211,29 @@ API int cardEpisodes(int legacy){
  for(unsigned i=0;i<21;i++)if(liveEpisodes.episodes[i]!=(legacy?0:(i%8)+1))return 7;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_IL_EPISODES))return 8;
  if(!lock())return 9;for(unsigned i=0;i<21;i++)liveEpisodes.episodes[i]=8-(i%8);commit();
- if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=12)return 10;
+ if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=14)return 10;
  for(unsigned i=0;i<21;i++)if(card[0].ilEpisodes.episodes[i]!=8-(i%8))return 11;
  card[0].ilEpisodes.episodes[19]^=1;if(valid(&card[0]))return 12;
  return mutexErrors?13:0;
+}
+API int cardHoverless(unsigned version){
+ mutexErrors=flushes=0;checkCommit=false;writeFails=false;fileExists=true;initState();
+ makeRecord(&card[0],version,20,3);card[1].magic=0;
+ for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SUSAMUNE_ILING_PB_MAX_SLOTS;++i)card[0].cfg.ilingProfiles.values[p][i]=1000+p*100+i;
+ card[0].cfg.ilingProfiles.activeProfile=3;
+ card[0].hoverless.activeProfile=4;card[0].hoverless.values[10]=777;
+ card[0].hoverless.checksum=SusamuneHoverlessChecksum(&card[0].hoverless);
+ if(version==12)memset(&card[0].hoverless,0xa5,sizeof(card[0].hoverless));
+ card[0].checksum=checksum(&card[0]);
+ static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishHoverless();
+ for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SUSAMUNE_ILING_PB_MAX_SLOTS;++i)
+  if(state.cfg.ilingProfiles.values[p][i]!=(int)(1000+p*100+i))return 2;
+ if(state.cfg.ilingProfiles.activeProfile!=3)return 3;
+ if(liveHoverless.values[10]!=(version==12?-1:777)||liveHoverless.activeProfile!=(version==12?255:4))return 4;
+ if(!lock())return 5;liveHoverless.values[10]=700;liveHoverless.activeProfile=4;commit();
+ if(writeRecordLocked()!=0||!valid(&card[1])||card[1].hoverless.values[10]!=700)return 6;
+ initState();if(loadRecords(0,&scratch)!=0)return 7;publishHoverless();
+ return liveHoverless.values[10]==700&&liveHoverless.activeProfile==4?0:8;
 }
 API int cardPracticeDisplays(unsigned version){
  mutexErrors=flushes=0;checkCommit=false;writeFails=false;fileExists=true;initState();
@@ -221,15 +249,15 @@ API int cardPracticeDisplays(unsigned version){
   expected=card[1].practiceDisplays;}
  card[1].checksum=checksum(&card[1]);
  if(sizeof(Record)!=8192||__builtin_offsetof(Record,practiceDisplays)!=32+kRecordPayloadSizeV10)return 1;
- if((version==10&&!validV10(&card[1]))||(version==11&&!validV11(&card[1]))||(version==12&&!valid(&card[1])))return 2;
+ if((version==10&&!validV10(&card[1]))||(version==11&&!validV11(&card[1]))||(version==12&&!validV12(&card[1]))||(version==13&&!validV13(&card[1]))||(version==14&&!valid(&card[1])))return 2;
  static Record scratch;if(loadRecords(0,&scratch)!=0)return 3;publishPracticeDisplays();
- if(state.generation!=21||state.initialSave!=(version<12)||mutexErrors)return 4;
+ if(state.generation!=21||state.initialSave!=(version<14)||mutexErrors)return 4;
  for(unsigned i=0;i<128;++i)if(((u8*)&livePracticeDisplays)[i]!=((u8*)&expected)[i])return 5;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE)||state.cfg.values[12]!=37)return 6;
  if(version>=10&&state.ilEpisodes.magic!=SUSAMUNE_IL_EPISODE_MAGIC)return 7;
  if(!lock())return 8;livePracticeDisplays.entries[1].textA=91;commit();expected.entries[1].textA=91;
  for(unsigned i=0;i<128;++i)if(((u8*)&state.practiceDisplays)[i]!=((u8*)&expected)[i])return 9;
- if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=12||card[0].generation!=22)return 10;
+ if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=14||card[0].generation!=22)return 10;
  initState();if(loadRecords(0,&scratch)!=0)return 11;publishPracticeDisplays();
  if(state.initialSave||state.generation!=22)return 12;
  for(unsigned i=0;i<128;++i)if(((u8*)&livePracticeDisplays)[i]!=((u8*)&expected)[i])return 13;
@@ -237,6 +265,38 @@ API int cardPracticeDisplays(unsigned version){
  if(valid(&card[0]))return 14;
  initState();if(loadRecords(0,&scratch)!=0||state.generation!=21)return 15;
  return mutexErrors?16:0;
+}
+API int cardFinishBreakdown(unsigned version,unsigned corrupt){
+ mutexErrors=flushes=0;checkCommit=false;writeFails=false;fileExists=true;initState();
+ makeRecord(&card[0],kRecordVersion,30,3);makeRecord(&card[1],version,31,5);
+ card[0].finishBreakdown.x=611;card[0].finishBreakdown.halfSeconds=2;card[0].checksum=checksum(&card[0]);
+ card[1].hoverless.activeProfile=4;card[1].hoverless.values[5]=789;
+ card[1].hoverless.checksum=SusamuneHoverlessChecksum(&card[1].hoverless);
+ card[1].finishBreakdown.x=512;card[1].finishBreakdown.y=399;card[1].finishBreakdown.padding=255;
+ card[1].finishBreakdown.rows=65;card[1].finishBreakdown.halfSeconds=0;card[1].finishBreakdown.rgb[2][1]=13;
+ card[1].checksum=checksum(&card[1]);if(corrupt){card[1].finishBreakdown.rgb[1][0]^=1;if(version<14)card[1].checksum=checksum(&card[1]);}
+ static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishPracticeDisplays();
+ if(mutexErrors||state.cfg.values[12]!=37||!(state.cfg.flags&SUSAMUNE_FINISH_BREAKDOWN_FLAG))return 2;
+ if(corrupt&&version==14){if(state.generation!=30||liveBreakdown.x!=611)return 3;}
+ else if(version<14){if(state.generation!=31||!state.initialSave||liveBreakdown.x!=22||liveBreakdown.rows!=111||liveBreakdown.halfSeconds!=40)return 4;}
+ else if(state.generation!=31||state.initialSave||liveBreakdown.x!=512||liveBreakdown.padding!=255||liveBreakdown.rows!=65||liveBreakdown.halfSeconds!=0||liveBreakdown.rgb[2][1]!=13)return 5;
+ if(version==13&&state.hoverless.values[5]!=789)return 6;
+ if(!lock())return 7;liveBreakdown.x=620;liveBreakdown.halfSeconds=120;liveBreakdown.rows=0;commit();
+ liveBreakdown.x=15;if(stagedFinishBreakdown().x!=620)return 8;
+ writeFails=true;unsigned generation=state.generation;if(writeRecordLocked()!=CARD_ERROR_IOERROR||state.generation!=generation)return 9;
+ writeFails=false;if(writeRecordLocked()!=0)return 10;
+ initState();if(loadRecords(0,&scratch)!=0)return 11;publishPracticeDisplays();
+ return liveBreakdown.x==620&&liveBreakdown.rows==0&&liveBreakdown.halfSeconds==120&&!state.initialSave?0:12;
+}
+API int cardFinishBreakdownRows(unsigned rows){
+ mutexErrors=0;checkCommit=false;writeFails=false;fileExists=true;initState();
+ makeRecord(&card[0],kRecordVersion,30,3);makeRecord(&card[1],kRecordVersion,31,5);
+ card[1].finishBreakdown.rows=(u8)rows;card[1].checksum=checksum(&card[1]);
+ static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishPracticeDisplays();
+ if(liveBreakdown.rows!=rows||state.initialSave||!lock())return 2;
+ commit();if(writeRecordLocked()!=0)return 3;
+ initState();if(loadRecords(0,&scratch)!=0)return 4;publishPracticeDisplays();
+ return liveBreakdown.rows==rows&&!state.initialSave&&!mutexErrors?0:5;
 }
 '''
         source = work / "persistence.cpp"
@@ -339,8 +399,13 @@ API int cardPracticeDisplays(unsigned version){
             with self.subTest(legacy=legacy):
                 self.assertEqual(self.lib.cardEpisodes(legacy), 0)
 
+    def test_hoverless_v12_migration_and_v13_keep_all_legacy_profile_values(self):
+        for version in (12, 13):
+            with self.subTest(version=version):
+                self.assertEqual(self.lib.cardHoverless(version), 0)
+
     def test_three_practice_styles_roundtrip_and_legacy_records_ignore_padding(self):
-        for version in (7, 9, 10, 11, 12):
+        for version in (7, 9, 10, 11, 12, 13):
             with self.subTest(version=version):
                 self.assertEqual(self.lib.cardPracticeDisplays(version), 0)
 

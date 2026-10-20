@@ -157,7 +157,7 @@ class NestedMenuContracts(unittest.TestCase):
         self.assertIn('return "LAYOUT AND CONTROLS"', menu)
         self.assertIn("jumpRootSection(-1);", menu)
         self.assertIn("jumpRootSection(+1);", menu)
-        self.assertIn('return "Layout editor"', menu)
+        self.assertIn('return "Displays and styles"', menu)
         self.assertIn('return "Button binds"', menu)
         self.assertIn("gInputDisplay.editing()", menu)
 
@@ -170,8 +170,8 @@ class NestedMenuContracts(unittest.TestCase):
         self.assertIn("drawHelpLine(menu, x, y, w, h, help)", menu)
         self.assertIn("const int listH = help ? h - HELP_H : h;", menu)
         self.assertIn('return "Movement feedback and practice overlays."', menu)
-        self.assertIn('return "Move, resize and recolour Moonshine HUD elements."', menu)
-        self.assertIn('return "Choose the controller combo for each Moonshine action."', menu)
+        self.assertIn('return "Visibility and appearance together for each display."', menu)
+        self.assertIn('return "Controller shortcuts grouped by action."', menu)
 
     def test_settings_root_scrolls_with_its_section_headers(self) -> None:
         menu = text("src/menu.cpp")
@@ -340,7 +340,7 @@ class MovementStylePersistenceContracts(unittest.TestCase):
 
     def test_dolphin_v5_migrates_to_v12(self) -> None:
         emulator = text("src/emulator_persistence.cpp")
-        self.assertIn("constexpr u16 kRecordVersion = 12;", emulator)
+        self.assertIn("constexpr u16 kRecordVersion = 14;", emulator)
         self.assertIn("const bool v10 = !current && validV10(record);", emulator)
         self.assertIn("const bool v9 = !current && validV9(record);", emulator)
         self.assertIn("initILEpisodes(&sState->ilEpisodes);", emulator)

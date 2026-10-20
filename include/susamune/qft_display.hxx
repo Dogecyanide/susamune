@@ -15,6 +15,8 @@ public:
 
     void beginOverlayFrame();
     void draw(Menu *menu, const char *text) const;
+    bool verticalGradient(const u8 (*textRgb)[3]) const;
+    bool animatedGradient(const u8 (*textRgb)[3]) const;
     void drawTasFallback(Menu *menu) const;
     bool hasAnchor(const char *text) const;
     bool adjacentStyle(const char *anchorText, const char *text,

@@ -36,6 +36,7 @@ extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++
 alignas(32) static u8 memory[CACHE_SIZE+64],scratch[0x80000+64];
 static u8*const DI_READ_BUFFER=scratch+32;
 static const u32 DI_READ_BUFFER_LENGTH=0x80000;
+static u32 GetDIBufferLimit(){return DI_READ_BUFFER_LENGTH;}
 static u32 ISOFileOpen=1,CacheInited,TempCacheCount,CacheEntryCount,DataCacheOffset;
 static u8*DCCache=CACHE_START;
 static u32 DCacheLimit=CACHE_SIZE,TRIGame,BI2region;

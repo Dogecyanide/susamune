@@ -5,6 +5,7 @@ namespace JDrama { class TGraphics; }
 
 namespace GhostFludd {
 void beginFrame();
+bool hoverEmitted();
 void capture(SusamuneGhostFluddSample &sample);
 void direction(const SusamuneGhostFluddSample &sample, TVec3f &out);
 void draw(JDrama::TGraphics *graphics);

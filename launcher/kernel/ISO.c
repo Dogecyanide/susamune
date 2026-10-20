@@ -507,8 +507,9 @@ const u8 *ISORead(u32* Length, u32 Offset)
 	 * DI's existing loop consumes the bounded scratch chunk and asks again. */
 	if(CacheInited == 0 || DCacheLimit == 0 || *Length > DCacheLimit)
 	{
-		if (*Length > DI_READ_BUFFER_LENGTH)
-			*Length = DI_READ_BUFFER_LENGTH;
+		const u32 limit = GetDIBufferLimit();
+		if (*Length > limit)
+			*Length = limit;
 		ISOReadDirect(DI_READ_BUFFER, *Length, Offset64);
 		return DI_READ_BUFFER;
 	}

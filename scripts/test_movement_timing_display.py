@@ -34,14 +34,18 @@ struct TMarioControllerWork { enum {A=0x100,B=0x200}; unsigned mFrameInput; };
 struct TMario {
  void **vtable;
  enum {STATE_JUMP=0x02000880, STATE_AIRBORN=0x800,
-       STATE_WATERBORN=0x2000, STATE_CUTSCENE=0x1000};
- unsigned mState;
+       STATE_WATERBORN=0x2000, STATE_CUTSCENE=0x1000,
+       STATE_WALLSLIDE=0x8a7,STATE_WALLJUMP=0x2000886,
+       STATE_DIVE=0x80088a,STATE_DIVEJUMP=0x2000889,
+       STATE_JUMPSPIN=0x890,STATE_JUMPSPINR=0x895,STATE_JUMPSPINL=0x896};
+ unsigned mState,mPrevState;
  unsigned mActionState;unsigned short mSubStateTimer;const void *mFloorTriangle;
+ bool currentFloorSlips;bool isSlipStart(){return currentFloorSlips;}
  struct {float x,y,z;} mTranslation,mSpeed;
  TMarioControllerWork *mControllerWork;
 };
-enum {SETTING_GB_SKIP_DISPLAY,SETTING_JUMP_DISPLAY};
-struct Settings {unsigned on[2]; bool getBool(int id) const{return on[id]!=0;}
+enum {SETTING_GB_SKIP_DISPLAY,SETTING_JUMP_DISPLAY,SETTING_WALLKICK_DISPLAY};
+struct Settings {unsigned on[3]; bool getBool(int id) const{return on[id]!=0;}
  unsigned get(int id) const{return on[id];}} gSettings;
 struct TMarDirector {enum{STATE_NORMAL=4};unsigned _260,mCurState,unk58;};
 TMarDirector director,otherDirector;
@@ -68,35 +72,42 @@ void *memcpy(void*d,const void*s,unsigned long long n){
 struct Menu{};
 struct CreationStyle{int x,y;u8 scale,padding[3];};
 struct SusamuneWallkickStyleCfg{int x,y;u8 scale,padding[3],rgb[7][3];};
-char drawnText[80],drawnTexts[3][80];unsigned drawnColor,drawnDisplay,drawnMask,drawnColors[3];
+char drawnText[80],drawnTexts[4][80];unsigned drawnColor,drawnDisplay,drawnMask,drawnColors[4];
 struct CreationExtras{
  void drawPracticeDisplay(Menu*,const char*text,unsigned display,int color){
   unsigned i=0;while(text[i]){drawnText[i]=drawnTexts[display][i]=text[i];++i;}
   drawnText[i]=drawnTexts[display][i]=0;
   drawnColor=color;drawnDisplay=display;drawnColors[display]=color;drawnMask|=1u<<display;}
+ void drawWallkickDisplay(Menu*m,const char*text,unsigned color){
+  drawPracticeDisplay(m,text,3,color);}
 } gCreationExtras;
 namespace JapaneseUi {const char *text(const char*s){return s;}}
 enum {SUSAMUNE_PRACTICE_DISPLAY_GB,SUSAMUNE_PRACTICE_DISPLAY_JUMP,SUSAMUNE_PRACTICE_DISPLAY_BUTTSLIDE};
 '''
         extras = ROOT / "src/creation_extras.cpp"
         extras_source = extras.read_text(encoding="utf-8")
-        for pool in ("kGbTimingNames", "kButtslideNames"):
+        for pool in ("kGbTimingNames", "kButtslideNames", "kWallkickNames"):
             code += re.search(rf"const char {pool}\[\]\s*=\s*[^;]+;", extras_source).group() + "\n"
         code += "namespace PackedText {" + function_source(
             ROOT / "src/packed_text.cpp", "const char *at(") + "}\n"
         code += function_source(extras, "void formatPracticeDisplay(") + "\n"
+        code += function_source(extras, "const char *wallkickDisplayLabel(") + "\n"
         code += tracking
+        code += re.sub(r"^#include[^\n]*", "",
+                       (ROOT / "src/wallkick_display.cpp").read_text(encoding="utf-8"),
+                       flags=re.M)
         code += r'''
 #define API extern "C" __declspec(dllexport)
 JDrama::TGraphics graphics;
 API void init(){
- gSettings.on[0]=true;gSettings.on[1]=false;gpMarioOriginal=&mario[0];
+ gSettings.on[0]=true;gSettings.on[1]=gSettings.on[2]=false;gpMarioOriginal=&mario[0];
  mario[0].vtable=marioTimingVtable;mario[1].vtable=marioTimingVtable;
  mario[0].mControllerWork=&pad;mario[1].mControllerWork=&pad;
  mario[0].mFloorTriangle=&director;mario[0].mState=0;slipMode=slipQueries=0;
  currentDirector=&director;director._260=1;director.mCurState=4;director.unk58=0;
  marioTimingVtable[8]=(void*)&retailMarioTimingPerform;
  MovementTimingDisplay::onStageSetup();retailCalls=0;swapOwner=0;
+ WallkickDisplay::onStageSetup();
 }
 API void enable(unsigned gb,unsigned jump){gSettings.on[0]=gb;gSettings.on[1]=jump;}
 API void loaded(){MovementTimingDisplay::onSavestateLoaded();}
@@ -106,7 +117,7 @@ API void tick(unsigned before,unsigned after,unsigned pressed,float y,float v,un
  MovementTimingDisplay::beforeDirect(active!=0);
  // As in retail, only the first quarterframe owns the controller edge.
  for(unsigned i=0;i<4;i++){
-  ++director.unk58;outputState=after;outputPressed=i?0:pressed;
+  if(active)++director.unk58;outputState=after;outputPressed=i?0:pressed;
   MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
  }
  MovementTimingDisplay::afterDirect(active!=0);
@@ -114,15 +125,34 @@ API void tick(unsigned before,unsigned after,unsigned pressed,float y,float v,un
 API void landAtQuarter(unsigned quarter){
  MovementTimingDisplay::beforeDirect(true);gpMarioOriginal->mState=0x02000880;
  for(unsigned i=0;i<4;i++){
-  director.unk58=i;outputState=i>=quarter?0x0C400201:0x02000880;outputPressed=0;
+  ++director.unk58;outputState=i>=quarter?0x0C400201:0x02000880;outputPressed=0;
   MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
  }
  MovementTimingDisplay::afterDirect(true);
 }
 API void jumpAtPhase(unsigned phase){
- MovementTimingDisplay::beforeDirect(true);director.unk58=phase;
- gpMarioOriginal->mState=0x0C400201;outputState=0x02000880;outputPressed=0x100;
- MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
+ MovementTimingDisplay::beforeDirect(true);gpMarioOriginal->mState=0x0C400201;
+ for(unsigned i=0;i<4;i++){
+  ++director.unk58;outputState=i>=phase?0x02000880:0x0C400201;
+  outputPressed=i==phase?0x100:0;
+  MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
+ }
+ MovementTimingDisplay::afterDirect(true);
+}
+API void landAndJumpSameFrame(){
+ MovementTimingDisplay::beforeDirect(true);gpMarioOriginal->mState=0x02000880;
+ for(unsigned i=0;i<4;i++){
+  ++director.unk58;outputState=i<2?0x0C400201:0x02000880;outputPressed=i==2?0x100:0;
+  MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
+ }
+ MovementTimingDisplay::afterDirect(true);
+}
+API void groundQuarters(unsigned count){
+ MovementTimingDisplay::beforeDirect(true);gpMarioOriginal->mState=0x0C400201;
+ for(unsigned i=0;i<count;i++){
+  ++director.unk58;outputState=0x0C400201;outputPressed=0;
+  MovementTimingDisplay::perform(gpMarioOriginal,1,&graphics);
+ }
  MovementTimingDisplay::afterDirect(true);
 }
 API void ownerChangeDuringFrame(){
@@ -145,7 +175,8 @@ API unsigned result(){return MovementTimingDisplay::sResult;}
 API unsigned resultFrames(){return MovementTimingDisplay::sResultFrames;}
 API unsigned jumpShown(){return MovementTimingDisplay::sJumpPopupFrames;}
 API unsigned jumpFrames(){return MovementTimingDisplay::sJumpResultFrames;}
-API unsigned phase(){return MovementTimingDisplay::sJumpPhase;}
+API unsigned delayQf(){return MovementTimingDisplay::sJumpDelayQf;}
+API void setQf(unsigned qf){director.unk58=qf;}
 API float y(){return MovementTimingDisplay::sResultY;}
 API float v(){return MovementTimingDisplay::sResultV;}
 API unsigned input(){return pad.mFrameInput;}
@@ -167,7 +198,19 @@ API unsigned hookReady(){return MovementTimingDisplay::sHookReady;}
 API unsigned slotUntouched(){return marioTimingVtable[8]==0;}
 API unsigned slide(unsigned state,unsigned timer,unsigned mode,unsigned input){
  mario[0].mState=state;mario[0].mSubStateTimer=timer;mario[0].mActionState=input;slipMode=mode;
+ mario[0].currentFloorSlips=(input&8)!=0;
  return MovementTimingDisplay::buttslideStatus();}
+API unsigned slideChangedFloor(unsigned state,unsigned timer,unsigned mode,
+                               unsigned oldInput,unsigned newSlippery){
+ mario[0].mState=state;mario[0].mSubStateTimer=timer;
+ mario[0].mActionState=oldInput;mario[0].currentFloorSlips=newSlippery;slipMode=mode;
+ return MovementTimingDisplay::buttslideStatus();}
+API void wallkick(){
+ gSettings.on[2]=true;mario[0].mState=TMario::STATE_WALLSLIDE;
+ WallkickDisplay::beforeDirect(true);
+ mario[0].mState=TMario::STATE_WALLJUMP;mario[0].mPrevState=TMario::STATE_WALLSLIDE;
+ WallkickDisplay::afterDirect(true);
+}
 API unsigned queries(){return slipQueries;}
 API unsigned slideGuard(unsigned which){
  if(which==0)currentDirector=0;if(which==1)currentDirector=&otherDirector;
@@ -176,6 +219,11 @@ API unsigned slideGuard(unsigned which){
  if(which==6)mario[0].mFloorTriangle=0;
  return MovementTimingDisplay::buttslideStatus();}
 '''
+        menu = (ROOT / "src/menu.cpp").read_text(encoding="utf-8")
+        draw_calls = menu.split("gCreationExtras.draw(this);", 1)[1].split(
+            "MovementDisplay::draw(this);", 1)[0].replace("this", "&menu")
+        code += 'API unsigned menuMovementDraw(){Menu menu;drawnMask=0;' + draw_calls + \
+                'return drawnMask;}\n'
         # Execute the retail common handlers and their shared early jump path.
         # The remaining sliding movement is neutral in this decision fixture.
         code += r'''
@@ -286,7 +334,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
         self.lib.drawResult()
         self.assertEqual(self.lib.displayMask(), 7)
         self.assertEqual([self.lib.displayText(i) for i in range(3)],
-                         [b"On time 9f Y404 V6.0", b"1f qf3", b"Ready"])
+                         [b"On time 9f Y404 V6.0", b"1f qf5", b"Ready"])
         self.assertEqual([self.lib.displayColor(i) for i in range(3)], [1, 0, 0])
         self.lib.slide(0x00840452, 20, 2, 0)
         self.lib.drawResult()
@@ -303,7 +351,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
         self.lib.drawResult()
         self.assertEqual(self.lib.displayMask(), 3)
         self.assertEqual(self.lib.displayText(0), b"On time 9f Y404 V6.0")
-        self.assertEqual(self.lib.displayText(1), b"3f qf1")
+        self.assertEqual(self.lib.displayText(1), b"3f qf13")
         self.assertEqual((self.lib.shown(), self.lib.jumpShown()), (86, 90))
 
     def test_result_timeouts_are_independent_and_holds_freeze_both(self):
@@ -453,7 +501,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
         self.tick(after=DIVE, pressed=B)
         self.assertEqual(self.lib.shown(), 0)
 
-    def test_jump_reports_next_active_frame_and_actual_takeoff_phase(self):
+    def test_jump_reports_exact_elapsed_quarters_for_same_frame_count(self):
         for landing in range(4):
             for phase in range(4):
                 with self.subTest(landing=landing, phase=phase):
@@ -462,7 +510,40 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
                     self.lib.landAtQuarter(landing)
                     self.lib.jumpAtPhase(phase)
                     self.assertEqual((self.lib.jumpShown(), self.lib.jumpFrames()), (90, 1))
-                    self.assertEqual(self.lib.phase(), phase)
+                    self.assertEqual(self.lib.delayQf(), 4 - landing + phase)
+
+    def test_jump_delay_is_independent_of_global_phase_and_wraps_safely(self):
+        for base in (0, 1, 2, 3, 987654, 0xFFFFFFFC):
+            self.lib.init()
+            self.lib.enable(0, 1)
+            self.lib.setQf(base)
+            self.lib.landAtQuarter(3)
+            self.lib.jumpAtPhase(0)
+            self.assertEqual(self.lib.delayQf(), 1)
+            self.assertEqual(self.lib.drawResult(), b"1f qf1")
+
+    def test_same_rendered_frame_landing_jump_keeps_subframe_distance(self):
+        self.lib.enable(0, 1)
+        self.lib.landAndJumpSameFrame()
+        self.assertEqual((self.lib.jumpFrames(), self.lib.delayQf()), (1, 2))
+
+    def test_jump_delay_uses_executed_quarters_not_assumed_four_per_frame(self):
+        for quarters in (1, 2, 3, 5, 7):
+            self.lib.init()
+            self.lib.enable(0, 1)
+            self.lib.landAtQuarter(3)
+            self.lib.groundQuarters(quarters)
+            self.lib.jumpAtPhase(0)
+            self.assertEqual((self.lib.jumpFrames(), self.lib.delayQf()),
+                             (2, quarters + 1))
+
+    def test_unannounced_backward_clock_change_cannot_show_unsigned_garbage(self):
+        self.lib.enable(0, 1)
+        self.lib.setQf(1000)
+        self.lib.landAtQuarter(3)
+        self.lib.setQf(10)
+        self.lib.jumpAtPhase(0)
+        self.assertEqual(self.lib.jumpShown(), 0)
 
     def test_jump_waits_and_holds_are_separate(self):
         self.lib.enable(0, 1)
@@ -472,7 +553,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
         for _ in range(300):
             self.tick(GROUND, GROUND, active=False)
         self.lib.jumpAtPhase(3)
-        self.assertEqual((self.lib.jumpFrames(), self.lib.phase()), (6, 3))
+        self.assertEqual((self.lib.jumpFrames(), self.lib.delayQf()), (6, 25))
 
     def test_landing_jump_shows_one_through_six_then_late_with_qf(self):
         for frames in (1, 2, 3, 4, 5, 6, 7, 252, 1001):
@@ -485,7 +566,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
                 self.lib.jumpAtPhase(3)
                 self.assertEqual(self.lib.jumpFrames(), min(frames, 7))
                 label = f"{frames}f" if frames <= 6 else "Late"
-                self.assertEqual(self.lib.drawResult().decode(), f"{label} qf3")
+                self.assertEqual(self.lib.drawResult().decode(), f"{label} qf{4 * frames + 1}")
                 self.assertEqual(self.lib.color(), min(frames, 7) - 1)
 
     def test_landing_clock_starts_at_most_recent_landing_not_stage_start(self):
@@ -494,15 +575,15 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
             self.tick(GROUND, GROUND)
         self.lib.landAtQuarter(3)
         self.lib.jumpAtPhase(1)
-        self.assertEqual(self.lib.drawResult(), b"1f qf1")
+        self.assertEqual(self.lib.drawResult(), b"1f qf2")
         self.lib.landAtQuarter(0)
         for _ in range(6):
             self.tick(GROUND, GROUND)
         self.lib.jumpAtPhase(2)
-        self.assertEqual(self.lib.drawResult(), b"Late qf2")
+        self.assertEqual(self.lib.drawResult(), b"Late qf30")
         self.lib.landAtQuarter(2)
         self.lib.jumpAtPhase(0)
-        self.assertEqual(self.lib.drawResult(), b"1f qf0")
+        self.assertEqual(self.lib.drawResult(), b"1f qf2")
 
     def test_landing_history_is_cleared_on_stage_and_state_load(self):
         for reset in (self.lib.setup, self.lib.loaded):
@@ -515,7 +596,7 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
                 self.assertEqual(self.lib.drawResult(), b"")
                 self.lib.landAtQuarter(0)
                 self.lib.jumpAtPhase(2)
-                self.assertEqual(self.lib.drawResult(), b"1f qf2")
+                self.assertEqual(self.lib.drawResult(), b"1f qf6")
 
     def test_jump_requires_observed_landing_and_disallows_walkoff(self):
         self.lib.enable(0, 1)
@@ -555,6 +636,25 @@ API unsigned retailReady(unsigned back,unsigned timer,unsigned mode,unsigned inp
         for _ in range(100):self.assertEqual(self.lib.slide(0x00840452,20,2,0),1)
         self.assertEqual(self.lib.calls(),calls)
         self.assertEqual(self.lib.shown(),0)
+
+    def test_backslide_uses_current_floor_instead_of_prior_input_flags(self):
+        self.lib.enable(0, 2)
+        for old_input in (0, 8):
+            for floor_slips in (0, 1):
+                shown = self.lib.slideChangedFloor(
+                    0x00840453, 21, 2, old_input, floor_slips)
+                self.assertEqual(shown, 1 if floor_slips else 2)
+                self.assertEqual(self.lib.slideChangedFloor(
+                    0x00840452, 21, 2, old_input, floor_slips), 2)
+                self.assertEqual(self.lib.slideChangedFloor(
+                    0x00840453, 0, 1, old_input, floor_slips), 2)
+
+    def test_actual_menu_draw_calls_preserve_wallkick_with_every_movement_popup(self):
+        self.combined_results()
+        self.lib.wallkick()
+        self.lib.slide(0x00840452, 21, 2, 0)
+        self.assertEqual(self.lib.menuMovementDraw(), 15)
+        self.assertEqual(self.lib.displayText(3), b"1st")
 
     def test_buttslide_modes_and_runtime_guards(self):
         for setting,expected in ((0,0),(1,0),(2,2),(3,2)):

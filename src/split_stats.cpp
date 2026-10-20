@@ -1,4 +1,6 @@
 #include "susamune/ghost.hxx"
+#include "susamune/ghost_fludd.hxx"
+#include "susamune/hoverless.h"
 #include "susamune/split_stats.hxx"
 
 #include <Dolphin/mem.h>
@@ -308,7 +310,17 @@ u32 pendingAttemptTime(u8 route) {
     return pending;
 }
 
+void rejectHoverlessEmission() {
+    if ((sState->flags & FLAG_ATTEMPT_ACTIVE) &&
+        sState->activeProfile == SUSAMUNE_HOVERLESS_PROFILE && GhostFludd::hoverEmitted()) {
+        sState->flags &= ~FLAG_ATTEMPT_ELIGIBLE;
+        sState->candidateGoldMask = 0;
+        if (sState->overlayColor == OVERLAY_GOLD) clearOverlay();
+    }
+}
+
 void commitAttemptGolds() {
+    rejectHoverlessEmission();
     if (!(sState->flags & FLAG_ATTEMPT_ACTIVE) ||
         !(sState->flags & FLAG_ATTEMPT_ELIGIBLE) ||
         sState->candidateGoldMask == 0 ||
@@ -390,6 +402,8 @@ void formatAnchorQf(s32 qf, char *out, u32 size) {
 }
 
 bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
+    // Retail split callbacks can run before the IL update sees this emission.
+    rejectHoverlessEmission();
     if (routeId >= SplitStats::ROUTE_COUNT ||
         !(sState->flags & FLAG_ATTEMPT_ACTIVE) ||
         sState->activeRoute != routeId || local != sState->expectedEvent ||
@@ -572,6 +586,7 @@ void beginFrame() {
 
 void update() {
     if (!sState) return;
+    rejectHoverlessEmission();
     sampleAttemptTime();
 #if !IS_EMULATOR
     pollSave();

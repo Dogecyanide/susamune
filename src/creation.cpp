@@ -1,6 +1,10 @@
 #include "susamune/mem2_map.h"
 #include "susamune/creation.hxx"
 #include "susamune/creation_color.hxx"
+#include "susamune/gradient_motion.hxx"
+#include "susamune/settings.hxx"
+#include "susamune/gameplay_speed_editor.hxx"
+#include "susamune/qft_display.hxx"
 
 #include "Dolphin/printf.h"
 #include "SMS/Player/MarioGamePad.hxx"
@@ -33,6 +37,10 @@ enum EditOption {
     OPTION_BG_A,
     OPTION_PADDING,
     OPTION_COLOR_MODE,
+    OPTION_GRADIENT,
+    OPTION_GRADIENT_DIRECTION,
+    OPTION_GRADIENT_MOTION,
+    OPTION_GRADIENT_SPEED,
     OPTION_COUNT,
 };
 
@@ -45,6 +53,13 @@ enum ConfirmAction {
 
 // Only one Creation editor is active; keep its HSL choices through target changes.
 constexpr unsigned kHslSlots = 256;
+u8 sGradientPreset;
+u16 sGradientDirectionSetting;
+u8 sGradientDirectionBackup;
+u8 sGradientMotionBackup, sGradientSpeedBackup;
+u8 sCreationMinimumScale, sCreationMaximumScale;
+u8 sGradientEnds[4][3];
+const char kGradientNames[] = "Current colours\0Sunset\0Ocean\0Rainbow\0Blend ends\0One colour";
 #if defined(__powerpc__)
 #define sHsl (*reinterpret_cast<CreationColor::Hsl (*)[kHslSlots + 1]>(SUSAMUNE_HSL_CACHE_PPC_BASE))
 #else
@@ -136,10 +151,45 @@ void adjustTextChannel(u8 (*textRgb)[3], u16 slots, u16 target,
     }
 }
 
+void gradientRange(u8 (*rgb)[3], u16 firstSlot, u16 count, u8 preset, unsigned ends) {
+    if (!count) return;
+    for (u16 i = 0; i < count; ++i)
+        CreationColor::gradient(preset, i, count, sGradientEnds[ends],
+                                 sGradientEnds[ends + 1], rgb[firstSlot + i]);
+}
+
+void applyGradient(u8 (*rgb)[3], u16 slots, u8 preset, bool timer, bool captureEnds) {
+    if (!preset || !rgb || !slots) return;
+    if (captureEnds) {
+        // Browsing presets must not overwrite the user's blend endpoints.
+        for (unsigned c = 0; c < 3; ++c) {
+            sGradientEnds[0][c] = rgb[0][c];
+            sGradientEnds[1][c] = rgb[timer && slots >= 15 ? 5 : slots - 1][c];
+            sGradientEnds[2][c] = rgb[timer && slots >= 15 ? 6 : 0][c];
+            sGradientEnds[3][c] = rgb[timer && slots >= 15 ? 9 : slots - 1][c];
+        }
+    }
+    if (timer && slots >= 15) {
+        gradientRange(rgb, 0, 6, preset, 0);
+        gradientRange(rgb, 6, 4, preset, 2);
+        const u8 before[] = {1, 3, 7};
+        for (unsigned i = 0; i < 3; ++i)
+            for (unsigned c = 0; c < 3; ++c)
+                rgb[10 + i][c] = (rgb[before[i]][c] + rgb[before[i] + 1][c] + 1) / 2;
+    } else gradientRange(rgb, 0, slots, preset, 0);
+    for (u16 i = 0; i < slots; ++i) sHsl[i] = CreationColor::fromRgb(rgb[i]);
+}
+
 void resetOption(CreationStyle &style, const CreationStyle &defaults,
                  u8 (*textRgb)[3], const u8 (*defaultRgb)[3],
                  u16 defaultRgbSlots, u16 slots, u8 option, u16 target) {
-    if (option <= OPTION_TEXT_L) {
+    if (option == OPTION_GRADIENT) {
+        for (u16 i = 0; i < slots; ++i) {
+            for (unsigned c = 0; c < 3; ++c)
+                textRgb[i][c] = defaultRgb[defaultRgbSlots > 1 ? i : 0][c];
+            sHsl[i] = CreationColor::fromRgb(textRgb[i]);
+        }
+    } else if (option <= OPTION_TEXT_L) {
         const int first = target ? target - 1 : 0;
         const int end = target ? first + 1 : slots;
         for (int i = first; i < end; i++) {
@@ -176,6 +226,7 @@ const char *targetLabel(u16 target, const char *preview, const char *targetNames
 }  // namespace
 
 void CreationEditor::reset() {
+    NumberEditor::cancel(this);
     mStyle        = nullptr;
     mTextRgb      = nullptr;
     mBackupRgb    = nullptr;
@@ -215,16 +266,45 @@ void CreationEditor::begin(CreationStyle *style, u8 (*textRgb)[3],
     }
     sHsl[mTextSlots] = CreationColor::fromRgb(&mStyle->bgR);
     mRepeatMask   = 0;
-    mOption       = customMask ? OPTION_COLOR_MODE : 0;
+    mOption       = customMask ? OPTION_COLOR_MODE :
+                   (capabilities & CAP_GRADIENT) && mTargetSlots > 1 ? OPTION_GRADIENT : 0;
     mCapabilities = capabilities;
     mTextTarget   = 0;
     mRepeatFrames = 0;
     mConfirm      = CONFIRM_NONE;
     mEditing      = true;
+    sGradientPreset = 0;
+    sGradientDirectionSetting = 0xffff;
+    sCreationMinimumScale = 50;
+    sCreationMaximumScale = 200;
+    NumberEditor::cancel(this);
+}
+
+void CreationEditor::setScaleLimits(u8 minimum, u8 maximum) {
+    sCreationMinimumScale = minimum;
+    sCreationMaximumScale = maximum;
+}
+
+SettingId gradientSetting(unsigned option) {
+    if (option == OPTION_GRADIENT_DIRECTION) return (SettingId)sGradientDirectionSetting;
+    const unsigned first = sGradientDirectionSetting == SETTING_NATIVE_VERTICAL_GRADIENT
+        ? SETTING_NATIVE_GRADIENT_MOTION : SETTING_QFT_GRADIENT_MOTION;
+    return (SettingId)(first + (option == OPTION_GRADIENT_SPEED));
+}
+
+void CreationEditor::setGradientDirectionSetting(u16 setting) {
+    sGradientDirectionSetting = setting;
+    sGradientDirectionBackup = gSettings.get((SettingId)setting);
+    sGradientMotionBackup = gSettings.get(gradientSetting(OPTION_GRADIENT_MOTION));
+    sGradientSpeedBackup = gSettings.get(gradientSetting(OPTION_GRADIENT_SPEED));
 }
 
 #pragma clang section text=""
 bool CreationEditor::optionEnabled(u8 option) const {
+    if (option >= OPTION_GRADIENT_DIRECTION && option <= OPTION_GRADIENT_SPEED)
+        return sGradientDirectionSetting != 0xffff;
+    if (option == OPTION_GRADIENT)
+        return (mCapabilities & CAP_GRADIENT) && mTargetSlots > 1;
     if (option == OPTION_COLOR_MODE)
         return mCustomMask && (mCapabilities & CAP_COLOR_MODE);
     if (option <= OPTION_TEXT_L)
@@ -241,7 +321,9 @@ bool CreationEditor::optionEnabled(u8 option) const {
 void CreationEditor::moveOption(int direction) {
     const u8 first = mOption;
     do {
-        mOption = (u8)((mOption + OPTION_COUNT + direction) % OPTION_COUNT);
+        const int order = mOption >= OPTION_COLOR_MODE ? mOption - OPTION_COLOR_MODE : mOption + 3;
+        const int next = (order + OPTION_COUNT + direction) % OPTION_COUNT;
+        mOption = next < 3 ? OPTION_COLOR_MODE + next : next - 3;
     } while (!optionEnabled(mOption) && mOption != first);
 }
 
@@ -268,6 +350,12 @@ u32 CreationEditor::repeatInput(TMarioGamePad *pad) {
 u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                           const u8 (*defaultRgb)[3], u16 defaultRgbSlots) {
     if (!mEditing || !mStyle || !pad) return UPDATE_NONE;
+    if (NumberEditor::active(this)) {
+        unsigned value;
+        if (NumberEditor::update(gMenu, &value) != 1) return UPDATE_NONE;
+        mStyle->scale = (u8)value;
+        return UPDATE_CHANGED;
+    }
 
     const u32 pressed = pad->mButtons.mRapidInput;
     if (mConfirm != CONFIRM_NONE) {
@@ -279,6 +367,11 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
             }
             if (mConfirm == CONFIRM_CANCEL) {
                 *mStyle = mBackup;
+                if (sGradientDirectionSetting != 0xffff) {
+                    gSettings.set((SettingId)sGradientDirectionSetting, sGradientDirectionBackup);
+                    gSettings.set(gradientSetting(OPTION_GRADIENT_MOTION), sGradientMotionBackup);
+                    gSettings.set(gradientSetting(OPTION_GRADIENT_SPEED), sGradientSpeedBackup);
+                }
                 if (mCustomMask) *mCustomMask = mCustomMaskBackup;
                 for (u16 i = 0; i < mTextSlots; i++) {
                     for (int c = 0; c < 3; c++)
@@ -288,13 +381,19 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                 mEditing = false;
                 return UPDATE_FINISHED | UPDATE_CANCELLED;
             }
-            if (mOption == OPTION_COLOR_MODE && mCustomMask) {
+            if (mOption >= OPTION_GRADIENT_DIRECTION) {
+                gSettings.set(gradientSetting(mOption), mOption == OPTION_GRADIENT_SPEED ? 1 : 0);
+            } else if (mOption == OPTION_COLOR_MODE && mCustomMask) {
                 const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
                                             : (1u << mTextSlots) - 1u;
                 *mCustomMask &= ~mask;
             } else if (optionEnabled(mOption)) {
+                const u16 resetSlots = mOption == OPTION_GRADIENT
+                    ? (mCapabilities & CAP_TIMER_GRADIENT) ? 13 : mTargetSlots : mTextSlots;
                 resetOption(*mStyle, defaults, mTextRgb, defaultRgb,
-                            defaultRgbSlots, mTextSlots, mOption, mTextTarget);
+                            defaultRgbSlots, resetSlots, mOption, mTextTarget);
+                if (mOption == OPTION_GRADIENT) mTextTarget = 0;
+                if (mOption == OPTION_GRADIENT || mOption <= OPTION_TEXT_L) sGradientPreset = 0;
                 if (mOption <= OPTION_TEXT_L && mCustomMask &&
                     (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
                     *mCustomMask |= mTextTarget ? 1u << (mTextTarget - 1)
@@ -308,13 +407,19 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                     mStyle->scale = defaults.scale;
             }
             mConfirm = CONFIRM_NONE;
-            return UPDATE_CHANGED | (mOption <= OPTION_TEXT_L ? UPDATE_COLOR_CHANGED : 0) |
+            return UPDATE_CHANGED | (mOption <= OPTION_TEXT_L || mOption == OPTION_GRADIENT ? UPDATE_COLOR_CHANGED : 0) |
                    (mOption == OPTION_COLOR_MODE ? UPDATE_MODE_CHANGED : 0);
         }
         if (pressed & TMarioGamePad::B) mConfirm = CONFIRM_NONE;
         return UPDATE_NONE;
     }
 
+    if ((pressed & TMarioGamePad::A) && (pad->mButtons.mInput & TMarioGamePad::X) &&
+        (mCapabilities & CAP_SCALE)) {
+        NumberEditor::begin(this, "Display size", mStyle->scale,
+                            sCreationMinimumScale, sCreationMaximumScale, "%");
+        return UPDATE_NONE;
+    }
     if (pressed & TMarioGamePad::A) {
         mConfirm = CONFIRM_KEEP;
         return UPDATE_NONE;
@@ -346,9 +451,17 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
              ? repeat & (TMarioGamePad::L | TMarioGamePad::R)
              : 0);
     if (LayoutEditor::updatePositionScale(
-            layout, mStyle->x, mStyle->y, mStyle->scale, 200,
+            layout & ~(TMarioGamePad::L | TMarioGamePad::R),
+            mStyle->x, mStyle->y, mStyle->scale, sCreationMaximumScale,
             (mCapabilities & CAP_OFFSET_POSITION) ? 1280 : 640,
             (mCapabilities & CAP_OFFSET_POSITION) ? 960 : 480)) {
+        result |= UPDATE_CHANGED;
+    }
+    if (layout & (TMarioGamePad::L | TMarioGamePad::R)) {
+        const int delta = (layout & TMarioGamePad::L ? -2 : 0) +
+                          (layout & TMarioGamePad::R ? 2 : 0);
+        mStyle->scale = (u8)clampi(mStyle->scale + delta,
+                                  sCreationMinimumScale, sCreationMaximumScale);
         result |= UPDATE_CHANGED;
     }
 
@@ -364,13 +477,25 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
     if (repeat & TMarioGamePad::CSTICK_RIGHT) delta = step;
     if (!delta || !optionEnabled(mOption)) return result;
 
-    if (mOption == OPTION_COLOR_MODE) {
+    if (mOption >= OPTION_GRADIENT_DIRECTION) {
+        gSettings.cycle(gradientSetting(mOption), delta > 0 ? 1 : -1);
+        return result | UPDATE_CHANGED;
+    } else if (mOption == OPTION_GRADIENT) {
+        const bool captureEnds = !sGradientPreset;
+        sGradientPreset = delta > 0 ? sGradientPreset % 5 + 1 :
+                          sGradientPreset > 1 ? sGradientPreset - 1 : 5;
+        mTextTarget = 0;
+        applyGradient(mTextRgb, mTargetSlots, sGradientPreset,
+                      mCapabilities & CAP_TIMER_GRADIENT, captureEnds);
+        return result | UPDATE_CHANGED | UPDATE_COLOR_CHANGED;
+    } else if (mOption == OPTION_COLOR_MODE) {
         const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
                                     : (1u << mTextSlots) - 1u;
         if (delta > 0) *mCustomMask |= mask;
         else *mCustomMask &= ~mask;
         return result | UPDATE_CHANGED | UPDATE_MODE_CHANGED;
     } else if (mOption <= OPTION_TEXT_L) {
+        sGradientPreset = 0;
         adjustTextChannel(mTextRgb, mTextSlots, mTextTarget,
                            mOption - OPTION_TEXT_H, delta);
         if (mCustomMask && (mCapabilities & CAP_RGB_ENABLES_CUSTOM))
@@ -401,6 +526,7 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
 
 void CreationEditor::draw(Menu *menu, const char *title, const char *preview) const {
     if (!menu || !mStyle) return;
+    if (NumberEditor::active(this)) { NumberEditor::draw(menu); return; }
 
     const bool offsets = mCapabilities & CAP_OFFSET_POSITION;
     const int previewY = offsets ? (int)mStyle->y - 480 + 419 : mStyle->y;
@@ -409,7 +535,7 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
     for (int i = 0; i < OPTION_COUNT; i++)
         if (optionEnabled((u8)i)) optionCount++;
     const bool layoutControls = mCapabilities & (CAP_POSITION | CAP_SCALE);
-    const int optionRows = optionCount > 5 ? 5 : optionCount;
+    const int optionRows = optionCount > 10 ? (optionCount + 1) / 2 : optionCount > 5 ? 5 : optionCount;
     const bool colorModes = optionEnabled(OPTION_COLOR_MODE);
     const int panelH = 92 + optionRows * 14 + (layoutControls ? 17 : 0) +
                        (colorModes ? 14 : 0);
@@ -479,17 +605,17 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
     if (colorModes) {
         menu->drawText((mCapabilities & CAP_RGB_ENABLES_CUSTOM)
                            ? "Original: retail colours   Custom: your HSL   Colour edits select Custom"
-                           : "Original: shaded tint   Custom: flat colour   HSL works in both",
+                           : "Original: tint retail colours   Custom: your colours with black outlines",
                        18, infoY, 9, 9, Color(190, 220, 255, 255));
         infoY += 14;
     }
 
     int shown = 0;
     for (int order = 0; order < OPTION_COUNT; order++) {
-        const int i = order == 0 ? OPTION_COLOR_MODE : order - 1;
+        const int i = order < 5 ? OPTION_COLOR_MODE + order : order - 5;
         if (!optionEnabled((u8)i)) continue;
-        const int column = shown / 5;
-        const int row = shown % 5;
+        const int column = shown / optionRows;
+        const int row = shown % optionRows;
         const int x = 18 + column * 306;
         const int y = infoY + row * 14;
         const bool selected = i == mOption;
@@ -497,7 +623,9 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
             menu->fillBox(x - 3, y - 1, 294, 14, Color(90, 170, 255, 60));
             menu->drawText(">", x, y, 11, 11, Color(90, 170, 255, 255));
         }
-        const char *optionName = i == OPTION_COLOR_MODE ? "Appearance" : PackedText::at(
+        const char *optionName = i == OPTION_GRADIENT_SPEED ? "Animation speed" :
+            i == OPTION_GRADIENT_MOTION ? "Gradient animation" :
+            i == OPTION_GRADIENT_DIRECTION ? "Gradient direction" : i == OPTION_COLOR_MODE ? "Appearance" : i == OPTION_GRADIENT ? "Colour preset" : PackedText::at(
             mTargetNames && i <= OPTION_TEXT_BRIGHTNESS
                 ? kElementOptionNames : kOptionNames, i);
         menu->drawText(optionName, x + 12, y, 11, 11,
@@ -505,7 +633,13 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
                                 : Color(200, 206, 220, 255));
 
         const char *value = status;
-        if (i == OPTION_COLOR_MODE) {
+        if (i == OPTION_GRADIENT_MOTION || i == OPTION_GRADIENT_SPEED) {
+            value = gSettings.valueLabel(gradientSetting(i));
+        } else if (i == OPTION_GRADIENT_DIRECTION) {
+            value = gSettings.getBool((SettingId)sGradientDirectionSetting) ? "Vertical" : "Horizontal";
+        } else if (i == OPTION_GRADIENT) {
+            value = PackedText::at(kGradientNames, sGradientPreset);
+        } else if (i == OPTION_COLOR_MODE) {
             const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
                                         : (1u << mTextSlots) - 1u;
             value = !(*mCustomMask & mask) ? "Original" :
@@ -538,16 +672,26 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
         const char *controls = SUSAMUNE_GLYPH_C " U" SUSAMUNE_GLYPH_SLASH
                                "D Option   " SUSAMUNE_GLYPH_C " L"
                                SUSAMUNE_GLYPH_SLASH
-                               "R Adjust   START: Next   " SUSAMUNE_GLYPH_X
+                               "R Change   START: Next part   " SUSAMUNE_GLYPH_X
                                "+START: Previous";
         menu->drawText(controls, 18, panelY + panelH - 44, 9, 9,
                        Color(150, 170, 205, 255));
-        menu->drawText("Hold " SUSAMUNE_GLYPH_Y " while adjusting: step 1 (normal 4)",
+        menu->drawText(mOption == OPTION_GRADIENT_MOTION || mOption == OPTION_GRADIENT_SPEED
+                           ? "Flow moves your colours. Pulse gently dims/brightens. Slow 8s / Normal 4s / Fast 2s."
+                           : mOption == OPTION_GRADIENT_DIRECTION
+                           ? (mCapabilities & CAP_TIMER_GRADIENT)
+                                 ? "Top/bottom colours: normal digits 1/6; countdown digits 1/4."
+                                 : "Vertical uses the first colour at the top and the last at the bottom."
+                           : mOption == OPTION_GRADIENT
+                           ? (mCapabilities & CAP_TIMER_GRADIENT)
+                                 ? "All digits + separators. TIME image/background stay unchanged."
+                                 : "All text. Blend ends: first to last colour. One colour: use first colour."
+                           : "Hold " SUSAMUNE_GLYPH_Y " while adjusting: step 1 (normal 4)",
                        18, panelY + panelH - 32, 9, 9,
                        Color(150, 170, 205, 255));
     }
     if (layoutControls)
-        menu->drawText("D-pad Move   L" SUSAMUNE_GLYPH_SLASH "R Size",
+        menu->drawText("D-pad Move   L" SUSAMUNE_GLYPH_SLASH "R Size   X+A: Enter size",
                        18, panelY + panelH - 17, 9, 9,
                        Color(150, 170, 205, 255));
     const char *finish = SUSAMUNE_GLYPH_A " Keep  " SUSAMUNE_GLYPH_B
@@ -606,6 +750,9 @@ void drawTextLine(Menu *menu, const CreationStyle &style,
     if (shadow) {
         menu->drawText(text, x + 1, y + 1, size, size, Color(0, 0, 0, 220));
     }
+    const bool vertical = gQftDisplay.verticalGradient(textRgb);
+    const u8 motion = gQftDisplay.animatedGradient(textRgb) ? GradientMotion::mode(false) : 0;
+    const u16 phase = motion ? GradientMotion::phase(false) : 0;
 
     char run[192];
     int byte = 0;
@@ -616,7 +763,9 @@ void drawTextLine(Menu *menu, const CreationStyle &style,
         const int startByte = byte;
         const u16 logicalSlot = (u16)(firstSlot + glyph);
         const u16 colorSlot = logicalSlot < textSlots ? logicalSlot : textSlots - 1;
-        const u8 *rgb = textRgb[colorSlot];
+        u8 moving[3];
+        if (motion) GradientMotion::sample(textRgb, textSlots, colorSlot, motion, phase, moving);
+        const u8 *rgb = motion ? moving : textRgb[colorSlot];
         const bool selectedRun = logicalSlot == selectedSlot;
 
         do {
@@ -626,17 +775,33 @@ void drawTextLine(Menu *menu, const CreationStyle &style,
             const u16 nextLogical = (u16)(firstSlot + glyph);
             const u16 nextSlot = nextLogical < textSlots ? nextLogical : textSlots - 1;
             if (selectedRun || nextLogical == selectedSlot) break;
-            if (textRgb[nextSlot][0] != rgb[0] || textRgb[nextSlot][1] != rgb[1] ||
-                textRgb[nextSlot][2] != rgb[2]) break;
+            if (motion && !vertical) break;
+            if (!vertical && (textRgb[nextSlot][0] != rgb[0] || textRgb[nextSlot][1] != rgb[1] ||
+                textRgb[nextSlot][2] != rgb[2])) break;
         } while (byte - startByte + 1 < (int)sizeof(run));
 
         int runBytes = byte - startByte;
         for (int i = 0; i < runBytes; i++) run[i] = text[startByte + i];
         run[runBytes] = '\0';
-        menu->drawText(run, drawX, y, size, size,
-                       Color(lit(rgb[0], style.textBrightness),
-                             lit(rgb[1], style.textBrightness),
-                             lit(rgb[2], style.textBrightness), style.textA));
+        if (vertical) {
+            u8 ends[2][3];
+            if (motion) {
+                GradientMotion::sample(textRgb, textSlots, 0, motion, phase, ends[0]);
+                GradientMotion::sample(textRgb, textSlots, textSlots - 1, motion, phase, ends[1]);
+            }
+            const u8 *first = motion ? ends[0] : textRgb[0];
+            const u8 *last = motion ? ends[1] : textRgb[textSlots - 1];
+            menu->drawTextVertical(run, drawX, y, size,
+                Color(lit(first[0], style.textBrightness), lit(first[1], style.textBrightness),
+                      lit(first[2], style.textBrightness), style.textA),
+                Color(lit(last[0], style.textBrightness), lit(last[1], style.textBrightness),
+                      lit(last[2], style.textBrightness), style.textA));
+        } else {
+            menu->drawText(run, drawX, y, size, size,
+                           Color(lit(rgb[0], style.textBrightness),
+                                 lit(rgb[1], style.textBrightness),
+                                 lit(rgb[2], style.textBrightness), style.textA));
+        }
         const int runWidth = Menu::textWidth(run, size);
         if (selectedRun) arrowCentre = drawX + runWidth / 2;
         drawX += runWidth;

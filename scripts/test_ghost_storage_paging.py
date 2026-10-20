@@ -24,6 +24,11 @@ class GhostStoragePagingTests(unittest.TestCase):
 #define IS_EMULATOR 0
 #define SUSAMUNE_VERSION_JP 1
 #include "susamune/ghost_storage.hxx"
+#include "susamune/ghost_camera.h"
+#include "susamune/transfer_lease.hxx"
+#include "susamune/transfer_publication.h"
+#include "susamune/transfer_layout.h"
+#include "susamune/state_storage.h"
 extern "C" void *memcpy(void *out,const void *in,size_t size) {
     u8 *to=(u8*)out;const u8 *from=(const u8*)in;
     for(size_t i=0;i<size;i++)to[i]=from[i];return out;
@@ -38,6 +43,11 @@ extern "C" int memcmp(const void *a,const void *b,size_t size) {
 static SusamuneGhostStorageMailbox mailbox;
 static SusamuneGhostCatalogPage pages[2];
 static u8 payload[SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE];
+static u8 sharedPayload[SUSAMUNE_TRANSFER_STAGE_SIZE];
+alignas(32) static TWLeaseControl testTransfer;
+#define SUSAMUNE_TRANSFER_CLIENT_WIRE (&testTransfer)
+#undef SUSAMUNE_TRANSFER_STAGE_PPC_BASE
+#define SUSAMUNE_TRANSFER_STAGE_PPC_BASE (sharedPayload)
 #undef SUSAMUNE_GHOST_STORAGE_PPC_PTR
 #undef SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR
 #undef SUSAMUNE_GHOST_CATALOG_CACHE_PPC_BASE
@@ -52,6 +62,8 @@ static const u8 *canonicalExport;
 static u32 canonicalExportSize;
 void DCInvalidateRange(void*,u32){}
 void DCFlushRange(void*,u32){}
+bool OSDisableInterrupts(){return true;}
+void OSRestoreInterrupts(bool){}
 namespace CrashReport { void note(u32,u32,u32){} }
 struct Menu {void toast(const char*){}};static Menu *gMenu;
 namespace ILing {
@@ -83,6 +95,8 @@ namespace Ghost {
     bool importObserverTrack(const void*,u32,bool){observerImports++;return acceptImport;}
 }
 '''
+        source += re.sub(r'^#include[^\n]*\n', '',
+                         (ROOT / 'src/transfer_lease.cpp').read_text(), flags=re.MULTILINE)
         production = (ROOT / "src/ghost_storage.cpp").read_text(encoding="utf-8")
         source += re.sub(r'^#include[^\n]*\n', '', production, flags=re.MULTILINE)
         source += r'''
@@ -90,6 +104,10 @@ using namespace GhostStorage;
 #define CHECK(value) do { if(!(value)) return __LINE__; } while(0)
 #define EXPORT extern "C" __declspec(dllexport) int
 static void reset() {
+    TransferLease::sPpc={};TransferLease::sControl={};TransferLease::sPublisher={};
+    TransferLease::sMode=TransferLease::UNINITIALIZED;TransferLease::sOwner=0;TransferLease::sShared=false;
+    testTransfer={};sTransferToken={};sTransferBorrow={};sTransferPhase=TRANSFER_NONE;
+    sSharedBackend=sTransferFailed=false;sPendingCommand=SUSAMUNE_GHOST_CMD_NONE;
     memset(&mailbox,0,sizeof(mailbox));memset(payload,0,sizeof(payload));
     testProfile=playbackImports=observerImports=observerStops=checkpoints=0;
     pinned=false;preparing=hasTrack=acceptImport=true;
@@ -162,19 +180,22 @@ static void versionInfo(SusamuneGhostSlotInfo *out,u16 version,bool atLimit=fals
     out->requiredFeatures=version==3?SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V3:
         version==4?SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4:
         version==5?SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5:
-                   SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6;
+        version==6?SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6:
+        version==7?SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7:
+                   SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8;
     out->sampleCodec=version==3?SUSAMUNE_GHOST_CODEC_RAW:
                                SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
     if(atLimit) {
-        out->sampleCount=version==6?SUSAMUNE_GHOST_V6_MAX_SAMPLE_COUNT:
+        out->sampleCount=version>=6?SUSAMUNE_GHOST_V6_MAX_SAMPLE_COUNT:
                                    SUSAMUNE_GHOST_MAX_SAMPLE_COUNT;
-        out->durationQf=version==6?SUSAMUNE_GHOST_V6_MAX_DURATION_QF:
+        out->durationQf=version>=6?SUSAMUNE_GHOST_V6_MAX_DURATION_QF:
                                   SUSAMUNE_GHOST_MAX_DURATION_QF;
     }
     out->payloadSize=SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET+
         out->sampleCount*SUSAMUNE_GHOST_POSE_SAMPLE_SIZE;
     if(version>=5)out->payloadSize+=SUSAMUNE_GHOST_TEACHING_HEADER_SIZE+
-        2*(version==6?SUSAMUNE_GHOST_V6_INPUT_SAMPLE_SIZE:SUSAMUNE_GHOST_INPUT_SAMPLE_SIZE);
+        2*(version>=6?SUSAMUNE_GHOST_V6_INPUT_SAMPLE_SIZE:SUSAMUNE_GHOST_INPUT_SAMPLE_SIZE);
+    if(version==8)out->payloadSize+=32;
 }
 EXPORT versioned_catalog(int version,int imported,int atLimit) {
     reset();CHECK(refreshPage(imported,0));
@@ -213,6 +234,15 @@ EXPORT malformed_v6(int test) {
     CHECK(!memcmp(statusText(),"Ghost catalog failed validation",32));
     CHECK(refresh());makePage(1);versionInfo(&((SusamuneGhostCatalogPage*)payload)->entries[0].info,6);
     ack();CHECK(catalogReady()&&!busy());return 0;
+}
+EXPORT malformed_v8(int test) {
+    reset();CHECK(refreshPage(false,0));makePage(1);
+    SusamuneGhostSlotInfo *raw=&((SusamuneGhostCatalogPage*)payload)->entries[0].info;
+    versionInfo(raw,8);
+    if(test==0)raw->requiredFeatures=SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7;
+    else raw->payloadSize=SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET+
+        raw->sampleCount*SUSAMUNE_GHOST_POSE_SAMPLE_SIZE+32+31;
+    ack();CHECK(!catalogReady()&&!busy());return 0;
 }
 EXPORT saved_v6_refresh() {
     reset();ready(false,0,1);CHECK(saveNew(42));ack(0,1,801);
@@ -370,6 +400,8 @@ EXPORT identity_integrity() {
 }
 '''
         source += getattr(cls, "bridge_source", "")
+        source = getattr(cls, "fixture_transform", lambda s: s)(source)
+        cls.fixture_source = source
         cfile = work / "paging.cpp"
         cfile.write_text(source, encoding="ascii")
         library = work / "paging.dll"
@@ -390,7 +422,7 @@ EXPORT identity_integrity() {
         self.assertEqual(self.dll.wide_catalog(), 0)
 
     def test_supported_formats_load_at_normal_and_version_specific_limits(self):
-        for version in range(3, 7):
+        for version in range(3, 9):
             for imported in range(2):
                 for at_limit in range(2):
                     with self.subTest(version=version, imported=imported, at_limit=at_limit):
@@ -401,6 +433,9 @@ EXPORT identity_integrity() {
 
     def test_malformed_v6_metadata_is_rejected_and_refresh_can_recover(self):
         self.check_cases("malformed_v6", range(6))
+
+    def test_v8_catalog_requires_camera_feature_and_header_space(self):
+        self.check_cases("malformed_v8", range(2))
 
     def test_saving_v6_refreshes_a_loadable_catalog(self):
         self.assertEqual(self.dll.saved_v6_refresh(), 0)

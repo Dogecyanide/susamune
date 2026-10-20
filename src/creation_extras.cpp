@@ -1,4 +1,5 @@
 #include "susamune/creation_extras.hxx"
+#include "susamune/gradient_motion.hxx"
 #include "susamune/retail_input.hxx"
 
 #include "Dolphin/mem.h"
@@ -400,7 +401,7 @@ const CreationStyle &CreationExtras::defaultPracticeStyle(unsigned display) {
 __attribute__((section(".foxtrot.text"))) void CreationExtras::resetDefaults() {
     Creation::fillWhite(mColors, SUSAMUNE_CREATION_COLOR_COUNT);
     Creation::fillWhite(mDefaultColors, SUSAMUNE_CREATION_COLOR_COUNT);
-    const u8 menuBg[] = {24, 28, 40};
+    const u8 menuBg[] = {230, 230, 190};
     copyRgb(mColors[SUSAMUNE_CREATION_MENU_BG], menuBg);
     copyRgb(mDefaultColors[SUSAMUNE_CREATION_MENU_BG], menuBg);
     for (int word = 0; word < SUSAMUNE_CREATION_WORD_COUNT; word++) {
@@ -981,6 +982,7 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
 }
 
 bool CreationExtras::nativeTimerColorsEnabled() const {
+    if (gSettings.getBool(SETTING_NATIVE_VERTICAL_GRADIENT) || GradientMotion::mode(true)) return true;
     for (unsigned i = 0; i < 15; ++i)
         if ((mNativeTimerCustomMask & (1u << i)) ||
             (mColorPresent & SUSAMUNE_CREATION_COLOR(nativeTimerColorSlot(i))))
@@ -1001,6 +1003,36 @@ const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane, bool *custom) cons
         }
     }
     return nullptr;
+}
+
+bool CreationExtras::nativeTimerGradient(const J2DPane *pane, u8 colors[2][3]) const {
+    const bool vertical = gSettings.getBool(SETTING_NATIVE_VERTICAL_GRADIENT);
+    const u8 motion = GradientMotion::mode(true);
+    if ((!vertical && !motion) || rngControlInvalidatesIl())
+        return false;
+    for (unsigned i = 0; i < 13; ++i) {
+        if (mHudPictures[11 + i] != pane) continue;
+        const bool countdown = (i >= 6 && i < 10) || i == 12;
+        if (!motion) {
+            copyRgb(colors[0], mColors[nativeTimerColorSlot(countdown ? 6 : 0)]);
+            copyRgb(colors[1], mColors[nativeTimerColorSlot(countdown ? 9 : 5)]);
+        } else {
+            // Palette order follows the visible digits, including their separators.
+            static const u8 order[] = {0, 1, 10, 2, 3, 11, 4, 5, 6, 7, 12, 8, 9};
+            u8 palette[8][3];
+            const unsigned first = countdown ? 8 : 0, count = countdown ? 5 : 8;
+            unsigned slot = 0;
+            for (unsigned p = 0; p < count; ++p) {
+                copyRgb(palette[p], mColors[nativeTimerColorSlot(order[first + p])]);
+                if (order[first + p] == i) slot = p;
+            }
+            const u16 phase = GradientMotion::phase(true);
+            GradientMotion::sample(palette, count, vertical ? 0 : slot, motion, phase, colors[0]);
+            GradientMotion::sample(palette, count, vertical ? count - 1 : slot, motion, phase, colors[1]);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool CreationExtras::beginHudDraw(J2DScreen *screen) {
@@ -1107,8 +1139,10 @@ void CreationExtras::beginNativeTimerEditor() {
                   kNativeTimerNames, CreationEditor::CAP_POSITION |
                   CreationEditor::CAP_SCALE | CreationEditor::CAP_TEXT_ALPHA |
                   CreationEditor::CAP_BRIGHTNESS | CreationEditor::CAP_TEXT_COLOR |
-                  CreationEditor::CAP_OFFSET_POSITION | CreationEditor::CAP_COLOR_MODE,
+                  CreationEditor::CAP_OFFSET_POSITION | CreationEditor::CAP_COLOR_MODE |
+                  CreationEditor::CAP_GRADIENT | CreationEditor::CAP_TIMER_GRADIENT,
                   &mNativeTimerCustomMask);
+    mEditor.setGradientDirectionSetting(SETTING_NATIVE_VERTICAL_GRADIENT);
 }
 
 void CreationExtras::beginTimerCharacterEditor() {
@@ -1309,8 +1343,10 @@ void CreationExtras::beginWordEditor(int index) {
     mEditFirst = 0;
     mEditWord = (u8)index;
     mEditTitle = "Custom text style";
+    const u16 glyphs = Creation::glyphCount(mWords[index]);
     mEditor.begin(&mWordStyle[index], mWordRgb[index], mWordBackup,
-                  SUSAMUNE_CREATION_WORD_CHARS, mWordLength[index]);
+                  SUSAMUNE_CREATION_WORD_CHARS, glyphs, nullptr,
+                  CreationEditor::CAP_ALL | (glyphs > 1 ? CreationEditor::CAP_GRADIENT : 0));
 }
 
 void CreationExtras::beginKeyboard(int index) {

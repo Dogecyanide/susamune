@@ -19,6 +19,8 @@ public:
     };
 
     SavestateManager();
+    bool initSharedStore();
+    bool sharedStoreReady() const;
 
     u32 activeSlot() const;
     u32 saveSlot() const;
@@ -34,6 +36,7 @@ public:
     bool clearSlot(u32 slot, u32 expectedGeneration);
 
     static bool diskBusy();
+    bool loadPending() const;
     static bool saveDialogOpen();
     void updateDisk();
     struct TransferResult {
@@ -85,6 +88,7 @@ public:
     bool loadSlot(u32 slot, u32 expectedGeneration);
 
 private:
+    bool loadOrdinarySlot(u32 slot, u32 expectedGeneration);
     void feedback(const char *debug, const char *message);
     bool beginSDExport(u32 slot, u32 expectedGeneration, const char *name,
                        const SusamuneTasRequest *project);

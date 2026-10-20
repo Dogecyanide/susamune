@@ -51,6 +51,7 @@ still dropped, since those sections are regenerated wholesale.
 
 */
 
+#include "susamune/hoverless.h"
 #include "SusamuneCfg.h"
 #include "string.h"
 #include "alloc.h"
@@ -878,6 +879,8 @@ static int WritePbProfilesFile(const struct SusamuneILingProfilesCfg *profiles)
 	}
 	return ret;
 }
+
+#include "SusamuneHoverless.inc"
 
 // ---------------------------------------------------------------------
 // Global achievement/statistics binary files
@@ -5173,6 +5176,11 @@ static void ApplyMetadataStyleKey(struct SusamuneMetadataStyleCfg *cfg,
 		cfg->reserved0[3] = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_COMPACT;
 	}
+	else if (strcmp(key, "value_gap") == 0 && v8 <= 32)
+	{
+		cfg->reserved0[4] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_VALUE_GAP;
+	}
 }
 
 static bool ParseCreationWordKey(const char *key, u32 *word, const char **field)
@@ -5543,6 +5551,27 @@ static void ApplyMovementStyleKey(struct SusamuneMovementStyleCfg *cfg,
 	                             SUSAMUNE_DUST_STYLE_COLOR_COUNT);
 }
 
+static void ApplyFinishBreakdownKey(const char *key, const char *text)
+{
+	struct SusamuneFinishBreakdownCfg next = *SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR;
+	struct SusamuneMovementOverlayStyleCfg style;
+	u8 value;
+	if (strncmp(key, "finish_breakdown_", 17) != 0) return;
+	if (strcmp(key + 17, "rows") == 0) {
+		if (!ParseQftU8(text, &value)) return;
+		next.rows = value;
+	} else if (strcmp(key + 17, "duration_half_seconds") == 0) {
+		if (!ParseQftU8(text, &value)) return;
+		next.halfSeconds = value;
+	} else {
+		memset(&style, 0, sizeof(style));
+		memcpy(&style, &next.x, 21);
+		if (!ApplyMovementOverlayStyleKey(&style, "finish_breakdown", key, text, 3)) return;
+		memcpy(&next.x, &style, 21);
+	}
+	if (SusamuneFinishBreakdownValid(&next)) *SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR = next;
+}
+
 static void ApplyFailureBannerStyleKey(struct SusamuneWallkickStyleCfg *wallkick,
 	const char *key, const char *text)
 {
@@ -5808,6 +5837,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyCreationKey(&cfg->creation, Trim(line), Trim(eq + 1));
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
+			ApplyFinishBreakdownKey(Trim(line), Trim(eq + 1));
 			ApplyFailureBannerStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			practiceStylesPresent |= ApplyPracticeDisplayStyleKey(Trim(line), Trim(eq + 1));
 			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
@@ -6052,6 +6082,8 @@ static void EmitMetadataDisplaySection(FIL *f, int *err, const struct SusamuneCf
 	                    SUSAMUNE_METADATA_STYLE_COLUMNS);
 	EmitMetadataStyleU8(f, err, "compact", s->reserved0[3], s->present,
 	                    SUSAMUNE_METADATA_STYLE_COMPACT);
+	EmitMetadataStyleU8(f, err, "value_gap", s->reserved0[4], s->present,
+	                    SUSAMUNE_METADATA_STYLE_VALUE_GAP);
 	for (i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++)
 	{
 		if (s->slotPresent[i >> 3] & (1u << (i & 7)))
@@ -6165,6 +6197,19 @@ static void EmitPracticeDisplayStyles(FIL *f, int *err)
 		memcpy(&style, &cfg->entries[i], sizeof(cfg->entries[i]));
 		EmitMovementOverlayStyle(f, err, PracticeDisplayKeys[i], &style, SUSAMUNE_PRACTICE_DISPLAY_COLOR_COUNT);
 	}
+}
+
+static void EmitFinishBreakdown(FIL *f, int *err)
+{
+	const struct SusamuneFinishBreakdownCfg *cfg = SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR;
+	struct SusamuneMovementOverlayStyleCfg style;
+	char line[80];
+	if (!SusamuneFinishBreakdownValid(cfg)) return;
+	memset(&style, 0, sizeof(style));
+	memcpy(&style, &cfg->x, 21);
+	EmitMovementOverlayStyle(f, err, "finish_breakdown", &style, 3);
+	Emit(f, err, line, (u32)_sprintf(line, "finish_breakdown_rows = %u\r\n", cfg->rows));
+	Emit(f, err, line, (u32)_sprintf(line, "finish_breakdown_duration_half_seconds = %u\r\n", cfg->halfSeconds));
 }
 
 static void EmitFailureBannerStyle(FIL *f, int *err,
@@ -6389,6 +6434,7 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitFluddColors(f, err, FluddColorsBlock());
 	EmitILEpisodes(f, err);
 	EmitPracticeDisplayStyles(f, err);
+	EmitFinishBreakdown(f, err);
 	EmitFailureBannerStyle(f, err, &cfg->wallkickStyle);
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
@@ -6941,6 +6987,7 @@ void SusamuneCfgInit(void)
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->version = SUSAMUNE_IL_EPISODE_VERSION;
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->count = SUSAMUNE_IL_EPISODE_COUNT;
 	SusamunePracticeDisplayStyleInit(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR);
+	SusamuneFinishBreakdownInit(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR);
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -6959,12 +7006,15 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
 	                 SUSAMUNE_CFG_FLAG_IL_EPISODES |
 	                 SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE | SUSAMUNE_CFG_FLAG_SETTINGS_TAIL |
+	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG |
 	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
 	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED |
 	                 MOONSHINE_LAYOUT_CFG_FLAG;
 	if (InitPbFiles(cfg, region))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_ILING_PBS |
 		              SUSAMUNE_CFG_FLAG_ILING_PROFILES;
+	InitHoverless(region);
+	cfg->flags |= SUSAMUNE_HOVERLESS_FLAG;
 	if (InitProgressFiles(progress))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_PROGRESS;
 	if (InitStagePlaylistFiles(playlists))
@@ -7054,6 +7104,7 @@ void SusamuneCfgInit(void)
 	sync_after_write(fluddColors, sizeof(*fluddColors));
 	sync_after_write(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_after_write(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
+	sync_after_write(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
 	sync_after_write((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
@@ -7098,6 +7149,7 @@ void SusamuneCfgService(void)
 	sync_before_read(FluddColorsBlock(), sizeof(struct SusamuneFluddColorsCfg));
 	sync_before_read(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_before_read(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
+	sync_before_read(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
 	sync_before_read((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	seq = cfg->saveSeq;
 
@@ -7199,7 +7251,7 @@ bool SusamunePbPending(void)
 
 	if (!CfgReady)
 		return false;
-	return PbSavePending(profiles) || ProgressSavePending(progress) ||
+	return PbSavePending(profiles) || HoverlessPending() || ProgressSavePending(progress) ||
 	       StagePlaylistSavePending(playlists) || StageTargetSavePending(targets) ||
 	       SplitStatsSavePending(splitStats);
 }
@@ -7236,6 +7288,8 @@ void SusamunePbService(void)
 		sync_after_write(&profiles->ackSeq, 32);
 		return;
 	}
+
+	if (HoverlessPending()) { ServiceHoverless(); return; }
 
 	if (ProgressSavePending(progress))
 	{

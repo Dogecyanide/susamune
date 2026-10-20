@@ -45,7 +45,8 @@ f32 parameter(u8 type, unsigned offset, f32 fallback) {
     return params ? *reinterpret_cast<const f32 *>(params + offset) : fallback;
 }
 
-void advance(Water &water, const Ghost::VisualState &state, unsigned runner) {
+void advance(Water &water, const Ghost::VisualState &state, unsigned runner,
+             bool historical = false) {
     if (!water.ready || water.token != state.recordingToken ||
         state.visualQf < water.qf || state.visualQf - water.qf > 24) {
         memset(&water, 0, sizeof(water));
@@ -85,29 +86,59 @@ void advance(Water &water, const Ghost::VisualState &state, unsigned runner) {
     water.previous.set(state.x, state.y, state.z);
     if (!(state.fludd.mode & SUSAMUNE_GHOST_FLUDD_SPRAYING)) return;
     TVec3f aim;
-    direction(state.fludd, aim);
-    const f32 power = state.fludd.power;
-    const unsigned nozzle = state.fludd.mode & 7u;
+    const bool yoshi = (state.fludd.mode & SUSAMUNE_GHOST_VISUAL_YOSHI) != 0;
+    const bool burst = (state.fludd.mode & SUSAMUNE_GHOST_FLUDD_BURST) != 0;
+    const unsigned nozzle = yoshi ? 3 : state.fludd.mode & 7u;
     const TNozzleBase *source = nozzle < 6 && gpMarioOriginal && gpMarioOriginal->mFludd
         ? gpMarioOriginal->mFludd->mNozzleList[nozzle] : nullptr;
-    for (unsigned i = 0; i < 4; ++i) {
+    if (burst && gpMarioOriginal && gpMarioOriginal->mFludd)
+        source = yoshi ? &gpMarioOriginal->mFludd->mNozzleYoshiDeformBomb
+                       : &gpMarioOriginal->mFludd->mNozzleDeformBomb;
+    f32 power = state.fludd.power;
+    if (yoshi) {
+        const f32 pitch = static_cast<s8>(state.fludd.power) * 0.0245436926f;
+        const f32 yaw = state.yaw * 0.000095873799f;
+        aim.set(sinf(yaw) * cosf(pitch), -sinf(pitch), cosf(yaw) * cosf(pitch));
+        power = source ? source->mEmitParams.mEmitPow.get() : 50;
+    } else direction(state.fludd, aim);
+    unsigned count = 4;
+    if (burst && source) {
+        const f32 number = source->mEmitParams.mNum.get();
+        count = number >= 24 ? 24 : number > 4 ? static_cast<unsigned>(number) : 4;
+    }
+    for (unsigned i = 0; i < count; ++i) {
         Drop &drop = water.drops[water.next++ % kDrops];
         // Local deterministic scatter only: never consume Sunshine's RNG or
         // call its water emitter, collision responses, sound, or goop logic.
         u32 seed = state.visualQf * 1664525u + i * 1013904223u;
-        drop.position.set(state.x + state.fludd.offset[0] * 2,
-                          state.y + state.fludd.offset[1] * 2,
-                          state.z + state.fludd.offset[2] * 2);
+        drop.position.set(state.x + (yoshi ? aim.x * 65 : state.fludd.offset[0] * 2),
+                          state.y + (yoshi ? 65 : state.fludd.offset[1] * 2),
+                          state.z + (yoshi ? aim.z * 65 : state.fludd.offset[2] * 2));
         // Use the rendered muzzle. Both hover outlets share the recorded aim;
         // no additional emission or gameplay actor is created.
-        GhostModel::emissionPoint(runner, nozzle, i, drop.position);
+        if (!historical) GhostModel::emissionPoint(runner, nozzle, i, drop.position);
         drop.velocity.set(aim.x * power + inheritedX + ((s32)(seed & 255) - 127) * 0.016f,
                           aim.y * power + ((s32)((seed >> 8) & 255) - 127) * 0.016f,
                           aim.z * power + inheritedZ + ((s32)((seed >> 16) & 255) - 127) * 0.016f);
+        if (burst && source) {
+            const f32 spread = source->mEmitParams.mDirTremble.get() / 127.0f;
+            TVec3f direction;
+            direction.set(aim.x + ((s32)(seed & 255) - 127) * spread,
+                          aim.y + ((s32)((seed >> 8) & 255) - 127) * spread,
+                          aim.z + ((s32)((seed >> 16) & 255) - 127) * spread);
+            const f32 length = ghostSquareRoot(direction.x * direction.x +
+                direction.y * direction.y + direction.z * direction.z);
+            const f32 speed = power + ((s32)((seed >> 24) & 255) - 127) *
+                (source->mEmitParams.mPowTremble.get() / 127.0f);
+            if (length > 0.0001f)
+                drop.velocity.set(direction.x * speed / length + inheritedX,
+                                  direction.y * speed / length,
+                                  direction.z * speed / length + inheritedZ);
+        }
         drop.type = source ? source->mEmitParams.mType.get() : 0;
         const f32 size = source ? source->mEmitParams.mSize.get() : 50;
         drop.size = size > 255 ? 255 : size > 0 ? (u8)size : 50;
-        const f32 age = dt * i * 0.25f;
+        const f32 age = dt * i / count;
         const f32 gravity = parameter(drop.type, 0x54, -0.4f);
         drop.position.x += drop.velocity.x * age;
         drop.position.y += drop.velocity.y * age + gravity * age * (age + 1) * 0.5f;
@@ -116,6 +147,17 @@ void advance(Water &water, const Ghost::VisualState &state, unsigned runner) {
         drop.life = parameter(drop.type, 0x68, 255) - age;
         drop.splash = false;
     }
+}
+
+void rebuildWatchWater(Water &water, const Ghost::VisualState &state, unsigned runner) {
+    memset(&water, 0, sizeof(water));
+    // Rebuild a bounded visual tail using recorded origins, never today's joints.
+    const u32 first = state.visualQf > 280 ? state.visualQf - 280 : 0;
+    for (u32 qf = first; qf < state.visualQf; qf += 4) {
+        Ghost::VisualState past;
+        if (Ghost::observerVisualAt(runner, qf, &past)) advance(water, past, runner, true);
+    }
+    advance(water, state, runner, true);
 }
 
 void setup(bool highlight) {
@@ -195,17 +237,24 @@ void draw(JDrama::TGraphics *graphics) {
         bool configured = false;
         for (unsigned runner = 0; runner < 2; ++runner) {
             Ghost::VisualState state;
+#if TIMEWARP_LIVE_RACING
+            const bool visible = Ghost::renderVisualState(runner, &state);
+#else
             const bool visible = runner ? Ghost::secondaryVisualState(&state) : Ghost::visualState(&state);
+#endif
             Water &water = sWater.runner[runner];
             // The water pass can precede the player's model-entry cue. Availability
             // must not depend on a submitted latch that is cleared each frame.
             if (!visible || !state.visible || !GhostModel::available() ||
                 !gSettings.getBool(SETTING_GHOST_DISPLAY) ||
-                !(state.fludd.mode & SUSAMUNE_GHOST_FLUDD_PRESENT)) {
+                !(state.fludd.mode & (SUSAMUNE_GHOST_FLUDD_PRESENT | SUSAMUNE_GHOST_VISUAL_YOSHI))) {
                 water.ready = false;
                 continue;
             }
-            advance(water, state, runner);
+            if (Ghost::observerActive() && (!water.ready || water.token != state.recordingToken ||
+                state.visualQf < water.qf || state.visualQf - water.qf > 24))
+                rebuildWatchWater(water, state, runner);
+            else advance(water, state, runner);
             for (unsigned i = 0; i < kDrops; ++i) {
                 const Drop &drop = water.drops[i];
                 if (drop.life <= 0) continue;

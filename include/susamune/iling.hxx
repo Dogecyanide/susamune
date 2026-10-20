@@ -35,6 +35,15 @@ bool sameEpisodeShine(int selectedEntry, int completedEntry);
 s32 pbQf(int entry);
 // Stable across catalogue reorderings; shared by PBs and per-level targets.
 int persistentSlot(int entry);
+enum OnlinePool : u8 {
+    ONLINE_POOL_ANY_PERCENT,
+    ONLINE_POOL_ALL,
+    ONLINE_POOL_NON_ANY_PERCENT,
+    ONLINE_POOL_COUNT,
+};
+// Catalogue identity, independent of episode choices and PB profile.
+bool onlinePoolContains(int entry, unsigned pool);
+int onlineDefaultEpisode(int entry);
 void formatTime(s32 qf, char *out, u32 size,
                 const char *format = "%d:%02d.%03d");
 // Available only on Any% and only after every route IL has a PB.
@@ -66,6 +75,10 @@ bool preserveRetailExitArea();
 bool copySessionDeathRetryDest(int entry, LevelWarp::Dest *out);
 
 bool start(int entry);
+#if TIMEWARP_LIVE_RACING
+// Use the agreed route without changing the user's saved episode choice.
+bool startOnline(int entry, int episode);
+#endif
 bool start(int entry, u32 approvedDiscardToken);
 bool copyWarpDiscardName(int entry, char *out, u32 size, u32 *outToken);
 // A course warp can be cancelled by its final ghost-ownership check after the

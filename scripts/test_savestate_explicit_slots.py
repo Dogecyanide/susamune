@@ -15,6 +15,8 @@ FIXTURE = r'''
 #include "susamune/savestate.hxx"
 #undef private
 #include "susamune/state_pool_memory.h"
+#include "susamune/state_work_lease.hxx"
+#include "susamune/state_export_plan.h"
 typedef long long OSTime;
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++=(u8)c;return d;}
@@ -23,10 +25,30 @@ static int snprintf(char*d,__SIZE_TYPE__ n,const char*,...){if(n)*d=0;return 0;}
 struct Header {u32 magic;u8 area_id,episode_id;};
 struct StoredState {Header header;u32 archiveProfile,generation,rawSize,packedSize,parentEpisode,metadataTag;};
 static StoredState sSlots[3],sCandidate;static StateSlotPool sPool;
+static u8 poolBytes[120000];static StatePoolMemory sPoolMemory;
+static u32 sDurableSlots,sPackedChecksums[3];
+namespace TransferLease {static bool sharedMap(){return false;}}
+static u32 sNextGeneration,sSharedStore;
+static u32 sharedIdentity(u32){return 0;}
+namespace StateStore {static bool clear(u32,u32,u32,u32){return false;}}
+namespace StateWorkLease {
+static bool allowed=true,held;static u32 claims,releases,errors;
+Guard::Guard(bool needed):mHeld(!needed||allowed){if(needed){++claims;if(mHeld)held=true;}}
+Guard::~Guard(){if(mHeld){if(!held)++errors;held=false;++releases;}}
+}
+static u32 nextGeneration(){return 555;}
+namespace PracticeSession{void onSavestateCleared(u32,u32){if(!StateWorkLease::held)++StateWorkLease::errors;}}
+static bool checkedClear(StateSlotPool*p,StatePoolMemory*m,u32 slot){
+ if(!StateWorkLease::held){++StateWorkLease::errors;return false;}return StateSlotPoolClearBanked(p,m,slot);}
 static u32 metadataTag(const StoredState &s){return s.generation^s.archiveProfile;}
 static u32 sActiveSlot,sLoadSlot,sDiskSlot,sDiskGeneration,sDiskPoolUsed,sDiskScene,sStreamId;
 static bool sBusy,sAwaitingLoadApproval,sDiskActive,sDiskRestore,sDiskStream,sDiskRecovered;
 static bool sExplicitTransfer,sTransferReady;
+static bool sDiskChunkImport,sDiskNextWindow,sDiskCancelRequested;
+static u32 sDiskImport;
+static SusamuneTasRequest sDiskProject;
+static bool buildSharedExport(void*,SusamuneStateExportPlan&,u32){return false;}
+static bool finishSharedExport(){return true;}
 static SavestateManager::TransferResult sTransferResult;
 static u32 sProjectStartKey[2],sProjectRole,sProjectFrames,sProjectScene;
 static SusamuneStateCatalogEntry sSelectedSD;
@@ -40,6 +62,12 @@ static bool admitArchiveStage(bool=false){return admitted;}static OSTime OSGetTi
 struct Menu{void toast(const char*){++notices;}}menu;static Menu*gMenu=&menu;
 namespace StateArchiveProfile{static bool valid(u32 p){return p==19;}static bool reidentify(u32&p,u32 b){return valid(p)&&b==12;}}
 namespace StateStorage{
+u32 archiveCapacity(){return SUSAMUNE_STATE_POOL_EXPANDED_SIZE;}
+static u32 stagingSize(){return SUSAMUNE_STATE_STAGING_SIZE;}
+static u32 tailWindowSize(){return 0x4e000;}
+static bool startPlannedExport(const SusamuneStateArchiveHeader&,const void*,
+ bool(*)(void*,SusamuneStateExportPlan&,u32),void*,const SusamuneTasRequest*){return false;}
+static bool startImportWindow(u32,u32,u32,u32,u32,const SusamuneTasRequest*){return false;}
 static u32 command,poolOffset,id,crc,size;static bool occupied;
 static SusamuneTasRequest context;static bool hasContext;
 static SusamuneStateArchiveHeader header;static const void*metadata;
@@ -75,6 +103,8 @@ static void prepareProject(){manifest={};manifest.magic=SUSAMUNE_TAS_MAGIC;manif
 extern "C" {
 __declspec(dllexport) void reset(){
  memset(&manager,0,sizeof(manager));memset(sSlots,0,sizeof(sSlots));memset(&sPool,0,sizeof(sPool));
+ memset(poolBytes,0xA5,sizeof(poolBytes));sPoolMemory={{poolBytes},{sizeof(poolBytes)}};
+ StateWorkLease::allowed=true;StateWorkLease::held=false;StateWorkLease::claims=StateWorkLease::releases=StateWorkLease::errors=0;
  sActiveSlot=1;sLoadSlot=2;sSelectedSD={};sSelectedSD.id=71;sDiskSlot=9;sDiskGeneration=0;
  sBusy=sAwaitingLoadApproval=sDiskActive=sExplicitTransfer=sTransferReady=false;
  sDiskRestore=sDiskStream=sDiskRecovered=StateStorage::occupied=false;
@@ -108,6 +138,13 @@ __declspec(dllexport) u32 get(u32 n){switch(n){case 0:return sActiveSlot;case 1:
 __declspec(dllexport) u32 compatible(u32 mismatch){SusamuneTasManifest p={};p.gameId=0x474D5345;p.buildCrc=12;p.sceneKey=13;p.configId=14;
  if(mismatch==1)++p.gameId;if(mismatch==2)++p.buildCrc;if(mismatch==3)++p.sceneKey;if(mismatch==4)++p.configId;
  return manager.projectCompatible(p);}
+__declspec(dllexport) u32 clearOwned(u32 kind){
+ if(kind==1)StateWorkLease::allowed=false;if(kind==2)sPoolMemory.banks[0]=0;
+ return manager.clearSlot(1,102);}
+__declspec(dllexport) u32 work(u32 key){switch(key){case 0:return StateWorkLease::claims;
+ case 1:return StateWorkLease::releases;case 2:return StateWorkLease::errors;case 3:return StateWorkLease::held;
+ case 4:return sBusy;case 5:return sPool.used;case 6:return sSlots[1].header.magic;
+ case 7:return sSlots[1].generation;case 8:return SusamuneStateCrc(poolBytes,sizeof(poolBytes));}return 0;}
 }
 '''
 
@@ -124,14 +161,26 @@ class ExplicitStateSlotTests(unittest.TestCase):
                      'bool SavestateManager::beginSDExport(', 'bool SavestateManager::loadFromSD(',
                      'bool SavestateManager::importSlotExplicit(', 'bool SavestateManager::beginSDLoad('):
             source+=function_source(SOURCE,name)+'\n'
+        source+=function_source(SOURCE,'bool SavestateManager::clearSlot(').replace('StateSlotPoolClearBanked(', 'checkedClear(')
         path=Path(cls.temp.name)/'explicit.cpp';path.write_text(source+EXPORTS)
         proc=subprocess.run([str(ROOT/'toolchain/clang++.exe'),'--target=x86_64-pc-windows-msvc',
-            '-shared','-O2','-fno-builtin','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
+            '-shared','-O2','-fno-builtin','-fno-exceptions','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
             '-I',str(ROOT/'include'),str(path),'-o',str(path.with_suffix('.dll'))],capture_output=True,text=True)
         if proc.returncode:raise AssertionError(proc.stdout+proc.stderr)
         cls.lib=C.CDLL(str(path.with_suffix('.dll')))
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         cls.lib.get.restype=C.c_uint
+
+    def test_clear_holds_local_work_owner_through_compaction_and_releases_on_failure(self):
+        for kind in (0,1,2):
+            with self.subTest(kind=kind):
+                self.lib.reset();before=self.lib.work(8)
+                self.assertEqual(self.lib.clearOwned(kind),int(kind==0))
+                self.assertEqual([self.lib.work(i) for i in (0,1,2,3,4)],
+                                 [1,int(kind!=1),0,0,0])
+                self.assertEqual(self.lib.work(5),80000 if kind==0 else 120000)
+                self.assertEqual(self.lib.work(7),555 if kind==0 else 102)
+                if kind: self.assertEqual(self.lib.work(8),before)
 
     def test_explicit_export_uses_requested_slot_and_project_without_changing_selections(self):
         self.lib.reset();self.assertEqual(self.lib.invoke(0,0,101,1),1)

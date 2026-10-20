@@ -242,7 +242,7 @@ Profiles survive reboot in Moonshine data/layouts. Dolphin uses its Slot B memor
 
 Display > HUD and displays > Movement displays has Jump display and GB skip timing. Their Edit rows also open separate GB, Jump and Buttslide appearance controls. They are also in Layout editor > Practice feedback.
 
-Jump display shows 1f-6f after landing, then Late, with the takeoff's QF0-3 phase. Each landing starts a fresh count. Paused frames do not count.
+Jump display shows 1f-6f after landing, then Late, with the exact movement quarterframes from landing to the accepted jump. For example, 1f qf2 means the jump happened in the next rendered frame, two quarterframes after landing. Each landing starts a fresh count. Paused frames do not count.
 
 Jump display and Buttslide display have separate On/Off toggles. Both can be shown together. The compact Ready / Waiting cue shows when the game can accept your jump during a slide; the cue follows the current surface and slide state. It does not press A for you.
 

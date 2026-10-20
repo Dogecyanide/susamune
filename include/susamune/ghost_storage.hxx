@@ -55,6 +55,8 @@ bool loadImportedObserver(int row, bool secondary);
 bool removeImported(int row);
 
 bool busy();
+// Queued refreshes do not own the transfer; preparation and result readers do.
+bool quiet();
 // Late ARM acknowledgements remain valid after a timeout.
 bool timedOut();
 bool available();

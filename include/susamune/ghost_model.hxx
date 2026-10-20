@@ -11,6 +11,7 @@ void beginFrame();
 void beforeStageSetup();
 void onStageSetup(TMarDirector *director);
 bool preserveSavestateBindings(bool (*keep)(const void *word));
+bool prepareSavestate();
 void onSavestateLoaded();
 bool available();
 bool submitted(bool secondary = false);

@@ -32,7 +32,15 @@ class GhostTasClockTests(unittest.TestCase):
 #include "susamune/susamune_cfg.h"
 typedef unsigned int u32; typedef unsigned short u16;
 typedef unsigned char u8; typedef int s32; typedef long long s64;
-namespace GhostFludd {void capture(SusamuneGhostFluddSample&) {}}
+extern "C" void *memset(void *out, int value, __SIZE_TYPE__ size) {
+ unsigned char *bytes = static_cast<unsigned char *>(out);
+ while (size--) *bytes++ = static_cast<unsigned char>(value);
+ return out;
+}
+namespace GhostFludd {
+void capture(SusamuneGhostFluddSample&) {}
+bool hoverEmitted() { return false; }
+}
 struct Timer {
  s32 qf; u32 serial; bool stopped;
  bool currentQf(s32 *out, bool *stop=0) { *out=qf; if(stop)*stop=stopped; return true; }
@@ -41,7 +49,7 @@ struct Timer {
 struct Track {
  SusamuneGhostInputSample *inputs; u32 inputCount;
  SusamuneGhostSplitSample splits[6]; u8 splitCount;
- u16 formatVersion; bool completed; u16 segmentCount; u8 teachingFlags; u32 runFlags; u32 endQf;
+ u16 formatVersion; bool completed; u16 segmentCount; u8 teachingFlags, sourceProfile; u32 runFlags; u32 endQf;
 } sRecord;
 SusamuneGhostInputSample inputs[4096];
 SusamuneGhostClock sRecordClock;
@@ -64,7 +72,7 @@ __declspec(dllexport) void reset() {
  gQFTTimer.qf=100;gQFTTimer.serial=1;gQFTTimer.stopped=false;
  sAttemptSerial=1;sRecordClock.ready=false;sRecordClock.omittedQf=0;
  sRecord.inputs=inputs;sRecord.inputCount=0;sRecord.splitCount=0;
- sRecord.completed=false;sRecord.segmentCount=1;sRecord.teachingFlags=0;
+ sRecord.completed=false;sRecord.segmentCount=1;sRecord.teachingFlags=0;sRecord.sourceProfile=0;
  sRecord.formatVersion=5;sRecord.runFlags=0;sRecording=true;sObserverPhase=0;
  sFrameFrozen=false;sFrameAssisted=false;
  frameControl(false,false);

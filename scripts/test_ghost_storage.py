@@ -73,7 +73,7 @@ class StorageEnvelopeTests(unittest.TestCase):
     def test_old_and_future_canonical_versions_are_not_parsed(self) -> None:
         for version in (ghost_format.GHOST_VERSION_V1,
                         ghost_format.GHOST_VERSION_V2,
-                        ghost_format.GHOST_VERSION_V6 + 1):
+                        ghost_format.GHOST_VERSION_V7 + 1):
             with self.subTest(version=version), mock.patch.object(
                 ghost_format,
                 "validate_ghost",

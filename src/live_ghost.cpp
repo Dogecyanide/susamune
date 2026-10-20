@@ -1,0 +1,226 @@
+#include "susamune/live_ghost.hxx"
+
+#if TIMEWARP_LIVE_RACING
+#include "Dolphin/MTX.h"
+#include "Dolphin/math.h"
+#include "SMS/Camera/PolarSubCamera.hxx"
+#include "susamune/ghost_format.h"
+#include "susamune/live_race_wire.h"
+#include "susamune/creation_extras.hxx"
+#include "susamune/fludd_colors.hxx"
+#include "susamune/input_display.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/metadata_display.hxx"
+#include "susamune/practice_session.hxx"
+#include "susamune/qft_display.hxx"
+#include "susamune/stage_loader.hxx"
+#include "susamune/warp_wheel.hxx"
+#include "susamune/menu.hxx"
+#include "susamune/settings.hxx"
+
+#pragma clang section rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+
+namespace LiveGhost {
+namespace {
+static const char kOpponent[] = "Opponent";
+const unsigned int kDelayMs = 80, kStaleMs = 250;
+struct Sample { Ghost::VisualState pose; u32 remoteMs, receivedMs; SusamunePracticeInput input; };
+struct State {
+    Sample samples[4];
+    Ghost::VisualState latched;
+    SusamunePracticeInput latchedInput;
+    u32 count, sequence, sceneEpoch, originMs, token, latchedMs;
+    bool received, visible;
+    char name[17];
+};
+State s;
+bool sInputsShown = true;
+static_assert(sizeof(State) < 2048, "live ghost stays within its scalar budget");
+
+s32 delta(u32 a, u32 b) { return static_cast<s32>(a - b); }
+bool finite(f32 x) {
+    // Bit validation remains effective under the game's fast-math build flags.
+    union { f32 value; u32 bits; } word = {x};
+    return (word.bits & 0x7fffffffu) <= 0x49742400u;
+}
+bool valid(const Ghost::VisualState &p) {
+    return finite(p.x) && finite(p.y) && finite(p.z) &&
+        p.animationId <= SUSAMUNE_GHOST_ANIMATION_ID_MAX &&
+        p.animationPhase <= SUSAMUNE_GHOST_ANIMATION_PHASE_MAX &&
+        p.yoshi <= SUSAMUNE_GHOST_V4_YOSHI_UNKNOWN &&
+        (!p.yoshi || (p.animationId >= 0xb6u && p.animationId <= 0xc6u)) &&
+        SusamuneGhostVisualValid(reinterpret_cast<const unsigned char *>(&p.fludd), 1) &&
+        (!(p.fludd.mode & SUSAMUNE_GHOST_VISUAL_YOSHI) || p.yoshi != 0);
+}
+void newTimeline(u32 remoteMs) {
+    s.count = 0;
+    s.originMs = remoteMs;
+    if (!++s.token) ++s.token;
+}
+bool discontinuity(const Ghost::VisualState &a, const Ghost::VisualState &b) {
+    const f32 x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+    return x * x + y * y + z * z > 1000000.0f;
+}
+Ghost::VisualState interpolate(const Sample &a, const Sample &b, u32 time) {
+    const s32 duration = delta(b.remoteMs, a.remoteMs);
+    f32 t = duration > 0 ? static_cast<f32>(delta(time, a.remoteMs)) / duration : 0;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    Ghost::VisualState p = t >= 1 ? b.pose : a.pose;
+    p.x = a.pose.x + (b.pose.x - a.pose.x) * t;
+    p.y = a.pose.y + (b.pose.y - a.pose.y) * t;
+    p.z = a.pose.z + (b.pose.z - a.pose.z) * t;
+    const s16 turn = static_cast<s16>(static_cast<u16>(b.pose.yaw) -
+                                       static_cast<u16>(a.pose.yaw));
+    p.yaw = static_cast<s16>(a.pose.yaw + static_cast<s32>(turn * t));
+    if (a.pose.animationId == b.pose.animationId && a.pose.yoshi == b.pose.yoshi) {
+        const s32 phase = ((static_cast<s32>(b.pose.animationPhase) -
+                           a.pose.animationPhase + 2048) & 4095) - 2048;
+        p.animationPhase = static_cast<u16>((a.pose.animationPhase +
+            static_cast<s32>(phase * t)) & 4095);
+    }
+    return p;
+}
+}
+
+void reset() {
+    u32 token = s.token + 1u;
+    if (!token) ++token;
+    s = {};
+    s.token = token;
+    setName(kOpponent, 8);
+}
+
+bool setName(const char *name, unsigned int length) {
+    if (!name || !length || length > 16) return false;
+    for (unsigned int i = 0; i < length; ++i)
+        if (static_cast<unsigned char>(name[i]) < 0x20u ||
+            static_cast<unsigned char>(name[i]) > 0x7eu) return false;
+    for (unsigned int i = 0; i < length; ++i) s.name[i] = name[i];
+    s.name[length] = 0;
+    return true;
+}
+
+bool submit(const Ghost::VisualState &pose, u32 sequence, u32 remoteMs,
+            u32 sceneEpoch, u32 receivedMs, const SusamunePracticeInput *input) {
+    if (!valid(pose) || (input && ((input->buttons & ~MSR_INPUT_BUTTON_MASK) ||
+        input->error || input->flags))) return false;
+    const bool newScene = !s.received || sceneEpoch != s.sceneEpoch;
+    if (s.received && newScene && delta(sceneEpoch, s.sceneEpoch) <= 0) return false;
+    if (!newScene && (delta(sequence, s.sequence) <= 0 ||
+        delta(remoteMs, s.samples[s.count - 1].remoteMs) <= 0 ||
+        delta(receivedMs, s.samples[s.count - 1].receivedMs) < 0)) return false;
+    if (newScene || delta(remoteMs, s.samples[s.count - 1].remoteMs) > 1000 ||
+        discontinuity(pose, s.samples[s.count - 1].pose)) newTimeline(remoteMs);
+    if (s.count == 4) {
+        for (unsigned int i = 1; i < 4; ++i) s.samples[i - 1] = s.samples[i];
+        --s.count;
+    }
+    s.samples[s.count++] = {pose, remoteMs, receivedMs,
+                           input ? *input : SusamunePracticeInput{}};
+    s.sequence = sequence;
+    s.sceneEpoch = sceneEpoch;
+    s.received = true;
+    return true;
+}
+
+void tick(u32 localNowMs, bool canDisplaySameCanonicalScene) {
+    s.visible = false;
+    if (!canDisplaySameCanonicalScene || !s.count) return;
+    const Sample &last = s.samples[s.count - 1];
+    const s32 age = delta(localNowMs, last.receivedMs);
+    if (age < 0 || static_cast<u32>(age) > kStaleMs) return;
+    u32 time = last.remoteMs + static_cast<u32>(age) - kDelayMs;
+    if (delta(time, s.samples[0].remoteMs) < 0) time = s.samples[0].remoteMs;
+    if (delta(time, last.remoteMs) > 0) time = last.remoteMs;
+    if (s.latched.recordingToken == s.token && delta(time, s.latchedMs) < 0)
+        time = s.latchedMs;
+    s.latched = last.pose;
+    s.latchedInput = last.input;
+    for (unsigned int i = 1; i < s.count; ++i) {
+        if (delta(time, s.samples[i].remoteMs) <= 0) {
+            s.latched = interpolate(s.samples[i - 1], s.samples[i], time);
+            // Hold the matching sample; interpolating buttons invents inputs.
+            s.latchedInput = delta(time, s.samples[i].remoteMs) < 0
+                ? s.samples[i - 1].input : s.samples[i].input;
+            break;
+        }
+    }
+    // Cosmetic water time is local to this remote timeline, never the game timer.
+    s.latched.visualQf = static_cast<u32>(static_cast<u64>(time - s.originMs) * 120u / 1000u);
+    s.latched.recordingToken = s.token;
+    s.latchedMs = time;
+    s.visible = s.latched.visible;
+}
+
+bool visualState(Ghost::VisualState *out) {
+    if (!out || !s.visible) return false;
+    *out = s.latched;
+    return true;
+}
+
+bool inputState(SusamunePracticeInput *out) {
+    if (!out || !s.visible) return false;
+    *out = s.latchedInput;
+    return true;
+}
+
+bool inputsShown() { return sInputsShown; }
+void setInputsShown(bool shown) { sInputsShown = shown; }
+
+void drawName(Menu *menu) {
+    if (!menu || menu->shown() || !s.visible || !gpCamera ||
+        !gSettings.getBool(SETTING_GHOST_DISPLAY) ||
+        Ghost::observerPreparing() || Ghost::observerStatsSuppressed()) return;
+    Vec position = {gpCamera->mTranslation.x, gpCamera->mTranslation.y, gpCamera->mTranslation.z};
+    Vec up = {gpCamera->mUpVector.x, gpCamera->mUpVector.y, gpCamera->mUpVector.z};
+    Vec target = {gpCamera->mTargetPos.x, gpCamera->mTargetPos.y, gpCamera->mTargetPos.z};
+    if (!finite(position.x) || !finite(position.y) || !finite(position.z) ||
+        !finite(up.x) || !finite(up.y) || !finite(up.z) ||
+        !finite(target.x) || !finite(target.y) || !finite(target.z)) return;
+    const f32 fovy = gpCamera->mProjectionFovy, aspect = gpCamera->mProjectionAspect;
+    const f32 near = gpCamera->mProjectionNear, far = gpCamera->mProjectionFar;
+    if (!finite(fovy) || !finite(aspect) || !finite(near) || !finite(far) ||
+        !(fovy >= 1 && fovy <= 170 && aspect >= 0.5f && aspect <= 2 &&
+          near > 0 && near < far && far <= 1000000)) return;
+    Vec source = {s.latched.x, s.latched.y + 140.0f, s.latched.z}, viewPosition;
+    Mtx view;
+    C_MTXLookAt(view, &position, &up, &target);
+    PSMTXMultVec(view, &source, &viewPosition);
+    const f32 depth = -viewPosition.z;
+    if (!finite(depth) || !(depth >= near && depth <= far) ||
+        !finite(viewPosition.x) || !finite(viewPosition.y)) return;
+    const f32 cot = 1.0f / tanf(fovy * 0.00872664626f);
+    const f32 x = viewPosition.x * cot / (aspect * depth);
+    const f32 y = viewPosition.y * cot / depth;
+    if (!finite(x) || !finite(y) || !(x >= -1 && x <= 1 && y >= -1 && y <= 1)) return;
+    const int width = Menu::textWidth(s.name, 12);
+    if (width <= 0 || width > 624) return;
+    int left = static_cast<int>((x * 0.5f + 0.5f) * 640) - width / 2;
+    int top = static_cast<int>((0.5f - y * 0.5f) * 480) - 14;
+    if (left < 8) left = 8;
+    if (left > 632 - width) left = 632 - width;
+    if (top < 8) top = 8;
+    if (top > 456) top = 456;
+    menu->fillBox(left - 3, top - 2, width + 6, 17, JUtility::TColor(0, 0, 0, 130));
+    menu->drawText(s.name, left, top, 12, 12, JUtility::TColor(190, 250, 255, 255));
+}
+
+void drawInputs(Menu *menu) {
+    if (!menu || menu->shown() || !sInputsShown ||
+        PracticeSession::hideHud() || PracticeSession::ownsGameplayInput() ||
+        Ghost::observerPreparing() || Ghost::observerStatsSuppressed() ||
+        StageLoader::modal() || StageLoader::resultOwnsInput() ||
+        WarpWheel::shown() || WarpWheel::promptPending() ||
+        gQftDisplay.editing() || gInputDisplay.editing() ||
+        gMetadataDisplay.editing() || gCreationExtras.editing() ||
+        MarioColors::editing() || FluddColors::editing()) return;
+    SusamunePracticeInput input;
+    if (!inputState(&input)) return;
+    gInputDisplay.drawSnapshot(menu, input, 460, 350, 65, nullptr);
+    int size = 12;
+    while (size > 8 && Menu::textWidth(s.name, size) > 148) --size;
+    menu->drawText(s.name, 460, 335, size, size, JUtility::TColor(220, 240, 255, 255));
+}
+}
+#endif

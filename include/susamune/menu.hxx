@@ -21,6 +21,7 @@
 // =====================================================================
 
 class MenuTab;  // internal to menu.cpp
+namespace MenuSearch { struct Entry; }
 
 class Menu {
 public:
@@ -28,7 +29,9 @@ public:
 
     // Per-frame input (from onUpdate) and render (from afterDraw).
     void update(TMarioGamePad *pad);
+    void updateWithSounds(TMarioGamePad *pad);
     void draw(J2DOrthoGraph *ortho);
+    void drawGuidebook(J2DOrthoGraph *ortho);
 
     // Drawn after every other overlay so assisted footage cannot hide it.
 
@@ -42,6 +45,9 @@ public:
     // PB. The caller retains ownership of any action held behind that PB.
     bool openGhostPBSave(u32 token);
     void openTasProject();
+    bool searchActive() const;
+    bool searchAvailable() const;
+    void openSearch();
 
     // Menu-only C-stick repeat. This never changes the game's pad state.
     u32 navigationInput(TMarioGamePad *pad);
@@ -51,6 +57,8 @@ public:
     // save) is triggered by closing the menu. `msg` is copied into a small
     // internal buffer, so callers may pass scratch storage. Replaces any
     // message still on screen; expires on its own after kToastFrames.
+    void drawTextVertical(const char *text, int x, int y, int size,
+                          JUtility::TColor top, JUtility::TColor bottom);
     void toast(const char *msg);
     bool hasToast() const { return mToastFrames > 0 && mToastBuf[0] != '\0'; }
 
@@ -66,6 +74,8 @@ public:
     // Draw one line of text with the shared textbox. No allocation: `s` is
     // borrowed (a const literal or a caller-owned scratch buffer).
     void drawText(const char *s, int x, int y, int sizeX, int sizeY, JUtility::TColor color);
+    void drawMenuText(const char *s, int x, int y, int sizeX, int sizeY,
+                      JUtility::TColor color);
 #if ENABLE_SAVESTATE_DBG
     // Same renderer with `y` already expressed as J2D's text baseline.
     void drawTextBaseline(const char *s, int x, int y, int sizeX, int sizeY,
@@ -76,6 +86,7 @@ public:
     // (JUTResFont) reconfigures, so a bare J2DFillBox after any text renders as
     // skewed garbage.
     void fillBox(int x, int y, int w, int h, JUtility::TColor color);
+    void fillMenuBox(int x, int y, int w, int h, JUtility::TColor color);
     // Same, for a convex polygon: `xy` is `n` interleaved x,y pairs.
     void fillPoly(const s16 *xy, int n, JUtility::TColor color);
     // Draw a closed polygon outline at the input display's original width.
@@ -91,14 +102,19 @@ public:
     static const int kToastFrames = 180;
 
 private:
+    friend void menuInit();
+    u32 soundSelection(MenuTab *tab) const;
+    u32 soundState() const;
     void switchTab(int dir);
-    void drawTabStrip(int x, int y, int w);
-    int  tabWidth(int i) const;  // drawn width of tab `i`, padding included
     void drawToast();
     // Auto-save on close: fires a save when the menu is dismissed with edits
     // pending, then watches for the launcher's answer and toasts the result.
     void requestSettingsSave();
     void pollSettingsSave();
+    bool searchEntry(unsigned index, MenuSearch::Entry &entry, bool open = false);
+    void updateSearch(TMarioGamePad *pad);
+    void cacheSearch(bool recount);
+    bool drawSearch();
 
     J2DTextBox      mText;   // the one reusable textbox; see note above
     J2DOrthoGraph  *mOrtho;  // borrowed from draw(); used to re-enter 2D state

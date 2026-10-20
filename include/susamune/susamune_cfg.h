@@ -54,6 +54,50 @@
 #define SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET 0x1A00u
 #define SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE 0x71900120u
 #define SUSAMUNE_CFG_FLAG_SETTINGS_TAIL 0x02000000u
+#define SUSAMUNE_FINISH_BREAKDOWN_FLAG 0x08000000u
+#define SUSAMUNE_FINISH_BREAKDOWN_MAGIC 0x53464244u
+#define SUSAMUNE_FINISH_BREAKDOWN_VERSION 1u
+#define SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET 0x1EA0u
+#define SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE 0x719005C0u
+#define SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE 0x719005E0u
+
+struct SusamuneFinishBreakdownCfg {
+    unsigned int magic;
+    unsigned short version, x, y;
+    unsigned char scale, textA, bgR, bgG, bgB, bgA, textBrightness, padding;
+    unsigned char rgb[3][3];
+    unsigned char rows, halfSeconds, reserved[3];
+};
+
+static inline void SusamuneFinishBreakdownInit(struct SusamuneFinishBreakdownCfg *cfg) {
+    static const unsigned char rgb[3][3] = {{155,220,255},{235,240,250},{140,245,165}};
+    unsigned i, c;
+    cfg->magic = SUSAMUNE_FINISH_BREAKDOWN_MAGIC;
+    cfg->version = SUSAMUNE_FINISH_BREAKDOWN_VERSION;
+    cfg->x = 22; cfg->y = 72; cfg->scale = 100; cfg->textA = 255;
+    cfg->bgR = cfg->bgG = cfg->bgB = 0; cfg->bgA = 185;
+    cfg->textBrightness = 100; cfg->padding = 8;
+    for (i = 0; i < 3; ++i) {
+        for (c = 0; c < 3; ++c) cfg->rgb[i][c] = rgb[i][c];
+        cfg->reserved[i] = 0;
+    }
+    cfg->rows = 111; cfg->halfSeconds = 40;
+}
+
+static inline int SusamuneFinishBreakdownValid(const volatile struct SusamuneFinishBreakdownCfg *cfg) {
+    return cfg && cfg->magic == SUSAMUNE_FINISH_BREAKDOWN_MAGIC &&
+        cfg->version == SUSAMUNE_FINISH_BREAKDOWN_VERSION && cfg->x <= 640 && cfg->y <= 480 &&
+        cfg->scale >= 25 && cfg->scale <= 150 && cfg->textBrightness >= 25 &&
+        cfg->textBrightness <= 200 && (cfg->padding <= 16 || cfg->padding == 255) &&
+        cfg->rows <= 127 && cfg->halfSeconds <= 120;
+}
+
+#define SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR ((struct SusamuneFinishBreakdownCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET))
+#if IS_EMULATOR
+#define SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR ((struct SusamuneFinishBreakdownCfg *)SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE)
+#else
+#define SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR ((struct SusamuneFinishBreakdownCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET))
+#endif
 #define SUSAMUNE_CFG_TOTAL_SETTINGS (SUSAMUNE_CFG_MAX_SETTINGS + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS + SUSAMUNE_CFG_SETTINGS_TAIL_SIZE)
 // An independent PPC-owned line; no existing mailbox or settings offset moves.
 #if defined(IS_EMULATOR) && IS_EMULATOR
@@ -481,7 +525,8 @@ struct SusamuneQftDisplayCfg {
 #define SUSAMUNE_METADATA_STYLE_ROW_GAP     (1u << 11)
 #define SUSAMUNE_METADATA_STYLE_COLUMNS     (1u << 12)
 #define SUSAMUNE_METADATA_STYLE_COMPACT     (1u << 13)
-#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 14) - 1u)
+#define SUSAMUNE_METADATA_STYLE_VALUE_GAP   (1u << 14)
+#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 15) - 1u)
 
 struct SusamuneMetadataStyleCfg {
     unsigned int   magic;
@@ -1282,6 +1327,11 @@ struct SusamuneSplitStatsFile {
     unsigned char tailPad[12];
 };
 
+/* Boot-immutable ARM publication; absent on older launchers. */
+struct SusamuneLiveDescriptor {
+    unsigned int magic, abi, ppcAddress, bytes, capabilities, reserved;
+};
+
 struct SusamuneCfg {
     // --- cache line 0: written by the kernel at boot, by the mod on save ---
     unsigned int   magic;
@@ -1300,7 +1350,7 @@ struct SusamuneCfg {
     // --- cache line 1: written ONLY by the kernel ---
     unsigned int   ackSeq;   // kernel -> mod: echoes saveSeq once written
     unsigned int   status;   // kernel -> mod: 0 = ok, else the FatFS FRESULT
-    unsigned char  pad1[24];
+    struct SusamuneLiveDescriptor liveTransport;
 
     // --- cache line 2+: written by the kernel at boot, by the mod on save ---
     unsigned char  values[SUSAMUNE_CFG_MAX_SETTINGS];
@@ -1410,6 +1460,10 @@ typedef char susamune_il_episodes_gap_check[(SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + 
 typedef char susamune_practice_display_gap_check[(SUSAMUNE_IL_EPISODES_CFG_OFFSET + sizeof(struct SusamuneILEpisodesCfg) == SUSAMUNE_PRACTICE_DISPLAY_STYLE_CFG_OFFSET && SUSAMUNE_PRACTICE_DISPLAY_STYLE_CFG_OFFSET + sizeof(struct SusamunePracticeDisplayStyleCfg) <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_settings_tail_gap_check[(SUSAMUNE_PRACTICE_DISPLAY_STYLE_CFG_OFFSET + sizeof(struct SusamunePracticeDisplayStyleCfg) == SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET && SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET + SUSAMUNE_CFG_SETTINGS_TAIL_SIZE <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_settings_tail_alignment_check[(SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET % 32 == 0 && SUSAMUNE_CFG_SETTINGS_TAIL_SIZE == 32 && SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE % 32 == 0) ? 1 : -1];
+typedef char susamune_finish_breakdown_size[(sizeof(struct SusamuneFinishBreakdownCfg) == 32 && __builtin_offsetof(struct SusamuneFinishBreakdownCfg, rgb) == 18 && __builtin_offsetof(struct SusamuneFinishBreakdownCfg, halfSeconds) == 28) ? 1 : -1];
+typedef char susamune_finish_breakdown_alignment[(SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET % 32 == 0 && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE % 32 == 0) ? 1 : -1];
+typedef char susamune_finish_breakdown_gap[(SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET + sizeof(struct SusamuneFinishBreakdownCfg) <= SUSAMUNE_PROGRESS_CFG_OFFSET && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) <= 0x71901000u) ? 1 : -1];
+typedef char susamune_finish_breakdown_staging_gap[(SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) == SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE % 32 == 0 && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) <= 0x71901000u) ? 1 : -1];
 typedef char susamune_settings_tail_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET - SUSAMUNE_MARIO_COLORS_CFG_OFFSET == SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE && SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE + SUSAMUNE_CFG_SETTINGS_TAIL_SIZE <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
 typedef char susamune_fludd_colors_gap_check[(SUSAMUNE_MARIO_COLORS_CFG_OFFSET + sizeof(struct SusamuneMarioColorsCfg) == SUSAMUNE_FLUDD_COLORS_CFG_OFFSET && SUSAMUNE_FLUDD_COLORS_CFG_OFFSET + 64 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + 32 == SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE && SUSAMUNE_DOLPHIN_FLUDD_COLORS_PPC_BASE + 64 <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
@@ -1473,6 +1527,8 @@ typedef char susamune_fludd_colors_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_
 typedef char susamune_cfg_extra_values_check[(__builtin_offsetof(struct SusamuneCfg, extraValues) == 18 &&
     __builtin_offsetof(struct SusamuneCfg, extraValues) + SUSAMUNE_CFG_MAX_EXTRA_SETTINGS == 32) ? 1 : -1];
 typedef char susamune_cfg_line0_check[(__builtin_offsetof(struct SusamuneCfg, ackSeq) == 32) ? 1 : -1];
+typedef char susamune_cfg_live_descriptor_check[(sizeof(struct SusamuneLiveDescriptor) == 24 &&
+    __builtin_offsetof(struct SusamuneCfg, liveTransport) == 40 && sizeof(struct SusamuneCfg) == 5152) ? 1 : -1];
 typedef char susamune_cfg_line2_check[(__builtin_offsetof(struct SusamuneCfg, values) == 64) ? 1 : -1];
 typedef char susamune_cfg_binds_check[(__builtin_offsetof(struct SusamuneCfg, binds) == 192) ? 1 : -1];
 typedef char susamune_input_cfg_size_check[(sizeof(struct SusamuneInputDisplayCfg) == 32) ? 1 : -1];

@@ -1,10 +1,12 @@
 #ifndef SUSAMUNE_STATE_CRC_HXX
 #define SUSAMUNE_STATE_CRC_HXX
 
+#include "state_crc.h"
+
 namespace StateCrc {
 
-const unsigned int kWorkspaceBytes = 4096;
-const unsigned int kWorkspaceAlignment = 4;
+const unsigned int kWorkspaceBytes = TW_CRC_WORKSPACE_BYTES;
+const unsigned int kWorkspaceAlignment = TW_CRC_WORKSPACE_ALIGNMENT;
 
 // Borrows the same 4 KiB of the existing idle codec workspace.
 // Initialize again after any codec operation;

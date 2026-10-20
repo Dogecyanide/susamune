@@ -9,6 +9,7 @@ typedef _Bool bool;
 #define false 0
 #define NULL ((void*)0)
 #include "susamune/ghost_storage.h"
+#include "susamune/ghost_camera.h"
 #include "susamune/data_paths.h"
 #include "susamune/mod_bin.h"
 typedef unsigned char u8;
@@ -126,3 +127,20 @@ static u8 testPayload[SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE];
 #define SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR testPayload
 
 static u32 get_fattime(void) { return (46u<<25)|(9u<<21)|(6u<<16); }
+
+#ifndef TEST_TRANSFER_EXTERNAL
+#include "susamune/transfer_layout.h"
+#include "susamune/state_storage.h"
+static bool SusamuneTransferActive(void) { return false; }
+static bool SusamuneTransferAllows(u32 owner,u32 seq,u32 session,u32 command) {
+ (void)owner;(void)seq;(void)session;(void)command;return true;
+}
+static bool SusamuneTransferCancelled(u32 owner) { (void)owner;return false; }
+static u8 *SusamuneTransferGhostBase(void) { return testPayload; }
+static u32 SusamuneTransferStageSize(void) { return SUSAMUNE_STATE_STAGING_SIZE; }
+static u32 SusamuneTransferPoolSize(void) { return SUSAMUNE_STATE_POOL_EXPANDED_SIZE; }
+static u8 *SusamuneTransferPoolPiece(u32 offset,u32 *size) { (void)offset;*size=0;return NULL; }
+static bool SusamuneTransferPoolRange(u32 offset,u32 size) { return SusamuneStatePoolRange(offset,size); }
+static bool SusamuneTransferImportRange(u32 offset,u32 size) { return SusamuneStateImportRange(offset,size); }
+static bool SusamuneTransferWindowRange(u32 packed,u32 offset,u32 size) { return SusamuneStateWindowRange(packed,offset,size); }
+#endif

@@ -32,6 +32,7 @@ bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
     return true;
 }
 void finish(const char *text) {
+    StateStorage::releaseOwner();
     sPhase = IDLE; sReplace = sNew = sOpening = sOverwrite = false; sStatus = text;
 }
 void failed(u32 result) {
@@ -42,7 +43,8 @@ void failed(u32 result) {
         "TAS could not be opened or saved. Existing SD projects are safe.");
 }
 bool ready() {
-    if (sPhase != IDLE || !gSavestateMgr || SavestateManager::diskBusy() || PracticeSession::starting()) return false;
+    if (sPhase != IDLE || !gSavestateMgr || SavestateManager::diskBusy() || PracticeSession::starting() ||
+        gSavestateMgr->loadPending() || PracticeSession::seekBusy()) return false;
     return true;
 }
 void remember(Ref &ref, u32 slot) {
@@ -279,6 +281,7 @@ bool loadCheckpoint(u32 role) {
     return true;
 }
 bool continueEditing() {
+    if (!ready()) return false;
     if (active() && PracticeSession::attachedTo(sRefs[0].key) && !PracticeSession::atRecordedScene()) {
         sStatus = "Area timing differs - return to a checkpoint to edit"; return false;
     }
@@ -288,6 +291,7 @@ bool continueEditing() {
     sStatus = nullptr; return true;
 }
 bool replay() {
+    if (!ready()) return false;
     if (active() && !checkpoint(0).loadableHere) {
         sStatus = "Return to the area where this TAS begins, then Replay."; return false;
     }
@@ -398,6 +402,10 @@ void update() {
     StateStorage::Result result;
     if (sPhase == TAPE_EXPORT || sPhase == TAPE_IMPORT) {
         if (!StateStorage::takeResult(result)) return;
+        struct Borrow {
+            StateStorage::ResultToken token;
+            ~Borrow() { if (token.generation) StateStorage::consumeResult(token); }
+        } borrow = {result.token};
         if (result.status != SUSAMUNE_STATE_OK) { failed(result.status); return; }
         if (sPhase == TAPE_EXPORT) {
             const auto &h = result.header;
@@ -408,7 +416,9 @@ void update() {
             ++sPending.generation;
             if (!sPending.generation) { finish("TAS save version limit reached; use a new project."); return; }
             sPending.checksum = SusamuneTasManifestCrc(&sPending);
-            if (!SusamuneTasManifestValid(&sPending) || !StateStorage::projectCommit(sPending, sPreviousCrc)) {
+            if (!StateStorage::consumeResult(result, true)) { failed(SUSAMUNE_STATE_BAD_REQUEST); return; }
+            borrow.token = {};
+            if (!SusamuneTasManifestValidCapacity(&sPending, StateStorage::archiveCapacity()) || !StateStorage::projectCommit(sPending, sPreviousCrc)) {
                 failed(SUSAMUNE_STATE_BAD_REQUEST); return;
             }
             sPhase = COMMIT; sStatus = "Finishing TAS save...";
@@ -439,6 +449,7 @@ void update() {
         return;
     }
     if (!StateStorage::takeProjectResult(result)) return;
+    StateStorage::consumeResult(result);
     if (result.status != SUSAMUNE_STATE_OK) { failed(result.status); return; }
     if (sPhase == BEGIN_SAVE) {
         sPending.projectId = result.id; beginExports();
@@ -450,7 +461,7 @@ void update() {
         }
         finish("TAS recording, Beginning and checkpoints saved to SD.");
     } else if (sPhase == READ) {
-        if (!SusamuneTasManifestValid(&result.project)) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (!SusamuneTasManifestValidCapacity(&result.project, StateStorage::archiveCapacity())) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
         if (!gSavestateMgr->projectCompatible(result.project)) { failed(SUSAMUNE_STATE_WRONG_CONFIG); return; }
         sPending = result.project; memset(sPlan, 0, sizeof(sPlan));
         sRole = 0; sPhase = PLAN_OPEN; planOpen();
@@ -489,5 +500,30 @@ void afterDraw() {
     }
     sCurrent = sRole;
     finish("TAS is paused here. Continue to edit, or Replay to watch.");
+}
+}
+
+#pragma clang section text="" rodata="" data="" bss=""
+namespace TasProject {
+bool seek(u32 frame) {
+    static const char unavailable[] = "No matching earlier checkpoint here. Return to the Beginning area.";
+    if (!ready() || !active() || !PracticeSession::takeBelongsTo(sRefs[0].key)) return false;
+    u32 selected = 3, position = 0;
+    for (u32 role = 0; role < 3; ++role) {
+        PracticeSession::SavestateData saved;
+        if (!valid(sRefs[role], &saved) ||
+            !PracticeSession::seekAnchorValid(sRefs[role].slot, sRefs[role].generation, frame)) continue;
+        if (selected == 3 || saved.frames > position) {
+            selected = role;
+            position = saved.frames;
+        }
+    }
+    if (selected == 3) { sStatus = unavailable; return false; }
+    const Ref &ref = sRefs[selected];
+    if (!PracticeSession::requestSeek(ref.slot, ref.generation, frame)) {
+        sStatus = PracticeSession::status(); return false;
+    }
+    sStatus = nullptr;
+    return true;
 }
 }

@@ -1,0 +1,37 @@
+Moonshine PR13 - quick Dolphin test
+
+Read README.txt first. Keep your clean ISO. Apply the matching patch with
+Apply-ISO.cmd, use the included Dolphin memory settings, and select 60 Hz
+when playing PAL online.
+
+1. In Ghosts > Ghost visuals, set Ghost display to On and Ghost appearance
+   to Mario. Return to Ghosts and set Auto race target to Last attempt.
+   Play a short attempt, then restart the same route and race against that
+   session ghost. Check its body, water effects and input
+   display. Saved-file libraries, file import and Watch/timeline playback
+   require the Wii storage backend and are unavailable in this package.
+
+2. In the shared appearance editor, try the Gradient choices on the SGT,
+   QFT and custom text. Keep one change, then cancel another. Reopen the
+   editor and check that the kept colors are still present.
+
+3. Try Floor, World and Wireframe collision views. Move the camera, walk
+   onto another surface and enter another area. Check colored surfaces,
+   the yellow current floor and the optional legend.
+
+4. Finish a route that enters a hotel, casino or secret area. Check the
+   finish breakdown's stage times, transitions and total. Restart or load
+   a state and confirm an earlier attempt is not shown as the new finish.
+
+5. For Wii/Dolphin play, use matching PR13 builds. Start the Dolphin
+   companion, enter the same relay endpoint, create a room on one machine
+   and join its code on the other. Check both players' movement, disconnect
+   and reconnect. Each player controls their own game simulation.
+
+If something looks wrong, report the game region, area and episode, setting,
+exact steps, and whether it happened after a restart, seek or state load.
+
+Verification shipped with this package covers all three exported/applied
+patches plus the PAL production bootstrap, local UDP exchange and a freshly
+recorded Mario ghost rendered after a same-route restart. It does not claim
+a completed two-machine Wii/Dolphin gameplay session.

@@ -97,12 +97,15 @@ struct LayoutOptions {
     int rowGap;
     int columns;
     bool compact;
+    int valueGap;
 };
 
-LayoutOptions layoutOptions(u8 fieldGap, u8 rowGap, u8 columns, bool compact) {
+LayoutOptions layoutOptions(u8 fieldGap, u8 rowGap, u8 columns, bool compact,
+                            u8 valueGap) {
     return LayoutOptions{
         clampi(fieldGap, 0, 32), clampi(rowGap, 0, 16),
         clampi(columns, 0, MetadataDisplay::FIELD_COUNT), compact,
+        clampi(valueGap, 0, 32),
     };
 }
 
@@ -394,10 +397,15 @@ void drawCustom(Menu *menu, const CreationStyle &style, const u8 (*textRgb)[3],
     } while (more);
 }
 
+int labelValueOffset(const char *prefix, int size, int gap) {
+    // Keep the legacy space's colour slot while replacing its visible width.
+    return Menu::textWidth(prefix, size) - Menu::textWidth(" ", size) + gap;
+}
+
 void drawStandard(Menu *menu, const MetadataDisplayLiveCfg &cfg,
                   const CreationStyle &style, const u8 (*textRgb)[3],
                   const Values &values, bool editing, int size, int lineH,
-                  u16 selectedSlot) {
+                  u16 selectedSlot, int valueGap) {
     const u8 *labelOffsets = fieldLabelOffsets(cfg);
     int maxWidth = 0;
     int lines = 0;
@@ -408,7 +416,7 @@ void drawStandard(Menu *menu, const MetadataDisplayLiveCfg &cfg,
         const char *label = kMetadataText + labelOffsets[field];
         snprintf(prefix, sizeof(prefix), "%s: ", label);
         formatValue(value, sizeof(value), field, fieldPrecision(field), values);
-        const int width = Menu::textWidth(prefix, size) +
+        const int width = labelValueOffset(prefix, size, valueGap) +
                           Menu::textWidth(value, size);
         if (width > maxWidth) maxWidth = width;
         lines++;
@@ -435,7 +443,7 @@ void drawStandard(Menu *menu, const MetadataDisplayLiveCfg &cfg,
                                    selectedSlot);
             Creation::drawTextLine(
                 menu, style, textRgb, SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
-                value, style.x + Menu::textWidth(prefix, size), y, size,
+                value, style.x + labelValueOffset(prefix, size, valueGap), y, size,
                 valueSlot, true, selectedSlot);
             y += lineH;
         }
@@ -482,7 +490,7 @@ HorizontalMetrics horizontalMetrics(const MetadataDisplayLiveCfg &cfg,
             if (reserved > valueWidth) valueWidth = reserved;
         }
         metrics.valueWidths[field] = valueWidth;
-        const int cellWidth = Menu::textWidth(prefix, size) + valueWidth;
+        const int cellWidth = labelValueOffset(prefix, size, layout.valueGap) + valueWidth;
         if (cellWidth > metrics.widestCell) metrics.widestCell = cellWidth;
         if (horizontalWrap(rowWidth, rowFields, cellWidth, available, layout)) {
             if (rowWidth > metrics.width) metrics.width = rowWidth;
@@ -530,7 +538,7 @@ void drawStandardHorizontal(Menu *menu, const MetadataDisplayLiveCfg &cfg,
         snprintf(prefix, sizeof(prefix), "%s: ", label);
         const u16 prefixSlots = (u16)Creation::glyphCount(prefix);
         const u16 valueSlots = kMaximumValueSlots[field];
-        const int prefixWidth = Menu::textWidth(prefix, size);
+        const int prefixWidth = labelValueOffset(prefix, size, layout.valueGap);
         const int cellWidth = prefixWidth + metrics.valueWidths[field];
 
         if (editing || (cfg.fieldMask & fieldBit(field))) {
@@ -546,14 +554,13 @@ void drawStandardHorizontal(Menu *menu, const MetadataDisplayLiveCfg &cfg,
             const u16 valueSlot = valueCount < valueSlots
                                       ? slot + prefixSlots + valueSlots - valueCount
                                       : slot + prefixSlots;
-            const int valueWidth = Menu::textWidth(value, size);
             Creation::drawTextLine(menu, placed, textRgb,
                                    SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
                                    prefix, x, y, size, slot, true,
                                    selectedSlot);
             Creation::drawTextLine(
                 menu, placed, textRgb, SUSAMUNE_METADATA_STYLE_TEXT_SLOTS,
-                value, x + prefixWidth + metrics.valueWidths[field] - valueWidth,
+                value, x + prefixWidth,
                 y, size, valueSlot, true, selectedSlot);
             rowWidth += (rowFields ? layout.fieldGap : 0) + cellWidth;
             rowFields++;
@@ -589,6 +596,7 @@ void MetadataDisplay::resetDefaults() {
     mRowGap = 0;
     mColumns = 0;
     mCompact = false;
+    mValueGap = 7;
 
     mEditor.reset();
     mEditorPreview[0] = '\0';
@@ -655,6 +663,7 @@ void MetadataDisplay::adoptStyle(const volatile SusamuneMetadataStyleCfg *src) {
     if (p & SUSAMUNE_METADATA_STYLE_ROW_GAP) mRowGap = src->reserved0[1];
     if (p & SUSAMUNE_METADATA_STYLE_COLUMNS) mColumns = src->reserved0[2];
     if (p & SUSAMUNE_METADATA_STYLE_COMPACT) mCompact = src->reserved0[3] != 0;
+    if (p & SUSAMUNE_METADATA_STYLE_VALUE_GAP) mValueGap = src->reserved0[4];
 
     for (int i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++) {
         if (p & SUSAMUNE_METADATA_STYLE_TEXT_R) mTextRgb[i][0] = src->textR;
@@ -711,6 +720,7 @@ void MetadataDisplay::stageStyleInto(volatile SusamuneMetadataStyleCfg *dst) con
     dst->reserved0[1] = mRowGap;
     dst->reserved0[2] = mColumns;
     dst->reserved0[3] = mCompact;
+    dst->reserved0[4] = mValueGap;
     for (u32 i = 0; i < sizeof(dst->slotPresent); i++) dst->slotPresent[i] = 0;
     for (int i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++) {
         const bool override = mTextRgb[i][0] != mTextRgb[base][0] ||
@@ -739,14 +749,16 @@ void MetadataDisplay::resetLayout() {
     mRowGap = 0;
     mColumns = 0;
     mCompact = false;
+    mValueGap = 7;
     markDirty();
 }
 
 void MetadataDisplay::clampLayout() {
-    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact);
+    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact, mValueGap);
     mFieldGap = (u8)layout.fieldGap;
     mRowGap = (u8)layout.rowGap;
     mColumns = (u8)layout.columns;
+    mValueGap = (u8)layout.valueGap;
     mStyle.scale          = (u8)clampi(mStyle.scale, 50, 200);
     mStyle.textBrightness = (u8)clampi(mStyle.textBrightness, 25, 200);
     if (mStyle.padding != 0xff)
@@ -785,6 +797,7 @@ const char *MetadataDisplay::menuRowName(int row) {
     if (row == FIELD_COUNT + 6) return "Row gap";
     if (row == FIELD_COUNT + 7) return "Fields per row";
     if (row == FIELD_COUNT + 8) return "Value widths";
+    if (row == FIELD_COUNT + 9) return "Value gap";
     if (row == 2 + FIELD_COUNT) return "Layout";
     if (row > 2 + FIELD_COUNT) row--;
     return kMetadataText + kTextOffsets[FIELD_COUNT + row];
@@ -795,6 +808,7 @@ const char *MetadataDisplay::menuRowValue(int row) const {
     if (row == FIELD_COUNT + 6) return numberLabel(mRowGap);
     if (row == FIELD_COUNT + 7) return mColumns ? numberLabel(mColumns) : "Auto";
     if (row == FIELD_COUNT + 8) return mCompact ? "Compact" : "Stable";
+    if (row == FIELD_COUNT + 9) return numberLabel(mValueGap);
     if (row == 0) return onOffText(mCfg.startVisible != 0);
     if (row == 1) return labelModeText(mCfg.labelMode);
     if (row >= 2 && row < 2 + FIELD_COUNT)
@@ -832,6 +846,7 @@ void MetadataDisplay::adjustMenuRow(int row, int dir) {
         if (row == FIELD_COUNT + 6) mRowGap = (u8)((mRowGap + step + 17) % 17);
         if (row == FIELD_COUNT + 7) mColumns = (u8)((mColumns + step + 12) % 12);
         if (row == FIELD_COUNT + 8) mCompact = !mCompact;
+        if (row == FIELD_COUNT + 9) mValueGap = (u8)((mValueGap + step + 33) % 33);
         markDirty();
     }
 }
@@ -910,7 +925,7 @@ void MetadataDisplay::draw(Menu *menu, bool force) const {
     const bool editor = editing();
     const Values maximum = editorValues();
     const Values v = editor ? maximum : readValues();
-    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact);
+    const LayoutOptions layout = layoutOptions(mFieldGap, mRowGap, mColumns, mCompact, mValueGap);
     int size  = textSize(mStyle);
     const int lines = editor && mCfg.labelMode != SUSAMUNE_METADATA_LABEL_CUSTOM
                           ? FIELD_COUNT : enabledLineCount(mCfg, mFormat, mFormatLength);
@@ -928,7 +943,7 @@ void MetadataDisplay::draw(Menu *menu, bool force) const {
                                size, lineH, selected, layout);
     } else {
         drawStandard(menu, mCfg, mStyle, mTextRgb, v, editor,
-                     size, lineH, selected);
+                     size, lineH, selected, layout.valueGap);
     }
 }
 

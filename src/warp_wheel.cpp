@@ -805,6 +805,7 @@ void prepareArmedDeparture() {
 
 __attribute__((noinline)) void armWarp(const LevelWarp::Dest &dest,
                                        bool keepSpawn, bool overrideSource) {
+    PracticeSession::resetGameplaySpeed();
     PracticeSession::releaseForDeparture();
     sDest = dest;
     sArmed = true;
@@ -1514,6 +1515,15 @@ bool slotDest(int i, LevelWarp::Dest *out) {
     out->area     = kRoot[sRoot].episodeArea;
     out->episode  = (u8)i;
     out->gameInt3 = (u8)i;
+    if (out->area == TGameSequence::AREA_PINNABEACH) {
+        // Episodes 2 and 4 stay on the beach; the other IL starts are inside.
+        for (int park = 0; park < 6; ++park) {
+            if (kPinnaPark[park].gameInt3 == i) {
+                *out = kPinnaPark[park];
+                break;
+            }
+        }
+    }
     return true;
 }
 

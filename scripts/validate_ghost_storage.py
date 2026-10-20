@@ -68,9 +68,11 @@ def _validate_canonical_ghost(
         if version not in (ghost_format.GHOST_VERSION_V3,
                            ghost_format.GHOST_VERSION_V4,
                            ghost_format.GHOST_VERSION_V5,
-                           ghost_format.GHOST_VERSION_V6):
+                           ghost_format.GHOST_VERSION_V6,
+                           ghost_format.GHOST_VERSION_V7,
+                           ghost_format.GHOST_VERSION_V8):
             raise UnsupportedStorage(
-                f"unsupported ghost version {version}; storage supports 3, 4, 5 and 6"
+                f"unsupported ghost version {version}; storage supports 3 through 8"
             )
     try:
         if running_region is None:
@@ -194,7 +196,7 @@ def personal_slot_is_live(slot: int) -> bool:
 
 def share_directory(region: str, profile: int) -> str:
     _require(region in ghost_format.REGION_NAMES.values(), "invalid region")
-    _require(0 <= profile < 4, "invalid profile")
+    _require((0 <= profile < 4 or profile == 5), "invalid profile")
     return f"/Moonshine data/ghosts/{SHARE_DIRECTORY}/{region}/p{profile}"
 
 
@@ -318,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("file", type=Path)
     parser.add_argument("--region", choices=ghost_format.REGION_NAMES.values(),
                         required=True)
-    parser.add_argument("--profile", type=int, choices=range(4), required=True)
+    parser.add_argument("--profile", type=int, choices=(0, 1, 2, 3, 5), required=True)
     parser.add_argument("--slot", type=int, required=True)
     args = parser.parse_args(argv)
     region = next(key for key, value in ghost_format.REGION_NAMES.items()

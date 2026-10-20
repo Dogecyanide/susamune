@@ -6,6 +6,7 @@
 #include "susamune/mem2_map.h"
 #include "susamune/practice_session.hxx"
 #include "susamune/qft_timer.hxx"
+#include "susamune/settings.hxx"
 
 // Keep display/editor code in the existing upper span; neither heap moves.
 #if defined(__powerpc__)
@@ -164,6 +165,14 @@ void QftDisplay::draw(Menu *menu, const char *text) const {
 
 #pragma clang section text=".foxtrot.text"
 
+bool QftDisplay::verticalGradient(const u8 (*textRgb)[3]) const {
+    return textRgb == mTextRgb && gSettings.getBool(SETTING_QFT_VERTICAL_GRADIENT);
+}
+
+bool QftDisplay::animatedGradient(const u8 (*textRgb)[3]) const {
+    return textRgb == mTextRgb && gSettings.getBool(SETTING_QFT_GRADIENT_MOTION);
+}
+
 bool QftDisplay::hasAnchor(const char *text) const {
     return sAnchorDrawn && text && strcmp(sAnchorText, text) == 0;
 }
@@ -198,7 +207,9 @@ void QftDisplay::beginEditor() {
     if (editing()) return;
     mDirtyBeforeEdit = mDirty;
     mEditor.begin(&mStyle, mTextRgb, mBackupRgb,
-                  SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS);
+                  SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS, 0, nullptr,
+                  CreationEditor::CAP_ALL | CreationEditor::CAP_GRADIENT);
+    mEditor.setGradientDirectionSetting(SETTING_QFT_VERTICAL_GRADIENT);
 }
 
 void QftDisplay::updateEditor(TMarioGamePad *pad) {

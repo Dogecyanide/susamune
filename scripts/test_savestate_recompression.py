@@ -46,12 +46,15 @@ u32 capacity,stagingSize;
 #define SUSAMUNE_STATE_STAGING_SIZE stagingSize
 #define SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE 0x50000u
 StateSlotPool sPool;StatePoolMemory sPoolMemory;u8 *staging;void *work;
-#define kStagingBase staging
+namespace StateStorage{void*stagingBase(){return staging;}u32 stagingSize(){return ::stagingSize;}}
+namespace TransferLease{bool sharedMap(){return false;}}
+static bool sBusy,sDiskActive,sDiskLoadReady;
+static bool statePoolSharedMemory(StatePoolMemory&){return false;}
 void *codecWorkspace(){return work;}
 int fault,trapCount,secondCalls,lastCompact,lastQuick;
 bool trapped(){++trapCount;return false;}
-StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,const StateCodec::WriteSpan*d,u32 dn,bool compact,bool quick){
- ++secondCalls;lastCompact=compact;lastQuick=quick;StateCodec::Result r=StateCodec::compress(w,n,s,count,d,dn,compact,quick);
+StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 count,const StateCodec::WriteSpan*d,u32 dn,bool compact,bool quick,StateCodec::ZeroRange zero={}){
+ ++secondCalls;lastCompact=compact;lastQuick=quick;StateCodec::Result r=StateCodec::compress(w,n,s,count,d,dn,compact,quick,zero);
  if(fault==1)r.status=StateCodec::CODEC_ERROR;
  if(fault==2)++r.rawBytes;
  if(fault==3)++r.compressedBytes;
@@ -62,9 +65,9 @@ StateCodec::Result testCompress(void*w,u32 n,const StateCodec::ReadSpan*s,u32 co
 extern "C" __declspec(dllexport) int run(StateSlotPool*p,StatePoolMemory*m,u32 cap,u8*t,u32 ts,
  void*w,const StateCodec::ReadSpan*s,u32 count,u32 raw,u32 slot,int bad,u32 compact,u32 quick,StateCodec::Result*out,int*calls){
  sPool=*p;sPoolMemory=*m;capacity=cap;staging=t;stagingSize=ts;work=w;fault=bad;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
- StateCodec::WriteSpan destination[3]={{t,ts},{0,0},{0,0}};
+ StateCodec::WriteSpan destination[STATE_POOL_MEMORY_BANKS+1]={{t,ts},{0,0},{0,0}};
  poolWriteSpans(p->used,cap-p->used,destination+1);
- *out=StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,destination,3,compact!=0,quick!=0);
+ *out=StateCodec::compress(w,SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,s,count,destination,STATE_POOL_MEMORY_BANKS+1,compact!=0,quick!=0);
  bool ok=commitPackedState(s,count,raw,slot,*out,compact!=0,quick!=0);
  *p=sPool;*calls=secondCalls;return trapCount?-1:ok;
 }
@@ -76,7 +79,7 @@ extern "C" __declspec(dllexport) u32 measure(void*w,const StateCodec::ReadSpan*s
 extern "C" __declspec(dllexport) int runAdaptive(StateSlotPool*p,StatePoolMemory*m,u8*t,u32 ts,
  void*w,const StateCodec::ReadSpan*source,u32 count,u32 rawSize,u32 slot,StateCodec::Result*out){
  sPool=*p;sPoolMemory=*m;capacity=StatePoolMemoryCapacity(m);staging=t;stagingSize=ts;work=w;fault=0;trapCount=secondCalls=0;lastCompact=lastQuick=-1;
- StateCodec::WriteSpan output[3]={{t,ts},{0,0},{0,0}};poolWriteSpans(p->used,capacity-p->used,output+1);
+ StateCodec::WriteSpan output[STATE_POOL_MEMORY_BANKS+1]={{t,ts},{0,0},{0,0}};poolWriteSpans(p->used,capacity-p->used,output+1);
  StateCodec::Result result;
  u32 sizes[3]={};const bool fits=compressCandidate(source,count,rawSize,slot,result,sizes);
  *p=sPool;*out=result;return trapCount?-1:fits;

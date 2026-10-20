@@ -20,6 +20,8 @@ GHOST_VERSION_V3 = 3
 GHOST_VERSION_V4 = 4
 GHOST_VERSION_V5 = 5
 GHOST_VERSION_V6 = 6
+GHOST_VERSION_V7 = 7
+GHOST_VERSION_V8 = 8
 V6_MAX_INPUT_COUNT = 36_000
 V6_MAX_DURATION_QF = 71_928
 V6_MAX_SAMPLE_COUNT = 17_983
@@ -363,13 +365,42 @@ def _read_bounded(path: Path, expected_magic: bytes | None = None) -> bytes:
     return data
 
 
+def _validate_camera(data: bytes, segments: list) -> dict:
+    _require(len(data) >= 32, "truncated camera header")
+    magic, version, size, count, flags, checksum, r0, r1, r2 = struct.unpack_from(">IHH6I", data)
+    _require((magic, version, size) == (0x53474341, 1, 32), "invalid camera header")
+    _require(count <= 5312 and len(data) == 32 + count * 24, "camera count/size mismatch")
+    _require(not flags & ~1 and not (r0 or r1 or r2), "unknown camera flags/reserved")
+    _require(_crc32(data[32:]) == checksum, "camera checksum mismatch")
+    previous_qf = previous_segment = None
+    for index in range(count):
+        sample = data[32 + index * 24:56 + index * 24]
+        qf = struct.unpack_from(">I", sample)[0]
+        quaternion = struct.unpack_from(">4h", sample, 13)
+        fov = struct.unpack_from(">H", sample, 21)[0]
+        segment = sample[23] & 63
+        _require(not sample[23] & 128 and segment < len(segments), "invalid camera segment")
+        _require(segments[segment]['start_qf'] <= qf <= segments[segment]['end_qf'],
+                 "camera timestamp outside segment")
+        _require(256 <= fov <= 179 * 256, "invalid camera field of view")
+        _require(1073479689 <= sum(v * v for v in quaternion) <= 1073879689,
+                 "invalid camera quaternion")
+        if previous_qf is not None:
+            _require(segment >= previous_segment and qf >= previous_qf and
+                     (segment != previous_segment or qf != previous_qf), "unordered camera samples")
+        _require(not (previous_segment is None or segment != previous_segment) or bool(sample[23] & 64),
+                 "missing camera cut marker")
+        previous_qf, previous_segment = qf, segment
+    return {'sample_count': count, 'truncated': bool(flags & 1)}
+
+
 def _validate_teaching(data: bytes, start_qf: int, end_qf: int, ghost_version: int = 5) -> dict:
     _require(len(data) >= 32, "truncated teaching header")
     magic, version, header_size, inputs, splits, flags, checksum, r0, r1 = struct.unpack_from(
         ">IHH6I", data)
-    fludd = ghost_version == 6
+    fludd = ghost_version >= 6
     stride = 24 if fludd else 16
-    _require(magic == 0x53475449 and version == (2 if fludd else 1) and header_size == 32,
+    _require(magic == 0x53475449 and version == (3 if ghost_version >= 7 else 2 if fludd else 1) and header_size == 32,
              "invalid teaching header")
     _require(inputs <= (V6_MAX_INPUT_COUNT if fludd else V5_MAX_INPUT_COUNT) and splits <= V5_MAX_SPLIT_COUNT,
              "teaching count exceeds bound")
@@ -388,10 +419,20 @@ def _validate_teaching(data: bytes, start_qf: int, end_qf: int, ghost_version: i
             visual = data[offset + 16:offset + 24]
             mode = visual[0]
             pitch = ((visual[5] & 15) << 8) | visual[6]
-            _require((not any(visual)) if not mode else
-                     (not mode & ~0x1f and bool(mode & 8) and mode & 7 <= 5
-                      and (bool(mode & 16) or visual[7] == 0)
-                      and (pitch <= 1024 or pitch >= 3072)), "invalid FLUDD observation")
+            if ghost_version >= 7 and mode & 0x80:
+                _require(not mode & ~0xb0 and visual[1] < 26
+                         and (not mode & 0x20 or bool(mode & 0x10))
+                         and (not visual[4] or visual[1] == 15)
+                         and visual[5] in (0, 3, 4) and (visual[5] or not visual[6]),
+                         "invalid Yoshi observation")
+            else:
+                if ghost_version >= 7 and mode & 0x20:
+                    _require(bool(mode & 16) and not mode & 7, "invalid burst observation")
+                    mode &= ~0x20
+                _require((not any(visual)) if not mode else
+                         (not mode & ~0x1f and bool(mode & 8) and mode & 7 <= 5
+                          and (bool(mode & 16) or visual[7] == 0)
+                          and (pitch <= 1024 or pitch >= 3072)), "invalid FLUDD observation")
         previous = qf
     result = []
     previous = None
@@ -414,9 +455,9 @@ def validate_ghost(data: bytes) -> dict:
     _require(len(data) >= 8, "truncated ghost prefix")
     _require(data[:4] == GHOST_MAGIC, "bad ghost magic")
     version = struct.unpack_from(">H", data, 4)[0]
-    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4, GHOST_VERSION_V5, GHOST_VERSION_V6):
+    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4, GHOST_VERSION_V5, GHOST_VERSION_V6, GHOST_VERSION_V7, GHOST_VERSION_V8):
         raise UnsupportedVersion(
-            f"unsupported ghost version {version}; reader supports 3, 4, 5 and 6"
+            f"unsupported ghost version {version}; reader supports 3 through 8"
         )
     _require(len(data) >= GHOST_HEADER_SIZE, "truncated ghost header")
     fields = _GHOST_PREFIX.unpack_from(data)
@@ -471,7 +512,7 @@ def validate_ghost(data: bytes) -> dict:
     expected_file_crc = _crc32_zeroed(data, (12, 16))
     _require(file_checksum == expected_file_crc, "ghost file checksum mismatch")
 
-    supported_features = (7 if version == GHOST_VERSION_V6 else 3 if version == GHOST_VERSION_V5 else SUPPORTED_REQUIRED_FEATURES_V4
+    supported_features = (31 if version == GHOST_VERSION_V8 else 15 if version == GHOST_VERSION_V7 else 7 if version == GHOST_VERSION_V6 else 3 if version == GHOST_VERSION_V5 else SUPPORTED_REQUIRED_FEATURES_V4
                           if version == GHOST_VERSION_V4
                           else SUPPORTED_REQUIRED_FEATURES_V3)
     if required_features & ~supported_features:
@@ -490,14 +531,14 @@ def validate_ghost(data: bytes) -> dict:
     _require(sample_interval_qf == SAMPLE_INTERVAL_QF, "invalid sample interval")
     _require(not (run_flags & RUN_TAS) or (run_flags & RUN_ASSISTED),
              "TAS ghost must be marked assisted")
-    _require(source_profile < PROFILE_COUNT, "invalid source profile")
+    _require((source_profile < PROFILE_COUNT or source_profile == 5), "invalid source profile")
     region_name = _game_region(game_id, region, disc_revision)
     _validate_route(route_area, route_episode, route_parent_area, route_flags,
                     route_variant, "route")
 
-    _require(MIN_SAMPLE_COUNT <= sample_count <= (V6_MAX_SAMPLE_COUNT if version == 6 else MAX_SAMPLE_COUNT),
+    _require(MIN_SAMPLE_COUNT <= sample_count <= (V6_MAX_SAMPLE_COUNT if version >= 6 else MAX_SAMPLE_COUNT),
              "sample count outside canonical bounds")
-    _require(0 < duration_qf <= (V6_MAX_DURATION_QF if version == 6 else MAX_DURATION_QF),
+    _require(0 < duration_qf <= (V6_MAX_DURATION_QF if version >= 6 else MAX_DURATION_QF),
              "ghost duration outside its version limit")
     _require(start_qf <= QF_MAX and end_qf <= QF_MAX,
              "ghost QFT boundary exceeds signed runtime range")
@@ -573,8 +614,16 @@ def validate_ghost(data: bytes) -> dict:
     _require(payload_size == file_size - header_size,
              f"{label} payload size disagrees with file")
     pose_end = sample_data_offset + sample_data_size
+    teaching_end = file_size
     if version >= GHOST_VERSION_V5:
-        teaching = _validate_teaching(data[pose_end:], start_qf, end_qf, version)
+        if version == GHOST_VERSION_V8:
+            _require(file_size - pose_end >= 32, "truncated V8 teaching header")
+            inputs, splits = struct.unpack_from(">II", data, pose_end + 8)
+            _require(inputs <= V6_MAX_INPUT_COUNT and splits <= V5_MAX_SPLIT_COUNT,
+                     "V8 teaching count exceeds bound")
+            teaching_end = pose_end + 32 + inputs * 24 + splits * 12
+            _require(teaching_end <= file_size, "truncated V8 teaching data")
+        teaching = _validate_teaching(data[pose_end:teaching_end], start_qf, end_qf, version)
     else:
         _require(file_size == pose_end,
                  f"{label} ghost contains trailing or missing bytes")
@@ -687,9 +736,11 @@ def validate_ghost(data: bytes) -> dict:
     ghost_id = (ghost_id_hi << 32) | ghost_id_lo
     _require(ghost_id != 0, "zero ghost id")
     created_unix = (created_hi << 32) | created_lo
+    camera = _validate_camera(data[teaching_end:], segments) if version == GHOST_VERSION_V8 else None
     return {
         "kind": "ghost",
         "teaching": teaching,
+        "camera": camera,
         "version": version,
         "file_size": file_size,
         "file_checksum": file_checksum,
@@ -772,7 +823,7 @@ def validate_index(data: bytes) -> dict:
     _require(entry_size == INDEX_ENTRY_SIZE, "invalid index entry size")
     _require(entry_count <= PROFILE_MAX_ENTRIES, "index exceeds 48 ghosts")
     _require(max_entries == PROFILE_MAX_ENTRIES, "index policy count changed")
-    _require(profile < PROFILE_COUNT, "invalid index profile")
+    _require((profile < PROFILE_COUNT or profile == 5), "invalid index profile")
     _require(quota_duration_qf == PROFILE_MAX_DURATION_QF,
              "index policy duration changed")
     _require(file_size == len(data), "index file size does not match bytes")
@@ -831,7 +882,7 @@ def validate_index(data: bytes) -> dict:
                         route_variant, f"entry {index} route")
         _require((entry_flags & ~0x0003) == 0,
                  f"entry {index} has unknown flags")
-        _require(MIN_SAMPLE_COUNT <= sample_count <= (V6_MAX_SAMPLE_COUNT if version == 6 else MAX_SAMPLE_COUNT),
+        _require(MIN_SAMPLE_COUNT <= sample_count <= (V6_MAX_SAMPLE_COUNT if version >= 6 else MAX_SAMPLE_COUNT),
                  f"entry {index} sample count outside bounds")
         _require(duration_qf <= MAX_DURATION_QF,
                  f"entry {index} duration exceeds 15 minutes")
