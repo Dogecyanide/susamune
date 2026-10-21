@@ -259,8 +259,8 @@ private:
         return true;
     }
     static const char *rowName(int page, int row) {
-        static const char main[] = "New TAS\0Continue\0Replay\0Save TAS\0Open TAS\0Checkpoints\0Pause / Resume\0Advance one frame\0TAS banner";
-        static const char checkpoints[] = "Go to Beginning\0Save Checkpoint 1\0Go to Checkpoint 1\0Save Checkpoint 2\0Go to Checkpoint 2";
+        static const char main[] MENU_OWNED_RODATA("tas_rows") = "New TAS\0Continue\0Replay\0Save TAS\0Open TAS\0Checkpoints\0Pause / Resume\0Advance one frame\0TAS banner";
+        static const char checkpoints[] MENU_OWNED_RODATA("tas_checkpoint_rows") = "Go to Beginning\0Save Checkpoint 1\0Go to Checkpoint 1\0Save Checkpoint 2\0Go to Checkpoint 2";
         return page == MAIN && row == 9 ? kTasScrubMenuLabel : PackedText::at(page == CHECKPOINTS ? checkpoints : main, row);
     }
     BindId selectedBind() const {

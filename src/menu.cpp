@@ -1081,6 +1081,12 @@ int expandedRow(int row);
 bool update(Menu *menu, TMarioGamePad *pad, int &selected, u16 pressed);
 void draw(Menu *menu, int x, int y, int w, int h, int selected);
 }
+// A static table inside an inline member function is emitted as a COMDAT input. A new
+// one must not join the frozen mixed .foxtrot.rodata input, whose ownership the pinned
+// link cannot split; its own .foxtrot.rodata.<name> section gives it one owner. Ordinary
+// links still place it in .foxtrot.rodata.
+#define MENU_OWNED_RODATA(name) __attribute__((section(".foxtrot.rodata." name)))
+
 class GhostsTab : public MenuTab {
     friend class Menu;
 public:
@@ -1558,7 +1564,7 @@ private:
         if (selection == IMPORT_SCAN_SELECTION) return "Scan import folder";
         if (selection == PERSONAL_PAGE_SELECTION) return "Personal page";
         if (selection == IMPORTED_PAGE_SELECTION) return "Imported page";
-        static const char names[] = "Ghost display\0Ghost opacity\0Ghost appearance\0Auto race target\0PB ghost save\0PB profile\0\0Ghost inputs";
+        static const char names[] MENU_OWNED_RODATA("ghosts_rows") = "Ghost display\0Ghost opacity\0Ghost appearance\0Auto race target\0PB ghost save\0PB profile\0\0Ghost inputs";
         return PackedText::at(names, selection);
     }
 
@@ -4879,8 +4885,8 @@ private:
         else snprintf(load, loadSize, "State %lu", gSavestateMgr->loadSlot() + 1);
     }
     static const char *rowName(int row, bool sd = false) {
-        static const char *const main[] = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", "SD states"};
-        static const char disk[] = "Save to\0Load from\0Save memory state to SD\0Refresh / first page\0Next page";
+        static const char *const main[] MENU_OWNED_RODATA("savestates_rows") = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", "SD states"};
+        static const char disk[] MENU_OWNED_RODATA("savestates_sd_rows") = "Save to\0Load from\0Save memory state to SD\0Refresh / first page\0Next page";
         return sd ? PackedText::at(disk, row) : row == ROW_FAST ? kFastRamLoadLabel : main[row];
     }
     u32 sdCount() const {
@@ -6210,7 +6216,7 @@ private:
     static const char *rowName(int row) {
         if (row == 1) return PracticeSession::pausePending() ? "Cancel armed pause" :
             (PracticeSession::manualPaused() || (PracticeSession::freeCamera() && PracticeSession::nativePaused())) ? "Resume gameplay" : "Pause gameplay";
-        static const char names[] = "Free camera\0\0Movement speed\0Reverse sideways\0Look sensitivity\0Hide all HUD\0Camera smoothing\0Recenter camera";
+        static const char names[] MENU_OWNED_RODATA("practice_controls_rows") = "Free camera\0\0Movement speed\0Reverse sideways\0Look sensitivity\0Hide all HUD\0Camera smoothing\0Recenter camera";
         return PackedText::at(names, row);
     }
     static SettingId cameraSetting(int row) {
@@ -6269,7 +6275,7 @@ public:
     }
 private:
     static const char *pageLine(int page, int line) {
-        static const char *const pages[][8] = {
+        static const char *const pages[][8] MENU_OWNED_RODATA("guide_pages") = {
             {"FRAME CONTROLS", "Practice: TAS projects pauses or steps.",
              "Your shortcut appears below the list.", "Press X on an action to change its shortcut.",
              "Hold Mario's buttons, then tap Step.", "Press early to pause when Mario can move.",
