@@ -51,6 +51,7 @@
 #include "susamune/layout_profiles.hxx"
 #include "susamune/live_race.hxx"
 #include "susamune/live_ghost.hxx"
+#include "susamune/live_transport.hxx"
 #include "susamune/movement_timing_display.hxx"
 #include "susamune/movement_display.hxx"
 #include "susamune/warp_wheel.hxx"

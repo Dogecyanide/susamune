@@ -672,6 +672,7 @@ void onILResult(int entry, s32 qf, bool eligible) {
     s.message = Text::waitingResult;
 }
 void update() {
+    LiveStun::update();
     if (!s.active) return;
     const u32 now = nowMs();
     const auto transport = LiveTransport::poll();

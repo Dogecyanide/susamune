@@ -75,6 +75,16 @@ static const char invalidIp[] = "Each IP segment must be 0 to 255";
 static const char invalidPort[] = "UDP port must be 1 to 65535";
 static const char dot[] = ".";
 static const char digitHelp[] = "D-pad Left/Right: digit    Up/Down: value";
+static const char stunBusy[] = "Disconnect before the NAT test";
+static const char stunFormat[] = "STUN %s  A %s  B %s";
+static const char stunRunning[] = "probing...";
+static const char stunSame[] = "SAME - punching should work";
+static const char stunDifferent[] = "DIFFERENT - symmetric NAT";
+static const char stunOne[] = "one reply - retry X";
+static const char stunNone[] = "no reply - retry X";
+static const char stunFailed[] = "failed";
+static const char endpointFormat[] = "%u.%u.%u.%u:%u";
+static const char none[] = "--";
 }
 
 class OnlineTab final : public MenuTab {
@@ -86,7 +96,7 @@ public:
     bool grabsInput() const override { return mMode != NONE; }
     bool suppressesBinds() const override { return true; }
     bool fullScreen() const override { return mMode == NAME || numeric() || mMode == DRAFT_PICK; }
-    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Y); }
+    void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X | JUTGamePad::Y); }
     bool back() override {
         if (mMode == NONE) return false;
         mMode = NONE;
@@ -156,6 +166,17 @@ public:
             return;
         }
 
+        if (pressed & JUTGamePad::X) {
+            // Phase-0 NAT probe on the race's own local port.
+#if IS_EMULATOR
+            const u16 localPort = 0;
+#else
+            const u16 localPort = LiveRace::options().port;
+#endif
+            if (status.active || !LiveStun::start(localPort)) menu->toast(OnlineText::stunBusy);
+            else mDiagnostics = true;
+            return;
+        }
         const u32 nav = menu->navigationInput(pad);
         if (nav & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, ROW_COUNT);
         else if (nav & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, ROW_COUNT);
@@ -269,8 +290,10 @@ public:
             socketText = text;
         }
         small(menu, socketText, x + 4, y + 96, w - 8);
-        snprintf(text, sizeof(text), OnlineText::packetFormat,
-            diagnostics.submitted, diagnostics.received, diagnostics.accepted);
+        if (LiveStun::result().state == LiveStun::IDLE) {
+            snprintf(text, sizeof(text), OnlineText::packetFormat,
+                diagnostics.submitted, diagnostics.received, diagnostics.accepted);
+        } else stunLine(text, sizeof(text));
         small(menu, text, x + 4, y + 110, w - 8);
         }
 
@@ -394,6 +417,22 @@ private:
         drawFooterText(menu, turn && !status.draftPending ?
             (picking ? OnlineText::draftPickHelp : OnlineText::draftBanHelp) : OnlineText::draftBackHelp,
             x + 4, y + h - 16);
+    }
+    static void stunLine(char *text, unsigned size) {
+        const LiveStun::Result &stun = LiveStun::result();
+        char mapped[LiveStun::SERVER_COUNT][24];
+        for (unsigned i = 0; i < LiveStun::SERVER_COUNT; ++i) {
+            const TWLiveEndpoint &at = stun.mapped[i];
+            if (stun.answered >> i & 1u)
+                snprintf(mapped[i], sizeof(mapped[i]), OnlineText::endpointFormat, at.ip[0], at.ip[1], at.ip[2], at.ip[3], at.port);
+            else snprintf(mapped[i], sizeof(mapped[i]), OnlineText::none);
+        }
+        const char *verdict = stun.state == LiveStun::RUNNING ? OnlineText::stunRunning :
+            stun.state == LiveStun::FAILED ? OnlineText::stunFailed :
+            stun.verdict == LiveStun::SAME_MAPPING ? OnlineText::stunSame :
+            stun.verdict == LiveStun::DIFFERENT_MAPPING ? OnlineText::stunDifferent :
+            stun.verdict == LiveStun::ONE_REPLY ? OnlineText::stunOne : OnlineText::stunNone;
+        snprintf(text, size, OnlineText::stunFormat, verdict, mapped[0], mapped[1]);
     }
     static void small(Menu *menu, const char *text, int x, int y, int width) {
         int size = FOOT_SZ;

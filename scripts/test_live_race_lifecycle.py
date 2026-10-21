@@ -53,6 +53,7 @@ bool publishPose(const Endpoint&,const void*,unsigned){return submitAccepts;}
 bool receive(Packet& packet){++received;packet={};return endlessPackets;}
 void stop(){++transportStops;}
 }
+namespace LiveStun { void update(){} }
 namespace LiveRelay {
 bool init(Client&c,const Callbacks&){c.info.state=WAITING;return true;}
 bool begin(Client&,bool,unsigned,unsigned,unsigned,const Endpoint&,unsigned){++relayBegins;return true;}
