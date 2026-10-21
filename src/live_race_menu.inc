@@ -97,7 +97,11 @@ class OnlineTab final : public MenuTab {
     friend class ::Menu;
 public:
     OnlineTab() : mSel(0), mMode(NONE), mCursor(0), mLength(0), mPage(0),
-                  mUpper(false), mDiagnostics(false) { focus(); }
+                  mUpper(false), mDiagnostics(false) {
+        // The tab lives in uncleared MEM2 runtime storage: the editor must start idle.
+        mEditor.reset();
+        focus();
+    }
     const char *title() const override { return OnlineText::title; }
     bool grabsInput() const override { return mMode != NONE; }
     bool suppressesBinds() const override { return true; }
@@ -228,7 +232,7 @@ public:
                 mEditor.setScaleLimits(50, 200);
                 mEditor.begin(&mStyle, mRgb, mRgbBackup, 1, 0, nullptr,
                               CreationEditor::CAP_POSITION | CreationEditor::CAP_SCALE);
-                mMode = SCORE;
+                if (mEditor.editing()) mMode = SCORE;
                 return;
             }
             LiveRace::setPrefs(prefs);
