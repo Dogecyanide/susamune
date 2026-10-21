@@ -5572,6 +5572,28 @@ static void ApplyFinishBreakdownKey(const char *key, const char *text)
 	if (SusamuneFinishBreakdownValid(&next)) *SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR = next;
 }
 
+static int OnlineNameValid(const char *name)
+{
+	u32 i;
+	if (!name[0]) return 0;
+	for (i = 0; i < SUSAMUNE_ONLINE_NAME_SIZE; ++i)
+	{
+		if (!name[i]) return 1;
+		if ((u8)name[i] < 0x20 || (u8)name[i] > 0x7e) return 0;
+	}
+	return 0;
+}
+
+static void ApplyOnlineNameKey(const char *key, const char *text)
+{
+	struct SusamuneOnlineNameCfg *cfg = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
+	u32 length = (u32)strlen(text);
+	if (strcmp(key, "online_name") != 0 || length >= SUSAMUNE_ONLINE_NAME_SIZE ||
+	    !OnlineNameValid(text)) return;
+	memset(cfg->name, 0, sizeof(cfg->name));
+	memcpy(cfg->name, text, length);
+}
+
 static void ApplyFailureBannerStyleKey(struct SusamuneWallkickStyleCfg *wallkick,
 	const char *key, const char *text)
 {
@@ -5838,6 +5860,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
 			ApplyFinishBreakdownKey(Trim(line), Trim(eq + 1));
+			ApplyOnlineNameKey(Trim(line), Trim(eq + 1));
 			ApplyFailureBannerStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			practiceStylesPresent |= ApplyPracticeDisplayStyleKey(Trim(line), Trim(eq + 1));
 			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
@@ -6435,6 +6458,11 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitILEpisodes(f, err);
 	EmitPracticeDisplayStyles(f, err);
 	EmitFinishBreakdown(f, err);
+	{
+		const struct SusamuneOnlineNameCfg *name = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
+		if (name->magic == SUSAMUNE_ONLINE_NAME_MAGIC && OnlineNameValid(name->name))
+			Emit(f, err, line, (u32)_sprintf(line, "online_name = %s\r\n", name->name));
+	}
 	EmitFailureBannerStyle(f, err, &cfg->wallkickStyle);
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
@@ -6988,6 +7016,8 @@ void SusamuneCfgInit(void)
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->count = SUSAMUNE_IL_EPISODE_COUNT;
 	SusamunePracticeDisplayStyleInit(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR);
 	SusamuneFinishBreakdownInit(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR);
+	memset(SUSAMUNE_ONLINE_NAME_PHYS_PTR, 0, sizeof(struct SusamuneOnlineNameCfg));
+	SUSAMUNE_ONLINE_NAME_PHYS_PTR->magic = SUSAMUNE_ONLINE_NAME_MAGIC;
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -7006,7 +7036,7 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
 	                 SUSAMUNE_CFG_FLAG_IL_EPISODES |
 	                 SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE | SUSAMUNE_CFG_FLAG_SETTINGS_TAIL |
-	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG |
+	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG | SUSAMUNE_ONLINE_NAME_FLAG |
 	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
 	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED |
 	                 MOONSHINE_LAYOUT_CFG_FLAG;
@@ -7105,6 +7135,7 @@ void SusamuneCfgInit(void)
 	sync_after_write(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_after_write(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
 	sync_after_write(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_after_write(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
 	sync_after_write((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
@@ -7150,6 +7181,7 @@ void SusamuneCfgService(void)
 	sync_before_read(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_before_read(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
 	sync_before_read(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_before_read(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
 	sync_before_read((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	seq = cfg->saveSeq;
 

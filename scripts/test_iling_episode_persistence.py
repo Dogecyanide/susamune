@@ -59,6 +59,9 @@ static SusamuneCfg &cfg=cfgStorage.value;
 static SusamuneFinishBreakdownCfg breakdown;
 #undef SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR
 #define SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR (&breakdown)
+static SusamuneOnlineNameCfg onlineName;
+#undef SUSAMUNE_ONLINE_NAME_PHYS_PTR
+#define SUSAMUNE_ONLINE_NAME_PHYS_PTR (&onlineName)
 static SusamunePracticeDisplayStyleCfg practiceStyles;
 #undef SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR
 #define SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR (&practiceStyles)
@@ -100,7 +103,7 @@ unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
         code += kernel[kernel.index("#define SUSAMUNE_SETTING_KEY"):kernel.index("// Same, for the running disc") ]
         code += function(kernel, "FindSettingKey")
         for name in re.findall(r"\b(Apply\w+)\(", function(kernel, "ParseIni")):
-            if name not in ("ApplyILEpisodeKey", "ApplyPracticeDisplayStyleKey", "ApplyWallkickStyleKey", "ApplyFailureBannerStyleKey", "ApplyFinishBreakdownKey"):
+            if name not in ("ApplyILEpisodeKey", "ApplyPracticeDisplayStyleKey", "ApplyWallkickStyleKey", "ApplyFailureBannerStyleKey", "ApplyFinishBreakdownKey", "ApplyOnlineNameKey"):
                 code += f"template<class... T>void {name}(T...){{}}\n"
         code += kernel[kernel.index("enum IniSection {"):kernel.index("static enum IniSection ClassifySection")]
         code += kernel[kernel.index("#define IL_EPISODE_KEY"):kernel.index("static void ApplyILEpisodeKey")]
@@ -108,7 +111,7 @@ unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
         code += keys[:keys.index("};") + 2]
         code += kernel[kernel.index("static const char *const PracticeDisplayKeys"):kernel.index("static u8 ApplyPracticeDisplayStyleKey")]
         for name in ("BuildSectionName", "IsSpace", "Trim", "ParseU8", "ParseU16", "ParseQftU8", "ParseQftRgb", "ClassifySection",
-                     "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
+                     "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "OnlineNameValid", "ApplyOnlineNameKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
                      "ParseIni", "Emit", "EmitStr", "EmitILEpisodes", "EmitMovementOverlayStyle", "EmitPracticeDisplayStyles", "EmitFailureBannerStyle", "EmitFinishBreakdown"):
             code += function(kernel, name)
         for name in ("EmitNativeTimerStyle", "EmitMarioColors", "EmitFluddColors"):
@@ -140,6 +143,7 @@ API void selectRegion(const char*region){
  resetEpisodeChoices();stageEpisodes(&episodes);memset(&cfg,0,sizeof(cfg));
  SusamunePracticeDisplayStyleInit(&practiceStyles);
  SusamuneFinishBreakdownInit(&breakdown);
+ memset(&onlineName,0,sizeof(onlineName));onlineName.magic=SUSAMUNE_ONLINE_NAME_MAGIC;
  cfg.wallkickStyle.magic=SUSAMUNE_WALLKICK_STYLE_MAGIC;cfg.wallkickStyle.version=SUSAMUNE_WALLKICK_STYLE_VERSION;
  cfg.flags|=SUSAMUNE_CFG_FLAG_SETTINGS_TAIL;
  cfg.count=SETTING_KEY_COUNT;for(unsigned i=0;i<SUSAMUNE_CFG_TOTAL_SETTINGS;i++)SusamuneCfgSetSetting(&cfg,i,SUSAMUNE_CFG_UNSET);
@@ -152,6 +156,7 @@ API void settingCount(unsigned count){cfg.count=count;}
 API void getEpisodes(SusamuneILEpisodesCfg*out){*out=episodes;}
 API const void*styles(){return &practiceStyles;}
 API void finishBreakdown(SusamuneFinishBreakdownCfg*out){*out=breakdown;}
+API SusamuneOnlineNameCfg*onlineNameBlock(){return &onlineName;}
 API const void*unrelated(){return &cfg.movementStyle;}
 API void failure(MoonshineFailureStyle*out){MoonshineFailureStyleRead(out,&cfg.wallkickStyle,&practiceStyles);}
 API int layoutFailure(unsigned old,MoonshineFailureStyle*out){

@@ -21,6 +21,7 @@
 #include "susamune/savestate.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/stage_loader.hxx"
+#include "susamune/susamune_cfg.h"
 #include "susamune/tas_project.hxx"
 #include "susamune/warp_wheel.hxx"
 
@@ -595,12 +596,30 @@ u32 freshSecret() {
     mix ^= mix >> 15; mix *= 0x2c1b3c6du; mix ^= mix >> 12;
     return mix % LiveP2P::SECRET_MAX + 1;
 }
+
+#if !IS_EMULATOR
+// The name lives in susamune.ini (creation section, "online_name"); a kernel
+// without the block leaves the flag clear and the name is simply not kept.
+SusamuneOnlineNameCfg *savedName() {
+    const volatile SusamuneCfg *cfg = SUSAMUNE_CFG_PPC_PTR;
+    return cfg->magic == SUSAMUNE_CFG_MAGIC && (cfg->flags & SUSAMUNE_ONLINE_NAME_FLAG) ?
+        SUSAMUNE_ONLINE_NAME_PPC_PTR : nullptr;
+}
+#endif
 }
 
 void init() {
     s = {}; sOptions = {}; sStageMarker = 0;
     memcpy(sOptions.name, Text::defaultName, 7);
     sOptions.bestOf = 3;
+#if !IS_EMULATOR
+    if (SusamuneOnlineNameCfg *saved = savedName()) {
+        DCInvalidateRange(saved, sizeof(*saved));
+        Options loaded = sOptions;
+        memcpy(loaded.name, saved->name, 16);
+        if (saved->magic == SUSAMUNE_ONLINE_NAME_MAGIC && validOptions(loaded)) sOptions = loaded;
+    }
+#endif
     s.message = Text::offline;
     LiveGhost::reset();
 }
@@ -617,6 +636,16 @@ bool configure(const Options &options) {
         if (!sOptions.name[i]) ended = true;
         if (ended) sOptions.name[i] = 0;
     }
+#if !IS_EMULATOR
+    // Saved with the other settings when the menu closes.
+    SusamuneOnlineNameCfg *saved = savedName();
+    if (saved && memcmp(saved->name, sOptions.name, sizeof(sOptions.name))) {
+        memcpy(saved->name, sOptions.name, sizeof(sOptions.name));
+        saved->magic = SUSAMUNE_ONLINE_NAME_MAGIC;
+        DCStoreRange(saved, sizeof(*saved));
+        gSettings.markDirty();
+    }
+#endif
     return true;
 }
 bool host() { return begin(true); }
