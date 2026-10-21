@@ -21,7 +21,7 @@ def fixture(owner="live_race.cpp", name=None):
 
 class Mem1RetentionTests(unittest.TestCase):
     def test_console_whitelist_is_new_exclusive_and_leaves_emulator_policy_unchanged(self):
-        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 50)
+        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 56)
         for name in extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS:
             owners = [owner for owner, names in extensions.NEW_MODULES.items() if name in names]
             self.assertEqual(len(owners), 1, name)

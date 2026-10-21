@@ -712,6 +712,13 @@ RETAIN_MEM1_CONSOLE_FUNCTIONS = frozenset((
     "stop__13LiveTransportFv",
     "unchanged__Q216StateQuickReplay0FRCQ216StateQuickReplay4Planb",
     "visualState__9LiveGhostFPQ25Ghost11VisualState",
+    # Prototype 19 JP headroom: raw cold bytes become compressed MEM1 bytes.
+    "drawName__9LiveGhostFP4Menu",
+    "tick__9LiveGhostFUlb",
+    "setName__9LiveGhostFPCcUi",
+    "submit__9LiveGhostFRCQ25Ghost11VisualStateUlUlUlUlPC21SusamunePracticeInput",
+    "accept__8LiveStunFRC0",
+    "finish__Q28LiveStun0Fi",
 ))
 
 
