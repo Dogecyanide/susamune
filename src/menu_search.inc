@@ -284,6 +284,23 @@ SEARCH_CODE(available) bool Menu::searchAvailable() const {
     return false;
 }
 
+// Search (L+Y by default) only exists where searchAvailable() says so, which
+// already excludes sub-pages such as the creation editor and its Y steps.
+SEARCH_CODE(shortcut) bool Menu::searchShortcut(TMarioGamePad *pad) {
+    const u32 search = searchAvailable() ? gBinds.get(BIND_MENU_SEARCH) : 0;
+    if (search && gBinds.wasPressedRaw(BIND_MENU_SEARCH)) {
+        openSearch();
+        return true;
+    }
+    // A shoulder that starts a search combo changes tabs on release instead,
+    // so holding it for the combo does not leave the page first.
+    const u32 shoulder = (search & (search - 1)) ? search & (TMarioGamePad::L | TMarioGamePad::R) : 0;
+    const u32 tabs = (pad->mButtons.mRapidInput & ~shoulder) | (pad->mButtons._8 & shoulder);
+    if (tabs & TMarioGamePad::L) switchTab(-1);
+    if (tabs & TMarioGamePad::R) switchTab(+1);
+    return false;
+}
+
 SEARCH_CODE(open) void Menu::openSearch() {
     if (!searchAvailable()) return;
     auto &state = sMenuRuntime.search;

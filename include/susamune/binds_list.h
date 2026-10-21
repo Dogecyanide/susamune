@@ -78,7 +78,8 @@
     X(BIND_FEATURE_MUTE_BGM, "feature_mute_bgm")                            \
     X(BIND_FEATURE_SHADOW_HP, "feature_shadow_hp")                          \
     X(BIND_FEATURE_UNLOCK_YOSHI, "feature_unlock_yoshi")                    \
-    X(BIND_FEATURE_UNLOCK_NOZZLES, "feature_unlock_nozzles")
+    X(BIND_FEATURE_UNLOCK_NOZZLES, "feature_unlock_nozzles")                \
+    X(BIND_MENU_SEARCH, "menu_search")
 
 // The bindable buttons, as (GameCube button bit, ini token, menu glyph). The
 // mod defines the regional glyph macros in glyphs.hxx; the launcher ignores

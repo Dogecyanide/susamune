@@ -69,8 +69,9 @@ API unsigned edge(unsigned row,unsigned held,unsigned before,unsigned assigned,u
     def test_new_binds_are_all_unassigned_and_fit_existing_mailbox(self):
         ids=re.findall(r'X\((BIND_\w+),',(ROOT/'include/susamune/binds_list.h').read_text())
         descs=re.findall(r'^BIND_DESC\(.*?,\s*(.*?)\)$',(ROOT/'src/binds_descs.inc').read_text(),re.M)
-        self.assertEqual(len(ids),58);self.assertEqual(len(ids),len(descs))
-        self.assertEqual(descs[46:],['0']*12)
+        self.assertEqual(len(ids),59);self.assertEqual(len(ids),len(descs))
+        self.assertEqual(descs[46:58],['0']*12)
+        self.assertEqual((ids[58],descs[58]),('BIND_MENU_SEARCH','kL | kY'))
         self.assertEqual(ids[45],'BIND_SAVESTATE_LOAD_3')
         self.assertEqual(len({self.lib.settings(i) for i in range(self.lib.count())}),12)
         self.assertLessEqual(len(ids),64)

@@ -4691,8 +4691,11 @@ private:
 namespace {
 
 struct BindPage { const char *name; u8 first, count; };
+#pragma clang section rodata=""
+// Outside .foxtrot.rodata: that pinned input cannot grow.
+const char kSearchBindHelp[] = "Opens search on the top Settings, ILs and System pages.";
 constexpr u8 kBindPageIds[] = {
-    BIND_MENU_TOGGLE, BIND_TOGGLE_INPUT_DISPLAY,
+    BIND_MENU_TOGGLE, BIND_MENU_SEARCH, BIND_TOGGLE_INPUT_DISPLAY,
     BIND_SAVESTATE_SAVE, BIND_SAVESTATE_LOAD,
     BIND_SAVESTATE_SAVE_2, BIND_SAVESTATE_LOAD_2,
     BIND_SAVESTATE_SAVE_3, BIND_SAVESTATE_LOAD_3,
@@ -4722,15 +4725,16 @@ constexpr u8 kBindPageIds[] = {
     BIND_FEATURE_UNLOCK_NOZZLES,
 };
 constexpr BindPage kBindPages[] = {
-    {"Menu and displays", 0, 2},
-    {"Savestates", 2, 9},
-    {"Warps and restarts", 11, 4},
-    {"Practice tools", 15, 8},
-    {"TAS projects", 23, 10},
-    {"Objects and Yoshi", 33, 5},
-    {"Attempt counter", 38, 6},
-    {"Feature toggles", 44, 12},
+    {"Menu and displays", 0, 3},
+    {"Savestates", 3, 9},
+    {"Warps and restarts", 12, 4},
+    {"Practice tools", 16, 8},
+    {"TAS projects", 24, 10},
+    {"Objects and Yoshi", 34, 5},
+    {"Attempt counter", 39, 6},
+    {"Feature toggles", 45, 12},
 };
+#pragma clang section rodata=".foxtrot.rodata"
 constexpr bool bindPagesValid() {
     unsigned next = 0;
     for (const BindPage &page : kBindPages) {
@@ -5183,6 +5187,7 @@ public:
         const BindId id = selectedBind();
         const char *help = id >= BIND_SAVESTATE_SAVE_2 && id <= BIND_SAVESTATE_LOAD_3
             ? "Always uses this RAM state; selected save/load slots stay unchanged."
+            : id == BIND_MENU_SEARCH ? kSearchBindHelp
             : id >= BIND_FEATURE_FAST_TEXT
                 ? "Toggle on/off; multi-choice features cycle through their options."
                 : "C-stick left/right changes groups. Shortcuts accept up to four buttons.";
@@ -7015,7 +7020,6 @@ void Menu::update(TMarioGamePad *pad) {
         return;
     }
 
-    u32 rapid = pad->mButtons.mRapidInput;
     if (mShown && searchActive()) {
         updateSearch(pad);
         return;
@@ -7045,17 +7049,7 @@ void Menu::update(TMarioGamePad *pad) {
         mCRepeatFrames = 0;
         return;
     }
-    if (searchAvailable() && (rapid & TMarioGamePad::Y)) {
-        openSearch();
-        return;
-    }
-
-    if (rapid & TMarioGamePad::L) {
-        switchTab(-1);
-    }
-    if (rapid & TMarioGamePad::R) {
-        switchTab(+1);
-    }
+    if (searchShortcut(pad)) return;  // also L/R tab switching
 
     mTabs[mCurTab]->update(this, pad);
 }

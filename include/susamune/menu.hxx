@@ -48,6 +48,7 @@ public:
     bool searchActive() const;
     bool searchAvailable() const;
     void openSearch();
+    bool searchShortcut(TMarioGamePad *pad);
 
     // Menu-only C-stick repeat. This never changes the game's pad state.
     u32 navigationInput(TMarioGamePad *pad);

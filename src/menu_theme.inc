@@ -56,15 +56,21 @@ void Menu::drawGuidebook(J2DOrthoGraph *ortho) {
     MenuTheme::page(false);
 
     const Color footer = MenuTheme::footerColor();
-    const char *hint = searchAvailable()
-        ? SUSAMUNE_GLYPH_A " Select   " SUSAMUNE_GLYPH_B " Back   "
-          SUSAMUNE_GLYPH_Y " Search"
-        : current->favoriteHint()
+    const bool search = searchAvailable() && gBinds.get(BIND_MENU_SEARCH);
+    const char *hint = !search && current->favoriteHint()
         ? SUSAMUNE_GLYPH_A " Select   " SUSAMUNE_GLYPH_B " Back   "
           SUSAMUNE_GLYPH_X " Shine"
         : SUSAMUNE_GLYPH_A " Select   " SUSAMUNE_GLYPH_B " Back";
     drawText(hint, 44, 412, 14, 14, footer);
     char combo[kBindTextMax];
+    if (search) {
+        // The search shortcut is rebindable, so show the combo in use.
+        static const char kSearchHint[] = "   %s Search";
+        char line[kBindTextMax + sizeof(kSearchHint)];
+        Binds::format(gBinds.get(BIND_MENU_SEARCH), combo);
+        snprintf(line, sizeof(line), kSearchHint, combo);
+        drawText(line, 44 + textWidth(hint, 14), 412, 14, 14, footer);
+    }
     Binds::format(gBinds.get(BIND_MENU_TOGGLE), combo);
     const int closeWidth = textWidth(" Close", 14);
     drawText(combo, 592 - closeWidth - textWidth(combo, 14), 412, 14, 14, footer);

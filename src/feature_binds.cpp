@@ -21,7 +21,7 @@ const u8 kFeatureBindSettings[] = {
     SETTING_UNLOCK_YOSHI,
     SETTING_UNLOCK_NOZZLES,
 };
-static_assert(sizeof(kFeatureBindSettings) == BIND_COUNT - BIND_FEATURE_FAST_TEXT,
+static_assert(sizeof(kFeatureBindSettings) == BIND_FEATURE_UNLOCK_NOZZLES + 1 - BIND_FEATURE_FAST_TEXT,
               "feature bind mapping must follow its append-only tail");
 }
 void update() {

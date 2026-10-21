@@ -630,6 +630,7 @@ NEW_MODULES.update({
         "matches__10MenuSearchFPCcRCQ210MenuSearch5Entry",
         "openSearch__4MenuFv",
         "searchAvailable__4MenuCFv",
+        "searchShortcut__4MenuFP13TMarioGamePad",
         "searchEntry__4MenuFUiRQ210MenuSearch5Entryb",
         "updateSearch__4MenuFP13TMarioGamePad",
         "cacheSearch__4MenuFb",
