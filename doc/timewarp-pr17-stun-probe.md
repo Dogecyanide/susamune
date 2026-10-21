@@ -1,15 +1,22 @@
-# Phase-0 STUN probe (online builds only)
+# STUN probe (online builds only)
 
-This is a measurement for peer-to-peer hole punching. It does not change the
-relay race path. It exists only when `TIMEWARP_LIVE_RACING` is on.
+The probe learns this console's public UDP address and checks whether the NAT
+keeps one public port for every destination. Online play runs it on the race
+socket to make the room code (see `timewarp-pr17-p2p-online.md`). It exists
+only when `TIMEWARP_LIVE_RACING` is on.
 
 ## What it does
 
-On the Online tab, X starts the probe while no session is active. It opens
-the existing transport (`LiveTransport::begin`). On a console, that is the
-MoonshineNet IOS UDP socket in the launcher kernel. It binds the race's own
-local port (the Server port setting, 48222 by default); Dolphin uses port 0
-through its companion. One socket sends a bare RFC 5389 Binding Request
+On the Online tab, X (or A on the NAT test row) starts the probe while no
+session is active. It opens the existing transport (`LiveTransport::begin`).
+On a console, that is the MoonshineNet IOS UDP socket in the launcher kernel.
+It binds the race's own local port (`LiveRace::LOCAL_PORT`, 48222); Dolphin
+uses port 0 through its companion.
+
+Create room and Join room run the same probe in shared mode
+(`LiveStun::startShared`). There it neither opens nor stops the transport.
+`LiveRace` hands every received packet to `LiveStun::accept` first, and
+`LiveStun::cancel` ends a run on disconnect. Shared runs also stop after 15 s. One socket sends a bare RFC 5389 Binding Request
 (20 bytes, no attributes) to each server:
 
 | Server | Resolved IPv4 (2026-10-21, from NL) | Port |
@@ -30,7 +37,8 @@ failure.
 
 ## Reading the result
 
-Diagnostics opens automatically. The last diagnostics line becomes:
+The NAT test row shows the verdict. With Diagnostics on and no session
+active, the last diagnostics line shows:
 
 `STUN <verdict>  A <public ip:port from Google>  B <public ip:port from Cloudflare>`
 
@@ -38,14 +46,13 @@ Diagnostics opens automatically. The last diagnostics line becomes:
   port. The NAT mapping is endpoint-independent, the case UDP hole punching
   needs.
 - `DIFFERENT - symmetric NAT`: the public port changed with the destination.
-  Direct punching is unlikely from this network; the relay stays necessary.
+  Direct punching is unlikely from this network.
 - `one reply` / `no reply`: incomplete; retry with X. If it repeats, the
   firewall may block one server's port.
 - `failed, code N`: the transport could not open; N is its error code.
 
 The probe needs no room and no 60 Hz mode; racing itself still requires 60 Hz.
-X is the action instead of a new row. A row would change the Online tab's
-MEM1-retained row table and enum for a temporary diagnostic.
+The P2P redesign added the NAT test row to the Online tab's row table.
 
 ## Cost (console pinned link, `jp/us/pal`)
 
@@ -66,8 +73,9 @@ ceiling before this probe; see the PR17 handoff notes.
 
 `scripts/test_live_stun.py` compiles the real codec and driver blocks for the
 host. It checks the request bytes, parsing with preceding padded attributes,
-rejection of malformed or foreign replies, the retry schedule, both verdicts
-and transport failure. With `MOONSHINE_STUN_LIVE=1`, it also queries both
+rejection of malformed or foreign replies, the retry schedule, both verdicts,
+transport failure and shared mode (no transport ownership, packets handed in,
+cancel, time limit). With `MOONSHINE_STUN_LIVE=1`, it also queries both
 real servers through the same codec.
 
 Dolphin does not exercise the Wii kernel socket path. Its build reaches the

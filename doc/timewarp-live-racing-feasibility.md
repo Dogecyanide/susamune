@@ -11,6 +11,12 @@ as the working baseline.
 
 ## Recommendation
 
+> **Superseded on 2026-10-21 (PR17).** Online play is now direct
+> peer-to-peer with swapped room codes and no relay fallback; the relay
+> client was removed from the mod. See `timewarp-pr17-p2p-online.md`. The
+> relay server in `tools/live_relay/` is unchanged. The text below records
+> the earlier relay decision.
+
 The user chose **a room-code relay server** on October 13, so neither player
 needs to configure home-router port forwarding. Each Wii opens one outbound UDP
 path to the supplied server IPv4 address and port. The server creates a room

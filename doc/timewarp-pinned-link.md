@@ -203,7 +203,7 @@ the positive and rejection paths. No frozen layout or timer receipt changes.
 
 PR14 retains the 64 explicitly inventoried new CPU functions from
 `live_race.cpp`, `live_race_session.cpp` and `live_relay.cpp` in existing MEM1
-holes. The same sole-source, whole-function, relocation and protected-range
+holes. (PR17 deleted the relay client; the other two modules stay retained.) The same sole-source, whole-function, relocation and protected-range
 audits run before retention. These functions have no frozen input ranges to
 reclaim; their final addresses, sizes and source hashes are recorded in
 `retained_mem1_cpu_inputs`. Compressing them with the other initialized MEM1
