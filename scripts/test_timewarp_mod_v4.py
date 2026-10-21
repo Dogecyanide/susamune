@@ -311,9 +311,9 @@ class ModV4Tests(unittest.TestCase):
     def test_regional_ceiling_exact_and_above(self):
         game = GAMES["jp"]
         segments = [dict(offset=0, raw=bytes(0x57F80), memory_size=0x57F80),
-                    dict(offset=0x80000, raw=bytes(0x2E000), memory_size=0x2E000)]
+                    dict(offset=0x80000, raw=bytes(0x2E700), memory_size=0x2E700)]
         data = build_mod_v4(game, segments, [])
-        self.assertEqual(len(data), 0x86000)
+        self.assertEqual(len(data), 0x86700)
         self.assertEqual(self.h.run(data)[0], 0)
         segments[1]["raw"] += bytes(4)
         segments[1]["memory_size"] += 4
