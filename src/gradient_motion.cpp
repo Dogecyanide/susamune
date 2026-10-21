@@ -7,10 +7,22 @@ u8 mode(bool native) {
     return gSettings.get(native ? SETTING_NATIVE_GRADIENT_MOTION : SETTING_QFT_GRADIENT_MOTION);
 }
 
+// Exact 64-bit remainder from 32-bit steps: the mod links without libgcc, so a
+// variable u64 % would need __umoddi3. Requires period < 2^31 (at most 8 s here).
+static u32 timeRemainder(unsigned long long now, u32 period) {
+    u32 rest = static_cast<u32>(now >> 32) % period;
+    const u32 low = static_cast<u32>(now);
+    for (int bit = 31; bit >= 0; --bit) {
+        rest = rest << 1 | (low >> bit & 1u);
+        if (rest >= period) rest -= period;
+    }
+    return rest;
+}
+
 u16 phase(bool native) {
     const unsigned speed = gSettings.get(native ? SETTING_NATIVE_GRADIENT_SPEED : SETTING_QFT_GRADIENT_SPEED);
     const u32 period = OS_TIMER_CLOCK * (8u >> (speed < 3 ? speed : 1));
-    const u32 at = static_cast<u32>(OSGetTime() % period);
+    const u32 at = timeRemainder(OSGetTime(), period);
     return at / ((period + 1023) >> 10);
 }
 
