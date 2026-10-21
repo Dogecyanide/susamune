@@ -576,7 +576,9 @@ void updatePose(u32 now) {
     } else if (s.sceneObservations < 3) ++s.sceneObservations;
     const bool stable = valid && s.sceneObservations >= 3;
     LiveGhost::tick(now, stable && s.peerSceneKnown && sameScene(s.localScene, s.peerScene));
-    if (now - s.sentPoseMs < 33u) return;
+    // Every second frame (30 Hz at 60 Hz, 25 Hz at 50 Hz); 33 ms skipped a frame when
+    // the millisecond clock rounded two NTSC frames down to 32 ms.
+    if (now - s.sentPoseMs < 30u) return;
     s.sentPoseMs = now;
     if (!stable) return;
     MSRPose pose = {};

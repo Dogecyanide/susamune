@@ -24,6 +24,35 @@
 namespace LiveGhost {
 namespace {
 static const char kOpponent[] = "Opponent";
+// Online prototype 19 smooths the opponent; the JP container has no room for
+// it (288 bytes over its ceiling), so JP keeps the prototype 18 timeline.
+#if defined(SUSAMUNE_VERSION_JP)
+#define SMOOTH_OPPONENT 0
+#else
+#define SMOOTH_OPPONENT 1
+#endif
+#if SMOOTH_OPPONENT
+// Snapshot interpolation: poses carry the sender's millisecond clock and are
+// shown about 100 ms in the past, longer when packets arrive unevenly. Past the
+// newest pose the opponent keeps its last velocity for a moment, then holds.
+const unsigned int kSamples = 8, kMinDelayMs = 100;  // kSamples: a power of two
+const unsigned int kExtrapolateMs = 175, kStaleMs = 1000;
+struct Sample { Ghost::VisualState pose; u32 remoteMs, receivedMs; SusamunePracticeInput input; };
+struct State {
+    Sample samples[kSamples];
+    Ghost::VisualState latched;
+    SusamunePracticeInput latchedInput;
+    u32 first, count, sequence, sceneEpoch, originMs, token, latchedMs;  // ring of samples
+    // Local minus remote clock along the fastest path seen, the average lateness
+    // beyond it, and the playback delay that follows that lateness.
+    u32 offset, jitter, delayMs;  // delayMs: added to kMinDelayMs
+    bool received, visible, timed;
+    char name[17];
+};
+#pragma clang section bss=""
+State s;
+#pragma clang section bss=".foxtrot.bss"
+#else
 const unsigned int kDelayMs = 80, kStaleMs = 250;
 struct Sample { Ghost::VisualState pose; u32 remoteMs, receivedMs; SusamunePracticeInput input; };
 struct State {
@@ -35,10 +64,14 @@ struct State {
     char name[17];
 };
 State s;
+#endif
 bool sInputsShown = true;
 static_assert(sizeof(State) < 2048, "live ghost stays within its scalar budget");
 
 s32 delta(u32 a, u32 b) { return static_cast<s32>(a - b); }
+#if SMOOTH_OPPONENT
+Sample &at(u32 i) { return s.samples[(s.first + i) & (kSamples - 1)]; }
+#endif
 bool finite(f32 x) {
     // Bit validation remains effective under the game's fast-math build flags.
     union { f32 value; u32 bits; } word = {x};
@@ -62,6 +95,31 @@ bool discontinuity(const Ghost::VisualState &a, const Ghost::VisualState &b) {
     const f32 x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
     return x * x + y * y + z * z > 1000000.0f;
 }
+#if SMOOTH_OPPONENT
+// Positions continue along a to b for up to kExtrapolateMs past b; the angle
+// and animation stop at b.
+Ghost::VisualState interpolate(const Sample &a, const Sample &b, u32 time) {
+    const s32 duration = delta(b.remoteMs, a.remoteMs);  // positive: submit keeps order
+    s32 ahead = delta(time, a.remoteMs);
+    if (ahead < 0) ahead = 0;
+    if (ahead > duration + static_cast<s32>(kExtrapolateMs)) ahead = duration + kExtrapolateMs;
+    const f32 t = static_cast<f32>(ahead) / duration, turn = t > 1 ? 1 : t;
+    Ghost::VisualState p = t >= 1 ? b.pose : a.pose;
+    p.x = a.pose.x + (b.pose.x - a.pose.x) * t;
+    p.y = a.pose.y + (b.pose.y - a.pose.y) * t;
+    p.z = a.pose.z + (b.pose.z - a.pose.z) * t;
+    const s16 yaw = static_cast<s16>(static_cast<u16>(b.pose.yaw) -
+                                       static_cast<u16>(a.pose.yaw));
+    p.yaw = static_cast<s16>(a.pose.yaw + static_cast<s32>(yaw * turn));
+    if (a.pose.animationId == b.pose.animationId && a.pose.yoshi == b.pose.yoshi) {
+        const s32 phase = ((static_cast<s32>(b.pose.animationPhase) -
+                           a.pose.animationPhase + 2048) & 4095) - 2048;
+        p.animationPhase = static_cast<u16>((a.pose.animationPhase +
+            static_cast<s32>(phase * turn)) & 4095);
+    }
+    return p;
+}
+#else
 Ghost::VisualState interpolate(const Sample &a, const Sample &b, u32 time) {
     const s32 duration = delta(b.remoteMs, a.remoteMs);
     f32 t = duration > 0 ? static_cast<f32>(delta(time, a.remoteMs)) / duration : 0;
@@ -82,6 +140,7 @@ Ghost::VisualState interpolate(const Sample &a, const Sample &b, u32 time) {
     }
     return p;
 }
+#endif
 }
 
 void reset() {
@@ -102,6 +161,36 @@ bool setName(const char *name, unsigned int length) {
     return true;
 }
 
+#if SMOOTH_OPPONENT
+bool submit(const Ghost::VisualState &pose, u32 sequence, u32 remoteMs,
+            u32 sceneEpoch, u32 receivedMs, const SusamunePracticeInput *input) {
+    if (!valid(pose) || (input && ((input->buttons & ~MSR_INPUT_BUTTON_MASK) ||
+        input->error || input->flags))) return false;
+    const bool newScene = !s.received || sceneEpoch != s.sceneEpoch;
+    if (s.received && newScene && delta(sceneEpoch, s.sceneEpoch) <= 0) return false;
+    if (!newScene && (delta(sequence, s.sequence) <= 0 ||
+        delta(remoteMs, at(s.count - 1).remoteMs) <= 0 ||
+        delta(receivedMs, at(s.count - 1).receivedMs) < 0)) return false;
+    if (newScene || delta(remoteMs, at(s.count - 1).remoteMs) > 1000 ||
+        discontinuity(pose, at(s.count - 1).pose)) newTimeline(remoteMs);
+    if (s.count == kSamples) { ++s.first; --s.count; }
+    // The fastest packet sets the clock offset; it creeps up 1 ms per later
+    // packet so a new route or clock drift is followed.
+    const u32 lag = receivedMs - remoteMs;
+    if (!s.timed || delta(lag, s.offset) < 0) { s.offset = lag; s.timed = true; }
+    const u32 late = lag - s.offset;
+    s.jitter = (s.jitter * 7 + (late > 67u ? 67u : late)) / 8;
+    if (late) ++s.offset;
+    Sample &slot = at(s.count++);
+    slot.pose = pose; slot.remoteMs = remoteMs; slot.receivedMs = receivedMs;
+    slot.input = input ? *input : SusamunePracticeInput{};
+    s.sequence = sequence;
+    s.sceneEpoch = sceneEpoch;
+    s.received = true;
+    return true;
+}
+
+#else
 bool submit(const Ghost::VisualState &pose, u32 sequence, u32 remoteMs,
             u32 sceneEpoch, u32 receivedMs, const SusamunePracticeInput *input) {
     if (!valid(pose) || (input && ((input->buttons & ~MSR_INPUT_BUTTON_MASK) ||
@@ -125,6 +214,44 @@ bool submit(const Ghost::VisualState &pose, u32 sequence, u32 remoteMs,
     return true;
 }
 
+#endif
+
+#if SMOOTH_OPPONENT
+void tick(u32 localNowMs, bool canDisplaySameCanonicalScene) {
+    s.visible = false;
+    if (!canDisplaySameCanonicalScene || !s.count) return;
+    const Sample &last = at(s.count - 1);
+    const s32 age = delta(localNowMs, last.receivedMs);
+    if (age < 0 || static_cast<u32>(age) > kStaleMs) return;
+    // Two send intervals plus twice the lateness (100-200 ms), eased 1 ms per
+    // frame so the opponent never jumps when the delay changes.
+    const u32 extra = s.jitter > 17 ? 2 * s.jitter - 34 : 0;
+    if (s.delayMs < extra) ++s.delayMs;
+    else if (s.delayMs > extra) --s.delayMs;
+    // Driven by the local clock, not by packet arrival, so jitter cannot stutter it.
+    u32 time = localNowMs - s.offset - kMinDelayMs - s.delayMs;
+    if (delta(time, at(0).remoteMs) < 0) time = at(0).remoteMs;
+    if (s.latched.recordingToken == s.token && delta(time, s.latchedMs) < 0)
+        time = s.latchedMs;
+    s.latched = last.pose;
+    s.latchedInput = last.input;
+    if (s.count > 1) {
+        unsigned int i = 1;
+        while (i + 1 < s.count && delta(time, at(i).remoteMs) > 0) ++i;
+        s.latched = interpolate(at(i - 1), at(i), time);
+        // Hold the matching sample; interpolating buttons invents inputs.
+        s.latchedInput = delta(time, at(i).remoteMs) < 0
+            ? at(i - 1).input : at(i).input;
+    }
+    // Cosmetic water time is local to this remote timeline, never the game timer.
+    // 120 per second; u32 holds a 16-day timeline.
+    s.latched.visualQf = (time - s.originMs) * 3u / 25u;
+    s.latched.recordingToken = s.token;
+    s.latchedMs = time;
+    s.visible = s.latched.visible;
+}
+
+#else
 void tick(u32 localNowMs, bool canDisplaySameCanonicalScene) {
     s.visible = false;
     if (!canDisplaySameCanonicalScene || !s.count) return;
@@ -153,6 +280,8 @@ void tick(u32 localNowMs, bool canDisplaySameCanonicalScene) {
     s.latchedMs = time;
     s.visible = s.latched.visible;
 }
+
+#endif
 
 bool visualState(Ghost::VisualState *out) {
     if (!out || !s.visible) return false;

@@ -60,16 +60,23 @@ API unsigned scenario(unsigned test){
  if(test==0){
   p.yaw=32000;q.yaw=-32000;p.animationPhase=4000;q.animationPhase=200;
   CHECK(submit(p,1,100,9,1000));CHECK(submit(q,2,200,9,1100));
-  tick(1100,true);CHECK(LiveGhost::visualState(&out));CHECK(close(out.x,20));
+  // 900 ms one-way clock offset, no jitter: shown 100 ms behind the sender.
+  tick(1120,true);CHECK(LiveGhost::visualState(&out));CHECK(close(out.x,20));
+  CHECK(s.offset==900&&!s.delayMs);
   CHECK(out.yaw==32307);CHECK(out.animationPhase==4059);CHECK(out.visualQf==2);
   const auto copy=out;CHECK(LiveGhost::visualState(&out));CHECK(out.x==copy.x&&out.visualQf==copy.visualQf&&out.recordingToken==copy.recordingToken);
-  tick(1350,true);CHECK(LiveGhost::visualState(&out)&&out.x==100);
-  tick(1351,true);CHECK(!LiveGhost::visualState(&out));
+  // Dry buffer: last velocity for 175 ms, angle and animation stop at the newest pose, then hold.
+  tick(1300,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,200)&&out.yaw==-32000&&out.animationPhase==200);
+  tick(1400,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,275));
+  tick(2100,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,275));
+  tick(2101,true);CHECK(!LiveGhost::visualState(&out));
   tick(1200,false);CHECK(!LiveGhost::visualState(&out));
+  // Never backwards: a late frame time holds the last shown moment.
   reset();CHECK(submit(p,1,100,9,1000));CHECK(submit(q,2,200,9,1100));
-  tick(1180,true);CHECK(LiveGhost::visualState(&out)&&out.x==100);
-  q=pose(150);CHECK(submit(q,3,250,9,1220));tick(1220,true);
-  CHECK(LiveGhost::visualState(&out)&&out.x==100&&out.visualQf==12);
+  tick(1150,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,50));
+  tick(1140,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,50));
+  q=pose(150);CHECK(submit(q,3,250,9,1150));tick(1220,true);
+  CHECK(LiveGhost::visualState(&out)&&close(out.x,120)&&out.visualQf==14);
  }else if(test==1){
   CHECK(submit(p,10,100,9,1000));CHECK(!submit(q,9,200,9,1100));
   CHECK(!submit(q,11,99,9,1100));CHECK(!submit(q,11,100,9,1100));
@@ -81,9 +88,9 @@ API unsigned scenario(unsigned test){
  }else if(test==2){
   CHECK(submit(p,0xffffffffu,0xfffffff0u,0xffffffffu,0xfffffff0u));
   CHECK(submit(q,0,0x20,0xffffffffu,0x20));
-  tick(0x70,true);CHECK(LiveGhost::visualState(&out)&&out.x==100&&out.visualQf==5);
+  tick(0x20+100,true);CHECK(LiveGhost::visualState(&out)&&close(out.x,100)&&out.visualQf==5);
   CHECK(submit(p,0,4,0,0x80));tick(0x80,true);CHECK(LiveGhost::visualState(&out)&&out.x==0);
-  tick(0x80+251,true);CHECK(!LiveGhost::visualState(&out));
+  tick(0x80+1001,true);CHECK(!LiveGhost::visualState(&out));
  }else if(test==3){
   CHECK(submit(p,1,100,1,1000));union{u32 u;float f;}bits={0x7fc00000u};
   q.x=bits.f;CHECK(!submit(q,2,200,1,1100));bits.u=0x7f800000u;
@@ -110,7 +117,7 @@ API unsigned scenario(unsigned test){
   CHECK(Ghost::renderVisualState(1,&out)&&out.x==100);
   Ghost::preparation=true;CHECK(Ghost::renderVisualState(1,&out)&&out.x==-2);
   Ghost::preparation=false;Ghost::watch=true;CHECK(Ghost::renderVisualState(1,&out)&&out.x==-2);
-  Ghost::watch=false;tick(1251,true);CHECK(!Ghost::renderVisualState(1,&out));
+  Ghost::watch=false;tick(2001,true);CHECK(!Ghost::renderVisualState(1,&out));
   CHECK(!Ghost::renderVisualState(2,&out));CHECK(!Ghost::renderVisualState(1,nullptr));
  }else if(test==6){
   SusamunePracticeInput first={},second={},input={};
@@ -118,11 +125,27 @@ API unsigned scenario(unsigned test){
   second.buttons=0x200;second.stickX=80;second.substickY=-37;second.triggerR=255;
   CHECK(submit(p,1,100,1,1000,&first));CHECK(submit(q,2,200,1,1100,&second));
   tick(1100,true);CHECK(inputState(&input));CHECK(input.buttons==0x100&&input.stickX==-80&&input.substickY==37&&input.triggerR==160);
-  tick(1180,true);CHECK(inputState(&input));CHECK(input.buttons==0x200&&input.stickX==80&&input.substickY==-37&&input.triggerR==255);
-  tick(1351,true);CHECK(!inputState(&input));tick(1200,false);CHECK(!inputState(&input));
+  tick(1190,true);CHECK(inputState(&input)&&input.buttons==0x100);
+  tick(1200,true);CHECK(inputState(&input));CHECK(input.buttons==0x200&&input.stickX==80&&input.substickY==-37&&input.triggerR==255);
+  tick(2101,true);CHECK(!inputState(&input));tick(1200,false);CHECK(!inputState(&input));
   CHECK(submit(q,1,1,2,1400));tick(1400,true);CHECK(inputState(&input)&&input.buttons==0&&input.stickX==0&&input.triggerR==0);
   q.visible=false;CHECK(submit(q,2,2,2,1500,&first));tick(1580,true);CHECK(!inputState(&input));
   CHECK(!inputState(nullptr));
+ }else if(test==8){
+  // Bursty arrival (three poses at once, up to 66 ms late) must not make the opponent
+  // stutter: steady motion stays monotonic and the delay grows to cover it.
+  float previous=-1;unsigned packet=0;
+  for(unsigned now=1000;now<4000;now+=17){
+   while(packet<90){const u32 remote=100+33*packet,arrive=100+33*(packet/3*3+2)+900;
+    if(arrive>now)break;CHECK(submit(pose(remote),packet+1,remote,1,arrive));++packet;}
+   if(!packet)continue;tick(now,true);CHECK(LiveGhost::visualState(&out));
+   CHECK(out.x+.01f>=previous);previous=out.x;
+   if(now>2500){const float behind=float(now-900)-out.x;CHECK(behind>=99&&behind<=100+s.delayMs+1);}
+  }
+  CHECK(s.jitter>=20&&s.delayMs>=20&&s.delayMs<=100&&s.offset>=900&&s.offset<=905);
+  // A big jump or level change snaps without lerping.
+  CHECK(submit(pose(5000),200,100+33*90,1,4100));tick(4100,true);CHECK(LiveGhost::visualState(&out)&&out.x==5000);
+  CHECK(sizeof(s.samples)/sizeof(s.samples[0])==8);
  }else if(test==7){
   SusamunePracticeInput input={};input.buttons=0x80;CHECK(!submit(p,1,100,1,1000,&input));
   input.buttons=0x8000;CHECK(!submit(p,1,100,1,1000,&input));input.buttons=0x1f7f;
@@ -133,6 +156,7 @@ API unsigned scenario(unsigned test){
  return 0;
 }
 '''
+        cls.generated = code
         directory = Path(cls.temp.name)
         cpp, dll = directory / "test.cpp", directory / "test.dll"
         cpp.write_text(code)
@@ -149,9 +173,11 @@ API unsigned scenario(unsigned test){
         self.assertLess(self.lib.stateBytes(), 2048)
         for number, name in enumerate(("interpolation/stale", "ordering/scene", "wrap",
                                        "invalid poses", "teleport/name", "Watch provider",
-                                       "matching input timeline", "input validation and toggle")):
+                                       "matching input timeline", "input validation and toggle",
+                                       "jitter buffer")):
             with self.subTest(name=name):
-                self.assertEqual(self.lib.scenario(number), 0, "C++ assertion line")
+                line = self.lib.scenario(number)
+                self.assertEqual(line, 0, self.generated.splitlines()[line - 1] if line else "")
 
 
 if __name__ == "__main__":
