@@ -21,7 +21,11 @@ def fixture(owner="live_race.cpp", name=None):
 
 class Mem1RetentionTests(unittest.TestCase):
     def test_console_whitelist_is_new_exclusive_and_leaves_emulator_policy_unchanged(self):
-        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 52)
+        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 51)
+        live = set(extensions.NEW_MODULES["live_race.cpp"]) | set(extensions.NEW_MODULES["live_race_session.cpp"])
+        self.assertLessEqual(extensions.CONSOLE_COLD_FROM_RETAINED, live)
+        for per_frame in ("update__8LiveRaceFv", "drawScore__8LiveRaceFP4MenuRCQ28LiveRace5Prefs"):
+            self.assertNotIn(per_frame, extensions.CONSOLE_COLD_FROM_RETAINED)
         for name in extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS:
             owners = [owner for owner, names in extensions.NEW_MODULES.items() if name in names]
             self.assertEqual(len(owners), 1, name)

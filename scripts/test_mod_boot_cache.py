@@ -19,6 +19,7 @@ BUILD = ROOT / "build/timewarp-launcher"
 TOOLS = ROOT / "launcher/nintendont_devkitpro"
 STATUS = 0xD3003420
 MASK = 0xFFFFFFFF
+MENU_CODE = (0x91CF9000, 0x208)  # FakeEntryLoad.S fixed presentation-code span
 
 
 def signed(value, bits):
@@ -31,9 +32,9 @@ def execute(code, address, lines, cold_address, cold_lines):
     original = registers[:]
     memory = {STATUS + 4: lines, STATUS + 8: address,
               STATUS + 12: cold_lines, STATUS + 16: cold_address}
-    entry, polls, pc, ctr, lr, equal = 0x80003154, 0, 0, 0, 0, False
+    entry, polls, pc, ctr, lr, equal, less = 0x80003154, 0, 0, 0, 0, False, False
     reads, stores, cache, barriers = [], [], [], []
-    for _ in range(16 * (lines + cold_lines + 256) + 128):
+    for _ in range(16 * (lines + (cold_lines & 0x7FFFFFFF) + MENU_CODE[1] + 256) + 128):
         assert 0 <= pc < len(code) and pc % 4 == 0
         instruction, next_pc = words[pc // 4], pc + 4
         op = instruction >> 26
@@ -60,11 +61,19 @@ def execute(code, address, lines, cold_address, cold_lines):
                 registers[rt] = memory[target]
         elif op == 11:
             equal = signed(registers[ra], 32) == immediate
+            less = signed(registers[ra], 32) < immediate
+        elif op == 21:
+            shift, mb, me = rb, (instruction >> 6) & 31, (instruction >> 1) & 31
+            assert not instruction & 1 and me == 31, f"unknown rlwinm 0x{instruction:08x}"
+            rotated = ((registers[rt] << shift) | (registers[rt] >> (32 - shift))) & MASK
+            registers[ra] = rotated & (MASK >> mb)
         elif op == 16:
             bo, bi = rt, ra
             assert not instruction & 3
             if bo == 12 and bi == 2:
                 take = equal
+            elif bo == 4 and bi == 0:
+                take = not less
             elif bo == 16 and bi == 0:
                 ctr = (ctr - 1) & MASK
                 take = ctr != 0
@@ -76,6 +85,8 @@ def execute(code, address, lines, cold_address, cold_lines):
             xo = (instruction >> 1) & 1023
             if xo == 32:
                 equal = registers[ra] == registers[rb]
+            elif xo == 444:
+                registers[ra] = registers[rt] | registers[rb]
             elif xo == 467:
                 spr = ((instruction >> 16) & 31) | ((instruction >> 6) & 992)
                 if spr == 8:
@@ -95,7 +106,7 @@ def execute(code, address, lines, cold_address, cold_lines):
             barriers.append(("isync", len(cache)))
         elif instruction == 0x4E800020:
             assert lr == entry and barriers == [("sync", len(cache)), ("isync", len(cache))]
-            assert all(registers[i] == original[i] for i in range(32) if i not in (0, 3, 4))
+            assert all(registers[i] == original[i] for i in range(32) if i not in (0, 3, 4, 5))
             return reads, stores, cache
         else:
             raise AssertionError(f"unknown instruction 0x{instruction:08x}")
@@ -210,9 +221,12 @@ __declspec(dllexport) u32 info(u32 index) {
         cls.lib.trace_info.restype = C.c_uint
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
 
-    def check_trace(self, address, lines, cold_address, cold_lines):
-        reads, stores, actual = execute(self.code, address, lines, cold_address, cold_lines)
-        expected = [a for start, count in ((address, lines), (0x80001000, 256), (cold_address, cold_lines))
+    def check_trace(self, address, lines, cold_address, cold_lines, menu=False):
+        word = cold_lines | (0x80000000 if menu else 0)
+        reads, stores, actual = execute(self.code, address, lines, cold_address, word)
+        ranges = ((address, lines), (0x80001000, 256), (cold_address, cold_lines))
+        ranges += (MENU_CODE,) if menu and cold_lines else ()
+        expected = [a for start, count in ranges
                     for a in range(start, start + count * 32, 32)]
         self.assertEqual(actual, [(kind, a) for a in expected for kind in ("dcbi", "icbi")])
         self.assertEqual(stores, [(STATUS, 0x4DEA)])
@@ -258,6 +272,8 @@ __declspec(dllexport) u32 info(u32 index) {
     def test_generated_cold_range_exact_one_line_and_real_payload(self):
         self.check_trace(0x80003100, 5, 0x91E3F0A0, 1)
         self.check_trace(0x80003100, 5, 0x91E3F0A0, 56928 // 32)
+        self.check_trace(0x80003100, 5, 0x91E3F0A0, 56928 // 32, menu=True)
+        self.check_trace(0x80003100, 5, 0xFFFFFFFF, 0, menu=True)
 
     def test_actual_patchgame_reset_clears_stale_cold_and_only_extends_cache_range(self):
         for vma in BASES.values():
@@ -289,7 +305,7 @@ __declspec(dllexport) u32 info(u32 index) {
             mnemonics = re.findall(r"^\s*[0-9a-f]+:\s+[0-9a-f]+\s+(\w+)", section, re.M)
             self.assertFalse([m for m in mnemonics if re.fullmatch(r"str[bh]" + conditions, m)], section.splitlines()[0])
         header = (ROOT / "include/susamune/mod_boot.h").read_text()
-        values = [int(v, 16) for v in re.findall(r"#define SUSAMUNE_MOD_BOOT_\w+ (0x[0-9A-Fa-f]+)u", header)]
+        values = [int(v, 16) for v in re.findall(r"#define SUSAMUNE_MOD_BOOT_COLD_\w+ (0x[0-9A-Fa-f]+)u", header)]
         self.assertEqual(values, [STATUS + 12 - 0xC0000000, STATUS + 16 - 0xC0000000])
 
 

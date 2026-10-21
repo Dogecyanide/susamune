@@ -139,7 +139,7 @@ API unsigned byte(unsigned index){return live[index];}
         self.assertLess(body.index("OSDisableInterrupts()"), guard)
         self.assertLess(guard, body.index("StateCodec::decompress"))
         self.assertIn('feedback("E:video", "Video player busy - try again")', body)
-        self.assertEqual(body.count("copyStateBytes,"), 4)
+        self.assertEqual(body.count("copyStateBytes,"), 7)
 
 
 if __name__ == "__main__":

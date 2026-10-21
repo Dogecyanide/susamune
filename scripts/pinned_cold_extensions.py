@@ -541,6 +541,8 @@ NEW_MODULES.update({
     "live_race_session.cpp": frozenset((
         "init__15LiveRaceSessionFRQ215LiveRaceSession7SessionRCQ215LiveRaceSession6ConfigRCQ215LiveRaceSession9Callbacks",
         "validName__Q215LiveRaceSession0FPCc",
+        "encode__7LiveP2PFRCQ27LiveP2P4CodePc",
+        "decode__7LiveP2PFPCcPQ27LiveP2P4Code",
         "startHost__15LiveRaceSessionFRQ215LiveRaceSession7SessionRC0Ui",
         "emptyEndpoint__Q215LiveRaceSession0FRC0",
         "validEndpoint__Q215LiveRaceSession0FRC0",
@@ -574,6 +576,8 @@ NEW_MODULES.update({
     )),
     "live_race.cpp": frozenset((
         "startSession__Q28LiveRace0FUl",
+        "enterCode__8LiveRaceFPCc",
+        "chooseDraft__8LiveRaceFUi",
         "init__8LiveRaceFv",
         "options__8LiveRaceFv",
         "configure__8LiveRaceFRCQ28LiveRace7Options",
@@ -645,6 +649,11 @@ NEW_MODULES.update({
         "grabsInput__Q209OnlineTabCFv",
         "suppressesBinds__Q209OnlineTabCFv",
         "fullScreen__Q209OnlineTabCFv",
+        "stunVerdict__Q209OnlineTabFPcUi",
+        "draftScore__Q209OnlineTabFPcUiRCQ28LiveRace6Statusb",
+        "fit__Q209OnlineTabFP4MenuPCciiiiiQ28JUtility6TColor",
+        "draftTurn__Q209OnlineTabFRCQ28LiveRace6Status",
+        "beginEdit__Q209OnlineTabFUc",
         "menuInit__Fv",
     )),
 })
@@ -669,6 +678,20 @@ MENU_CODE_FUNCTIONS = CREATION_EDITOR | frozenset((
 
 # These new CPU inputs fit existing MEM1 holes and compress in the boot image.
 RETAIN_MEM1_MODULES = frozenset(("live_race.cpp", "live_race_session.cpp"))
+# Online setup, menu and code helpers never run per frame; on console they go to the
+# cold image, which JP's container now has room for, to free JP MEM1.
+CONSOLE_COLD_FROM_RETAINED = frozenset((
+    "init__8LiveRaceFv",
+    "status__8LiveRaceFv",
+    "configure__8LiveRaceFRCQ28LiveRace7Options",
+    "validOptions__Q28LiveRace0FRCQ28LiveRace7Options",
+    "startSession__Q28LiveRace0FUl",
+    "enterCode__8LiveRaceFPCc",
+    "chooseDraft__8LiveRaceFUi",
+    "init__15LiveRaceSessionFRQ215LiveRaceSession7SessionRCQ215LiveRaceSession6ConfigRCQ215LiveRaceSession9Callbacks",
+    "encode__7LiveP2PFRCQ27LiveP2P4CodePc",
+    "decode__7LiveP2PFPCcPQ27LiveP2P4Code",
+))
 
 # Keep these new CPU functions in existing console MEM1 holes; emulator layout stays fixed.
 RETAIN_MEM1_CONSOLE_FUNCTIONS = frozenset((
@@ -699,7 +722,6 @@ RETAIN_MEM1_CONSOLE_FUNCTIONS = frozenset((
     "clear__Q216StateQuickReplay0FPvUi",
     "command__Q213LiveTransport0FUiUi",
     "crcBytes__Q216StateQuickReplay0FRCQ216StateQuickReplay4PlanUiPCvUi",
-    "draw__Q209OnlineTabFP4Menuiiii",
     "fingerprint__Q216StateQuickReplay0FRCQ216StateQuickReplay4Plan",
     "indices__Q213LiveTransport0Fv",
     "intact__Q216StateQuickReplay0FRCQ216StateQuickReplay4Plan",
@@ -866,7 +888,8 @@ def mark_inputs(rows, functions, baseline, protected=(), target=None):
             if any(function["old_address"] < p["address"] + p["size"]
                    and p["address"] < function["old_address"] + function["size"] for p in protected):
                 raise ValueError("New cold input overlaps a protected anchor")
-            if (function["owner"] in RETAIN_MEM1_MODULES or
+            if (function["owner"] in RETAIN_MEM1_MODULES and not (
+                    target == "console" and function["name"] in CONSOLE_COLD_FROM_RETAINED) or
                     target == "console" and function["name"] in RETAIN_MEM1_CONSOLE_FUNCTIONS):
                 if previous or function["name"] not in NEW_MODULES[function["owner"]]:
                     raise ValueError("Retained MEM1 input is not an explicitly new CPU function")

@@ -56,7 +56,7 @@ struct Editor {
 };
 namespace FinishBreakdown { bool editing(){return false;} void updateEditor(Menu*,TMarioGamePad*){} void beginEditor(){hit(7,99);} }
 struct InputDisplay:Editor {enum{MENU_ROW_COUNT=6};};
-struct MetadataDisplay:Editor {enum{FIELD_COUNT=11};static constexpr int menuRowCount(){return 20;} };
+struct MetadataDisplay:Editor {enum{FIELD_COUNT=11};static constexpr int menuRowCount(){return 21;} };
 struct CreationExtras:Editor {
     enum{MENU_ROW_COUNT=25};
     void beginNativeTimerEditor(){hit(4,100);}
@@ -142,7 +142,7 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
 
     def test_page_ranges_include_every_new_row_and_no_headers(self):
         self.assertEqual([self.lib.range(p, 1) - self.lib.range(p, 0) for p in range(7)],
-                         [11, 7, 20, 9, 9, 16, 10])
+                         [11, 7, 21, 9, 9, 16, 10])
 
     def test_breakdown_toggle_and_editor_are_adjacent(self):
         self.assertEqual(self.route(0, 3)[1][0], 5)
@@ -157,8 +157,8 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
         for local, row in enumerate((108, 113, 114, 115, 109, 110, 111, 112)):
             self.assertEqual(self.route(5, 2 * local + 1)[1][:2], [4, row])
 
-    def test_metadata_visibility_and_style_share_page_with_all_twenty_actions(self):
-        expected = [0, 14, 13, 16, 19, 17, 18] + list(range(1, 13)) + [15]
+    def test_metadata_visibility_and_style_share_page_with_all_twenty_one_actions(self):
+        expected = [0, 14, 13, 20, 16, 19, 17, 18] + list(range(1, 13)) + [15]
         for local, row in enumerate(expected):
             self.assertEqual(self.route(2, local)[1][:3], [3, row, 1])
 
@@ -172,18 +172,18 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
 
     def test_x_shines_display_options_without_toggling_or_opening_editor(self):
         for page, local in ((1, 0), (1, 2), (1, 3), (1, 4), (2, 0),
-                            (2, 2), (2, 3), (2, 14), (2, 16), (2, 4),
+                            (2, 2), (2, 4), (2, 15), (2, 17), (2, 5),
                             (4, 2), (4, 5), (4, 8), (5, 0), (5, 6)):
             count, out = self.route(page, local, held=0x400)
             self.assertEqual((count, out[0]), (1, 6), (page, local))
-        for page, local in ((1, 1), (1, 5), (2, 1), (2, 19), (5, 1)):
+        for page, local in ((1, 1), (1, 5), (2, 1), (2, 20), (5, 1)):
             self.assertEqual(self.route(page, local, held=0x400)[0], 0)
 
     def test_new_metadata_geometry_has_bidirectional_controls_without_opening_editors(self):
-        for local, row in ((3, 16), (4, 19), (5, 17), (6, 18)):
+        for local, row in ((3, 20), (4, 16), (5, 19), (6, 17), (7, 18)):
             for nav, direction in ((4, -1), (8, 1)):
                 self.assertEqual(self.route(2, local, nav, 0), (1, [3, row, direction, local]))
-        for local in (0, 19):
+        for local in (0, 20):
             self.assertEqual(self.route(2, local, 4, 0)[0], 0)
 
     def test_navigation_wraps_within_each_group(self):

@@ -310,6 +310,7 @@ typedef unsigned long long OSTime;
 static unsigned now=1000;
 unsigned OSGetTick(){return now;} OSTime OSGetTime(){return 1234;}
 unsigned OSMillisecondsToTicks(unsigned n){return n;}
+#define OS_TIMER_CLOCK 1000u
 unsigned OSSecondsToTicks(unsigned n){return 1000*n;}
 static const unsigned SUSAMUNE_GAME_VERSION=3;
 void flush(volatile void*,unsigned){} void invalidate(const volatile void*,unsigned){}

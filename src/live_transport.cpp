@@ -45,9 +45,9 @@ bool emulatorPresent() {
         sGame.gameVersion = SUSAMUNE_GAME_VERSION;
         sGame.instance = (static_cast<unsigned>(stamp) ^ static_cast<unsigned>(stamp >> 32)) | 1u;
         sGame.bytes = sizeof(*kEmulator);
-        sGameTick = now - OSMillisecondsToTicks(100);
+        sGameTick = now - 100u * (OS_TIMER_CLOCK / 1000u);  // OSMillisecondsToTicks wraps u32
     }
-    if (now - sGameTick >= OSMillisecondsToTicks(100)) {
+    if (now - sGameTick >= 100u * (OS_TIMER_CLOCK / 1000u)) {
         sGameTick = now;
         sGame.heartbeat = sGameGeneration + 1;
         if (!TWLivePublish(&kEmulator->game, &sGame, sizeof(sGame), &sGameGeneration, &kIo)) return false;

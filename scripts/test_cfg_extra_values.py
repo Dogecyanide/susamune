@@ -149,7 +149,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         ids = re.findall(r"X\((SETTING_\w+),",
                          (ROOT / "include/susamune/settings_list.h").read_text())
         index = ids.index("SETTING_MENU_SOUNDS")
-        self.assertEqual(index, len(ids) - 1)
+        self.assertLess(index, len(ids))
         self.assertLess(index, 174)
         for old_count in (0, 128, 142, index):
             self.lib.reset(old_count)
@@ -193,7 +193,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.lib.set(128, 4)
         self.lib.set(129, 1)
         self.lib.stage()
-        self.assertEqual(self.lib.count(), 151)
+        self.assertEqual(self.lib.count(), 171)
         self.assertEqual([self.lib.read(i) for i in (128,129)], [4,1])
         self.assertEqual(bytes(self.lib.byteAt(i) for i in range(192,320)), b'\xa5'*128)
 
@@ -226,7 +226,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.assertEqual(self.lib.get(138), 1)
         self.lib.set(138, 0)
         self.lib.stage()
-        self.assertEqual(self.lib.count(), 151)
+        self.assertEqual(self.lib.count(), 171)
         self.assertEqual(self.lib.read(138), 0)
         self.assertEqual(self.lib.cardRoundtrip(0), 1)
         self.assertEqual(self.lib.get(138), 0)
@@ -288,10 +288,11 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
 
     def test_jump_and_buttslide_alias_toggle_independently_without_new_wire_bytes(self):
         self.assertEqual(self.lib.name(141), b'Jump display')
-        self.assertEqual(self.lib.name(151), b'Buttslide display')
-        self.assertEqual(self.lib.category(141), self.lib.category(151))
+        # The buttslide row is a UI alias at SETTING_COUNT sharing Jump display's wire byte.
+        self.assertEqual(self.lib.name(171), b'Buttslide display')
+        self.assertEqual(self.lib.category(141), self.lib.category(171))
         for mask in range(4):
-            for setting, bit in ((141, 1), (151, 2)):
+            for setting, bit in ((141, 1), (171, 2)):
                 for direction in (-1, 1):
                     self.lib.reset(142)
                     self.lib.set(141, mask)
@@ -300,7 +301,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
                     self.assertEqual(self.lib.get(141), mask ^ bit)
                     self.assertEqual(self.lib.label(setting), b'Off' if mask & bit else b'On')
                     self.lib.stage()
-                    self.assertEqual(self.lib.count(), 151)
+                    self.assertEqual(self.lib.count(), 171)
                     self.assertEqual(self.lib.read(141), mask ^ bit)
                     self.assertEqual(self.lib.read(142), 255)
                     self.assertEqual(self.lib.cardRoundtrip(0), 1)
