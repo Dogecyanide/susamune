@@ -78,6 +78,7 @@ enum {SETTING_GHOST_DISPLAY,SETTING_GHOST_APPEARANCE,MODEL_SLOT_COUNT=2};
 struct Settings {bool getBool(int){return true;}int get(int){return 2;}}gSettings;
 const f32 kAngleToRadians=0.0000958738f;
 ModelSlot sSlots[2];ModelData modelData[2];J3DModel models[2];
+int onlineModel(){return -1;}bool onlineShown(){return false;}  // offline: ordinary ghost policy
 J3DAnmTransform*marioAnimation(u16,bool,bool=false){return &animation;}
 J3DAnmTransform**animationSlot(ModelSlot&s){return &s.animation;}
 J3DMtxCalc**rootMtxCalcSlot(ModelSlot&s){return &s.root;}
