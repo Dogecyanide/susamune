@@ -524,6 +524,15 @@ NEW_MODULES.update({
         "receive__13LiveTransportFR0",
         "stop__13LiveTransportFv",
         "TWLiveResume__FPUiPCVvPC0",
+        # Phase-0 STUN probe: cold on console like the rest of this transport.
+        "request__8LiveStunFPUcPCUc",
+        "mapped__8LiveStunFPCvUiPCUcP0",
+        "result__8LiveStunFv",
+        "start__8LiveStunFUs",
+        "update__8LiveStunFv",
+        "transaction__Q28LiveStun0FPUcUi",
+        "same__Q28LiveStun0FRC0RC0",
+        "finish__Q28LiveStun0Fi",
     )),
     "live_race_session.cpp": frozenset((
         "init__15LiveRaceSessionFRQ215LiveRaceSession7SessionRCQ215LiveRaceSession6ConfigRCQ215LiveRaceSession9Callbacks",
