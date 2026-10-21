@@ -179,6 +179,15 @@ set(SHARED_FLAGS
     -ffunction-sections
     -fdata-sections)
 
+# LLVM saves r14-r31 one word at a time; CodeWarrior and the game use
+# stmw/lmw for the same frame slots. Compile through assembly and fold those
+# saves (scripts/ppc_multiple_words.py). Timer inputs and their anchors keep
+# the compiler's own output.
+set(CMAKE_CXX_COMPILE_OBJECT
+    "\"${VENV_PYTHON}\" \"${CMAKE_SOURCE_DIR}/scripts/ppc_multiple_words.py\" <CMAKE_CXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
+set_property(SOURCE ${MOD_SOURCES} APPEND PROPERTY OBJECT_DEPENDS
+    "${CMAKE_SOURCE_DIR}/scripts/ppc_multiple_words.py")
+
 function(susamune_add_mod_object vers)
     string(TOUPPER "${vers}" _upper)
     add_executable(susamune_obj_${vers} ${MOD_SOURCES})
