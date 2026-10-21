@@ -320,10 +320,12 @@ bool CreationEditor::optionEnabled(u8 option) const {
 
 void CreationEditor::moveOption(int direction) {
     const u8 first = mOption;
+    // The colour-mode/gradient group is listed first, as draw() shows it.
+    const int lead = OPTION_COUNT - OPTION_COLOR_MODE;
     do {
-        const int order = mOption >= OPTION_COLOR_MODE ? mOption - OPTION_COLOR_MODE : mOption + 3;
+        const int order = mOption >= OPTION_COLOR_MODE ? mOption - OPTION_COLOR_MODE : mOption + lead;
         const int next = (order + OPTION_COUNT + direction) % OPTION_COUNT;
-        mOption = next < 3 ? OPTION_COLOR_MODE + next : next - 3;
+        mOption = next < lead ? OPTION_COLOR_MODE + next : next - lead;
     } while (!optionEnabled(mOption) && mOption != first);
 }
 

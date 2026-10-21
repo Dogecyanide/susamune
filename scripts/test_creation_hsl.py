@@ -357,6 +357,18 @@ API unsigned roundtripAllRgb(){
         self.assertEqual(self.rgb_at(0), (255, 0, 0))
         self.assertEqual(self.rgb_at(1), (255, 0, 0))
 
+    def test_option_navigation_reaches_every_gradient_option_once(self):
+        self.begin([(255, 0, 0), (0, 0, 255)], modes=1)
+        self.lib.enableGradient(0, 2)
+        self.lib.enableDirection(0)
+        self.assertTrue(self.lib.motionAvailable())
+        self.lib.selectOption(10)
+        forward = [self.lib.moveOption(1) for _ in range(15)]
+        self.assertEqual(forward, [11, 12, 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        backward = [self.lib.moveOption(-1) for _ in range(15)]
+        self.assertEqual(backward, forward[-2::-1] + [10])
+        self.lib.finish(0)
+
     def test_vertical_direction_keep_cancel_reset_and_other_editor_isolation(self):
         self.begin([(255, 0, 0), (0, 0, 255)])
         self.lib.enableGradient(0, 2)
