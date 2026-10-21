@@ -1071,10 +1071,8 @@ bool onlineShown() { return false; }
 #endif
 
 Appearance selectedAlternative() {
-#if !defined(SUSAMUNE_VERSION_JP)
     const int online = onlineModel();
     if (online > 0) return online == 2 ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
-#endif
     return gSettings.get(SETTING_GHOST_APPEARANCE) == 2
         ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
 }
@@ -1082,14 +1080,9 @@ Appearance selectedAlternative() {
 __attribute__((noinline)) ModelSlot &runnerSlot(int runner) {
     const int online = onlineModel();
     if (online >= 0) {
-#if defined(SUSAMUNE_VERSION_JP)
-        // JP has no model switch: the opponent is always Shadow Mario.
-        return sSlots[runner ? 0 : 1];
-#else
         // A missing Piantissimo falls back to Shadow Mario; the name tag stays.
         const int opponent = online && sSlots[1].model ? 1 : 0;
         return sSlots[runner ? opponent : opponent ^ 1];
-#endif
     }
     const int selected = gSettings.get(SETTING_GHOST_APPEARANCE) != 0;
     return sSlots[selected ^ (runner != 0 ? 1 : 0)];

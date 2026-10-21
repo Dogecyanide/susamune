@@ -28,15 +28,6 @@
 
 #pragma clang section rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
-// The JP container ceiling leaves no room for these prototype 19 extras: code
-// rotation, saved online preferences, the score bar layout and auto-opening
-// the Online tab. JP keeps the per-console code, reconnect and round clock.
-#if defined(SUSAMUNE_VERSION_JP)
-#define ONLINE_EXTRAS 0
-#else
-#define ONLINE_EXTRAS 1
-#endif
-
 namespace LiveRace {
 namespace {
 namespace Session = LiveRaceSession;
@@ -76,63 +67,63 @@ static_assert(MSR_ANIMATION_PHASE_MAX == SUSAMUNE_GHOST_ANIMATION_PHASE_MAX,
               "online animation phase");
 
 namespace Text {
-static const char assisted[] = "Assisted result - round void";
-static const char tie[] = "Tie - ready for another round";
+static const char assisted[] = "Assisted - round void";
+static const char tie[] = "Tie - ready again";
 static const char roundWon[] = "Round won";
 static const char roundLost[] = "Round lost";
-static const char matchWon[] = "Match won - host can set up the next match";
-static const char matchLost[] = "Match lost - host can set up the next match";
-static const char freeRoam[] = "Free roam - host can set up a race";
+static const char matchWon[] = "Match won - host sets up next";
+static const char matchLost[] = "Match lost - host sets up next";
+static const char freeRoam[] = "Free roam - host can set a race";
 static const char applyingSetup[] = "Sharing the next setup";
 static const char freeRoamScore[] = "Online free roam";
 static const char ready[] = "Ready when you are";
-static const char cancelled[] = "Round cancelled - ready again";
-static const char startDeclined[] = "Start declined - ready again";
-static const char finishAction[] = "Finish the current practice action first";
-static const char pendingGhost[] = "Save or dismiss the pending ghost first";
-static const char couldNotStart[] = "Could not start - ready again";
-static const char raceLive[] = "Race live - first eligible IL finish";
-static const char requires60Hz[] = "Online prototype requires 60 Hz";
+static const char cancelled[] = "Round cancelled";
+static const char startDeclined[] = "Start declined";
+static const char finishAction[] = "Finish the current action first";
+static const char pendingGhost[] = "Save or dismiss the ghost first";
+static const char couldNotStart[] = "Could not start";
+static const char raceLive[] = "Race live - first IL finish wins";
+static const char requires60Hz[] = "Online requires 60 Hz";
 #if IS_EMULATOR
 static const char networkBusy[] = "Run the Dolphin companion, then retry";
 static const char networkStarting[] = "Starting Dolphin companion network";
 #else
-static const char networkBusy[] = "Network unavailable or still closing";
+static const char networkBusy[] = "Network busy or closing";
 static const char networkStarting[] = "Starting Wii network";
 #endif
 static const char waitingIl[] = "Waiting for host's IL";
 static const char defaultName[] = "Player";
 static const char offline[] = "Offline";
 static const char disconnected[] = "Disconnected";
-static const char waitingReady[] = "Ready - waiting for the other player";
-static const char waitingResult[] = "Finished - waiting for opponent's time";
+static const char waitingReady[] = "Ready - waiting for opponent";
+static const char waitingResult[] = "Finished - waiting for opponent";
 #if IS_EMULATOR
 static const char networkLost[] = "Dolphin companion unavailable - reconnect";
 #else
-static const char networkLost[] = "Wii network unavailable - reconnect";
+static const char networkLost[] = "Wii network lost - reconnect";
 #endif
-static const char invalidSettings[] = "Invalid connection settings";
+static const char invalidSettings[] = "Invalid settings";
 static const char peerLeft[] = "Opponent left";
-static const char connectionLost[] = "Connection lost - reconnect";
+static const char connectionLost[] = "Connection lost";
 static const char starting[] = "Starting network";
 static const char connected[] = "Connected";
 static const char gettingAddress[] = "Getting your address...";
-static const char noAddress[] = "No reply from address servers - check the internet";
-static const char noSend[] = "Wii network sent nothing - see Diagnostics";
+static const char noAddress[] = "No reply from address servers";
+static const char noSend[] = "Nothing sent - see Diagnostics";
 static const char waitingFriend[] = "Waiting for friend";
-static const char shareCode[] = "Send your code, then enter your friend's code";
-static const char enterCode[] = "Enter the host's code as Friend's code";
+static const char shareCode[] = "Send your code, enter your friend's";
+static const char enterCode[] = "Enter the host's code";
 static const char connecting[] = "Connecting directly...";
 static const char cantConnect[] = "Can't connect directly";
-static const char badCode[] = "Code not valid - check every character";
-static const char needJoinerCode[] = "That is a host code - enter the joiner's code";
-static const char needHostCode[] = "That is a joiner code - enter the host's code";
+static const char badCode[] = "Code not valid - check it";
+static const char needJoinerCode[] = "Host code - enter the joiner's";
+static const char needHostCode[] = "Joiner code - enter the host's";
 static const char ownCode[] = "That is your own code";
 static const char roomFirst[] = "Create or join a room first";
-static const char hintHost[] = "Swap codes: send yours, enter theirs as Friend's code";
-static const char hintJoin[] = "Swap codes: enter the host's, send yours to the host";
-static const char hintSymmetric[] = "Symmetric NAT: the router changes ports per peer; direct play fails";
-static const char hintBlocked[] = "Check both codes. A strict router or firewall may block direct play";
+static const char hintHost[] = "Send your code, enter theirs";
+static const char hintJoin[] = "Enter the host's code, send yours";
+static const char hintSymmetric[] = "Symmetric NAT - direct play fails";
+static const char hintBlocked[] = "Check both codes; a firewall may block play";
 static const char empty[] = "";
 static const char scoreFormat[] = "Online  %u - %u   Best of %u";
 static const char setScoreFormat[] = "Set %u - %u  |  IL %u - %u";
@@ -140,15 +131,15 @@ static const char draftBegin[] = "Preparing five ILs";
 static const char draftHostBan[] = "Player 1: ban one IL";
 static const char draftGuestBan[] = "Player 2: ban two ILs";
 static const char draftHostPick[] = "Player 1: pick the IL";
-static const char draftWinnerBan[] = "Previous winner: ban one IL";
-static const char draftLoserPick[] = "Previous loser: choose the counterpick";
-static const char setWon[] = "Set won - host can apply the next setup";
-static const char setLost[] = "Set lost - host can apply the next setup";
+static const char draftWinnerBan[] = "Winner: ban one IL";
+static const char draftLoserPick[] = "Loser: counterpick";
+static const char setWon[] = "Set won - host sets up next";
+static const char setLost[] = "Set lost - host sets up next";
 }
 #pragma clang section rodata="" data="" bss=""
 namespace Text2 {
 static const char reconnecting[] = "Reconnecting...";
-static const char stillTrying[] = "Still trying - check both codes";
+static const char stillTrying[] = "Still trying - check codes";
 static const char opponentFormat[] = "Opponent: %lu:%02lu.%02lu";
 }
 // Prototype 19 state; the fixed Runtime layout above stays unchanged.
@@ -392,9 +383,7 @@ void settleRound() {
             winner = s.hosting ? LiveDraft::PLAYER_TWO : LiveDraft::PLAYER_ONE;
         }
         s.localReady = s.peerReady = false;
-#if ONLINE_EXTRAS
         x.autoOpen = true; x.settledMs = nowMs();
-#endif
         s.phase = (s.localWins > sOptions.bestOf / 2 || s.peerWins > sOptions.bestOf / 2) ? MATCH_DONE : ROUND_DONE;
         if (s.phase == MATCH_DONE) s.message = s.localWins > s.peerWins ? Text::matchWon : Text::matchLost;
         if (sOptions.draft) {
@@ -662,9 +651,7 @@ u32 freshSecret();
 #if !IS_EMULATOR
 SusamuneOnlineNameCfg *savedName();
 #endif
-#if ONLINE_EXTRAS
 u32 today() { return static_cast<u32>(OSGetTime() / (OS_TIMER_CLOCK * 86400ull)); }
-#endif
 // The room secret is kept per console so its code stays the same between
 // sessions; it is replaced after about 90 days, but never on a clock that is
 // unset or earlier than the day it was made.
@@ -674,7 +661,6 @@ u32 roomSecret() {
     if (saved) {
         DCInvalidateRange(saved, sizeof(*saved));
         bool changed = false;
-#if ONLINE_EXTRAS
         const u32 day = today();
         const bool clock = day >= 9000u && day < 65535u;  // 2024 or later
         if (!saved->secret || saved->secret > LiveP2P::SECRET_MAX ||
@@ -686,11 +672,6 @@ u32 roomSecret() {
         } else if (!saved->secretDay && clock) {
             saved->secretDay = static_cast<u16>(day); changed = true;
         }
-#else
-        if (!saved->secret || saved->secret > LiveP2P::SECRET_MAX) {
-            saved->secret = static_cast<u16>(freshSecret()); changed = true;
-        }
-#endif
         u8 last[6];
         memcpy(last, s.own.endpoint.ip, 4);
         last[4] = static_cast<u8>(s.own.endpoint.port >> 8); last[5] = static_cast<u8>(s.own.endpoint.port);
@@ -736,7 +717,6 @@ void init() {
         Options loaded = sOptions;
         memcpy(loaded.name, saved->name, 16);
         if (saved->magic == SUSAMUNE_ONLINE_NAME_MAGIC && validOptions(loaded)) sOptions = loaded;
-#if ONLINE_EXTRAS
         // Older ini files leave these zero: Shadow Mario, opponent and score shown.
         sPrefs.model = saved->model < MODEL_COUNT ? saved->model : MODEL_SHADOW;
         sPrefs.hideOpponent = saved->flags & SUSAMUNE_ONLINE_HIDE_OPPONENT;
@@ -744,7 +724,6 @@ void init() {
         if (saved->scoreScale) {
             sPrefs.scoreScale = saved->scoreScale; sPrefs.scoreX = saved->scoreX; sPrefs.scoreY = saved->scoreY;
         }
-#endif
     }
 #endif
     s.message = Text::offline;
@@ -785,7 +764,7 @@ const char *enterCode(const char *text) {
         !memcmp(&code.endpoint, &s.own.endpoint, sizeof(code.endpoint))) return Text::ownCode;
     if (s.friendKnown && s.hosting) LiveP2P::reset(s.punch, s.own.secret, LiveP2P::HOST);
     s.friendCode = code; s.friendKnown = true;
-#if !IS_EMULATOR && !defined(SUSAMUNE_VERSION_JP)
+#if !IS_EMULATOR
     if (SusamuneOnlineNameCfg *saved = savedName()) {
         u8 *f = saved->friendCode;
         memcpy(f, code.endpoint.ip, 4);
@@ -843,7 +822,6 @@ void onILResult(int entry, s32 qf, bool eligible) {
     s.localResult = true;
     s.message = Text::waitingResult;
 }
-#if ONLINE_EXTRAS
 static bool takeAutoOpen() {
     if (!gMenu || gMenu->shown()) return false;
     // After each IL of an online set, once the finish has settled on screen.
@@ -852,7 +830,6 @@ static bool takeAutoOpen() {
     x.autoOpen = false;
     return true;
 }
-#endif
 void update() {
     LiveStun::update();
     if (!s.active) return;
@@ -976,9 +953,7 @@ void update() {
     if (!connection.connected) return;
     updatePose(now);
     serviceRace();
-#if ONLINE_EXTRAS
     if (takeAutoOpen()) gMenu->openOnline();
-#endif
 }
 Status status() {
     Status out = {};
@@ -1034,13 +1009,13 @@ void drawScore(Menu *menu, const Prefs &prefs) {
     const char *score = s.phase == ROAMING ? Text::freeRoamScore : text;
     // The opponent finished first: their time, in the score bar, away from QFT.
     const char *message = s.message ? s.message : Text::empty;
-    if (ONLINE_EXTRAS && s.phase == RUNNING && s.peerResult && !s.localResult && s.peerEligible) {
+    if (s.phase == RUNNING && s.peerResult && !s.localResult && s.peerEligible) {
         const u32 cs = static_cast<u32>(s.peerQf) * 1001u / 2400u;
         snprintf(opponent, sizeof(opponent), Text2::opponentFormat, cs / 6000u, cs / 100u % 60u, cs % 100u);
         message = opponent;
     }
     const bool showStatus = s.phase != RUNNING || s.localResult || message == opponent;
-    const int scale = ONLINE_EXTRAS && prefs.scoreScale >= 50 && prefs.scoreScale <= 200 ? prefs.scoreScale : 100;
+    const int scale = prefs.scoreScale >= 50 && prefs.scoreScale <= 200 ? prefs.scoreScale : 100;
     const int size = 14 * scale / 100, statusSize = 13 * scale / 100;
     int width = Menu::textWidth(score, size);
     const int statusWidth = showStatus ? Menu::textWidth(message, statusSize) : 0;
@@ -1058,7 +1033,7 @@ const Prefs &prefs() { return sPrefs; }
 void setPrefs(const Prefs &prefs) {
     sPrefs = prefs;
     if (sPrefs.model >= MODEL_COUNT) sPrefs.model = MODEL_SHADOW;
-#if !IS_EMULATOR && ONLINE_EXTRAS
+#if !IS_EMULATOR
     if (SusamuneOnlineNameCfg *saved = savedName()) {
         saved->model = sPrefs.model;
         saved->flags = (sPrefs.hideOpponent ? SUSAMUNE_ONLINE_HIDE_OPPONENT : 0) |
@@ -1071,7 +1046,6 @@ void setPrefs(const Prefs &prefs) {
 }
 int opponentModel() { return s.active ? sPrefs.model : -1; }
 bool opponentShown() { return !sPrefs.hideOpponent; }
-#if !defined(SUSAMUNE_VERSION_JP)
 bool lastFriend(char *out) {
 #if !IS_EMULATOR
     if (const SusamuneOnlineNameCfg *saved = savedName()) {
@@ -1087,6 +1061,5 @@ bool lastFriend(char *out) {
     (void)out;
     return false;
 }
-#endif
 }
 #endif

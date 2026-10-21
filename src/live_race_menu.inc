@@ -1,35 +1,27 @@
 #pragma clang section text=""
-// The JP container has no room for the code grid, last-friend recall, the
-// opponent model switch or the score bar layout editor; JP keeps the
-// Creation keyboard, Shadow Mario and the fixed top-centre score bar.
-#if defined(SUSAMUNE_VERSION_JP)
-#define ONLINE_EXTRAS 0
-#else
-#define ONLINE_EXTRAS 1
-#endif
 namespace {
 // Named arrays keep new text out of the fixed menu literal pools.
 namespace OnlineText {
 static const char chooseHelp[] = SUSAMUNE_GLYPH_A " Select   " SUSAMUNE_GLYPH_C " L" SUSAMUNE_GLYPH_SLASH "R World   " SUSAMUNE_GLYPH_B " Cancel";
 static const char title[] = "Online";
-static const char disconnectFirst[] = "Disconnect before changing setup";
+static const char disconnectFirst[] = "Disconnect first";
 static const char fixedStart[] = "This IL has a fixed start";
-static const char unavailableAction[] = "Not available - check the connection";
-static const char finishedAction[] = "Match over - host applies the next setup";
+static const char unavailableAction[] = "Not available - check connection";
+static const char finishedAction[] = "Match over - host sets up next";
 static const char matchFinished[] = "Match finished";
-static const char finishedHelp[] = "Host: choose the next IL or mode, then Apply next setup.";
+static const char finishedHelp[] = "Host: pick the next IL or mode, then Apply.";
 static const char freeRoam[] = "Free roam";
 static const char raceMode[] = "IL racing";
 static const char draftMode[] = "Draft set";
 static const char draftOnly[] = "Draft sets only";
-static const char manualOnly[] = "Choose ILs through the draft list";
+static const char manualOnly[] = "Choose ILs in the draft list";
 static const char draftPoolNames[] = "Any%\0All ILs\0Non-Any%";
 static const char draftSetNames[] = "Best of 3\0Best of 5";
 static const char draftOpen[] = "Open IL list";
 static const char draftTurn[] = "Your turn";
 static const char draftWait[] = "Opponent's turn";
 static const char draftPending[] = "Sending selection...";
-static const char draftNoList[] = "Connect in Draft set mode to see the IL list";
+static const char draftNoList[] = "Connect in Draft set mode first";
 static const char draftTitle[] = "IL draft";
 static const char draftBan[] = "Ban an IL";
 static const char draftPick[] = "Choose an IL";
@@ -41,12 +33,12 @@ static const char draftBackHelp[] = SUSAMUNE_GLYPH_B " Online setup / Ready / Di
 static const char draftBanned[] = "BANNED";
 static const char draftChosen[] = "CHOSEN";
 static const char draftAvailable[] = "Available";
-static const char draftSelectedHelp[] = "IL chosen - both players choose Ready.";
-static const char draftWaitingHelp[] = "You can leave this list meanwhile.";
+static const char draftSelectedHelp[] = "IL chosen - both choose Ready.";
+static const char draftWaitingHelp[] = "You can leave this list.";
 static const char draftScoreFormat[] = "Set: %u - %u  (Bo%u)   |   IL rounds: %u - %u  (Bo3)";
 static const char draftSummaryFormat[] = "Set: %u - %u  (Bo%u)   |   Rounds: %u - %u";
 static const char draftFixedBest[] = "3 per IL";
-static const char freeRoamAction[] = "Free roam - host can choose IL racing";
+static const char freeRoamAction[] = "Free roam - host can pick IL racing";
 static const char hostOnly[] = "Host only";
 static const char applySetup[] = "Apply";
 static const char finishFirst[] = "Finish the match first";
@@ -74,28 +66,26 @@ static const char empty[] = "";
 static const char armRace[] = "Arm race";
 static const char connectFirst[] = "Connect first";
 static const char leave[] = "Leave session";
-static const char hostHelp[] = "Create or join a room, then swap codes.";
-static const char roomHelp[] = "Both choose Ready to start the IL.  X: NAT test";
+static const char hostHelp[] = "Create or join a room, swap codes.";
+static const char roomHelp[] = "Both Ready to start.  X: NAT test";
 static const char codePrompt[] = "Friend's code (14 characters)";
-#if ONLINE_EXTRAS
 static const char codeHelp[] = SUSAMUNE_GLYPH_A " Type   " SUSAMUNE_GLYPH_B " Delete   Y Last friend   START Enter";
 static const char scoreTitle[] = "Online score bar";
 static const char modelNames[] = "Shadow Mario\0Piantissimo\0Mario";
-#endif
-static const char codeChanged[] = "Your code changed - send the new one";
-static const char codeShare[] = "Send this code to your friend";
+static const char codeChanged[] = "Your code changed - resend it";
+static const char codeShare[] = "Send this code to a friend";
 static const char gettingAddress[] = "Getting address...";
 static const char enterFriend[] = "Enter";
 static const char natIdle[] = "Press A or X";
-static const char roomFirst[] = "Create or join a room first";
-static const char needName[] = "Enter an online name first";
-static const char printableName[] = "Use printable letters, numbers or symbols";
-static const char invalidSetup[] = "Online setup is invalid or busy";
-static const char stunBusy[] = "Online already tested NAT - see NAT test";
+static const char roomFirst[] = "Create or join a room";
+static const char needName[] = "Enter a name first";
+static const char printableName[] = "Use printable characters";
+static const char invalidSetup[] = "Setup invalid or busy";
+static const char stunBusy[] = "NAT already tested online";
 static const char stunFormat[] = "STUN %s  tries %u  A %s  B %s";
 static const char stunRunning[] = "probing...";
-static const char stunSame[] = "SAME - punching should work";
-static const char stunDifferent[] = "DIFFERENT - symmetric NAT";
+static const char stunSame[] = "SAME - should work";
+static const char stunDifferent[] = "DIFFERENT - symmetric";
 static const char stunOne[] = "one reply - retry X";
 static const char stunNone[] = "no reply - retry X";
 static const char stunFailed[] = "failed, code %d";
@@ -112,7 +102,6 @@ public:
     bool grabsInput() const override { return mMode != NONE; }
     bool suppressesBinds() const override { return true; }
     bool fullScreen() const override { return mMode != NONE && mMode != ENTRY; }
-#if ONLINE_EXTRAS
     // After each online IL: Ready, or the draft list while a set is drafting.
     void openAfterRound() {
         mMode = LiveRace::status().drafting ? DRAFT_PICK : NONE;
@@ -120,7 +109,6 @@ public:
         mCursor = 0;
         focus();
     }
-#endif
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X | JUTGamePad::Y); }
     bool back() override {
         if (mMode == NONE) return false;
@@ -147,7 +135,6 @@ public:
             if (!LiveRace::chooseDraft(mCursor)) menu->toast(LiveRace::status().race);
             return;
         }
-#if ONLINE_EXTRAS
         if (mMode == SCORE) {
             const CreationStyle defaults = {320, 16, 100, 255, 0, 0, 0, 130, 255, 0};
             static const u8 white[1][3] = {{255, 255, 255}};
@@ -183,21 +170,17 @@ public:
             if (mLength == LiveP2P::CODE_CHARS && enterCode(menu)) back();
             return;
         }
-#endif
         if (mMode != NONE) {
             // A connection may start or end while an editor is open.
-            if (mMode == FRIEND ? !status.active || status.connected :
-                status.active && (!status.setupEditable || mMode == NAME)) { back(); return; }
-            if (mMode != ENTRY) {
-                char *text = mMode == NAME ? mDraft.name : mCode;
+            if (status.active && (!status.setupEditable || mMode == NAME)) { back(); return; }
+            if (mMode == NAME) {
                 if (pressed & JUTGamePad::START) {
-                    if (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::X) back();
-                    else if (mMode == NAME ? apply(menu) : enterCode(menu)) back();
+                    if ((JUTGamePad::mPadStatus[0].mButton & JUTGamePad::X) || apply(menu)) back();
                 } else if (pressed & JUTGamePad::Z) {
-                    mLength = 0; text[0] = 0;
+                    mLength = 0; mDraft.name[0] = 0;
                 } else {
-                    updateCreationKeyboardButtons(pressed, text, mLength,
-                        mMode == NAME ? sizeof(mDraft.name) - 1 : sizeof(mCode) - 1, mPage, mUpper, mCursor);
+                    updateCreationKeyboardButtons(pressed, mDraft.name, mLength,
+                        sizeof(mDraft.name) - 1, mPage, mUpper, mCursor);
                 }
                 return;
             }
@@ -229,18 +212,13 @@ public:
         const int direction = (nav & TMarioGamePad::CSTICK_LEFT) ? -1 :
                               (nav & TMarioGamePad::CSTICK_RIGHT) ? 1 : 0;
         if (!(pressed & JUTGamePad::A) && !direction) return;
+        const int step = direction ? direction : 1;
         if (mSel == DIAGNOSTICS_ROW) { mDiagnostics = !mDiagnostics; return; }
         if (mSel == INPUTS_ROW) { LiveGhost::setInputsShown(!LiveGhost::inputsShown()); return; }
-        if (mSel == SHOW_ROW) {
+        if (mSel >= SHOW_ROW && mSel <= SCORE_ROW) {
             LiveRace::Prefs prefs = LiveRace::prefs();
-            prefs.hideOpponent = !prefs.hideOpponent;
-            LiveRace::setPrefs(prefs);
-            return;
-        }
-#if ONLINE_EXTRAS
-        if (mSel == MODEL_ROW || mSel == SCORE_ROW) {
-            LiveRace::Prefs prefs = LiveRace::prefs();
-            if (mSel == MODEL_ROW) prefs.model = wrap(prefs.model + (direction ? direction : 1), LiveRace::MODEL_COUNT);
+            if (mSel == SHOW_ROW) prefs.hideOpponent = !prefs.hideOpponent;
+            else if (mSel == MODEL_ROW) prefs.model = wrap(prefs.model + step, LiveRace::MODEL_COUNT);
             else if (direction) prefs.hideScore = !prefs.hideScore;
             else {
                 // The Creation layout editor: position and size only, QFT untouched.
@@ -256,7 +234,6 @@ public:
             LiveRace::setPrefs(prefs);
             return;
         }
-#endif
         if (mSel == NAME_ROW || (mSel >= ENTRY_ROW && mSel <= SET_LENGTH_ROW)) {
             if (status.active && (!status.setupEditable || mSel == NAME_ROW)) {
                 menu->toast(mSel == NAME_ROW ? OnlineText::disconnectFirst : OnlineText::finishFirst); return;
@@ -270,15 +247,15 @@ public:
             }
             if (mSel == EPISODE_ROW || mSel == BEST_ROW || mSel >= MODE_ROW) {
                 if (mSel == MODE_ROW) {
-                    const int mode = wrap((mDraft.freeRoam ? 2 : mDraft.draft ? 1 : 0) + (direction ? direction : 1), 3);
+                    const int mode = wrap((mDraft.freeRoam ? 2 : mDraft.draft ? 1 : 0) + step, 3);
                     mDraft.freeRoam = mode == 2;
                     mDraft.draft = mode == 1;
                     if (mDraft.draft) mDraft.bestOf = 3;
-                } else if (mSel == POOL_ROW) mDraft.pool = wrap(mDraft.pool + (direction ? direction : 1), 3);
+                } else if (mSel == POOL_ROW) mDraft.pool = wrap(mDraft.pool + step, 3);
                 else if (mSel == SET_LENGTH_ROW) mDraft.setBo5 = !mDraft.setBo5;
-                else if (mSel == BEST_ROW) mDraft.bestOf = 1 + 2 * wrap((mDraft.bestOf - 1) / 2 + (direction ? direction : 1), 4);
+                else if (mSel == BEST_ROW) mDraft.bestOf = 1 + 2 * wrap((mDraft.bestOf - 1) / 2 + step, 4);
                 else if (ILing::canChooseEpisode(mDraft.entry))
-                    mDraft.episode = wrap(mDraft.episode + (direction ? direction : 1), 8);
+                    mDraft.episode = wrap(mDraft.episode + step, 8);
                 else { menu->toast(OnlineText::fixedStart); return; }
                 apply(menu);
             } else if (pressed & JUTGamePad::A) beginEdit(mSel == NAME_ROW ? NAME : ENTRY);
@@ -323,7 +300,6 @@ public:
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
-#if ONLINE_EXTRAS
         if (mMode == NAME) {
             drawCreationKeyboard(menu, OnlineText::namePrompt, mDraft.name, mPage, mUpper, mCursor);
             return;
@@ -336,13 +312,6 @@ public:
             mEditor.draw(menu, OnlineText::scoreTitle, OnlineText::scoreTitle);
             return;
         }
-#else
-        if (mMode == NAME || mMode == FRIEND) {
-            drawCreationKeyboard(menu, mMode == NAME ? OnlineText::namePrompt : OnlineText::codePrompt,
-                                 mMode == NAME ? mDraft.name : mCode, mPage, mUpper, mCursor);
-            return;
-        }
-#endif
         if (mMode == ENTRY) { drawEntries(menu, x, y, w, h); return; }
         if (mMode == DRAFT_PICK) { drawDraft(menu, x, y, w, h); return; }
 
@@ -359,14 +328,8 @@ public:
         if (options.draft) draftScore(text, sizeof(text), status, false);
         else snprintf(text, sizeof(text), OnlineText::scoreFormat,
                  status.localWins, status.peerWins, options.bestOf);
-        int scoreSize = 18;
-        while (scoreSize > 13 && Menu::textWidth(text, scoreSize) > w - 8) --scoreSize;
-        menu->drawMenuText(status.freeRoam ? OnlineText::freeRoam : text,
-                       x + 4, y + 18, scoreSize, scoreSize, cValue());
-        const char *result = status.race ? status.race : OnlineText::noRace;
-        int resultSize = 16;
-        while (resultSize > 11 && Menu::textWidth(result, resultSize) > w - 8) --resultSize;
-        menu->drawMenuText(result, x + 4, y + 42, resultSize, resultSize, cRow());
+        fit(menu, status.freeRoam ? OnlineText::freeRoam : text, x + 4, y + 18, w - 8, 18, 13, cValue());
+        fit(menu, status.race ? status.race : OnlineText::noRace, x + 4, y + 42, w - 8, 16, 11, cRow());
         snprintf(text, sizeof(text), OnlineText::readyFormat,
             status.localReady ? "Ready" : OnlineText::notReady, status.peerReady ? "Ready" : OnlineText::notReady,
             status.setupEditable && status.active ? OnlineText::setupAvailable : status.active ? OnlineText::locked : OnlineText::prototype);
@@ -432,10 +395,8 @@ public:
             case DISCONNECT_ROW: value = status.active ? OnlineText::leave : OnlineText::offline; break;
             case INPUTS_ROW: value = LiveGhost::inputsShown() ? "On" : "Off"; break;
             case SHOW_ROW: value = LiveRace::prefs().hideOpponent ? "Off" : "On"; break;
-#if ONLINE_EXTRAS
             case MODEL_ROW: value = PackedText::at(OnlineText::modelNames, LiveRace::prefs().model); break;
             case SCORE_ROW: value = LiveRace::prefs().hideScore ? "Hidden" : "Edit"; break;
-#endif
             case DIAGNOSTICS_ROW: value = mDiagnostics ? "On" : "Off"; break;
             }
             const int ry = y + top + (i - first) * ROW_H;
@@ -460,16 +421,12 @@ private:
     enum Row { NAME_ROW, HOST_ROW, JOIN_ROW, CODE_ROW, FRIEND_ROW, ENTRY_ROW, EPISODE_ROW,
                BEST_ROW, MODE_ROW, POOL_ROW, SET_LENGTH_ROW, READY_ROW, SETUP_ROW, DRAFT_ROW, DISCONNECT_ROW,
                NAT_ROW, INPUTS_ROW, SHOW_ROW,
-#if ONLINE_EXTRAS
                MODEL_ROW, SCORE_ROW,
-#endif
                DIAGNOSTICS_ROW, ROW_COUNT };
     enum Mode { NONE, NAME, FRIEND, ENTRY, DRAFT_PICK, SCORE };
     static const char *rowName(int row) {
         static const char names[] = "Name\0Create room\0Join room\0Your code\0Friend's code\0IL race\0Episode\0Best of\0Mode\0IL pool\0Set length\0Ready\0Apply next setup\0Draft IL list\0Disconnect\0NAT test\0Opponent inputs\0Show opponent"
-#if ONLINE_EXTRAS
             "\0Opponent model\0Score bar"
-#endif
             "\0Diagnostics";
         return PackedText::at(names, row);
     }
@@ -497,18 +454,14 @@ private:
         char text[112];
         menu->drawMenuText(OnlineText::draftTitle, x + 4, y, 22, 22, cTitle());
         draftScore(text, sizeof(text), status, true);
-        int size = 17;
-        while (size > 12 && Menu::textWidth(text, size) > w - 8) --size;
-        menu->drawMenuText(text, x + 4, y + 30, size, size, cValue());
+        fit(menu, text, x + 4, y + 30, w - 8, 17, 12, cValue());
         const bool turn = draftTurn(status);
         const bool picking = draftPicking(status.draft);
         const char *action = status.draftPending ? OnlineText::draftPending : !status.drafting ?
             (status.race ? status.race : OnlineText::noRace) :
             turn ? (picking ? OnlineText::draftPick : OnlineText::draftBan) :
                    (picking ? OnlineText::draftPeerPick : OnlineText::draftPeerBan);
-        size = 18;
-        while (size > 12 && Menu::textWidth(action, size) > w - 8) --size;
-        menu->drawMenuText(action, x + 4, y + 58, size, size, turn ? cValue() : cRow());
+        fit(menu, action, x + 4, y + 58, w - 8, 18, 12, turn ? cValue() : cRow());
         if (status.drafting && status.race) small(menu, status.race, x + 4, y + 82, w - 8);
         for (unsigned i = 0; i < LiveDraft::CANDIDATE_COUNT; ++i) {
             const unsigned entry = status.draft.candidates[i];
@@ -517,9 +470,7 @@ private:
             const int ry = y + 108 + i * 30;
             if (i == mCursor) drawRowHighlight(menu, x, ry, w, 28);
             const char *label = entry < (unsigned)ILing::count() ? ILing::label(entry) : OnlineText::empty;
-            size = 17;
-            while (size > 11 && Menu::textWidth(label, size) > w - 115) --size;
-            menu->drawMenuText(label, x + 8, ry + 3, size, size, banned ? cRowDim() : cRow());
+            fit(menu, label, x + 8, ry + 3, w - 115, 17, 11, banned ? cRowDim() : cRow());
             const char *mark = banned ? OnlineText::draftBanned : chosen ? OnlineText::draftChosen : OnlineText::draftAvailable;
             menu->drawMenuText(mark, x + w - Menu::textWidth(mark, 12) - 8, ry + 6, 12, 12,
                            banned ? cRowDim() : chosen ? cValue() : cRow());
@@ -553,10 +504,13 @@ private:
             stun.verdict == LiveStun::DIFFERENT_MAPPING ? OnlineText::stunDifferent :
             stun.verdict == LiveStun::ONE_REPLY ? OnlineText::stunOne : OnlineText::stunNone;
     }
+    // Draws text at the largest size from `size` down to `least` that fits `width`.
+    static void fit(Menu *menu, const char *text, int x, int y, int width, int size, int least, Color color) {
+        while (size > least && Menu::textWidth(text, size) > width) --size;
+        menu->drawMenuText(text, x, y, size, size, color);
+    }
     static void small(Menu *menu, const char *text, int x, int y, int width) {
-        int size = FOOT_SZ;
-        while (size > 9 && Menu::textWidth(text, size) > width) --size;
-        menu->drawMenuText(text, x, y, size, size, cRow());
+        fit(menu, text, x, y, width, FOOT_SZ, 9, cRow());
     }
     bool apply(Menu *menu) {
         if (!LiveRace::status().setupEditable) {
@@ -586,7 +540,6 @@ private:
             JUTGamePad::Z | JUTGamePad::START | JUTGamePad::L | JUTGamePad::R |
             JUTGamePad::DPAD_LEFT | JUTGamePad::DPAD_RIGHT | JUTGamePad::DPAD_UP | JUTGamePad::DPAD_DOWN);
     }
-#if ONLINE_EXTRAS
     void drawCode(Menu *menu) {
         menu->fillMenuBox(0, 0, 640, 480, cBackdrop());
         menu->fillMenuBox(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, cPanel());
@@ -603,7 +556,6 @@ private:
         }
         drawFooterText(menu, OnlineText::codeHelp, x + 4, PANEL_Y + PANEL_H - PAD - 16);
     }
-#endif
     void drawEntries(Menu *menu, int x, int y, int w, int h) {
         const int position = ILing::menuPositionOf(mDraft.entry);
         const int entries = ILing::count();
@@ -641,19 +593,16 @@ private:
         drawFooterText(menu, OnlineText::chooseHelp, x + 4, y + h - FOOT_SZ);
     }
     LiveRace::Options mDraft;
-#if ONLINE_EXTRAS
     LiveRace::Prefs mPrefs;
     CreationEditor mEditor;
     CreationStyle mStyle;
     u8 mRgb[1][3], mRgbBackup[1][3];
-#endif
     RawPromptInput mInput;
     char mCode[LiveP2P::DISPLAY_CHARS + 1];
     u8 mSel, mMode, mCursor, mLength, mPage;
     bool mUpper, mDiagnostics;
 };
 }
-#if ONLINE_EXTRAS
 void Menu::openOnline() {
     if (mShown || !mNumTabs) return;
     mCurTab = mNumTabs - 1;
@@ -662,5 +611,4 @@ void Menu::openOnline() {
     static_cast<OnlineTab *>(mTabs[mCurTab])->openAfterRound();
     mShown = true;
 }
-#endif
 #pragma clang section text=".foxtrot.text"
