@@ -46,6 +46,8 @@ struct Status {
     bool active, connected, hosting, localReady, peerReady, racing, matchDone;
     bool freeRoam, setupEditable;
     bool drafting, draftPending;
+    bool reconnecting;         // the link dropped; the room is being restored silently
+    bool codeChanged;          // this console's public address or secret changed since last time
     LiveDraft::State draft;
     Diagnostics diagnostics;
 };
@@ -65,5 +67,22 @@ bool ready();
 bool newMatch();
 bool chooseDraft(unsigned candidate);
 void onILResult(int entry, s32 qf, bool eligible);
+// Preferences of this console only, kept in susamune.ini with the online name.
+enum { MODEL_SHADOW, MODEL_PIANTA, MODEL_MARIO, MODEL_COUNT };
+struct Prefs {
+    u8 model;                  // opponent model
+    bool hideOpponent, hideScore;
+    u8 scoreScale;             // CreationStyle scale (100 = normal)
+    u16 scoreX, scoreY;        // centre top of the score bar
+};
+const Prefs &prefs();
+// The score bar (and the opponent's time) at `prefs`; draw() uses the saved prefs.
+void drawScore(Menu *menu, const Prefs &prefs);
+void setPrefs(const Prefs &prefs);
+// The opponent model while a live opponent is shown, else -1.
+int opponentModel();
+bool opponentShown();
+// The last friend's code (CODE_CHARS + NUL, no dashes) or false.
+bool lastFriend(char *out);
 }
 #endif

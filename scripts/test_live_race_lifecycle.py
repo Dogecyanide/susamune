@@ -44,7 +44,19 @@ static LiveTransport::Status network;
 static LiveTransport::Packet nextPacket;
 static LiveStun::Result stunResult;
 static TWLiveMailbox mailbox;
-static u64 OSGetTime(){return clockMs;}
+static u64 rtcTicks;
+static u64 OSGetTime(){return rtcTicks?rtcTicks:clockMs;}
+#define OS_TIMER_CLOCK 1ull
+#define ONLINE_EXTRAS 1
+extern "C" int memcmp(const void*p,const void*q,__SIZE_TYPE__ n){auto*a=(const u8*)p;auto*b=(const u8*)q;for(;n--;++a,++b)if(*a!=*b)return *a<*b?-1:1;return 0;}
+struct SusamuneOnlineNameCfg {unsigned magic;char name[28];unsigned short secret,secretDay;unsigned char last[6],model,flags,friendCode[8];
+ unsigned short scoreX,scoreY;unsigned char scoreScale,reserved[39];};
+static SusamuneOnlineNameCfg savedBlock;static bool savedAvailable;static unsigned dirtyMarks;
+static void DCStoreRange(void*,unsigned){}static void DCInvalidateRange(void*,unsigned){}
+enum{SETTING_DISABLE_WARPS};struct Settings{bool getBool(int){return false;}void markDirty(){++dirtyMarks;}}gSettings;
+struct QFTStub{unsigned serial;unsigned attemptSerial()const{return serial;}};static QFTStub gQFTTimer;
+class Menu{public:bool shown(){return true;}void openOnline(){}};static Menu*gMenu;
+namespace StageLoader{bool active(){return false;}}
 static unsigned OSGetTick(){return 0x1234567u;}
 enum{VI_PAL=1};static unsigned VIGetTvFormat(){return 0;}
 namespace LiveTransport {
@@ -88,23 +100,25 @@ namespace LiveGhost {void reset(){++ghostResets;}}
         code += source[source.index("namespace LiveRace {"):source.index("u32 nowMs()")]
         code += r'''
 u32 nowMs(){return clockMs;}
+SusamuneOnlineNameCfg*savedName(){return savedAvailable?&savedBlock:nullptr;}
 bool validOptions(const Options&){return true;}
 const Session::Callbacks kCallbacks={};
 void acceptConnection(){if(s.session.info.connected)s.connected=true;}
 void updatePose(u32){++poses;}
 void serviceRace(){++raceServices;}
 '''
-        for name in ("sendControl", "sendPose", "canConfigureRace", "begin", "startSession", "usePeer", "freshSecret"):
+        for name in ("sendControl", "sendPose", "canConfigureRace", "begin", "startSession", "usePeer", "sampleAttempt",
+                     "freshSecret", "today", "roomSecret"):
             code += function(source, name) + "\n"
         code += "}\n"
-        for name in ("enterCode", "disconnect", "update", "status"):
+        for name in ("enterCode", "disconnect", "takeAutoOpen", "update", "status"):
             code += function(source, name) + "\n"
         code += "}\n"
         code += r'''
 using namespace LiveRace;
 static const TWLiveEndpoint kHost={{203,0,113,7},48222,0},kJoiner={{198,51,100,9},50123,0};
 static void reset(bool running=true){
- s={};sOptions={};network={};mailbox={};nextPacket={};stunResult={};clockMs=1000;network.epoch=7;
+ s={};sOptions={};x={};network={};mailbox={};nextPacket={};stunResult={};clockMs=1000;network.epoch=7;
  polled=received=sessionTicks=transportStops=ghostResets=sessionStops=stunStarts=stunCancels=0;
  hostStarts=guestStarts=poses=raceServices=localFrames=punchesSent=sessionPin=0;
  lastSent=sessionPeer=TWLiveEndpoint{};
@@ -128,12 +142,13 @@ static bool open(bool hosting,const TWLiveEndpoint&mapped,unsigned verdict=LiveS
  frame(1002,TW_LIVE_READY);if(s.addressed)return false;
  stunDone(mapped,verdict);frame(1003,TW_LIVE_READY);return s.addressed;
 }
-static void codeOf(const TWLiveEndpoint&e,unsigned secret,unsigned role,char*out){
- LiveP2P::Code c={e,secret,(u8)role};LiveP2P::encode(c,out);
+static void codeOf(const TWLiveEndpoint&e,unsigned secret,unsigned,char*out){
+ LiveP2P::Code c={e,secret};LiveP2P::encode(c,out);
 }
 #define CHECK(x) do{if(!(x))return __LINE__;}while(0)
 #define API extern "C" __declspec(dllexport)
 API unsigned scenario(unsigned test){
+ rtcTicks=0;savedAvailable=false;savedBlock={};dirtyMarks=0;
  reset();
  if(test==0){
   s.networkError=-77;frame(1001,TW_LIVE_UNAVAILABLE);
@@ -204,18 +219,18 @@ API unsigned scenario(unsigned test){
  }else if(test==11){
   // Host: STUN address becomes the code, and the session listens for anyone with the PIN.
   CHECK(open(true,kHost));
-  CHECK(s.own.role==LiveP2P::HOST&&s.own.secret>=1&&s.own.secret<=LiveP2P::SECRET_MAX);
+  CHECK(s.own.secret>=1&&s.own.secret<=LiveP2P::SECRET_MAX);
   CHECK(s.started&&hostStarts==1&&!sessionPeer.port&&sessionPin==s.own.secret&&s.message==Text::shareCode);
   auto out=LiveRace::status();
-  CHECK(out.code[4]=='-'&&out.code[19]==0&&!out.friendCode[0]&&out.hint==Text::hintHost&&out.connection==Text::waitingFriend);
+  CHECK(out.code[4]=='-'&&out.code[9]=='-'&&out.code[14]=='-'&&out.code[16]&&out.code[17]==0&&!out.friendCode[0]&&out.hint==Text::hintHost&&out.connection==Text::waitingFriend);
   LiveP2P::Code back;CHECK(LiveP2P::decode(out.code,&back)&&back.secret==s.own.secret&&back.endpoint.ip[3]==7&&back.endpoint.port==48222);
   frame(1500,TW_LIVE_READY);CHECK(!punchesSent);
  }else if(test==12){
   // Joiner: waits for the host's code, then joins with its PIN and punches every 200 ms.
-  CHECK(open(false,kJoiner));CHECK(!s.started&&s.message==Text::enterCode&&s.own.role==LiveP2P::JOINER);
-  char code[20];codeOf(kHost,424242,LiveP2P::HOST,code);
+  CHECK(open(false,kJoiner));CHECK(!s.started&&s.message==Text::enterCode);
+  char code[20];codeOf(kHost,4242,LiveP2P::HOST,code);
   CHECK(enterCode(code)==nullptr);
-  CHECK(s.started&&guestStarts==1&&sessionPeer.port==kHost.port&&sessionPeer.ip[0]==203&&sessionPin==424242);
+  CHECK(s.started&&guestStarts==1&&sessionPeer.port==kHost.port&&sessionPeer.ip[0]==203&&sessionPin==4242);
   CHECK(s.message==Text::connecting&&LiveRace::status().connection==Text::connecting);
   frame(1010,TW_LIVE_READY);CHECK(punchesSent==1&&lastSent.port==kHost.port);
   frame(1100,TW_LIVE_READY);CHECK(punchesSent==1);
@@ -224,9 +239,8 @@ API unsigned scenario(unsigned test){
   frame(1600,TW_LIVE_READY);CHECK(punchesSent==2);
   CHECK(!LiveRace::status().code[0]&&LiveRace::status().hint==Text::empty);
  }else if(test==13){
-  // Code checks: role, own code, typos and an inactive tab.
+  // Code checks: own code, typos and an inactive tab. Codes carry no role.
   CHECK(open(true,kHost));char code[20];
-  codeOf(kJoiner,77,LiveP2P::HOST,code);CHECK(enterCode(code)==Text::needJoinerCode);
   LiveP2P::Code own=s.own;LiveP2P::encode(own,code);CHECK(enterCode(code)==Text::ownCode);
   codeOf(kJoiner,77,LiveP2P::JOINER,code);code[3]=code[3]=='2'?'3':'2';CHECK(enterCode(code)==Text::badCode);
   CHECK(enterCode("")==Text::badCode&&!s.friendKnown);
@@ -236,17 +250,19 @@ API unsigned scenario(unsigned test){
   frame(1010,TW_LIVE_READY);CHECK(punchesSent==1&&lastSent.port==kJoiner.port);
   CHECK(LiveRace::status().friendCode[0]);
   disconnect();CHECK(enterCode(code)==Text::roomFirst);
-  CHECK(open(false,kJoiner));codeOf(kHost,5,LiveP2P::JOINER,code);CHECK(enterCode(code)==Text::needHostCode);
+  CHECK(open(false,kJoiner));codeOf(kHost,5,LiveP2P::JOINER,code);CHECK(enterCode(code)==nullptr&&guestStarts==1);
  }else if(test==14){
-  // A joiner that never hears back reports it; a symmetric NAT gets its own explanation.
+  // A joiner whose handshake times out never gives up: it restarts at once and,
+  // after 30 s, says it is still trying; a symmetric NAT gets its own explanation.
   CHECK(open(false,kJoiner,LiveStun::DIFFERENT_MAPPING));
   CHECK(LiveRace::status().hint==Text::hintSymmetric);
   char code[20];codeOf(kHost,9,LiveP2P::HOST,code);CHECK(enterCode(code)==nullptr);
   s.session.info.state=LiveRaceSession::FAILED;frame(1100,TW_LIVE_READY);
-  CHECK(s.active&&!s.started&&s.unreachable&&s.message==Text::cantConnect);
-  CHECK(LiveRace::status().connection==Text::cantConnect&&LiveRace::status().hint==Text::hintSymmetric);
+  CHECK(s.active&&s.started&&guestStarts==2&&!s.unreachable&&s.message==Text::connecting);
+  frame(31003,TW_LIVE_READY);CHECK(s.active&&s.unreachable&&s.message==Text2::stillTrying);
+  CHECK(LiveRace::status().connection==Text2::stillTrying&&LiveRace::status().hint==Text::hintSymmetric);
   stunResult.verdict=LiveStun::SAME_MAPPING;CHECK(LiveRace::status().hint==Text::hintBlocked);
-  CHECK(enterCode(code)==nullptr&&s.started&&guestStarts==2&&!s.unreachable);
+  CHECK(enterCode(code)==nullptr&&s.started&&!s.unreachable);
  }else if(test==15){
   // The host restarts its listener when a handshake times out, and flags 30 s without a path.
   CHECK(open(true,kHost));char code[20];codeOf(kJoiner,9,LiveP2P::JOINER,code);
@@ -254,7 +270,7 @@ API unsigned scenario(unsigned test){
   s.session.info.state=LiveRaceSession::FAILED;frame(2000,TW_LIVE_READY);
   CHECK(s.active&&s.started&&hostStarts==2&&!s.unreachable);
   frame(31002,TW_LIVE_READY);CHECK(!s.unreachable);
-  frame(31003,TW_LIVE_READY);CHECK(s.unreachable&&s.message==Text::cantConnect&&s.active&&LiveRace::status().hint==Text::hintBlocked);
+  frame(31003,TW_LIVE_READY);CHECK(s.unreachable&&s.message==Text2::stillTrying&&s.active&&LiveRace::status().hint==Text::hintBlocked);
   s.session.info.connected=true;frame(31100,TW_LIVE_READY);CHECK(s.connected&&LiveRace::status().connection==Text::connected);
  }else if(test==17){
   // The Wii network may need many seconds for DHCP; the tab says it is waiting, then why it stopped.
@@ -288,6 +304,61 @@ API unsigned scenario(unsigned test){
   LiveP2P::due(other,0,0,punch);nextPacket.endpoint=kJoiner;nextPacket.bytes=sizeof(punch);
   memcpy(nextPacket.data,punch,sizeof(punch));endlessPackets=true;
   frame(1100,TW_LIVE_READY);CHECK(!s.punch.peers[0].state&&s.diagnostics.accepted==4);
+ }else if(test==18){
+  // Waiting never stops: 200 ms punches for 30 s, then one a second.
+  CHECK(open(false,kJoiner));char code[20];codeOf(kHost,9,LiveP2P::HOST,code);CHECK(enterCode(code)==nullptr);
+  for(unsigned now=1010;now<31000;now+=10)frame(now,TW_LIVE_READY);
+  CHECK(punchesSent>=145&&punchesSent<=151&&s.active);const unsigned early=punchesSent;
+  for(unsigned now=31010;now<91010;now+=10)frame(now,TW_LIVE_READY);
+  CHECK(punchesSent-early>=59&&punchesSent-early<=61&&s.active&&s.message==Text2::stillTrying);
+  // Typing the code again keeps the room and STUN address.
+  CHECK(enterCode(code)==nullptr&&s.active&&s.addressed&&!transportStops&&!stunCancels);
+ }else if(test==19){
+  // STUN every 15 s while waiting keeps the mapping; a new address is reported.
+  CHECK(open(true,kHost));frame(16002,TW_LIVE_READY);CHECK(stunStarts==1);
+  frame(16003,TW_LIVE_READY);CHECK(stunStarts==2&&x.stunKeepalive);
+  stunResult.state=LiveStun::RUNNING;frame(16100,TW_LIVE_READY);CHECK(x.stunKeepalive&&!x.codeChanged);
+  stunDone(kHost);frame(16200,TW_LIVE_READY);CHECK(!x.stunKeepalive&&!x.codeChanged);
+  TWLiveEndpoint moved=kHost;moved.port=40000;frame(31203,TW_LIVE_READY);CHECK(stunStarts==3);
+  stunDone(moved);frame(31300,TW_LIVE_READY);CHECK(x.codeChanged&&s.own.endpoint.port==40000);
+  CHECK(LiveRace::status().codeChanged);
+ }else if(test==20){
+  // A lost link reconnects silently; a clean leave does not; reconnecting gives up after 2 minutes.
+  CHECK(open(true,kHost));s.session.info.connected=true;frame(2000,TW_LIVE_READY);CHECK(s.connected);
+  s.session.info.connected=false;s.session.info.state=LiveRaceSession::FAILED;s.session.info.error=LiveRaceSession::PEER_TIMEOUT;
+  const unsigned resets=ghostResets;
+  frame(3000,TW_LIVE_READY);CHECK(s.active&&!s.connected&&x.reconnecting&&hostStarts==2&&s.message==Text2::reconnecting);
+  CHECK(LiveRace::status().reconnecting&&LiveRace::status().connection==Text2::reconnecting&&ghostResets==resets);
+  s.session.info.state=LiveRaceSession::LISTENING;frame(122999,TW_LIVE_READY);CHECK(s.active&&x.reconnecting);
+  frame(123000,TW_LIVE_READY);CHECK(!s.active&&s.message==Text::connectionLost);
+  CHECK(open(false,kJoiner));char code[20];codeOf(kHost,9,LiveP2P::HOST,code);CHECK(enterCode(code)==nullptr);
+  s.session.info.connected=true;frame(2000,TW_LIVE_READY);CHECK(s.connected);
+  s.session.info.connected=false;s.session.info.state=LiveRaceSession::FAILED;s.session.info.error=LiveRaceSession::PEER_TIMEOUT;
+  frame(3000,TW_LIVE_READY);CHECK(x.reconnecting&&guestStarts==2&&sessionPeer.port==kHost.port);
+  s.session.info.state=LiveRaceSession::FAILED;s.session.info.error=LiveRaceSession::PEER_LEFT;frame(3100,TW_LIVE_READY);CHECK(!s.active&&s.message==Text::peerLeft);
+ }else if(test==21){
+  // The room secret is kept per console and rotated after 90 days of a valid clock.
+  savedAvailable=true;savedBlock.secret=1234;
+  CHECK(open(true,kHost));CHECK(s.own.secret==1234&&!savedBlock.secretDay&&!x.codeChanged);  // clock unset
+  CHECK(savedBlock.last[0]==203&&savedBlock.last[4]==(48222>>8)&&dirtyMarks==1);
+  rtcTicks=9100ull*86400;CHECK(open(true,kHost));
+  CHECK(s.own.secret==1234&&savedBlock.secretDay==9100&&!x.codeChanged&&dirtyMarks==2);  // old ini gets today
+  rtcTicks=9189ull*86400;CHECK(open(true,kHost));
+  CHECK(s.own.secret==1234&&savedBlock.secretDay==9100&&!x.codeChanged&&dirtyMarks==2);
+  rtcTicks=9190ull*86400;CHECK(open(true,kHost));
+  CHECK(s.own.secret!=1234&&s.own.secret>=1&&s.own.secret<=LiveP2P::SECRET_MAX&&savedBlock.secret==s.own.secret);
+  CHECK(savedBlock.secretDay==9190&&x.codeChanged&&sessionPin==s.own.secret);
+  const unsigned rotated=s.own.secret;
+  rtcTicks=100ull*86400;CHECK(open(true,kHost));CHECK(s.own.secret==rotated&&!x.codeChanged);  // clock set back
+  TWLiveEndpoint moved=kHost;moved.ip[3]=8;CHECK(open(true,moved));
+  CHECK(s.own.secret==rotated&&x.codeChanged&&savedBlock.last[3]==8&&LiveRace::status().codeChanged);
+  char code[20];codeOf(kJoiner,77,0,code);CHECK(enterCode(code)==nullptr);
+  CHECK(savedBlock.friendCode[0]==198&&savedBlock.friendCode[4]==(50123>>8)&&savedBlock.friendCode[7]==77);
+ }else if(test==22){
+  // Read-only round clock: a retry 1001 ms after the first attempt adds 240 qf.
+  s.phase=RUNNING;gQFTTimer.serial=5;sampleAttempt(100);CHECK(x.attemptSeen&&x.firstAttemptMs==100);
+  sampleAttempt(500);CHECK(x.lastAttemptMs==100);gQFTTimer.serial=6;sampleAttempt(1101);CHECK(x.lastAttemptMs==1101&&x.firstAttemptMs==100);
+  s.phase=WAIT_READY;gQFTTimer.serial=7;sampleAttempt(2000);CHECK(x.lastAttemptMs==1101);
  }
  return 0;
 }
@@ -310,7 +381,9 @@ API unsigned scenario(unsigned test){
                  "begin timestamp", "last ready refresh", "bounded receive budget", "clock wrap",
                  "diagnostic decoding and validity", "no address retention and retry", "packet acceptance counters",
                  "host code and listener", "joiner punching", "code checks", "joiner failure hints",
-                 "host restart and timeout", "one-code adoption", "network wait and send diagnostics")
+                 "host restart and timeout", "one-code adoption", "network wait and send diagnostics",
+                 "waiting never gives up", "STUN keepalive", "reconnect and leave", "per-console secret rotation",
+                 "round clock sampling")
         for number, name in enumerate(names):
             with self.subTest(name=name):
                 line = self.lib.scenario(number)

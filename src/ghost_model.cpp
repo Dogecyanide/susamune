@@ -1,4 +1,5 @@
 #include "susamune/ghost_model.hxx"
+#include "susamune/live_race.hxx"
 
 #include "Dolphin/GX.h"
 #include "Dolphin/MTX.h"
@@ -1059,12 +1060,37 @@ bool loadModel(Appearance appearance) {
     return true;
 }
 
+#if TIMEWARP_LIVE_RACING
+// Online: the second slot holds the opponent's Piantissimo or Mario model and
+// the player's own ghost keeps Shadow Mario, so the two never look alike.
+int onlineModel() { return LiveRace::opponentModel(); }
+bool onlineShown() { return LiveRace::opponentShown(); }
+#else
+int onlineModel() { return -1; }
+bool onlineShown() { return false; }
+#endif
+
 Appearance selectedAlternative() {
+#if !defined(SUSAMUNE_VERSION_JP)
+    const int online = onlineModel();
+    if (online > 0) return online == 2 ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
+#endif
     return gSettings.get(SETTING_GHOST_APPEARANCE) == 2
         ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
 }
 
 __attribute__((noinline)) ModelSlot &runnerSlot(int runner) {
+    const int online = onlineModel();
+    if (online >= 0) {
+#if defined(SUSAMUNE_VERSION_JP)
+        // JP has no model switch: the opponent is always Shadow Mario.
+        return sSlots[runner ? 0 : 1];
+#else
+        // A missing Piantissimo falls back to Shadow Mario; the name tag stays.
+        const int opponent = online && sSlots[1].model ? 1 : 0;
+        return sSlots[runner ? opponent : opponent ^ 1];
+#endif
+    }
     const int selected = gSettings.get(SETTING_GHOST_APPEARANCE) != 0;
     return sSlots[selected ^ (runner != 0 ? 1 : 0)];
 }
@@ -1095,7 +1121,7 @@ void *lightSetFor(const Ghost::VisualState &state) {
 bool prepareRunner(int runner, const Ghost::VisualState &state) {
     ModelSlot &slot = runnerSlot(runner);
     if (!slot.model || !slot.mtxCalc || !state.visible ||
-        !gSettings.getBool(SETTING_GHOST_DISPLAY) ||
+        !(runner && onlineModel() >= 0 ? onlineShown() : gSettings.getBool(SETTING_GHOST_DISPLAY)) ||
         (gMenu && gMenu->shown() && !Ghost::observerPaused())) return false;
 
     J3DAnmTransform *animation =

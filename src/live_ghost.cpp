@@ -1,4 +1,5 @@
 #include "susamune/live_ghost.hxx"
+#include "susamune/live_race.hxx"
 
 #if TIMEWARP_LIVE_RACING
 #include "Dolphin/MTX.h"
@@ -170,18 +171,16 @@ void setInputsShown(bool shown) { sInputsShown = shown; }
 
 void drawName(Menu *menu) {
     if (!menu || menu->shown() || !s.visible || !gpCamera ||
-        !gSettings.getBool(SETTING_GHOST_DISPLAY) ||
+        !LiveRace::opponentShown() ||
         Ghost::observerPreparing() || Ghost::observerStatsSuppressed()) return;
     Vec position = {gpCamera->mTranslation.x, gpCamera->mTranslation.y, gpCamera->mTranslation.z};
     Vec up = {gpCamera->mUpVector.x, gpCamera->mUpVector.y, gpCamera->mUpVector.z};
     Vec target = {gpCamera->mTargetPos.x, gpCamera->mTargetPos.y, gpCamera->mTargetPos.z};
-    if (!finite(position.x) || !finite(position.y) || !finite(position.z) ||
-        !finite(up.x) || !finite(up.y) || !finite(up.z) ||
-        !finite(target.x) || !finite(target.y) || !finite(target.z)) return;
+    // A NaN or infinite camera value fails these ranges or makes the projected
+    // depth and position non-finite, which the checks below reject.
     const f32 fovy = gpCamera->mProjectionFovy, aspect = gpCamera->mProjectionAspect;
     const f32 near = gpCamera->mProjectionNear, far = gpCamera->mProjectionFar;
-    if (!finite(fovy) || !finite(aspect) || !finite(near) || !finite(far) ||
-        !(fovy >= 1 && fovy <= 170 && aspect >= 0.5f && aspect <= 2 &&
+    if (!(fovy >= 1 && fovy <= 170 && aspect >= 0.5f && aspect <= 2 &&
           near > 0 && near < far && far <= 1000000)) return;
     Vec source = {s.latched.x, s.latched.y + 140.0f, s.latched.z}, viewPosition;
     Mtx view;

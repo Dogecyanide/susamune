@@ -262,12 +262,15 @@ class LiveRaceSessionTests(unittest.TestCase):
         self.assertEqual((self.lib.get(0, 1), self.lib.get(1, 1)), (2, 2))
         self.lib.reset(0, 2, 123456, 123456)
         self.connect(0xfffff000)
-        self.lib.tickNode(0, (0xfffff000 + 10000) & 0xffffffff)
+        # The peer timeout is 15 s so a long load on the other Wii does not drop the link.
+        self.lib.tickNode(0, (0xfffff000 + 14999) & 0xffffffff)
+        self.assertNotEqual(self.lib.get(0, 1), 3)
+        self.lib.tickNode(0, (0xfffff000 + 15000) & 0xffffffff)
         self.assertEqual(self.lib.get(0, 1), 3)
         self.lib.reset(0, 2, 123456, 123456)
         self.connect()
         self.assertEqual(self.reliable(), 1)
-        for now in range(1000, 10001, 1000):
+        for now in range(1000, 15001, 1000):
             self.lib.tickNode(1, now)
             while self.lib.wireCount():
                 i = 0

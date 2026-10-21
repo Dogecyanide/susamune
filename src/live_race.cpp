@@ -18,6 +18,7 @@
 #include "susamune/live_transport.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/practice_session.hxx"
+#include "susamune/qft_timer.hxx"
 #include "susamune/savestate.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/stage_loader.hxx"
@@ -26,6 +27,15 @@
 #include "susamune/warp_wheel.hxx"
 
 #pragma clang section rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+
+// The JP container ceiling leaves no room for these prototype 19 extras: code
+// rotation, saved online preferences, the score bar layout and auto-opening
+// the Online tab. JP keeps the per-console code, reconnect and round clock.
+#if defined(SUSAMUNE_VERSION_JP)
+#define ONLINE_EXTRAS 0
+#else
+#define ONLINE_EXTRAS 1
+#endif
 
 namespace LiveRace {
 namespace {
@@ -135,6 +145,22 @@ static const char draftLoserPick[] = "Previous loser: choose the counterpick";
 static const char setWon[] = "Set won - host can apply the next setup";
 static const char setLost[] = "Set lost - host can apply the next setup";
 }
+#pragma clang section rodata="" data="" bss=""
+namespace Text2 {
+static const char reconnecting[] = "Reconnecting...";
+static const char stillTrying[] = "Still trying - check both codes";
+static const char opponentFormat[] = "Opponent: %lu:%02lu.%02lu";
+}
+// Prototype 19 state; the fixed Runtime layout above stays unchanged.
+struct Extra {
+    u32 keepaliveMs, lostMs, settledMs, firstAttemptMs, lastAttemptMs, attemptSerial;
+    u8 draftBody[24];
+    u8 draftBytes, lastOffer;
+    bool reconnecting, attemptSeen, stunKeepalive, codeChanged, autoOpen, startResend, draftResend;
+};
+Extra x;
+Prefs sPrefs = {MODEL_SHADOW, false, false, 100, 320, 16};
+#pragma clang section rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
 u32 nowMs() { return static_cast<u32>(OSGetTime() / (OS_TIMER_CLOCK / 1000u)); }
 bool sendControl(void *, const Session::Endpoint &to, const void *data, unsigned bytes) {
@@ -320,6 +346,7 @@ void serviceDraft() {
         u8 body[12]; draftPayload(body, s.hosting ? DRAFT_APPLY : DRAFT_REQUEST, s.choiceToken);
         body[1] = actor; body[2] = s.choice;
         if (Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round)) {
+            memcpy(x.draftBody, body, sizeof(body)); x.draftBytes = sizeof(body);
             if (s.hosting) adoptDraft(next);
             else { s.choiceNeeded = false; s.choiceSent = true; }
         }
@@ -333,7 +360,10 @@ void serviceDraft() {
                       !LiveDraft::nextCandidates(next, entries, token)) return;
         u8 body[24] = {}; draftPayload(body, initial ? DRAFT_BEGIN : DRAFT_NEXT, token);
         for (unsigned i = 0; i < 5; ++i) MSRWrite16(body + 12 + 2 * i, entries[i]);
-        if (Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round)) adoptDraft(next);
+        if (Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round)) {
+            memcpy(x.draftBody, body, sizeof(body)); x.draftBytes = sizeof(body);
+            adoptDraft(next);
+        }
     }
 }
 bool canConfigureRace() {
@@ -362,6 +392,9 @@ void settleRound() {
             winner = s.hosting ? LiveDraft::PLAYER_TWO : LiveDraft::PLAYER_ONE;
         }
         s.localReady = s.peerReady = false;
+#if ONLINE_EXTRAS
+        x.autoOpen = true; x.settledMs = nowMs();
+#endif
         s.phase = (s.localWins > sOptions.bestOf / 2 || s.peerWins > sOptions.bestOf / 2) ? MATCH_DONE : ROUND_DONE;
         if (s.phase == MATCH_DONE) s.message = s.localWins > s.peerWins ? Text::matchWon : Text::matchLost;
         if (sOptions.draft) {
@@ -445,6 +478,8 @@ bool safeToStart() {
 }
 void startRound() {
     s.startNeeded = false;
+    // Online round clock: wall time between attempt starts, read-only beside QFT.
+    x.attemptSerial = gQFTTimer.attemptSerial(); x.attemptSeen = false;
     if (s.phase != WAIT_READY || !s.localReady) {
         abortRound(Text::startDeclined, true);
         return;
@@ -465,7 +500,12 @@ bool queueConfig(unsigned kind, unsigned type) {
 void serviceRace() {
     settleRound();
     if (Session::status(s.session).pending) return;
-    if (s.cancelNeeded) {
+    if (x.startResend) {
+        if (s.phase != RUNNING || queueConfig(MSR_START, START)) x.startResend = false;
+    } else if (x.draftResend) {
+        if (s.phase != DRAFTING ||
+            Session::sendReliable(s.session, MSR_READY, x.draftBody, x.draftBytes, s.round)) x.draftResend = false;
+    } else if (s.cancelNeeded) {
         if (queueConfig(MSR_READY, CANCEL)) s.cancelNeeded = false;
     } else if (s.localResult && !s.resultSent) {
         u8 body[8] = {};
@@ -476,16 +516,19 @@ void serviceRace() {
         u8 body[12]; configPayload(body, NEW_MATCH);
         // Keep the round generation monotonic across matches to reject stale results.
         if (Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round + 1u)) {
-            ++s.round; s.localWins = s.peerWins = 0; s.newMatchNeeded = false;
+            ++s.round; x.lastOffer = NEW_MATCH; s.localWins = s.peerWins = 0; s.newMatchNeeded = false;
             s.draft = {}; s.choiceNeeded = s.choiceSent = false;
             resetRound();
             s.message = s.phase == ROAMING ? Text::freeRoam : s.phase == DRAFTING ? Text::draftBegin : Text::ready;
         }
     } else if (s.hosting && (s.offerNeeded || s.phase == ROUND_DONE)) {
         if (!s.offerNeeded) {
-            ++s.round; resetRound(); s.offerNeeded = true;
+            ++s.round; resetRound(); s.offerNeeded = true; x.lastOffer = OFFER;
         }
-        if (queueConfig(MSR_READY, OFFER)) s.offerNeeded = false;
+        if (queueConfig(MSR_READY, x.lastOffer == NEW_MATCH ? NEW_MATCH : OFFER)) {
+            s.offerNeeded = false;
+            if (!x.lastOffer) x.lastOffer = OFFER;
+        }
     } else if (s.phase == DRAFTING) {
         serviceDraft();
     } else if (s.readyNeeded) {
@@ -496,11 +539,19 @@ void serviceRace() {
         startRound();
     }
 }
+// Read-only: notes the wall time when QFT starts a new attempt in this round.
+void sampleAttempt(u32 now) {
+    const u32 serial = gQFTTimer.attemptSerial();
+    if (s.phase != RUNNING || x.attemptSerial == serial) return;
+    x.attemptSerial = serial;
+    if (!x.attemptSeen) x.firstAttemptMs = now;
+    x.lastAttemptMs = now; x.attemptSeen = true;
+}
 bool begin(bool hosting) {
     if (s.active || !validOptions(sOptions)) return false;
     if (VIGetTvFormat() == VI_PAL) { s.message = Text::requires60Hz; return false; }
     if (!LiveTransport::begin(LOCAL_PORT)) { s.message = Text::networkBusy; return false; }
-    s = {};
+    s = {}; x = {};
     s.active = true; s.hosting = hosting; s.openedMs = nowMs();
     s.diagnostics.net = NET_WAITING;
     s.networkSeenMs = s.openedMs;
@@ -550,7 +601,22 @@ void updatePose(u32 now) {
 void acceptConnection() {
     const auto connection = Session::status(s.session);
     if (s.connected || !connection.connected) return;
-    s.connected = true; s.round = 1;
+    s.connected = true;
+    if (x.reconnecting) {
+        // Same room, same round: resend what may have been lost with the old link.
+        x.reconnecting = false;
+        s.message = Text::connected;
+        if (s.localResult) s.resultSent = false;
+        s.readyNeeded = s.phase == WAIT_READY;
+        if (s.choiceSent) { s.choiceSent = false; s.choiceNeeded = true; }
+        if (s.hosting) {
+            s.offerNeeded = x.lastOffer && s.phase != ROUND_DONE;
+            x.draftResend = s.phase == DRAFTING && x.draftBytes;
+            x.startResend = s.phase == RUNNING;
+        }
+        return;
+    }
+    s.round = 1;
     if (s.hosting) resetRound();
     else s.phase = WAIT_OFFER;
     s.offerNeeded = s.hosting;
@@ -590,6 +656,56 @@ void usePeer(u32 now) {
     Session::stop(s.session);
     if (!startSession(now)) { s.unreachable = true; s.message = Text::invalidSettings; }
 }
+u32 freshSecret();
+#if !IS_EMULATOR
+SusamuneOnlineNameCfg *savedName();
+#endif
+#if ONLINE_EXTRAS
+u32 today() { return static_cast<u32>(OSGetTime() / (OS_TIMER_CLOCK * 86400ull)); }
+#endif
+// The room secret is kept per console so its code stays the same between
+// sessions; it is replaced after about 90 days, but never on a clock that is
+// unset or earlier than the day it was made.
+u32 roomSecret() {
+#if !IS_EMULATOR
+    SusamuneOnlineNameCfg *saved = savedName();
+    if (saved) {
+        DCInvalidateRange(saved, sizeof(*saved));
+        bool changed = false;
+#if ONLINE_EXTRAS
+        const u32 day = today();
+        const bool clock = day >= 9000u && day < 65535u;  // 2024 or later
+        if (!saved->secret || saved->secret > LiveP2P::SECRET_MAX ||
+            (clock && saved->secretDay && day >= saved->secretDay + 90u)) {
+            x.codeChanged = saved->secret != 0;
+            saved->secret = static_cast<u16>(freshSecret());
+            saved->secretDay = clock ? static_cast<u16>(day) : 0;
+            changed = true;
+        } else if (!saved->secretDay && clock) {
+            saved->secretDay = static_cast<u16>(day); changed = true;
+        }
+#else
+        if (!saved->secret || saved->secret > LiveP2P::SECRET_MAX) {
+            saved->secret = static_cast<u16>(freshSecret()); changed = true;
+        }
+#endif
+        u8 last[6];
+        memcpy(last, s.own.endpoint.ip, 4);
+        last[4] = static_cast<u8>(s.own.endpoint.port >> 8); last[5] = static_cast<u8>(s.own.endpoint.port);
+        if (memcmp(saved->last, last, 6)) {
+            if (saved->last[0]) x.codeChanged = true;
+            memcpy(saved->last, last, 6); changed = true;
+        }
+        if (changed) {
+            // The kernel sets the block magic on every boot; the name may stay empty.
+            DCStoreRange(saved, sizeof(*saved));
+            gSettings.markDirty();
+        }
+        return saved->secret;
+    }
+#endif
+    return freshSecret();
+}
 u32 freshSecret() {
     const u64 stamp = OSGetTime();
     u32 mix = static_cast<u32>(stamp) ^ static_cast<u32>(stamp >> 32) * 0x9e3779b1u ^ OSGetTick();
@@ -609,7 +725,7 @@ SusamuneOnlineNameCfg *savedName() {
 }
 
 void init() {
-    s = {}; sOptions = {}; sStageMarker = 0;
+    s = {}; sOptions = {}; sStageMarker = 0; x = {};
     memcpy(sOptions.name, Text::defaultName, 7);
     sOptions.bestOf = 3;
 #if !IS_EMULATOR
@@ -618,6 +734,15 @@ void init() {
         Options loaded = sOptions;
         memcpy(loaded.name, saved->name, 16);
         if (saved->magic == SUSAMUNE_ONLINE_NAME_MAGIC && validOptions(loaded)) sOptions = loaded;
+#if ONLINE_EXTRAS
+        // Older ini files leave these zero: Shadow Mario, opponent and score shown.
+        sPrefs.model = saved->model < MODEL_COUNT ? saved->model : MODEL_SHADOW;
+        sPrefs.hideOpponent = saved->flags & SUSAMUNE_ONLINE_HIDE_OPPONENT;
+        sPrefs.hideScore = (saved->flags & SUSAMUNE_ONLINE_HIDE_SCORE) != 0;
+        if (saved->scoreScale) {
+            sPrefs.scoreScale = saved->scoreScale; sPrefs.scoreX = saved->scoreX; sPrefs.scoreY = saved->scoreY;
+        }
+#endif
     }
 #endif
     s.message = Text::offline;
@@ -654,15 +779,25 @@ const char *enterCode(const char *text) {
     LiveP2P::Code code;
     if (!s.active || s.connected) return Text::roomFirst;
     if (!LiveP2P::decode(text, &code)) return Text::badCode;
-    if (code.role == (s.hosting ? LiveP2P::HOST : LiveP2P::JOINER))
-        return s.addressed && code.secret == s.own.secret ? Text::ownCode :
-            s.hosting ? Text::needJoinerCode : Text::needHostCode;
+    if (s.addressed && code.secret == s.own.secret &&
+        !memcmp(&code.endpoint, &s.own.endpoint, sizeof(code.endpoint))) return Text::ownCode;
     if (s.friendKnown && s.hosting) LiveP2P::reset(s.punch, s.own.secret, LiveP2P::HOST);
     s.friendCode = code; s.friendKnown = true;
+#if !IS_EMULATOR && !defined(SUSAMUNE_VERSION_JP)
+    if (SusamuneOnlineNameCfg *saved = savedName()) {
+        u8 *f = saved->friendCode;
+        memcpy(f, code.endpoint.ip, 4);
+        f[4] = static_cast<u8>(code.endpoint.port >> 8); f[5] = static_cast<u8>(code.endpoint.port);
+        f[6] = static_cast<u8>(code.secret >> 8); f[7] = static_cast<u8>(code.secret);
+        DCStoreRange(saved, sizeof(*saved));
+        gSettings.markDirty();
+    }
+#endif
     usePeer(nowMs());
     return nullptr;
 }
 void disconnect() {
+    x.reconnecting = false;
     Session::stop(s.session); LiveStun::cancel(); LiveTransport::stop(); LiveGhost::reset();
     s.active = s.connected = false; s.phase = NO_MATCH;
     s.message = Text::disconnected;
@@ -695,11 +830,27 @@ bool chooseDraft(unsigned candidate) {
 }
 void beforeStageSetup() { ++sStageMarker; }
 void onILResult(int entry, s32 qf, bool eligible) {
-    if (!s.connected || s.phase != RUNNING || s.localResult || entry != sOptions.entry) return;
+    if (!(s.connected || x.reconnecting) || s.phase != RUNNING || s.localResult || entry != sOptions.entry) return;
+    // Resets, deaths and loads keep the round clock running: add the wall time
+    // from the first attempt of the round to the start of this one.
+    if (x.attemptSeen && qf >= 0) {
+        // 239.76 quarter-frames per second; u32 holds about 4.9 hours.
+        qf += static_cast<s32>((x.lastAttemptMs - x.firstAttemptMs) * 240u / 1001u);
+    }
     s.localQf = qf; s.localEligible = eligible && qf >= 0;
     s.localResult = true;
     s.message = Text::waitingResult;
 }
+#if ONLINE_EXTRAS
+static bool takeAutoOpen() {
+    if (!gMenu || gMenu->shown()) return false;
+    // After each IL of an online set, once the finish has settled on screen.
+    if (!x.autoOpen || !s.connected || s.phase == RUNNING || nowMs() - x.settledMs < 2000u ||
+        StageLoader::active()) return false;
+    x.autoOpen = false;
+    return true;
+}
+#endif
 void update() {
     LiveStun::update();
     if (!s.active) return;
@@ -762,9 +913,8 @@ void update() {
             s.message = stun.attempts && d.socketSent ? Text::noAddress : Text::noSend; return;
         }
         s.own.endpoint = stun.mapped[stun.answered & 1u ? 0 : 1];
-        s.own.secret = freshSecret();
-        s.own.role = s.hosting ? LiveP2P::HOST : LiveP2P::JOINER;
-        s.addressed = true;
+        s.own.secret = roomSecret();
+        s.addressed = true; x.keepaliveMs = now;
         s.message = s.hosting ? Text::shareCode : Text::enterCode;
         if (s.hosting) {
             LiveP2P::reset(s.punch, s.own.secret, LiveP2P::HOST);
@@ -774,14 +924,32 @@ void update() {
     }
     if (!s.connected) {
         // Both sides send until the session connects; its pings keep the NAT open after.
+        // Waiting never gives up: punches slow to once a second after 30 seconds.
+        const unsigned interval = s.friendKnown && now - s.punchMs >= 30000u ?
+            LiveP2P::PUNCH_SLOW_MS : LiveP2P::PUNCH_INTERVAL_MS;
         for (unsigned i = 0; i < LiveP2P::MAX_PEERS - 1; ++i) {
             u8 punch[LiveP2P::PUNCH_BYTES];
-            const unsigned bytes = LiveP2P::due(s.punch, i, now, punch);
+            const unsigned bytes = LiveP2P::due(s.punch, i, now, punch, interval);
             if (bytes && LiveTransport::sendControl(s.punch.peers[i].endpoint, punch, bytes))
                 ++s.diagnostics.submitted;
         }
         if (s.friendKnown && !s.unreachable && now - s.punchMs >= 30000u) {
-            s.unreachable = true; s.message = Text::cantConnect;
+            s.unreachable = true; s.message = Text2::stillTrying;
+        }
+        // STUN every 15 s keeps this NAT mapping open and notices a new address.
+        const LiveStun::Result &stun = LiveStun::result();
+        if (x.stunKeepalive && stun.state != LiveStun::RUNNING) {
+            x.stunKeepalive = false;
+            const TWLiveEndpoint &mapped = stun.mapped[stun.answered & 1u ? 0 : 1];
+            if (stun.answered && memcmp(&mapped, &s.own.endpoint, sizeof(mapped))) {
+                s.own.endpoint = mapped; x.codeChanged = true;
+            }
+        } else if (now - x.keepaliveMs >= 15000u) {
+            x.keepaliveMs = now;
+            x.stunKeepalive = LiveStun::startShared();
+        }
+        if (x.reconnecting && now - x.lostMs >= 120000u) {
+            disconnect(); s.message = Text::connectionLost; return;
         }
     }
     if (!s.started) return;
@@ -789,18 +957,26 @@ void update() {
     acceptConnection();
     const auto connection = Session::status(s.session);
     if (connection.state == Session::FAILED || connection.state == Session::STOPPED) {
-        if (!s.connected) {
-            // A host keeps listening; a joiner retries when a code is entered again.
-            s.started = false;
-            if (s.hosting && !startSession(now)) { disconnect(); s.message = Text::invalidSettings; }
-            else if (!s.hosting) { s.unreachable = true; s.message = Text::cantConnect; }
-            return;
+        if ((s.connected || x.reconnecting) && connection.error == Session::PEER_LEFT) {
+            disconnect(); s.message = Text::peerLeft; return;
         }
-        disconnect(); s.message = connection.error == Session::PEER_LEFT ? Text::peerLeft : Text::connectionLost; return;
+        if (s.connected) {
+            // A lost link restores the same room silently: same codes, PIN and round.
+            s.connected = false; x.reconnecting = true; x.lostMs = s.punchMs = now;
+            s.message = Text2::reconnecting;
+        }
+        // Both sides keep trying until the player leaves.
+        s.started = false;
+        if (!startSession(now)) { disconnect(); s.message = Text::invalidSettings; }
+        return;
     }
+    sampleAttempt(now);
     if (!connection.connected) return;
     updatePose(now);
     serviceRace();
+#if ONLINE_EXTRAS
+    if (takeAutoOpen()) gMenu->openOnline();
+#endif
 }
 Status status() {
     Status out = {};
@@ -813,8 +989,10 @@ Status status() {
     out.drafting = s.phase == DRAFTING;
     out.draftPending = s.choiceNeeded || s.choiceSent || Session::status(s.session).pending;
     out.draft = s.draft;
+    out.reconnecting = x.reconnecting; out.codeChanged = x.codeChanged;
     out.connection = !s.active ? Text::offline : !s.stunStarted ? Text::starting :
-        !s.addressed ? Text::gettingAddress : s.connected ? Text::connected : s.unreachable ? Text::cantConnect :
+        !s.addressed ? Text::gettingAddress : s.connected ? Text::connected :
+        x.reconnecting ? Text2::reconnecting : s.unreachable ? Text2::stillTrying :
         s.friendKnown || connection.state == Session::ACCEPTING ? Text::connecting : Text::waitingFriend;
     out.hint = Text::empty;
     if (s.active && s.addressed && !s.connected) {
@@ -842,25 +1020,71 @@ void draw(Menu *menu) {
     LiveGhost::drawName(menu);
     if (!menu || menu->shown() || !s.connected || PracticeSession::hideHud()) return;
     LiveGhost::drawInputs(menu);
-    char text[80];
+    if (!sPrefs.hideScore) drawScore(menu, sPrefs);
+}
+void drawScore(Menu *menu, const Prefs &prefs) {
+    char text[80], opponent[32];
     if (sOptions.draft) {
         const unsigned local = s.hosting ? 0 : 1;
         snprintf(text, sizeof(text), Text::setScoreFormat,
             s.draft.setWins[local], s.draft.setWins[local ^ 1], s.localWins, s.peerWins);
     } else snprintf(text, sizeof(text), Text::scoreFormat, s.localWins, s.peerWins, sOptions.bestOf);
     const char *score = s.phase == ROAMING ? Text::freeRoamScore : text;
-    const bool showStatus = s.phase != RUNNING || s.localResult;
+    // The opponent finished first: their time, in the score bar, away from QFT.
     const char *message = s.message ? s.message : Text::empty;
-    int width = Menu::textWidth(score, 14);
-    int statusSize = 13;
-    while (statusSize > 10 && Menu::textWidth(message, statusSize) > 390) --statusSize;
+    if (ONLINE_EXTRAS && s.phase == RUNNING && s.peerResult && !s.localResult && s.peerEligible) {
+        const u32 cs = static_cast<u32>(s.peerQf) * 1001u / 2400u;
+        snprintf(opponent, sizeof(opponent), Text2::opponentFormat, cs / 6000u, cs / 100u % 60u, cs % 100u);
+        message = opponent;
+    }
+    const bool showStatus = s.phase != RUNNING || s.localResult || message == opponent;
+    const int scale = ONLINE_EXTRAS && prefs.scoreScale >= 50 && prefs.scoreScale <= 200 ? prefs.scoreScale : 100;
+    const int size = 14 * scale / 100, statusSize = 13 * scale / 100;
+    int width = Menu::textWidth(score, size);
     const int statusWidth = showStatus ? Menu::textWidth(message, statusSize) : 0;
     if (statusWidth > width) width = statusWidth;
-    menu->fillBox(28, 398, width + 8, showStatus ? 42 : 24,
+    // Anchored at its top centre: the default sits between the top HUD counters.
+    const int left = prefs.scoreX - width / 2 - 4, top = prefs.scoreY;
+    menu->fillBox(left, top, width + 8, (showStatus ? 42 : 24) * scale / 100,
                   JUtility::TColor(0, 0, 0, 130));
-    menu->drawText(score, 32, 404, 14, 14, JUtility::TColor(190, 250, 255, 255));
+    menu->drawText(score, left + 4, top + 6 * scale / 100, size, size, JUtility::TColor(190, 250, 255, 255));
     if (showStatus)
-        menu->drawText(message, 32, 423, statusSize, statusSize, JUtility::TColor(255, 255, 255, 255));
+        menu->drawText(message, left + 4, top + 25 * scale / 100, statusSize, statusSize,
+                       JUtility::TColor(255, 255, 255, 255));
 }
+const Prefs &prefs() { return sPrefs; }
+void setPrefs(const Prefs &prefs) {
+    sPrefs = prefs;
+    if (sPrefs.model >= MODEL_COUNT) sPrefs.model = MODEL_SHADOW;
+#if !IS_EMULATOR && ONLINE_EXTRAS
+    if (SusamuneOnlineNameCfg *saved = savedName()) {
+        saved->model = sPrefs.model;
+        saved->flags = (sPrefs.hideOpponent ? SUSAMUNE_ONLINE_HIDE_OPPONENT : 0) |
+            (sPrefs.hideScore ? SUSAMUNE_ONLINE_HIDE_SCORE : 0);
+        saved->scoreX = sPrefs.scoreX; saved->scoreY = sPrefs.scoreY; saved->scoreScale = sPrefs.scoreScale;
+        DCStoreRange(saved, sizeof(*saved));
+        gSettings.markDirty();
+    }
+#endif
+}
+int opponentModel() { return s.active ? sPrefs.model : -1; }
+bool opponentShown() { return !sPrefs.hideOpponent; }
+#if !defined(SUSAMUNE_VERSION_JP)
+bool lastFriend(char *out) {
+#if !IS_EMULATOR
+    if (const SusamuneOnlineNameCfg *saved = savedName()) {
+        const u8 *f = saved->friendCode;
+        LiveP2P::Code code = {};
+        memcpy(code.endpoint.ip, f, 4);
+        code.endpoint.port = static_cast<u16>(f[4] << 8 | f[5]);
+        code.secret = static_cast<u32>(f[6] << 8 | f[7]);
+        char raw[LiveP2P::CODE_CHARS + 1];
+        if (LiveP2P::encode(code, raw)) { memcpy(out, raw, sizeof(raw)); return true; }
+    }
+#endif
+    (void)out;
+    return false;
+}
+#endif
 }
 #endif

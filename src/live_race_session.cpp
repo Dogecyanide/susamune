@@ -4,7 +4,7 @@
 #if TIMEWARP_LIVE_RACING
 namespace LiveRaceSession {
 namespace {
-const unsigned kHandshakeMs = 30000, kTimeoutMs = 10000;
+const unsigned kHandshakeMs = 30000, kTimeoutMs = 15000;
 const unsigned kHeartbeatMs = 1000, kRetryMs = 250;
 
 void copy(void *out, const void *in, unsigned bytes) {
@@ -205,7 +205,8 @@ void tick(Session &s, unsigned nowMs) {
     if (expired(s)) return;
     if (s.handshakeAck) sendHandshakeAck(s);
     if (!s.info.connected) {
-        if ((!s.handshakeSent || nowMs - s.lastHandshakeMs >= kHeartbeatMs) &&
+        // Early HELLOs die at a NAT that is not open yet; retry at the reliable pace.
+        if ((!s.handshakeSent || nowMs - s.lastHandshakeMs >= kRetryMs) &&
             ((s.info.state == JOINING && !s.guestAccepted && sendHello(s)) ||
              (s.info.state == ACCEPTING && sendAccept(s)))) {
             s.handshakeSent = true; s.lastHandshakeMs = nowMs;
@@ -213,7 +214,9 @@ void tick(Session &s, unsigned nowMs) {
         return;
     }
     if (s.controlAck) sendControlAck(s);
-    if (s.info.pending && nowMs - s.reliableSentMs >= kRetryMs &&
+    // Never resend before an ACK can be back: one RTT plus a frame or so of slack.
+    const unsigned retryMs = s.info.pingMs < 1000u && s.info.pingMs + 60u > kRetryMs ? s.info.pingMs + 60u : kRetryMs;
+    if (s.info.pending && nowMs - s.reliableSentMs >= retryMs &&
         send(s, s.pendingHeader, s.pendingData)) s.reliableSentMs = nowMs;
     if (!s.pingSent || nowMs - s.lastPingMs >= kHeartbeatMs) {
         unsigned char payload[4];
@@ -325,23 +328,23 @@ unsigned nextKey(unsigned &key) {
 unsigned checksum(const Code &code) {
     const unsigned char bytes[] = {code.endpoint.ip[0], code.endpoint.ip[1], code.endpoint.ip[2],
         code.endpoint.ip[3], static_cast<unsigned char>(code.endpoint.port >> 8),
-        static_cast<unsigned char>(code.endpoint.port), static_cast<unsigned char>(code.secret >> 16),
-        static_cast<unsigned char>(code.secret >> 8), static_cast<unsigned char>(code.secret), code.role};
+        static_cast<unsigned char>(code.endpoint.port), static_cast<unsigned char>(code.secret >> 8),
+        static_cast<unsigned char>(code.secret)};
     unsigned hash = 0x811c9dc5u;
     for (unsigned i = 0; i < sizeof(bytes); ++i) hash = (hash ^ bytes[i]) * 0x01000193u;
-    return (hash ^ hash >> 11 ^ hash >> 22) & 0x7ffu;
+    return (hash ^ hash >> 11 ^ hash >> 22) & 0x1ffu;
 }
 bool usable(const Code &code) {
-    return code.role <= JOINER && code.secret && code.secret <= SECRET_MAX && code.endpoint.port &&
+    return code.secret && code.secret <= SECRET_MAX && code.endpoint.port &&
         !code.endpoint.reserved && code.endpoint.ip[0] && code.endpoint.ip[0] < 224;
 }
-// Bytes 0-5 hold the endpoint under a keystream seeded by the secret; bytes
-// 6-9 hold secret, role and checksum under a fixed mask.
-void mask(unsigned char *bytes, unsigned secret, unsigned role) {
-    unsigned key = (secret * 0x9e3779b1u) ^ kMagic ^ role;
+// Bytes 0-5 hold the endpoint under a keystream seeded by the secret; the
+// last 22 bits hold secret and checksum under a fixed mask.
+void mask(unsigned char *bytes, unsigned secret) {
+    unsigned key = (secret * 0x9e3779b1u) ^ kMagic;
     for (unsigned i = 0; i < 6; ++i) bytes[i] ^= static_cast<unsigned char>(nextKey(key) >> 7);
 }
-const unsigned kWordMask = 0xa5c3963cu;
+const unsigned kWordMask = 0x2d5a93u;
 bool samePeer(const TWLiveEndpoint &a, const TWLiveEndpoint &b) {
     return a.port == b.port && a.ip[0] == b.ip[0] && a.ip[1] == b.ip[1] &&
         a.ip[2] == b.ip[2] && a.ip[3] == b.ip[3];
@@ -357,12 +360,15 @@ void write32(unsigned char *p, unsigned value) {
 
 bool encode(const Code &code, char *out) {
     if (!usable(code)) return false;
-    unsigned char bytes[10];
+    unsigned char bytes[9];
     for (unsigned i = 0; i < 4; ++i) bytes[i] = code.endpoint.ip[i];
     bytes[4] = static_cast<unsigned char>(code.endpoint.port >> 8);
     bytes[5] = static_cast<unsigned char>(code.endpoint.port);
-    mask(bytes, code.secret, code.role);
-    write32(bytes + 6, (code.secret << 12 | static_cast<unsigned>(code.role) << 11 | checksum(code)) ^ kWordMask);
+    mask(bytes, code.secret);
+    const unsigned word = (code.secret << 9 | checksum(code)) ^ kWordMask;
+    bytes[6] = static_cast<unsigned char>(word >> 14);
+    bytes[7] = static_cast<unsigned char>(word >> 6);
+    bytes[8] = static_cast<unsigned char>(word << 2);
     for (unsigned i = 0; i < CODE_CHARS; ++i) {
         unsigned value = 0;
         for (unsigned bit = 5 * i; bit < 5 * i + 5; ++bit)
@@ -374,7 +380,7 @@ bool encode(const Code &code, char *out) {
 }
 
 bool decode(const char *text, Code *out) {
-    unsigned char bytes[10] = {};
+    unsigned char bytes[9] = {};
     unsigned count = 0;
     for (; *text; ++text) {
         char c = *text;
@@ -390,25 +396,27 @@ bool decode(const char *text, Code *out) {
         ++count;
     }
     if (count != CODE_CHARS) return false;
-    const unsigned word = read32(bytes + 6) ^ kWordMask;
+    const unsigned word = (static_cast<unsigned>(bytes[6]) << 14 | bytes[7] << 6 | bytes[8] >> 2) ^ kWordMask;
     Code code = {};
-    code.secret = word >> 12;
-    code.role = static_cast<unsigned char>(word >> 11 & 1u);
-    mask(bytes, code.secret, code.role);
+    code.secret = word >> 9;
+    mask(bytes, code.secret);
     for (unsigned i = 0; i < 4; ++i) code.endpoint.ip[i] = bytes[i];
     code.endpoint.port = static_cast<unsigned short>(bytes[4] << 8 | bytes[5]);
-    if (!usable(code) || (word & 0x7ffu) != checksum(code)) return false;
+    if (!usable(code) || (word & 0x1ffu) != checksum(code)) return false;
     *out = code;
     return true;
 }
 
 void format(const char *code, char *out) {
-    for (unsigned i = 0, o = 0; i < CODE_CHARS; ++i) {
+    unsigned o = 0;
+    for (unsigned i = 0; i < CODE_CHARS && code[i]; ++i) {
         if (i && !(i & 3)) out[o++] = '-';
         out[o++] = code[i];
-        out[o] = 0;
     }
+    out[o] = 0;
 }
+
+char symbol(unsigned index) { return kAlphabet[index & 31u]; }
 
 void reset(Punch &punch, unsigned pin, unsigned char self) {
     punch = Punch{};
@@ -433,10 +441,11 @@ int add(Punch &punch, const TWLiveEndpoint &endpoint, unsigned char participant)
     return empty;
 }
 
-unsigned due(Punch &punch, unsigned index, unsigned nowMs, unsigned char *packet) {
+unsigned due(Punch &punch, unsigned index, unsigned nowMs, unsigned char *packet,
+             unsigned intervalMs) {
     if (index >= MAX_PEERS - 1) return 0;
     Peer &peer = punch.peers[index];
-    if (!peer.state || (peer.sent && nowMs - peer.lastSentMs < PUNCH_INTERVAL_MS)) return 0;
+    if (!peer.state || (peer.sent && nowMs - peer.lastSentMs < intervalMs)) return 0;
     peer.sent = 1;
     peer.lastSentMs = nowMs;
     write32(packet, kMagic);

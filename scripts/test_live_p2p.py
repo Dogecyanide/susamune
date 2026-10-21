@@ -22,14 +22,16 @@ static TWLiveEndpoint endpoint(unsigned ip, unsigned port) {
     return e;
 }
 API int encode(unsigned ip, unsigned port, unsigned secret, unsigned role, char *out) {
-    LiveP2P::Code code = {endpoint(ip, port), secret, (unsigned char)role};
+    // The role no longer travels in the code: either player's code works both ways.
+    (void)role;
+    LiveP2P::Code code = {endpoint(ip, port), secret};
     return LiveP2P::encode(code, out);
 }
 API int decode(const char *text, unsigned *ip, unsigned *port, unsigned *secret, unsigned *role) {
     LiveP2P::Code code;
     if (!LiveP2P::decode(text, &code)) return 0;
     *ip = (unsigned)code.endpoint.ip[0] << 24 | code.endpoint.ip[1] << 16 | code.endpoint.ip[2] << 8 | code.endpoint.ip[3];
-    *port = code.endpoint.port; *secret = code.secret; *role = code.role;
+    *port = code.endpoint.port; *secret = code.secret; *role = 0;
     return 1;
 }
 API void format(const char *code, char *out) { LiveP2P::format(code, out); }
@@ -39,6 +41,9 @@ API int add(unsigned node, unsigned ip, unsigned port, unsigned participant) {
 }
 API unsigned due(unsigned node, unsigned index, unsigned now, unsigned char *packet) {
     return LiveP2P::due(nodes[node], index, now, packet);
+}
+API unsigned dueEvery(unsigned node, unsigned index, unsigned now, unsigned char *packet, unsigned interval) {
+    return LiveP2P::due(nodes[node], index, now, packet, interval);
 }
 API int receive(unsigned node, unsigned ip, unsigned port, const void *data, unsigned bytes, unsigned now, int adopt) {
     return LiveP2P::receive(nodes[node], endpoint(ip, port), data, bytes, now, adopt != 0);
@@ -88,13 +93,13 @@ class LiveP2PTests(unittest.TestCase):
             raise RuntimeError(result.stdout + result.stderr)
         lib = C.CDLL(str(dll))
         cls.addClassCleanup(lambda: _ctypes.FreeLibrary(lib._handle))
-        for name in ("encode", "decode", "reset", "add", "due", "receive", "state", "peerPort", "peerIp",
+        for name in ("encode", "decode", "reset", "add", "due", "dueEvery", "receive", "state", "peerPort", "peerIp",
                      "participant", "open", "roster"):
             getattr(lib, name).restype = C.c_int if name in ("encode", "decode", "add", "receive", "open") else C.c_uint
         return lib
 
     def encode(self, address, port, secret, role):
-        out = C.create_string_buffer(17)
+        out = C.create_string_buffer(15)
         ok = self.lib.encode(ip(address), port, secret, role, out)
         return out.value.decode() if ok else None
 
@@ -111,41 +116,42 @@ class LiveP2PTests(unittest.TestCase):
         return out.value.decode()
 
     def test_codes_round_trip_in_an_unambiguous_alphabet(self):
-        cases = [("86.81.7.200", 48222, 123456, 0), ("1.2.3.4", 1, 1, 1),
-                 ("223.255.255.255", 65535, 999999, 1), ("100.64.0.9", 50123, 500000, 0)]
+        cases = [("86.81.7.200", 48222, 1234, 0), ("1.2.3.4", 1, 1, 0),
+                 ("223.255.255.255", 65535, 8191, 0), ("100.64.0.9", 50123, 5000, 0)]
         for case in cases:
             code = self.encode(*case)
-            self.assertEqual(len(code), 16)
+            self.assertEqual(len(code), 14)
             self.assertTrue(set(code) <= set(ALPHABET), code)
             self.assertFalse(set(code) & set("01OI"))
             shown = self.display(code)
-            self.assertEqual(shown, "-".join(code[i:i + 4] for i in range(0, 16, 4)))
+            self.assertEqual(shown, "-".join(code[i:i + 4] for i in range(0, 14, 4)))
+            self.assertEqual(len(shown), 17)
             for text in (code, shown, shown.lower(), " ".join(shown.split("-"))):
                 self.assertEqual(self.decode(text), case)
 
     def test_the_address_is_not_readable_from_the_code(self):
-        first = self.encode("86.81.7.200", 48222, 123456, 0)
-        second = self.encode("86.81.7.200", 48222, 123457, 0)
+        first = self.encode("86.81.7.200", 48222, 1234, 0)
+        second = self.encode("86.81.7.200", 48222, 1235, 0)
         # The endpoint characters change with the secret, so equal IPs do not share a prefix.
         self.assertNotEqual(first[:9], second[:9])
-        self.assertNotEqual(self.encode("86.81.7.200", 48222, 123456, 1), first)
+        # No role bits: the host's and the joiner's codes for one console are the same.
+        self.assertEqual(self.encode("86.81.7.200", 48222, 1234, 1), first)
 
     def test_invalid_codes_and_values_are_refused(self):
-        code = self.encode("86.81.7.200", 48222, 123456, 0)
-        for text in ("", code[:15], code + "2", code[:15] + "0", code[:15] + "O", code[:15] + "I",
-                     code[:15] + "1", code[:15] + "!"):
+        code = self.encode("86.81.7.200", 48222, 1234, 0)
+        for text in ("", code[:13], code + "2", code[:13] + "0", code[:13] + "O", code[:13] + "I",
+                     code[:13] + "1", code[:13] + "!"):
             self.assertIsNone(self.decode(text), text)
-        for args in (("86.81.7.200", 48222, 0, 0), ("86.81.7.200", 48222, 1000000, 0),
-                     ("86.81.7.200", 0, 5, 0), ("0.1.2.3", 1, 5, 0), ("224.0.0.1", 1, 5, 0),
-                     ("86.81.7.200", 1, 5, 2)):
+        for args in (("86.81.7.200", 48222, 0, 0), ("86.81.7.200", 48222, 8192, 0),
+                     ("86.81.7.200", 0, 5, 0), ("0.1.2.3", 1, 5, 0), ("224.0.0.1", 1, 5, 0)):
             self.assertIsNone(self.encode(*args), args)
 
     def test_single_character_typos_are_caught(self):
         accepted = total = 0
-        for case in [("86.81.7.200", 48222, 123456, 0), ("203.0.113.7", 50123, 4242, 1),
-                     ("192.0.2.1", 48222, 999999, 0)]:
+        for case in [("86.81.7.200", 48222, 1234, 0), ("203.0.113.7", 50123, 4242, 0),
+                     ("192.0.2.1", 48222, 8191, 0)]:
             code = self.encode(*case)
-            for position in range(16):
+            for position in range(14):
                 for symbol in ALPHABET:
                     if symbol == code[position]:
                         continue
@@ -175,6 +181,18 @@ class LiveP2PTests(unittest.TestCase):
         self.assertEqual(lib.due(0, 0, 5199, packet), 0)
         self.assertEqual(lib.due(0, 0, 5200, packet), 12)
         self.assertEqual(lib.due(0, 1, 5200, packet), 0)  # out of range
+
+    def test_waiting_punches_back_off_but_never_stop(self):
+        lib = self.lib
+        lib.reset(2, 4242, 0)
+        lib.add(2, ip("198.51.100.9"), 50123, 1)
+        packet = (C.c_ubyte * 16)()
+        self.assertNotEqual(lib.dueEvery(2, 0, 40000, packet, 1000), 0)
+        self.assertEqual(lib.dueEvery(2, 0, 40999, packet, 1000), 0)
+        self.assertNotEqual(lib.dueEvery(2, 0, 41000, packet, 1000), 0)
+        # Hours later the same peer is still punched once a second.
+        self.assertNotEqual(lib.dueEvery(2, 0, 3600000, packet, 1000), 0)
+        self.assertEqual(lib.dueEvery(2, 0, 3600200, packet, 1000), 0)
 
     def test_receive_opens_only_with_the_room_pin(self):
         lib = self.lib

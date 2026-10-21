@@ -46,6 +46,8 @@ static SusamuneOnlineNameCfg savedBlock;static bool savedAvailable;
 static void DCStoreRange(void*,unsigned){++stores;}
 extern "C" int memcmp(const void*p,const void*q,unsigned long long n){auto*a=(const u8*)p;auto*b=(const u8*)q;for(;n--;++a,++b)if(*a!=*b)return *a<*b?-1:1;return 0;}
 class Menu {public:void hide(){}};static Menu*gMenu;
+struct QFTStub {unsigned serial;unsigned attemptSerial()const{return serial;}};static QFTStub gQFTTimer;
+#define ONLINE_EXTRAS 1
 namespace ILing {
 int count(){return 16;}
 int persistentSlot(int entry){return 100+entry;}
@@ -67,6 +69,7 @@ static bool transmit(void*,const TWLiveEndpoint&to,const void*p,unsigned n){
         code += match[match.index("namespace LiveRace {"):match.index("u32 nowMs()")]
         code += r'''
 bool sendControl(void*,const Session::Endpoint&to,const void*p,unsigned n){return transmit(nullptr,to,p,n);}
+u32 nowMs(){return clockMs;}
 SusamuneOnlineNameCfg*savedName(){return savedAvailable?&savedBlock:nullptr;}
 bool sendPose(void*,const Session::Endpoint&,const void*,unsigned){return true;}
 void receivedPose(void*,const MSRHeader&,const MSRPose&,unsigned){}
@@ -77,9 +80,9 @@ void receivedPose(void*,const MSRHeader&,const MSRPose&,unsigned){}
         code += "\n}\n"
         code += r'''
 using namespace LiveRace;
-static Runtime peers[2];static Options opts[2];
-static void select(unsigned p){current=p;s=peers[p];sOptions=opts[p];}
-static void keep(){peers[current]=s;opts[current]=sOptions;}
+static Runtime peers[2];static Options opts[2];static Extra extras[2];
+static void select(unsigned p){current=p;s=peers[p];sOptions=opts[p];x=extras[p];}
+static void keep(){peers[current]=s;opts[current]=sOptions;extras[current]=x;}
 static void service(unsigned p){select(p);LiveRaceSession::tick(s.session,clockMs);acceptConnection();serviceRace();keep();}
 static int find(unsigned to,unsigned kind=0){for(unsigned i=0;i<queueEnd;++i)if(queue[i].used&&queue[i].to==to){MSRHeader h;if(MSRDecodeHeader(queue[i].data,queue[i].bytes,&h)&&(!kind||h.kind==kind))return i;}return -1;}
 static bool deliver(unsigned to,unsigned kind=0){
@@ -90,7 +93,7 @@ static bool deliver(unsigned to,unsigned kind=0){
 }
 static void pump(unsigned rounds=12){for(unsigned i=0;i<rounds;++i){clockMs+=10;for(unsigned p=0;p<2;++p){for(unsigned n=0;n<4&&find(p)>=0;++n)deliver(p);service(p);}}}
 static bool connect(unsigned best=3,bool freeRoam=false,bool draft=false,bool setBo5=false,unsigned pool=0){
- memset(peers,0,sizeof(peers));memset(opts,0,sizeof(opts));memset(queue,0,sizeof(queue));queueEnd=0;clockMs=1;
+ memset(peers,0,sizeof(peers));memset(opts,0,sizeof(opts));memset(extras,0,sizeof(extras));memset(queue,0,sizeof(queue));queueEnd=0;clockMs=1;
  starts[0]=starts[1]=blocked[0]=blocked[1]=0;congested[0]=congested[1]=false;
  for(unsigned p=0;p<2;++p){select(p);sOptions={};memcpy(sOptions.name,p?"Guest":"Host",p?6:5);sOptions.bestOf=best;sOptions.entry=2;sOptions.episode=4;sOptions.freeRoam=!p&&freeRoam;
   if(!p){sOptions.draft=draft;sOptions.setBo5=setBo5;sOptions.pool=pool;}
@@ -98,6 +101,17 @@ static bool connect(unsigned best=3,bool freeRoam=false,bool draft=false,bool se
   if(!LiveRaceSession::init(s.session,c,kCallbacks))return false;s.hosting=p==0;s.active=s.started=true;
   TWLiveEndpoint any={};if(p?!LiveRaceSession::startGuest(s.session,endpoints[0],clockMs):!LiveRaceSession::startHost(s.session,any,clockMs))return false;keep();}
  pump();const auto expected=freeRoam?ROAMING:draft?DRAFTING:WAIT_READY;return peers[0].connected&&peers[1].connected&&peers[0].phase==expected&&peers[1].phase==expected&&!peers[0].session.info.pending&&!peers[1].session.info.pending;
+}
+// The link drops and both sides restart their sessions with the same room, as
+// update() does after PEER_TIMEOUT: the match state must come back intact.
+static unsigned generation;
+static bool reconnect(){
+ ++generation;
+ for(unsigned p=0;p<2;++p){select(p);s.connected=false;x.reconnecting=true;
+  LiveRaceSession::Config c={};memcpy(c.name,sOptions.name,16);c.pin=123456;c.nonceLow=p+1+2*generation;c.region=p;c.timing=MSR_TIMING_60HZ;
+  if(!LiveRaceSession::init(s.session,c,kCallbacks))return false;
+  TWLiveEndpoint any={};if(p?!LiveRaceSession::startGuest(s.session,endpoints[0],clockMs):!LiveRaceSession::startHost(s.session,any,clockMs))return false;keep();}
+ pump();return peers[0].connected&&peers[1].connected&&!extras[0].reconnecting&&!extras[1].reconnecting;
 }
 static bool setReady(unsigned p){select(p);bool ok=ready();keep();return ok;}
 static bool race(){if(!setReady(0)||!setReady(1))return false;pump();return peers[0].phase==RUNNING&&peers[1].phase==RUNNING&&starts[0]==starts[1];}
@@ -122,6 +136,10 @@ static bool completeDraftRound(unsigned winner,bool eligible=true){
 }
 #define CHECK(x) do{if(!(x))return __LINE__;}while(0)
 #define API extern "C" __declspec(dllexport)
+API int peerState(unsigned p,unsigned what){const Runtime&r=peers[p&1];
+ const int v[]={(int)r.phase,(int)r.round,(int)r.localWins,(int)r.peerWins,r.localResult,r.peerResult,r.connected,r.resultSent,
+  r.offerNeeded,r.readyNeeded,(int)r.session.info.pending,(int)r.session.info.state,extras[p&1].reconnecting,r.localReady,r.peerReady};
+ return what<sizeof(v)/sizeof(v[0])?v[what]:-1;}
 API unsigned scenario(unsigned test){
  CHECK(connect(test==1||test>=9?1:3,test==11));
  if(test==0){
@@ -220,6 +238,24 @@ API unsigned scenario(unsigned test){
   CHECK(!configure(invalid));
   CHECK(newMatch());keep();pump();select(1);h.round=2;configPayload(body,NEW_MATCH);
   receivedControl(nullptr,h,body,12);CHECK(s.phase==WAIT_READY&&s.round==2);keep();
+ }else if(test==13){
+  CHECK(race());finish(0,100);service(0);const int lost=find(1,MSR_RESULT);CHECK(lost>=0);queue[lost].used=false;
+  CHECK(reconnect());finish(1,120);pump();  // Bo1: the result ends the match on both sides
+  CHECK(peers[0].localWins==1&&peers[1].peerWins==1&&!peers[0].peerWins&&!peers[1].localWins);
+  CHECK(peers[0].phase==MATCH_DONE&&peers[1].phase==MATCH_DONE&&starts[0]==1&&starts[1]==1);
+ }else if(test==14){
+  CHECK(setReady(0)&&setReady(1));service(0);service(1);
+  CHECK(deliver(0,MSR_READY));CHECK(deliver(1,MSR_READY));CHECK(deliver(0,MSR_ACK));
+  service(0);CHECK(starts[0]==1&&peers[0].phase==RUNNING);const int lost=find(1,MSR_START);CHECK(lost>=0);queue[lost].used=false;
+  CHECK(peers[1].phase==WAIT_READY&&peers[1].localReady);
+  CHECK(reconnect());pump();CHECK(starts[1]==1&&peers[1].phase==RUNNING&&peers[0].phase==RUNNING);
+  finish(0,100);finish(1,120);pump();CHECK(peers[0].localWins==1&&peers[1].peerWins==1&&peers[1].phase==MATCH_DONE);
+ }else if(test==15){
+  CHECK(race());
+  // Deaths and resets keep the clock: the second attempt starts 1001 ms after the first.
+  select(0);++gQFTTimer.serial;sampleAttempt(5000);++gQFTTimer.serial;sampleAttempt(6001);
+  onILResult(2,100,true);CHECK(s.localQf==100+240);keep();
+  select(1);++gQFTTimer.serial;sampleAttempt(7000);onILResult(2,100,true);CHECK(s.localQf==100);keep();
  }
  return 0;
 }
@@ -354,6 +390,14 @@ API unsigned draftScenario(unsigned test){
    }
    keep();service(0);pump();CHECK(peers[0].phase==WAIT_READY&&peers[1].phase==WAIT_READY&&syncedDraft());
   }
+ }else if(test==11){
+  CHECK(choose(0,0));service(0);const int lost=find(1,MSR_READY);CHECK(lost>=0);queue[lost].used=false;
+  CHECK(!syncedDraft());CHECK(reconnect());pump();CHECK(syncedDraft());
+  CHECK(chooseAndPump(1,1));CHECK(chooseAndPump(1,2));CHECK(chooseAndPump(0,3));CHECK(peers[0].phase==WAIT_READY);
+ }else if(test==12){
+  CHECK(choose(0,0));pump();CHECK(choose(1,1));service(1);const int lost=find(0,MSR_READY);CHECK(lost>=0);queue[lost].used=false;
+  CHECK(peers[1].choiceSent);CHECK(reconnect());pump();CHECK(syncedDraft()&&!peers[1].choiceSent);
+  CHECK(chooseAndPump(1,2));CHECK(chooseAndPump(0,3));CHECK(peers[1].phase==WAIT_READY);
  }
  return 0;
 }
@@ -376,7 +420,9 @@ API unsigned draftScenario(unsigned test){
         for number, name in enumerate(("round/tie/void", "best-of completion", "queued start unready",
                 "result then offer", "start then result", "duplicate/stale round", "TX backpressure", "edited name",
                 "unready while busy", "new match and changed IL", "repeated matches under backpressure",
-                "free roam to race and back", "unauthorized and stale new match")):
+                "free roam to race and back", "unauthorized and stale new match",
+                "reconnect resends a lost result", "reconnect resends a lost start",
+                "round clock across resets")):
             with self.subTest(name=name):
                 line = self.lib.scenario(number)
                 detail = self.generated.splitlines()[line - 1] if line else ""
@@ -387,7 +433,8 @@ API unsigned draftScenario(unsigned test){
                 "Bo5 set with changing winners", "ties and assisted rounds", "invalid commands and pool candidates",
                 "request and event backpressure", "lost event and duplicate retransmission",
                 "same-room rematch, changed pool and free roam", "final IL result before next candidates",
-                "candidate sampling in every pool", "continuing offer cannot change agreed setup")):
+                "candidate sampling in every pool", "continuing offer cannot change agreed setup",
+                "reconnect resends a lost draft event", "reconnect resends a lost draft request")):
             with self.subTest(name=name):
                 line = self.lib.draftScenario(number)
                 detail = self.generated.splitlines()[line - 1] if line else ""

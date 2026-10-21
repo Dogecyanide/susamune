@@ -44,6 +44,8 @@ public:
     // Open the Ghosts tab on a save confirmation bound to this exact accepted
     // PB. The caller retains ownership of any action held behind that PB.
     bool openGhostPBSave(u32 token);
+    // Opens the Online tab on Ready or the draft list after an online IL.
+    void openOnline();
     void openTasProject();
     bool searchActive() const;
     bool searchAvailable() const;
