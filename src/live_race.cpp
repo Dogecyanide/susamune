@@ -106,7 +106,8 @@ static const char connectionLost[] = "Connection lost - reconnect";
 static const char starting[] = "Starting network";
 static const char connected[] = "Connected";
 static const char gettingAddress[] = "Getting your address...";
-static const char noAddress[] = "Could not get your address - check the internet";
+static const char noAddress[] = "No reply from address servers - check the internet";
+static const char noSend[] = "Wii network sent nothing - see Diagnostics";
 static const char waitingFriend[] = "Waiting for friend";
 static const char shareCode[] = "Send your code, then enter your friend's code";
 static const char enterCode[] = "Enter the host's code as Friend's code";
@@ -500,6 +501,7 @@ bool begin(bool hosting) {
     if (!LiveTransport::begin(LOCAL_PORT)) { s.message = Text::networkBusy; return false; }
     s = {};
     s.active = true; s.hosting = hosting; s.openedMs = nowMs();
+    s.diagnostics.net = NET_WAITING;
     s.networkSeenMs = s.openedMs;
     s.message = Text::networkStarting;
     LiveGhost::reset();
@@ -676,8 +678,20 @@ void update() {
     const auto transport = LiveTransport::poll();
     // A concurrent ARM publication can leave this one bounded read unavailable.
     if (transport.state == TW_LIVE_UNAVAILABLE && now - s.networkSeenMs < 15000u) return;
+    Diagnostics &d = s.diagnostics;
+    if (d.net != NET_UP) {
+        // The worker gets an address from DHCP before it reports READY; that can take seconds.
+        const u32 waited = (now - s.openedMs) / 1000u;
+        d.waitedS = static_cast<u8>(waited > 255u ? 255u : waited);
+    }
     if (transport.state == TW_LIVE_READY) {
         s.networkSeenMs = now;
+        d.forwarded = static_cast<u8>(transport.txRead > 255u ? 255u : transport.txRead);
+        LiveTransport::Endpoint local;
+        if (!d.port && LiveTransport::localEndpoint(&local)) {
+            memcpy(d.ip, local.ip, 4); d.port = local.port;
+        }
+        d.net = NET_UP;
         LiveTransport::Diagnostics diagnostics;
         if (LiveTransport::diagnostics(transport, &diagnostics)) {
             // Retirement withdraws this line; retain the last valid attempt.
@@ -692,8 +706,8 @@ void update() {
     }
     s.networkError = transport.error;
     if (transport.state == TW_LIVE_FAILED || (s.stunStarted && transport.state != TW_LIVE_READY) ||
-        (!s.stunStarted && now - s.openedMs > 15000u)) {
-        disconnect(); s.message = Text::networkLost; return;
+        (!s.stunStarted && now - s.openedMs > 30000u)) {
+        disconnect(); d.net = NET_FAILED; d.trouble = true; s.message = Text::networkLost; return;
     }
     if (!s.stunStarted) {
         if (transport.state != TW_LIVE_READY) return;
@@ -713,7 +727,11 @@ void update() {
     if (!s.addressed) {
         const LiveStun::Result &stun = LiveStun::result();
         if (stun.state == LiveStun::RUNNING) return;
-        if (!stun.answered) { disconnect(); s.message = Text::noAddress; return; }
+        if (!stun.answered) {
+            // Nothing leaving the socket is a Wii-side problem, not the internet.
+            disconnect(); d.trouble = true;
+            s.message = stun.attempts && d.socketSent ? Text::noAddress : Text::noSend; return;
+        }
         s.own.endpoint = stun.mapped[stun.answered & 1u ? 0 : 1];
         s.own.secret = freshSecret();
         s.own.role = s.hosting ? LiveP2P::HOST : LiveP2P::JOINER;
@@ -783,11 +801,12 @@ Status status() {
     out.pingMs = s.connected ? connection.pingMs : ~0u; out.networkError = s.networkError;
     out.localWins = s.localWins; out.peerWins = s.peerWins;
     out.diagnostics = s.diagnostics;
-    LiveTransport::Endpoint endpoint;
-    if (s.active && LiveTransport::localEndpoint(&endpoint)) {
-        memcpy(out.localIp, endpoint.ip, 4);
-        out.localPort = endpoint.port;
-    }
+    // Keep the address after disconnect: 0.0.0.0 then means it was never known.
+    memcpy(out.localIp, s.diagnostics.ip, 4);
+    out.localPort = s.diagnostics.port;
+    const u8 net = s.diagnostics.net;
+    if (!s.active) out.diagnostics.net = net == NET_WAITING ? NET_FAILED :
+        net == NET_UP && !s.diagnostics.trouble ? NET_OFF : net;
     return out;
 }
 void draw(Menu *menu) {

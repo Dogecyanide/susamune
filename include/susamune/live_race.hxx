@@ -24,7 +24,14 @@ struct Diagnostics {
     u16 socketSent, socketReceived;
     u8 dropped, sendErrors, receiveErrors;
     bool socketAvailable;
+    // Wii network as last seen: NET_OFF, NET_WAITING (no address yet), NET_UP or NET_FAILED.
+    u8 net, waitedS;           // waitedS: seconds from Create/Join until the address was known
+    u8 forwarded;              // packets the ARM kernel took from the PPC send ring this attempt
+    bool trouble;              // the last attempt failed; the tab shows these lines
+    u8 ip[4];                  // last local address, kept after disconnect
+    u16 port;
 };
+enum { NET_OFF, NET_WAITING, NET_UP, NET_FAILED };
 struct Status {
     const char *connection;
     const char *race;

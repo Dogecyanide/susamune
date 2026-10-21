@@ -240,6 +240,38 @@ API unsigned rxRead() { return gRxRead; }
         self.assertEqual((result["state"], result["error"]), (3, -116))
         self.assertTrue(self.lib.stopped())
 
+    def test_standalone_probe_waits_for_the_address(self):
+        lib = self.lib
+        lib.reset()
+        self.assertTrue(lib.start(48222))
+        lib.setState(1, 0)  # The ARM side has not taken BEGIN yet.
+        lib.update(5000)
+        lib.setState(2, 0)  # Opening: KD, DHCP and the socket can take many seconds.
+        lib.update(200000)
+        self.assertEqual((self.result()["state"], lib.sent()), (1, 0))
+        lib.setState(3, 0)
+        lib.update(1)
+        self.assertEqual(lib.sent(), 2)  # The probe's clock starts at READY.
+        for _ in range(10):
+            lib.update(5000)
+        result = self.result()
+        self.assertEqual((result["state"], result["verdict"], result["attempts"]), (2, 0, 6))
+        self.assertTrue(lib.stopped())
+        lib.reset()
+        self.assertTrue(lib.start(48222))
+        lib.setState(2, 0)
+        lib.update(300000)
+        self.assertEqual(self.result()["state"], 1)
+        lib.update(1)
+        self.assertEqual((self.result()["state"], self.result()["error"]), (3, -1))
+        lib.reset()
+        self.assertTrue(lib.start(48222))
+        lib.setState(3, 0)
+        lib.update(1)
+        lib.setState(1, 0)  # IDLE after READY: the transport went away.
+        lib.update(1)
+        self.assertEqual(self.result()["state"], 3)
+
     def test_shared_probe_uses_the_owners_transport_and_packets(self):
         lib = self.lib
         lib.reset()

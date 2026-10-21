@@ -55,7 +55,10 @@ static void barrier(){}
 static const TWLiveIo kIo={flush,invalidate,barrier};
 bool begin(unsigned short){return true;}
 Status poll(){++polled;return network;}
-bool localEndpoint(Endpoint*){return false;}
+}
+static bool haveLocal;static TWLiveEndpoint localAddr;
+namespace LiveTransport {
+bool localEndpoint(Endpoint*e){if(!haveLocal)return false;*e=localAddr;return true;}
 bool sendControl(const Endpoint&e,const void*,unsigned bytes){lastSent=e;if(bytes==LiveP2P::PUNCH_BYTES)++punchesSent;return submitAccepts;}
 bool publishPose(const Endpoint&,const void*,unsigned){return submitAccepts;}
 bool receive(Packet& packet){++received;packet=nextPacket;return endlessPackets;}
@@ -181,9 +184,10 @@ API unsigned scenario(unsigned test){
   // No STUN answer: no address to share, so the room closes and keeps its diagnostics.
   reset(false);CHECK(begin(true));publishDiagnostics();frame(1001,TW_LIVE_READY);
   CHECK(s.diagnostics.socketAvailable&&s.diagnostics.socketSent==0xabcd&&s.diagnostics.socketError==-77);
-  mailbox.networkInfo.generation=0;stunResult.state=LiveStun::DONE;stunResult.answered=0;
+  mailbox.networkInfo.generation=0;stunResult.state=LiveStun::DONE;stunResult.answered=0;stunResult.attempts=6;
   frame(1002,TW_LIVE_READY);
   CHECK(!s.active&&s.message==Text::noAddress&&s.diagnostics.socketSent==0xabcd&&s.diagnostics.socketError==-77);
+  CHECK(s.diagnostics.trouble&&LiveRace::status().diagnostics.net==NET_UP);
   frame(1003,TW_LIVE_IDLE);auto out=LiveRace::status();
   CHECK(!out.active&&out.diagnostics.socketAvailable&&out.diagnostics.socketReceived==0x1234&&!out.code[0]);
   CHECK(begin(true));CHECK(!s.diagnostics.socketAvailable&&!s.diagnostics.socketSent&&!s.networkError);
@@ -252,6 +256,24 @@ API unsigned scenario(unsigned test){
   frame(31002,TW_LIVE_READY);CHECK(!s.unreachable);
   frame(31003,TW_LIVE_READY);CHECK(s.unreachable&&s.message==Text::cantConnect&&s.active&&LiveRace::status().hint==Text::hintBlocked);
   s.session.info.connected=true;frame(31100,TW_LIVE_READY);CHECK(s.connected&&LiveRace::status().connection==Text::connected);
+ }else if(test==17){
+  // The Wii network may need many seconds for DHCP; the tab says it is waiting, then why it stopped.
+  reset(false);CHECK(begin(true));CHECK(s.diagnostics.net==NET_WAITING);
+  frame(1001,TW_LIVE_OPENING);CHECK(s.active&&!s.diagnostics.waitedS&&LiveRace::status().diagnostics.net==NET_WAITING);
+  frame(25000,TW_LIVE_OPENING);CHECK(s.active&&!transportStops&&s.diagnostics.waitedS==24);
+  frame(31001,TW_LIVE_OPENING);CHECK(!s.active&&s.message==Text::networkLost&&s.diagnostics.trouble);
+  CHECK(LiveRace::status().diagnostics.net==NET_FAILED&&!LiveRace::status().localIp[0]);
+  // Sends that never leave the Wii are reported as such, not as an internet problem.
+  reset(false);CHECK(begin(true));haveLocal=true;localAddr=TWLiveEndpoint{{192,168,1,20},48222,0};
+  clockMs=4000;network.txRead=3;frame(4000,TW_LIVE_READY);
+  CHECK(s.diagnostics.net==NET_UP&&s.diagnostics.waitedS==3&&s.diagnostics.forwarded==3&&s.diagnostics.ip[3]==20);
+  stunResult.state=LiveStun::DONE;stunResult.answered=0;stunResult.attempts=4;frame(4100,TW_LIVE_READY);
+  CHECK(!s.active&&s.message==Text::noSend);
+  auto out=LiveRace::status();CHECK(out.localIp[0]==192&&out.localPort==48222&&out.diagnostics.net==NET_UP&&out.diagnostics.trouble);
+  // A clean disconnect keeps the address and shows the network as off.
+  reset(false);CHECK(begin(true));frame(1001,TW_LIVE_READY);disconnect();
+  out=LiveRace::status();CHECK(out.diagnostics.net==NET_OFF&&!out.diagnostics.trouble&&out.localIp[3]==20);
+  haveLocal=false;
  }else if(test==16){
   // One-code join: the host adopts a punch carrying its PIN from an unknown address.
   CHECK(open(true,kHost));
@@ -288,7 +310,7 @@ API unsigned scenario(unsigned test){
                  "begin timestamp", "last ready refresh", "bounded receive budget", "clock wrap",
                  "diagnostic decoding and validity", "no address retention and retry", "packet acceptance counters",
                  "host code and listener", "joiner punching", "code checks", "joiner failure hints",
-                 "host restart and timeout", "one-code adoption")
+                 "host restart and timeout", "one-code adoption", "network wait and send diagnostics")
         for number, name in enumerate(names):
             with self.subTest(name=name):
                 line = self.lib.scenario(number)

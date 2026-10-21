@@ -246,7 +246,7 @@ const TWLiveEndpoint kServers[SERVER_COUNT] = {
 Result sResult;
 unsigned char sTransaction[TRANSACTION_BYTES];
 unsigned sStarted, sSent;
-bool sShared;
+bool sShared, sReady;
 bool same(const TWLiveEndpoint &a, const TWLiveEndpoint &b) {
     for (unsigned i = 0; i < 4; ++i) if (a.ip[i] != b.ip[i]) return false;
     return a.port == b.port;
@@ -265,7 +265,7 @@ void finish(int error) {
 }
 bool begin(bool shared) {
     sResult = Result{};
-    sShared = shared;
+    sShared = sReady = shared;
     const OSTime stamp = OSGetTime();
     const unsigned tick = OSGetTick();
     for (unsigned i = 0; i < TRANSACTION_BYTES; ++i)
@@ -301,10 +301,17 @@ void update() {
     if (!sShared) {
         const LiveTransport::Status status = LiveTransport::poll();
         if (status.state != TW_LIVE_READY) {
-            // Opening, or a bounded unavailable read; anything else ends the probe.
-            if (status.state == TW_LIVE_FAILED || status.state == TW_LIVE_IDLE || status.state == TW_LIVE_RETIRING ||
-                now - sStarted > OSMillisecondsToTicks(15000)) finish(status.error ? status.error : -1);
+            // The ARM side may not have taken BEGIN yet (still IDLE), and DHCP can take
+            // seconds before READY. Wait up to 30 s for an address; only a retired or
+            // failed transport, or IDLE after READY, ends the probe early.
+            if (status.state == TW_LIVE_FAILED || status.state == TW_LIVE_RETIRING ||
+                (status.state == TW_LIVE_IDLE && sReady) ||
+                now - sStarted > OSMillisecondsToTicks(sReady ? 15000 : 30000)) finish(status.error ? status.error : -1);
             return;
+        }
+        if (!sReady) {
+            // The probe's own 15 s and the first request start once the address is known.
+            sReady = true; sStarted = now; sSent = now - OSMillisecondsToTicks(500);
         }
         LiveTransport::Packet packet;
         for (unsigned n = 0; n < TW_LIVE_RING_COUNT && LiveTransport::receive(packet); ++n) accept(packet);

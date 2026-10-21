@@ -47,8 +47,13 @@ static const char namePrompt[] = "Online name (16 characters)";
 static const char pingFormat[] = "%lu ms";
 static const char peerFormat[] = "%s  |  Peer: %.16s  |  %s";
 static const char offline[] = "Offline";
-static const char networkFormat[] = "Local IP: %u.%u.%u.%u:%u  |  Error: %ld";
-static const char socketFormat[] = "Socket TX %u RX %u Drop %u Err S/R %u/%u Code %ld";
+static const char networkFormat[] = "Wii net: %s %us  IP %u.%u.%u.%u:%u  Error %ld";
+static const char socketFormat[] = "ARM took %u  Socket TX %u RX %u Drop %u Err S/R %u/%u Code %ld";
+static const char netOff[] = "off";
+static const char netWaiting[] = "waiting for IP";
+static const char netUp[] = "up";
+static const char netFailed[] = "failed";
+static const char *const netState[] = {netOff, netWaiting, netUp, netFailed};
 static const char noDiagnostics[] = "Socket diagnostics unavailable";
 static const char packetFormat[] = "PPC TX %lu RX %lu OK %lu";
 static const char scoreFormat[] = "Score: %u - %u   |   IL Best of %u";
@@ -73,7 +78,7 @@ static const char needName[] = "Enter an online name first";
 static const char printableName[] = "Use printable letters, numbers or symbols";
 static const char invalidSetup[] = "Online setup is invalid or busy";
 static const char stunBusy[] = "Online already tested NAT - see NAT test";
-static const char stunFormat[] = "STUN %s  A %s  B %s";
+static const char stunFormat[] = "STUN %s  tries %u  A %s  B %s";
 static const char stunRunning[] = "probing...";
 static const char stunSame[] = "SAME - punching should work";
 static const char stunDifferent[] = "DIFFERENT - symmetric NAT";
@@ -267,16 +272,16 @@ public:
             status.setupEditable && status.active ? OnlineText::setupAvailable : status.active ? OnlineText::locked : OnlineText::prototype);
         // Until connected, this line explains the room codes or why punching failed.
         small(menu, status.hint && status.hint[0] ? status.hint : text, x + 4, y + 64, w - 8);
-        const bool diagnosticsShown = mDiagnostics || status.networkError != 0;
+        const bool diagnosticsShown = mDiagnostics || status.networkError != 0 || status.diagnostics.trouble;
         if (diagnosticsShown) {
         snprintf(text, sizeof(text), OnlineText::networkFormat,
-            status.localIp[0], status.localIp[1], status.localIp[2], status.localIp[3],
+            OnlineText::netState[status.diagnostics.net & 3], status.diagnostics.waitedS, status.localIp[0], status.localIp[1], status.localIp[2], status.localIp[3],
             status.localPort, status.networkError);
         small(menu, text, x + 4, y + 82, w - 8);
         const LiveRace::Diagnostics &diagnostics = status.diagnostics;
         const char *socketText = OnlineText::noDiagnostics;
         if (diagnostics.socketAvailable) {
-            snprintf(text, sizeof(text), OnlineText::socketFormat,
+            snprintf(text, sizeof(text), OnlineText::socketFormat, diagnostics.forwarded,
                 diagnostics.socketSent, diagnostics.socketReceived, diagnostics.dropped,
                 diagnostics.sendErrors, diagnostics.receiveErrors, diagnostics.socketError);
             socketText = text;
@@ -421,7 +426,7 @@ private:
             else snprintf(mapped[i], sizeof(mapped[i]), OnlineText::none);
         }
         char failed[24];
-        snprintf(text, size, OnlineText::stunFormat, stunVerdict(failed, sizeof(failed)), mapped[0], mapped[1]);
+        snprintf(text, size, OnlineText::stunFormat, stunVerdict(failed, sizeof(failed)), stun.attempts, mapped[0], mapped[1]);
     }
     // `scratch` holds the failure text when the probe could not run.
     static const char *stunVerdict(char *scratch, unsigned size) {
