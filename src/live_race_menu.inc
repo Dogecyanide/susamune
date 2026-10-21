@@ -82,7 +82,7 @@ static const char stunSame[] = "SAME - punching should work";
 static const char stunDifferent[] = "DIFFERENT - symmetric NAT";
 static const char stunOne[] = "one reply - retry X";
 static const char stunNone[] = "no reply - retry X";
-static const char stunFailed[] = "failed";
+static const char stunFailed[] = "failed, code %d";
 static const char endpointFormat[] = "%u.%u.%u.%u:%u";
 static const char none[] = "--";
 }
@@ -427,8 +427,10 @@ private:
                 snprintf(mapped[i], sizeof(mapped[i]), OnlineText::endpointFormat, at.ip[0], at.ip[1], at.ip[2], at.ip[3], at.port);
             else snprintf(mapped[i], sizeof(mapped[i]), OnlineText::none);
         }
+        char failed[24];
+        snprintf(failed, sizeof(failed), OnlineText::stunFailed, stun.error);
         const char *verdict = stun.state == LiveStun::RUNNING ? OnlineText::stunRunning :
-            stun.state == LiveStun::FAILED ? OnlineText::stunFailed :
+            stun.state == LiveStun::FAILED ? failed :
             stun.verdict == LiveStun::SAME_MAPPING ? OnlineText::stunSame :
             stun.verdict == LiveStun::DIFFERENT_MAPPING ? OnlineText::stunDifferent :
             stun.verdict == LiveStun::ONE_REPLY ? OnlineText::stunOne : OnlineText::stunNone;

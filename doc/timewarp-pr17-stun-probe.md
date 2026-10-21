@@ -41,19 +41,20 @@ Diagnostics opens automatically. The last diagnostics line becomes:
   Direct punching is unlikely from this network; the relay stays necessary.
 - `one reply` / `no reply`: incomplete; retry with X. If it repeats, the
   firewall may block one server's port.
-- `failed`: the transport could not open (the network-error line shows the
-  code).
+- `failed, code N`: the transport could not open; N is its error code.
 
-The first line still shows the Wii's local IP and port.
+The probe needs no room and no 60 Hz mode; racing itself still requires 60 Hz.
+X is the action instead of a new row. A row would change the Online tab's
+MEM1-retained row table and enum for a temporary diagnostic.
 
 ## Cost (console pinned link, `jp/us/pal`)
 
 | | JP | US | PAL |
 | --- | --- | --- | --- |
 | Recovered MEM1 remaining before | 742 | 14,926 | 15,033 |
-| after | 491 | 14,682 | 14,789 |
+| after | 483 | 14,674 | 14,781 |
 | Container bytes before | 558,176 | 554,400 | 554,112 |
-| after | 560,576 | 556,576 | 556,448 |
+| after | 560,640 | 556,608 | 556,512 |
 
 The codec and driver functions (1,832 bytes of code) are listed in the
 console cold set for `live_transport.cpp`. The remaining MEM1 cost is their
