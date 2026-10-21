@@ -524,7 +524,7 @@ NEW_MODULES.update({
         "receive__13LiveTransportFR0",
         "stop__13LiveTransportFv",
         "TWLiveResume__FPUiPCVvPC0",
-        # Phase-0 STUN probe: cold on console like the rest of this transport.
+        # STUN probe: cold on console like the rest of this transport.
         "request__8LiveStunFPUcPCUc",
         "mapped__8LiveStunFPCvUiPCUcP0",
         "result__8LiveStunFv",
@@ -533,6 +533,10 @@ NEW_MODULES.update({
         "transaction__Q28LiveStun0FPUcUi",
         "same__Q28LiveStun0FRC0RC0",
         "finish__Q28LiveStun0Fi",
+        "begin__Q28LiveStun0Fb",
+        "startShared__8LiveStunFv",
+        "accept__8LiveStunFRC0",
+        "cancel__8LiveStunFv",
     )),
     "live_race_session.cpp": frozenset((
         "init__15LiveRaceSessionFRQ215LiveRaceSession7SessionRCQ215LiveRaceSession6ConfigRCQ215LiveRaceSession9Callbacks",
@@ -570,7 +574,6 @@ NEW_MODULES.update({
     )),
     "live_race.cpp": frozenset((
         "startSession__Q28LiveRace0FUl",
-        "serverEndpoint__Q28LiveRace0Fv",
         "init__8LiveRaceFv",
         "options__8LiveRaceFv",
         "configure__8LiveRaceFRCQ28LiveRace7Options",
@@ -585,7 +588,6 @@ NEW_MODULES.update({
         "onILResult__8LiveRaceFilb",
         "update__8LiveRaceFv",
         "nowMs__Q28LiveRace0Fv",
-        "acceptConnection__Q28LiveRace0Fv",
         "status__8LiveRaceFv",
         "draw__8LiveRaceFP4Menu",
         "portableScene__Q28LiveRace0FRCQ38LiveRace05Scene",
@@ -635,7 +637,6 @@ NEW_MODULES.update({
         "title__Q209OnlineTabCFv",
         "update__Q209OnlineTabFP4MenuP13TMarioGamePad",
         "back__Q209OnlineTabFv",
-        "number__Q209OnlineTabCFUiUi",
         "apply__Q209OnlineTabFP4Menu",
         "draw__Q209OnlineTabFP4Menuiiii",
         "rowName__Q209OnlineTabFi",
@@ -644,23 +645,6 @@ NEW_MODULES.update({
         "suppressesBinds__Q209OnlineTabCFv",
         "fullScreen__Q209OnlineTabCFv",
         "menuInit__Fv",
-    )),
-    "live_relay.cpp": frozenset((
-        "nonzero__Q29LiveRelay0FPCUcUi",
-        "emit__Q29LiveRelay0FRQ29LiveRelay6ClientUiPCvUib",
-        "equal__Q29LiveRelay0FPCUcPCUcUi",
-        "MSRRead32__FPCUc",
-        "authenticated__Q29LiveRelay0FRCQ29LiveRelay6ClientRC9MSLHeader",
-        "MSRDecodeHeader__FPCvUiP9MSRHeader",
-        "forward__Q29LiveRelay0FRQ29LiveRelay6ClientPCvUib",
-        "begin__9LiveRelayFRQ29LiveRelay6ClientbUiUiUiRC0Ui",
-        "init__9LiveRelayFRQ29LiveRelay6ClientRCQ29LiveRelay9Callbacks",
-        "receive__9LiveRelayFRQ29LiveRelay6ClientRC0PCvUiUi",
-        "sendControl__9LiveRelayFRQ29LiveRelay6ClientPCvUi",
-        "sendPose__9LiveRelayFRQ29LiveRelay6ClientPCvUi",
-        "status__9LiveRelayFRCQ29LiveRelay6Client",
-        "stop__9LiveRelayFRQ29LiveRelay6Client",
-        "tick__9LiveRelayFRQ29LiveRelay6ClientUi",
     )),
 })
 
@@ -673,7 +657,7 @@ MENU_CODE_FUNCTIONS = CREATION_EDITOR | frozenset((
 )) | NEW_MODULES["menu_native_icon.cpp"]
 
 # These new CPU inputs fit existing MEM1 holes and compress in the boot image.
-RETAIN_MEM1_MODULES = frozenset(("live_race.cpp", "live_race_session.cpp", "live_relay.cpp"))
+RETAIN_MEM1_MODULES = frozenset(("live_race.cpp", "live_race_session.cpp"))
 
 # Keep these new CPU functions in existing console MEM1 holes; emulator layout stays fixed.
 RETAIN_MEM1_CONSOLE_FUNCTIONS = frozenset((
@@ -718,7 +702,6 @@ RETAIN_MEM1_CONSOLE_FUNCTIONS = frozenset((
     "localEndpoint__13LiveTransportFP0",
     "matches__10MenuSearchFPCcRCQ210MenuSearch5Entry",
     "menuInit__Fv",
-    "number__Q209OnlineTabCFUiUi",
     "ready__Q213LiveTransport0FRC0",
     "receive__13LiveTransportFR0",
     "reset__9LiveGhostFv",

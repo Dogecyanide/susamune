@@ -26,7 +26,7 @@ class LiveRaceMatchTests(unittest.TestCase):
 #define TIMEWARP_LIVE_RACING 1
 #include "susamune/live_race.hxx"
 #include "susamune/live_race_session.hxx"
-#include "susamune/live_relay.hxx"
+#include "susamune/live_p2p.hxx"
 #include "susamune/ghost_format.h"
 extern "C" void* memset(void*p,int c,unsigned long long n){auto*b=(u8*)p;while(n--)*b++=(u8)c;return p;}
 extern "C" void* memcpy(void*p,const void*q,unsigned long long n){auto*b=(u8*)p;auto*a=(const u8*)q;while(n--)*b++=*a++;return p;}
@@ -85,9 +85,9 @@ static void pump(unsigned rounds=12){for(unsigned i=0;i<rounds;++i){clockMs+=10;
 static bool connect(unsigned best=3,bool freeRoam=false,bool draft=false,bool setBo5=false,unsigned pool=0){
  memset(peers,0,sizeof(peers));memset(opts,0,sizeof(opts));memset(queue,0,sizeof(queue));queueEnd=0;clockMs=1;
  starts[0]=starts[1]=blocked[0]=blocked[1]=0;congested[0]=congested[1]=false;
- for(unsigned p=0;p<2;++p){select(p);sOptions={};memcpy(sOptions.name,p?"Guest":"Host",p?6:5);sOptions.port=38400;sOptions.roomCode=123456;sOptions.bestOf=best;sOptions.entry=2;sOptions.episode=4;sOptions.freeRoam=!p&&freeRoam;
+ for(unsigned p=0;p<2;++p){select(p);sOptions={};memcpy(sOptions.name,p?"Guest":"Host",p?6:5);sOptions.bestOf=best;sOptions.entry=2;sOptions.episode=4;sOptions.freeRoam=!p&&freeRoam;
   if(!p){sOptions.draft=draft;sOptions.setBo5=setBo5;sOptions.pool=pool;}
-  LiveRaceSession::Config c={};memcpy(c.name,sOptions.name,16);c.pin=sOptions.roomCode;c.nonceLow=p+1;c.region=p;c.timing=MSR_TIMING_60HZ;
+  LiveRaceSession::Config c={};memcpy(c.name,sOptions.name,16);c.pin=123456;c.nonceLow=p+1;c.region=p;c.timing=MSR_TIMING_60HZ;
   if(!LiveRaceSession::init(s.session,c,kCallbacks))return false;s.hosting=p==0;s.active=s.started=true;
   TWLiveEndpoint any={};if(p?!LiveRaceSession::startGuest(s.session,endpoints[0],clockMs):!LiveRaceSession::startHost(s.session,any,clockMs))return false;keep();}
  pump();const auto expected=freeRoam?ROAMING:draft?DRAFTING:WAIT_READY;return peers[0].connected&&peers[1].connected&&peers[0].phase==expected&&peers[1].phase==expected&&!peers[0].session.info.pending&&!peers[1].session.info.pending;
@@ -203,8 +203,8 @@ API unsigned scenario(unsigned test){
  }else if(test==12){
   CHECK(race());select(1);MSRHeader h={};h.kind=MSR_READY;h.round=s.round+1;u8 body[12];configPayload(body,NEW_MATCH);
   receivedControl(nullptr,h,body,12);CHECK(s.phase==RUNNING&&s.round==1);keep();
-  finish(0,100);finish(1,120);pump();select(0);Options invalid=sOptions;invalid.port++;
-  CHECK(!configure(invalid));invalid=sOptions;invalid.serverIp[0]++;CHECK(!configure(invalid));
+  finish(0,100);finish(1,120);pump();select(0);Options invalid=sOptions;invalid.name[0]++;
+  CHECK(!configure(invalid));
   CHECK(newMatch());keep();pump();select(1);h.round=2;configPayload(body,NEW_MATCH);
   receivedControl(nullptr,h,body,12);CHECK(s.phase==WAIT_READY&&s.round==2);keep();
  }

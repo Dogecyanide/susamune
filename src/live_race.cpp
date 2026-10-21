@@ -14,7 +14,7 @@
 #include "susamune/iling.hxx"
 #include "susamune/live_ghost.hxx"
 #include "susamune/live_race_session.hxx"
-#include "susamune/live_relay.hxx"
+#include "susamune/live_p2p.hxx"
 #include "susamune/live_transport.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/practice_session.hxx"
@@ -29,19 +29,20 @@
 namespace LiveRace {
 namespace {
 namespace Session = LiveRaceSession;
-namespace Relay = LiveRelay;
 enum Phase { NO_MATCH, WAIT_OFFER, WAIT_READY, RUNNING, ROUND_DONE, MATCH_DONE, ROAMING, DRAFTING };
 enum { OFFER = 1, READY = 2, CANCEL = 3, START = 4, NEW_MATCH = 5, CATALOGUE = 1 };
 enum { DRAFT_BEGIN = 6, DRAFT_NEXT = 7, DRAFT_APPLY = 8, DRAFT_REQUEST = 9 };
 struct Scene { u8 area, episode, parentArea, parentEpisode; };
 struct Runtime {
     Session::Session session;
-    Relay::Client relay;
-    u32 openedMs, networkSeenMs, sentPoseMs, round, stageSeen, sceneEpoch;
+    LiveP2P::Punch punch;
+    LiveP2P::Code own, friendCode;
+    u32 openedMs, networkSeenMs, sentPoseMs, round, stageSeen, sceneEpoch, punchMs;
     Scene localScene, peerScene;
     u8 sceneObservations, localWins, peerWins;
     Phase phase;
-    bool active, hosting, relayStarted, started, connected, localReady, peerReady;
+    bool active, hosting, stunStarted, addressed, friendKnown, unreachable;
+    bool started, connected, localReady, peerReady;
     bool offerNeeded, readyNeeded, startNeeded, cancelNeeded, newMatchNeeded;
     bool localResult, peerResult, resultSent, localEligible, peerEligible;
     bool peerSceneKnown;
@@ -81,8 +82,6 @@ static const char pendingGhost[] = "Save or dismiss the pending ghost first";
 static const char couldNotStart[] = "Could not start - ready again";
 static const char raceLive[] = "Race live - first eligible IL finish";
 static const char requires60Hz[] = "Online prototype requires 60 Hz";
-static const char needServer[] = "Enter the relay server IP and port";
-static const char needRoom[] = "Enter the six-digit room code";
 #if IS_EMULATOR
 static const char networkBusy[] = "Run the Dolphin companion, then retry";
 static const char networkStarting[] = "Starting Dolphin companion network";
@@ -106,15 +105,22 @@ static const char peerLeft[] = "Opponent left";
 static const char connectionLost[] = "Connection lost - reconnect";
 static const char starting[] = "Starting network";
 static const char connected[] = "Connected";
-static const char waitingGuest[] = "Waiting for guest";
-static const char connecting[] = "Connecting to opponent";
-static const char openingRoom[] = "Connecting to relay server";
-static const char noRoom[] = "Room not found - check the code";
-static const char roomFull[] = "Room already has two players";
-static const char serverBusy[] = "Server full - try again shortly";
-static const char roomClosed[] = "Room closed - create or join a new room";
-static const char lobbyExpired[] = "Room expired - create a new room";
-static const char serverLost[] = "Relay server unavailable - reconnect";
+static const char gettingAddress[] = "Getting your address...";
+static const char noAddress[] = "Could not get your address - check the internet";
+static const char waitingFriend[] = "Waiting for friend";
+static const char shareCode[] = "Send your code, then enter your friend's code";
+static const char enterCode[] = "Enter the host's code as Friend's code";
+static const char connecting[] = "Connecting directly...";
+static const char cantConnect[] = "Can't connect directly";
+static const char badCode[] = "Code not valid - check every character";
+static const char needJoinerCode[] = "That is a host code - enter the joiner's code";
+static const char needHostCode[] = "That is a joiner code - enter the host's code";
+static const char ownCode[] = "That is your own code";
+static const char roomFirst[] = "Create or join a room first";
+static const char hintHost[] = "Swap codes: send yours, enter theirs as Friend's code";
+static const char hintJoin[] = "Swap codes: enter the host's, send yours to the host";
+static const char hintSymmetric[] = "Symmetric NAT: the router changes ports per peer; direct play fails";
+static const char hintBlocked[] = "Check both codes. A strict router or firewall may block direct play";
 static const char empty[] = "";
 static const char scoreFormat[] = "Online  %u - %u   Best of %u";
 static const char setScoreFormat[] = "Set %u - %u  |  IL %u - %u";
@@ -129,11 +135,15 @@ static const char setLost[] = "Set lost - host can apply the next setup";
 }
 
 u32 nowMs() { return static_cast<u32>(OSGetTime() / (OS_TIMER_CLOCK / 1000u)); }
-bool sendControl(void *, const Session::Endpoint &, const void *data, unsigned bytes) {
-    return Relay::sendControl(s.relay, data, bytes);
+bool sendControl(void *, const Session::Endpoint &to, const void *data, unsigned bytes) {
+    const bool sent = LiveTransport::sendControl(to, data, bytes);
+    if (sent) ++s.diagnostics.submitted;
+    return sent;
 }
-bool sendPose(void *, const Session::Endpoint &, const void *data, unsigned bytes) {
-    return Relay::sendPose(s.relay, data, bytes);
+bool sendPose(void *, const Session::Endpoint &to, const void *data, unsigned bytes) {
+    const bool sent = LiveTransport::publishPose(to, data, bytes);
+    if (sent) ++s.diagnostics.submitted;
+    return sent;
 }
 bool sameScene(const Scene &a, const Scene &b) {
     return a.area == b.area && a.episode == b.episode &&
@@ -183,7 +193,7 @@ void receivedPose(void *, const MSRHeader &header, const MSRPose &pose, unsigned
     }
 }
 bool validOptions(const Options &value) {
-    if (!value.port || value.roomCode > 999999 || value.entry < 0 || value.entry >= ILing::count() ||
+    if (value.entry < 0 || value.entry >= ILing::count() ||
         value.episode >= 8 || !(value.bestOf == 1 || value.bestOf == 3 || value.bestOf == 5 || value.bestOf == 7) ||
         !value.name[0] || value.name[16] || value.pool > 2 ||
         (value.draft && (value.freeRoam || value.bestOf != 3))) return false;
@@ -487,16 +497,7 @@ void serviceRace() {
 bool begin(bool hosting) {
     if (s.active || !validOptions(sOptions)) return false;
     if (VIGetTvFormat() == VI_PAL) { s.message = Text::requires60Hz; return false; }
-    Session::Endpoint endpoint = {};
-    memcpy(endpoint.ip, sOptions.serverIp, 4); endpoint.port = sOptions.port;
-    if (!TWLiveEndpointValid(&endpoint)) { s.message = Text::needServer; return false; }
-    if (!hosting && sOptions.roomCode < 100000u) { s.message = Text::needRoom; return false; }
-#if IS_EMULATOR
-    const u16 localPort = 0; // Let a local relay or second Dolphin own its own port.
-#else
-    const u16 localPort = sOptions.port;
-#endif
-    if (!LiveTransport::begin(localPort)) { s.message = Text::networkBusy; return false; }
+    if (!LiveTransport::begin(LOCAL_PORT)) { s.message = Text::networkBusy; return false; }
     s = {};
     s.active = true; s.hosting = hosting; s.openedMs = nowMs();
     s.networkSeenMs = s.openedMs;
@@ -554,64 +555,50 @@ void acceptConnection() {
     unsigned length = 0; while (length < 16 && connection.remoteName[length]) ++length;
     LiveGhost::setName(connection.remoteName, length);
 }
-Session::Endpoint serverEndpoint() {
-    Session::Endpoint endpoint = {};
-    memcpy(endpoint.ip, sOptions.serverIp, 4); endpoint.port = sOptions.port;
-    return endpoint;
-}
 bool startSession(u32 now) {
-    if (s.started) return true;
-    const auto relay = Relay::status(s.relay);
-    if (!relay.peerReady) return false;
     Session::Config config = {};
     memcpy(config.name, sOptions.name, 16);
     const u64 stamp = OSGetTime();
     config.nonceHigh = static_cast<u32>(stamp >> 32) ^ 0x4d535231u;
     config.nonceLow = static_cast<u32>(stamp) | 1u;
-    config.pin = relay.roomCode; config.region = SUSAMUNE_GAME_VERSION - 1;
+    // The host's room secret is the PIN for every player in the room.
+    config.pin = s.hosting ? s.own.secret : s.friendCode.secret;
+    config.region = SUSAMUNE_GAME_VERSION - 1;
     config.timing = MSR_TIMING_60HZ;
-    const auto endpoint = serverEndpoint();
+    // The host accepts the first HELLO with its PIN: with an endpoint-independent
+    // filtering NAT the joiner gets in with the host's code alone.
+    const Session::Endpoint anyone = {};
     s.started = Session::init(s.session, config, kCallbacks) &&
-        (s.hosting ? Session::startHost(s.session, endpoint, now) : Session::startGuest(s.session, endpoint, now));
+        (s.hosting ? Session::startHost(s.session, anyone, now) :
+                     Session::startGuest(s.session, s.friendCode.endpoint, now));
     return s.started;
 }
-bool relayControl(void *, const Session::Endpoint &to, const void *data, unsigned bytes) {
-    const bool sent = LiveTransport::sendControl(to, data, bytes);
-    if (sent) ++s.diagnostics.submitted;
-    return sent;
-}
-bool relayPose(void *, const Session::Endpoint &to, const void *data, unsigned bytes) {
-    const bool sent = LiveTransport::publishPose(to, data, bytes);
-    if (sent) ++s.diagnostics.submitted;
-    return sent;
-}
-void receivedRelay(void *, const void *data, unsigned bytes, unsigned now) {
-    // A peer packet can overtake the server's room-ready notice.
-    if (!startSession(now)) return;
-    Session::receivePacket(s.session, serverEndpoint(), data, bytes, now);
-    acceptConnection();
-}
-const Relay::Callbacks kRelayCallbacks = {nullptr, relayControl, relayPose, receivedRelay};
-const char *relayFailure(Relay::Error error) {
-    switch (error) {
-    case Relay::NO_ROOM: return Text::noRoom;
-    case Relay::ROOM_FULL: return Text::roomFull;
-    case Relay::SERVER_BUSY: return Text::serverBusy;
-    case Relay::ROOM_CLOSED: return Text::roomClosed;
-    case Relay::PEER_LEFT: return Text::peerLeft;
-    case Relay::LOBBY_EXPIRED: return Text::lobbyExpired;
-    case Relay::INVALID_CONFIG: return Text::invalidSettings;
-    default: return Text::serverLost;
+// Starts punching once both this player's address and the friend's code are known.
+void usePeer(u32 now) {
+    if (!s.addressed || !s.friendKnown) return;
+    s.punchMs = now; s.unreachable = false;
+    s.message = Text::connecting;
+    if (s.hosting) {
+        LiveP2P::add(s.punch, s.friendCode.endpoint, LiveP2P::JOINER);
+        return;
     }
+    LiveP2P::reset(s.punch, s.friendCode.secret, LiveP2P::JOINER);
+    LiveP2P::add(s.punch, s.friendCode.endpoint, LiveP2P::HOST);
+    Session::stop(s.session);
+    if (!startSession(now)) { s.unreachable = true; s.message = Text::invalidSettings; }
+}
+u32 freshSecret() {
+    const u64 stamp = OSGetTime();
+    u32 mix = static_cast<u32>(stamp) ^ static_cast<u32>(stamp >> 32) * 0x9e3779b1u ^ OSGetTick();
+    mix ^= mix >> 15; mix *= 0x2c1b3c6du; mix ^= mix >> 12;
+    return mix % LiveP2P::SECRET_MAX + 1;
 }
 }
 
 void init() {
     s = {}; sOptions = {}; sStageMarker = 0;
     memcpy(sOptions.name, Text::defaultName, 7);
-    sOptions.serverIp[0] = 147; sOptions.serverIp[1] = 185;
-    sOptions.serverIp[2] = 221; sOptions.serverIp[3] = 213;
-    sOptions.port = 48222; sOptions.bestOf = 3;
+    sOptions.bestOf = 3;
     s.message = Text::offline;
     LiveGhost::reset();
 }
@@ -619,9 +606,8 @@ const Options &options() { return sOptions; }
 bool configure(const Options &options) {
     if (!validOptions(options)) return false;
     if (s.active) {
-        if (!canConfigureRace() || options.port != sOptions.port || options.roomCode != sOptions.roomCode) return false;
+        if (!canConfigureRace()) return false;
         for (unsigned i = 0; i < 17; ++i) if (options.name[i] != sOptions.name[i]) return false;
-        for (unsigned i = 0; i < 4; ++i) if (options.serverIp[i] != sOptions.serverIp[i]) return false;
     }
     sOptions = options;
     bool ended = false;
@@ -633,8 +619,20 @@ bool configure(const Options &options) {
 }
 bool host() { return begin(true); }
 bool join() { return begin(false); }
+const char *enterCode(const char *text) {
+    LiveP2P::Code code;
+    if (!s.active || s.connected) return Text::roomFirst;
+    if (!LiveP2P::decode(text, &code)) return Text::badCode;
+    if (code.role == (s.hosting ? LiveP2P::HOST : LiveP2P::JOINER))
+        return s.addressed && code.secret == s.own.secret ? Text::ownCode :
+            s.hosting ? Text::needJoinerCode : Text::needHostCode;
+    if (s.friendKnown && s.hosting) LiveP2P::reset(s.punch, s.own.secret, LiveP2P::HOST);
+    s.friendCode = code; s.friendKnown = true;
+    usePeer(nowMs());
+    return nullptr;
+}
 void disconnect() {
-    Session::stop(s.session); Relay::stop(s.relay); LiveTransport::stop(); LiveGhost::reset();
+    Session::stop(s.session); LiveStun::cancel(); LiveTransport::stop(); LiveGhost::reset();
     s.active = s.connected = false; s.phase = NO_MATCH;
     s.message = Text::disconnected;
 }
@@ -693,47 +691,64 @@ void update() {
         }
     }
     s.networkError = transport.error;
-    if (transport.state == TW_LIVE_FAILED || (s.relayStarted && transport.state != TW_LIVE_READY) ||
-        (!s.relayStarted && now - s.openedMs > 15000u)) {
+    if (transport.state == TW_LIVE_FAILED || (s.stunStarted && transport.state != TW_LIVE_READY) ||
+        (!s.stunStarted && now - s.openedMs > 15000u)) {
         disconnect(); s.message = Text::networkLost; return;
     }
-    if (!s.relayStarted) {
+    if (!s.stunStarted) {
         if (transport.state != TW_LIVE_READY) return;
-        const u64 stamp = OSGetTime();
-        Relay::init(s.relay, kRelayCallbacks);
-        if (!Relay::begin(s.relay, s.hosting, s.hosting ? 0u : sOptions.roomCode,
-                static_cast<u32>(stamp >> 32) ^ 0x4d524c31u, static_cast<u32>(stamp) | 1u,
-                serverEndpoint(), now)) {
-            disconnect(); s.message = Text::invalidSettings; return;
-        }
-        s.relayStarted = true;
-        s.message = Text::openingRoom;
+        // STUN shares the race socket, so the address it learns is the one peers punch.
+        if (!LiveStun::startShared()) { disconnect(); s.message = Text::networkBusy; return; }
+        s.stunStarted = true;
+        s.message = Text::gettingAddress;
     }
     LiveTransport::Packet packet;
     for (unsigned i = 0; i < 4 && LiveTransport::receive(packet); ++i) {
         ++s.diagnostics.received;
-        if (Relay::receive(s.relay, packet.endpoint, packet.data, packet.bytes, now))
+        if (LiveStun::accept(packet) ||
+            LiveP2P::receive(s.punch, packet.endpoint, packet.data, packet.bytes, now, s.hosting && !s.connected) ||
+            (s.started && Session::receivePacket(s.session, packet.endpoint, packet.data, packet.bytes, now)))
             ++s.diagnostics.accepted;
     }
-    Relay::tick(s.relay, now);
-    const auto relay = Relay::status(s.relay);
-    if (relay.state == Relay::FAILED) {
-        const char *message = relayFailure(relay.error);
-        disconnect(); s.message = message;
-        s.networkError = -1000 - static_cast<s32>(relay.error);
-        return;
+    if (!s.addressed) {
+        const LiveStun::Result &stun = LiveStun::result();
+        if (stun.state == LiveStun::RUNNING) return;
+        if (!stun.answered) { disconnect(); s.message = Text::noAddress; return; }
+        s.own.endpoint = stun.mapped[stun.answered & 1u ? 0 : 1];
+        s.own.secret = freshSecret();
+        s.own.role = s.hosting ? LiveP2P::HOST : LiveP2P::JOINER;
+        s.addressed = true;
+        s.message = s.hosting ? Text::shareCode : Text::enterCode;
+        if (s.hosting) {
+            LiveP2P::reset(s.punch, s.own.secret, LiveP2P::HOST);
+            if (!startSession(now)) { disconnect(); s.message = Text::invalidSettings; return; }
+        }
+        usePeer(now);
     }
-    if (!relay.peerReady) {
-        if (relay.roomCode && s.hosting) s.message = Text::waitingGuest;
-        return;
+    if (!s.connected) {
+        // Both sides send until the session connects; its pings keep the NAT open after.
+        for (unsigned i = 0; i < LiveP2P::MAX_PEERS - 1; ++i) {
+            u8 punch[LiveP2P::PUNCH_BYTES];
+            const unsigned bytes = LiveP2P::due(s.punch, i, now, punch);
+            if (bytes && LiveTransport::sendControl(s.punch.peers[i].endpoint, punch, bytes))
+                ++s.diagnostics.submitted;
+        }
+        if (s.friendKnown && !s.unreachable && now - s.punchMs >= 30000u) {
+            s.unreachable = true; s.message = Text::cantConnect;
+        }
     }
-    if (!startSession(now)) {
-        disconnect(); s.message = Text::invalidSettings; return;
-    }
+    if (!s.started) return;
     Session::tick(s.session, now);
     acceptConnection();
     const auto connection = Session::status(s.session);
     if (connection.state == Session::FAILED || connection.state == Session::STOPPED) {
+        if (!s.connected) {
+            // A host keeps listening; a joiner retries when a code is entered again.
+            s.started = false;
+            if (s.hosting && !startSession(now)) { disconnect(); s.message = Text::invalidSettings; }
+            else if (!s.hosting) { s.unreachable = true; s.message = Text::cantConnect; }
+            return;
+        }
         disconnect(); s.message = connection.error == Session::PEER_LEFT ? Text::peerLeft : Text::connectionLost; return;
     }
     if (!connection.connected) return;
@@ -751,10 +766,18 @@ Status status() {
     out.drafting = s.phase == DRAFTING;
     out.draftPending = s.choiceNeeded || s.choiceSent || Session::status(s.session).pending;
     out.draft = s.draft;
-    const auto relay = Relay::status(s.relay);
-    out.roomCode = s.active && relay.roomCode ? relay.roomCode : sOptions.roomCode;
-    out.connection = !s.active ? Text::offline : !s.relayStarted ? Text::starting : s.connected ? Text::connected :
-        relay.peerReady ? Text::connecting : s.hosting && relay.roomCode ? Text::waitingGuest : Text::openingRoom;
+    out.connection = !s.active ? Text::offline : !s.stunStarted ? Text::starting :
+        !s.addressed ? Text::gettingAddress : s.connected ? Text::connected : s.unreachable ? Text::cantConnect :
+        s.friendKnown || connection.state == Session::ACCEPTING ? Text::connecting : Text::waitingFriend;
+    out.hint = Text::empty;
+    if (s.active && s.addressed && !s.connected) {
+        char code[LiveP2P::CODE_CHARS + 1];
+        if (LiveP2P::encode(s.own, code)) LiveP2P::format(code, out.code);
+        if (s.friendKnown && LiveP2P::encode(s.friendCode, code)) LiveP2P::format(code, out.friendCode);
+        const bool symmetric = LiveStun::result().verdict == LiveStun::DIFFERENT_MAPPING;
+        out.hint = s.unreachable ? (symmetric ? Text::hintSymmetric : Text::hintBlocked) :
+            symmetric ? Text::hintSymmetric : s.hosting ? Text::hintHost : Text::hintJoin;
+    }
     out.race = s.message ? s.message : Text::empty;
     memcpy(out.peerName, connection.remoteName, sizeof(out.peerName));
     out.pingMs = s.connected ? connection.pingMs : ~0u; out.networkError = s.networkError;

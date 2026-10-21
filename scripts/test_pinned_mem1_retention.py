@@ -21,7 +21,7 @@ def fixture(owner="live_race.cpp", name=None):
 
 class Mem1RetentionTests(unittest.TestCase):
     def test_console_whitelist_is_new_exclusive_and_leaves_emulator_policy_unchanged(self):
-        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 51)
+        self.assertEqual(len(extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS), 50)
         for name in extensions.RETAIN_MEM1_CONSOLE_FUNCTIONS:
             owners = [owner for owner, names in extensions.NEW_MODULES.items() if name in names]
             self.assertEqual(len(owners), 1, name)
@@ -35,7 +35,7 @@ class Mem1RetentionTests(unittest.TestCase):
 
     def test_only_audited_new_module_inputs_remain_in_mem1(self):
         self.assertEqual(extensions.RETAIN_MEM1_MODULES,
-                         {"live_race.cpp", "live_race_session.cpp", "live_relay.cpp"})
+                         {"live_race.cpp", "live_race_session.cpp"})
         for owner in extensions.RETAIN_MEM1_MODULES:
             rows, functions, baseline = fixture(owner)
             extensions.mark_inputs(rows, functions, baseline)

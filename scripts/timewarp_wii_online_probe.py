@@ -273,12 +273,11 @@ def package(args):
         raise ValueError('Frozen source snapshot receipt differs')
     snapshot_files = load(snapshot_receipt)['files']
     snapshot_files = {n.replace('\\', '/'): h for n, h in snapshot_files.items()}
-    relay_sources = {}
-    for name in ('src/live_relay.cpp', 'include/susamune/live_relay.hxx',
-                 'include/susamune/live_relay_wire.h'):
+    p2p_sources = {}
+    for name in ('src/live_race_session.cpp', 'include/susamune/live_p2p.hxx'):
         if snapshot_files.get(name) != sha((ROOT / name).read_bytes()):
-            raise ValueError('Checkpoint does not contain the current relay client: ' + name)
-        relay_sources[name] = snapshot_files[name]
+            raise ValueError('Checkpoint does not contain the current P2P client: ' + name)
+        p2p_sources[name] = snapshot_files[name]
     shared = {}
     for name, expected in launcher['source_sha256'].items():
         if sha((ROOT / name).read_bytes()) != expected:
@@ -301,8 +300,8 @@ def package(args):
         if len(entries) != 1:
             raise ValueError('Expected one console build for ' + region)
         entry = entries[0]
-        if not any(row['file'] == 'live_relay.cpp' for row in entry['source_objects']):
-            raise ValueError('Relay client object absent: ' + region)
+        if not any(row['file'] == 'live_race_session.cpp' for row in entry['source_objects']):
+            raise ValueError('P2P client object absent: ' + region)
         manifest = load(link / ('manifest-' + region + '.json'))
         if manifest['target'] != 'console' or manifest['transport_environment'] != 'console':
             raise ValueError('Requires console code: ' + region)
@@ -345,8 +344,8 @@ def package(args):
     meta = ET.fromstring(files[APP + '/meta.xml'])
     meta.find('name').text = TITLE
     meta.find('short_description').text = 'Private practice and online test'
-    meta.find('long_description').text = ('Two-player room-code relay prototype for JP, US and PAL 60 Hz. '
-                                         'A running test server is required; see TESTING.txt. '
+    meta.find('long_description').text = ('Two-player direct (peer-to-peer) online prototype for JP, US and PAL 60 Hz. '
+                                         'Players swap room codes; see TESTING.txt. '
                                          'TAS seeking, Hoverless PBs, collision display, slowdown toggle '
                                          'and experimental faster RAM states. State sharing tools included. '
                                          'New changes require Wii testing.')
@@ -357,7 +356,6 @@ def package(args):
     with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED) as zip_file:
         for name, data in sorted(files.items()):
             zip_file.writestr(name, data)
-    relay = relay_archive(out)
     if (GUIDE_PATH.read_text(encoding='ascii') != guide or
             any((ROOT / 'tools/state_share' / name).read_bytes() != data
                 for name, data in state_share.items())):
@@ -370,8 +368,7 @@ def package(args):
                'testing_guide': artifact(GUIDE_PATH),
                'state_sharing_sources': {name: {'bytes': len(data), 'sha256': sha(data)}
                                          for name, data in state_share.items()},
-               'relay_server': relay,
-               'relay_client_sources': relay_sources,
+               'p2p_client_sources': p2p_sources,
                'shared_headers': shared, 'mods': descriptions, 'installer': installer,
                'files': {n: {'bytes': len(b), 'sha256': sha(b)} for n, b in files.items()}}
     verified_zip(archive, receipt)

@@ -6,11 +6,13 @@ class Menu;
 
 #if TIMEWARP_LIVE_RACING
 namespace LiveRace {
+#if IS_EMULATOR
+enum { LOCAL_PORT = 0 };      // A second Dolphin on this PC needs its own port.
+#else
+enum { LOCAL_PORT = 48222 };  // A fixed port keeps the public mapping stable between tries.
+#endif
 struct Options {
     char name[17];
-    u8 serverIp[4];
-    u16 port;
-    u32 roomCode;
     int entry;
     u8 bestOf, episode;
     bool freeRoam, draft, setBo5;
@@ -26,9 +28,10 @@ struct Diagnostics {
 struct Status {
     const char *connection;
     const char *race;
+    const char *hint;          // Room-code help or why a direct connection failed.
+    char code[20], friendCode[20]; // XXXX-XXXX-XXXX-XXXX while connecting, else empty
     char peerName[17];
     u32 pingMs;
-    u32 roomCode;
     s32 networkError;
     u8 localIp[4];
     u16 localPort;
@@ -48,6 +51,8 @@ bool configure(const Options &options);
 Status status();
 bool host();
 bool join();
+// Takes the friend's room code; returns null or the reason it was refused.
+const char *enterCode(const char *text);
 void disconnect();
 bool ready();
 bool newMatch();

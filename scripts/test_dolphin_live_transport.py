@@ -1,5 +1,7 @@
 """Companion ownership/lifecycle and real loopback UDP with native JP/PAL clients."""
 import ctypes as C
+import _ctypes
+import os
 import importlib.util
 from pathlib import Path
 import socket
@@ -56,13 +58,17 @@ class Memory:
         self.publish(bridge.INDICES, (host.epoch, (write + 1) & bridge.MASK, read, 0, 0, 0))
 
     def receive(self, host):
+        received = self.receive_from(host)
+        return None if received is None else received[1]
+
+    def receive_from(self, host):
         words = bridge.WORDS.unpack(self.read(bridge.INDICES, 32))
         write, read = words[3:5]
         if read == host.rx_write:
             return None
-        _, data = bridge.packet(self.read(bridge.RX + (read & 3) * 288, 288), host.epoch)
+        sender, data = bridge.packet(self.read(bridge.RX + (read & 3) * 288, 288), host.epoch)
         self.publish(bridge.INDICES, (host.epoch, write, (read + 1) & bridge.MASK, 0, 0, 0))
-        return data
+        return sender, data
 
 
 class MailboxTests(unittest.TestCase):
@@ -174,76 +180,122 @@ class MailboxTests(unittest.TestCase):
             self.assertEqual((self.host.sent, self.host.received, self.host.dropped), (1, 1, 2))
 
 
-class NativeRelaySocketTests(unittest.TestCase):
+P2P_HARNESS = r"""
+#define TIMEWARP_LIVE_RACING 1
+#include "susamune/live_p2p.hxx"
+#include "susamune/live_race_session.hxx"
+extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){unsigned char*a=(unsigned char*)d;const unsigned char*b=(const unsigned char*)s;while(n--)*a++=*b++;return d;}
+extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){unsigned char*a=(unsigned char*)d;while(n--)*a++=(unsigned char)c;return d;}
+struct Node {LiveP2P::Punch punch;LiveRaceSession::Session session;unsigned id,poses;};
+struct Datagram {unsigned from,bytes;TWLiveEndpoint to;unsigned char data[256];};
+static Node nodes[2];static Datagram packets[256];static unsigned count;
+static bool queue(void*context,const TWLiveEndpoint&e,const void*data,unsigned bytes){
+ if(count==256||bytes>256)return false;Datagram&p=packets[count++];
+ p.from=((Node*)context)->id;p.to=e;p.bytes=bytes;memcpy(p.data,data,bytes);return true;}
+static void onPose(void*context,const MSRHeader&,const MSRPose&,unsigned){++((Node*)context)->poses;}
+static TWLiveEndpoint loopback(unsigned port){TWLiveEndpoint e={{127,0,0,1},(unsigned short)port,0};return e;}
+#define API extern "C" __declspec(dllexport)
+API void reset(){memset(nodes,0,sizeof(nodes));count=0;}
+// The joiner always has the host's code; the host has the joiner's only when peerPort is set.
+API int start(unsigned id,unsigned pin,unsigned peerPort,unsigned now){
+ Node&n=nodes[id];n.id=id;LiveRaceSession::Config config={};config.name[0]=id?'J':'H';config.pin=pin;
+ config.region=id?2:0;config.timing=MSR_TIMING_60HZ;config.nonceHigh=0xabcdef00+id;config.nonceLow=0x12345678;
+ LiveRaceSession::Callbacks cb={&n,queue,queue,onPose,nullptr};
+ if(!LiveRaceSession::init(n.session,config,cb))return 0;
+ LiveP2P::reset(n.punch,pin,(unsigned char)id);
+ if(peerPort)LiveP2P::add(n.punch,loopback(peerPort),(unsigned char)(id^1));
+ const TWLiveEndpoint anyone={};
+ return id?LiveRaceSession::startGuest(n.session,loopback(peerPort),now):LiveRaceSession::startHost(n.session,anyone,now);}
+API void tick(unsigned id,unsigned now){Node&n=nodes[id];unsigned char punch[LiveP2P::PUNCH_BYTES];
+ if(!n.session.info.connected)for(unsigned i=0;i<LiveP2P::MAX_PEERS-1;++i){
+  const unsigned bytes=LiveP2P::due(n.punch,i,now,punch);if(bytes)queue(&n,n.punch.peers[i].endpoint,punch,bytes);}
+ LiveRaceSession::tick(n.session,now);}
+API void inject(unsigned id,unsigned port,const void*data,unsigned bytes,unsigned now){
+ Node&n=nodes[id];if(!LiveP2P::receive(n.punch,loopback(port),data,bytes,now,id==0))
+  LiveRaceSession::receivePacket(n.session,loopback(port),data,bytes,now);}
+API unsigned queued(){return count;}
+API unsigned from(unsigned i){return packets[i].from;}
+API unsigned toPort(unsigned i){return packets[i].to.port;}
+API unsigned bytes(unsigned i){return packets[i].bytes;}
+API const void*data(unsigned i){return packets[i].data;}
+API void drop(unsigned i){for(unsigned j=i+1;j<count;j++)packets[j-1]=packets[j];--count;}
+API int connected(unsigned id){return nodes[id].session.info.connected;}
+API int open(unsigned id){return LiveP2P::open(nodes[id].punch);}
+API unsigned poses(unsigned id){return nodes[id].poses;}
+API int sendPose(unsigned id){MSRPose p={};p.flags=1;p.x=80;return LiveRaceSession::publishPose(nodes[id].session,p,1);}
+"""
+
+
+class NativeP2PSocketTests(unittest.TestCase):
+    """Production punching and session code through two Dolphin companions on loopback.
+    The companion only admits senders it has sent to, like a port-restricted NAT."""
     @classmethod
     def setUpClass(cls):
-        import test_live_relay
-        cls.native = test_live_relay
-        test_live_relay.RelayTests.setUpClass.__func__(cls)
+        if sys.platform != 'win32':
+            raise unittest.SkipTest('Bundled Windows compiler required')
+        cls.temp = tempfile.TemporaryDirectory(prefix='dolphin-p2p-', dir=ROOT / 'build')
+        cls.addClassCleanup(cls.temp.cleanup)
+        work = Path(cls.temp.name)
+        session = (ROOT / 'src/live_race_session.cpp').read_text()
+        code = P2P_HARNESS + session[session.index('namespace LiveRaceSession {'):session.rindex('#endif')]
+        cpp, dll = work / 'p2p.cpp', work / 'p2p.dll'
+        cpp.write_text(code)
+        result = subprocess.run([str(ROOT / 'toolchain/clang++.exe'),
+            '--target=x86_64-pc-windows-msvc', '-std=c++17', '-shared', '-nostdlib', '-fno-builtin',
+            '-fno-exceptions', '-fno-rtti', '-fuse-ld=lld', '-Wl,/noentry', '-O2',
+            '-I', str(ROOT / 'include'), str(cpp), '-o', str(dll)],
+            capture_output=True, text=True, env={**os.environ, 'TEMP': str(work), 'TMP': str(work)})
+        if result.returncode:
+            raise RuntimeError(result.stdout + result.stderr)
+        cls.lib = C.CDLL(str(dll))
+        cls.addClassCleanup(lambda: _ctypes.FreeLibrary(cls.lib._handle))
+        cls.lib.data.restype = C.c_void_p
 
-    def test_jp_pal_native_handshake_poses_and_old_session_rejection(self):
-        relay = self.native.relay
-        self.lib.reset()
-        server = relay.Relay(secret=b'loopback-fixture')
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.bind(('127.0.0.1', 0))
-            sock.setblocking(False)
-            memories = [Memory(1), Memory(3)]
-            hosts = [bridge.Bridge(m) for m in memories]
-            for host in hosts:
-                self.addCleanup(host.close)
-            for memory, host in zip(memories, hosts):
-                memory.begin(host)
-            target = sock.getsockname()
-            now = 100
-            old_response = None
-
-            def pump():
-                nonlocal old_response
-                for _ in range(20):
-                    while self.lib.queued():
-                        node = getattr(self.lib, 'from')(0)
-                        data = C.string_at(self.lib.data(0), self.lib.bytes(0))
-                        memories[node].tx(hosts[node], target, data)
-                        self.lib.drop(0)
-                        hosts[node].step()
-                    for host in hosts:
-                        host.step()
-                    while True:
-                        try:
-                            data, sender = sock.recvfrom(257)
-                        except BlockingIOError:
-                            break
-                        for endpoint, reply in server.handle(data, sender, now / 1000):
-                            if relay.Packet.decode(reply).kind == relay.DATA:
-                                old_response = reply
-                            sock.sendto(reply, endpoint)
-                    for i, host in enumerate(hosts):
-                        host.step()
-                        while (data := memories[i].receive(host)) is not None:
-                            self.lib.inject(i, data, len(data), now, 0)
-                    time.sleep(0.001)
-
-            self.assertTrue(self.lib.start(0, 0, now))
-            pump()
-            code = self.lib.get(0, 2)
-            self.assertTrue(100000 <= code <= 999999)
-            self.assertTrue(self.lib.start(1, code, now))
-            pump()
+    def run_pair(self, swap):
+        lib = self.lib
+        lib.reset()
+        memories = [Memory(1), Memory(3)]
+        hosts = [bridge.Bridge(m) for m in memories]
+        for host in hosts:
+            self.addCleanup(host.close)
+        for memory, host in zip(memories, hosts):
+            memory.begin(host)
+        ports = [host.socket.getsockname()[1] for host in hosts]
+        now = 100
+        self.assertTrue(lib.start(0, 4242, ports[1] if swap else 0, now))
+        self.assertTrue(lib.start(1, 4242, ports[0], now))
+        for _ in range(200):
+            now += 50
             for i in range(2):
-                self.lib.tick(i, now + 1)
-            pump()
-            self.assertEqual([self.lib.get(i, 4) for i in range(2)], [1, 1])
-            self.assertEqual([self.lib.get(i, 5) for i in range(2)], [2, 0])
-            for i in range(2):
-                self.assertTrue(self.lib.sendPose(i))
-            pump()
-            self.assertEqual([self.lib.get(i, 6) for i in range(2)], [1, 1])
-            self.lib.stop(1)
-            pump()
-            self.assertNotIn(code, server.rooms)
-            self.assertIsNotNone(old_response)
-            self.assertFalse(self.lib.inject(0, old_response, len(old_response), now, 0))
+                lib.tick(i, now)
+            while lib.queued():
+                node = getattr(lib, 'from')(0)
+                data = C.string_at(lib.data(0), lib.bytes(0))
+                memories[node].tx(hosts[node], ('127.0.0.1', lib.toPort(0)), data)
+                lib.drop(0)
+                hosts[node].step()
+            time.sleep(0.001)
+            for i, host in enumerate(hosts):
+                host.step()
+                while (received := memories[i].receive_from(host)) is not None:
+                    sender, data = received
+                    lib.inject(i, sender[1], data, len(data), now)
+            if lib.connected(0) and lib.connected(1):
+                break
+        return hosts
+
+    def test_swapped_codes_punch_through_and_race(self):
+        self.run_pair(swap=True)
+        self.assertEqual([self.lib.connected(i) for i in range(2)], [1, 1])
+        self.assertEqual([self.lib.open(i) for i in range(2)], [1, 1])
+        for i in range(2):
+            self.assertTrue(self.lib.sendPose(i))
+        self.assertGreaterEqual(self.lib.queued(), 2)
+
+    def test_restricted_host_needs_the_joiners_code(self):
+        hosts = self.run_pair(swap=False)
+        self.assertEqual([self.lib.connected(i) for i in range(2)], [0, 0])
+        self.assertGreater(hosts[0].dropped, 0)
 
 
 class PpcHeartbeatTests(unittest.TestCase):
