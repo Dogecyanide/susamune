@@ -67,6 +67,8 @@
 #define SUSAMUNE_ONLINE_NAME_MAGIC 0x534F4E4Du  // 'SONM'
 #define SUSAMUNE_ONLINE_NAME_CFG_OFFSET 0x1EC0u
 #define SUSAMUNE_ONLINE_NAME_SIZE 17u
+#define SUSAMUNE_ONLINE_HIDE_OPPONENT 1u
+#define SUSAMUNE_ONLINE_HIDE_SCORE 2u
 
 struct SusamuneFinishBreakdownCfg {
     unsigned int magic;
@@ -1470,14 +1472,24 @@ typedef char susamune_settings_tail_alignment_check[(SUSAMUNE_CFG_SETTINGS_TAIL_
 typedef char susamune_finish_breakdown_size[(sizeof(struct SusamuneFinishBreakdownCfg) == 32 && __builtin_offsetof(struct SusamuneFinishBreakdownCfg, rgb) == 18 && __builtin_offsetof(struct SusamuneFinishBreakdownCfg, halfSeconds) == 28) ? 1 : -1];
 typedef char susamune_finish_breakdown_alignment[(SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET % 32 == 0 && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE % 32 == 0) ? 1 : -1];
 struct SusamuneOnlineNameCfg {
-    unsigned int magic;
-    char name[28];  // NUL-terminated, at most 16 printable ASCII characters
+    unsigned int magic;               // SUSAMUNE_ONLINE_NAME_MAGIC once a name was saved
+    char name[28];
+    /* Online prototype 19: zero when the ini has none of these keys. */
+    unsigned short secret;            // online_secret: per-console room secret, 1..8191
+    unsigned short secretDay;         // online_day: days since 2000-01-01 when it was made
+    unsigned char last[6];            // online_last: last public endpoint (ip, port big-endian)
+    unsigned char model;              // online_model: 0 Shadow Mario, 1 Piantissimo, 2 Mario
+    unsigned char flags;              // online_flags: SUSAMUNE_ONLINE_HIDE_* bits
+    unsigned char friendCode[8];      // online_friend: ip, port, secret of the last friend
+    unsigned short scoreX, scoreY;    // online_score: score bar position and scale
+    unsigned char scoreScale;
+    unsigned char reserved[39];
 };
 #define SUSAMUNE_ONLINE_NAME_PHYS_PTR \
     ((struct SusamuneOnlineNameCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_ONLINE_NAME_CFG_OFFSET))
 #define SUSAMUNE_ONLINE_NAME_PPC_PTR \
     ((struct SusamuneOnlineNameCfg *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_ONLINE_NAME_CFG_OFFSET))
-typedef char susamune_online_name_gap[(sizeof(struct SusamuneOnlineNameCfg) == 32 && SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET + sizeof(struct SusamuneFinishBreakdownCfg) == SUSAMUNE_ONLINE_NAME_CFG_OFFSET && SUSAMUNE_ONLINE_NAME_CFG_OFFSET % 32 == 0 && SUSAMUNE_ONLINE_NAME_CFG_OFFSET + 32 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
+typedef char susamune_online_name_gap[(sizeof(struct SusamuneOnlineNameCfg) == 96 && SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET + sizeof(struct SusamuneFinishBreakdownCfg) == SUSAMUNE_ONLINE_NAME_CFG_OFFSET && SUSAMUNE_ONLINE_NAME_CFG_OFFSET % 32 == 0 && SUSAMUNE_ONLINE_NAME_CFG_OFFSET + 96 <= SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 typedef char susamune_finish_breakdown_gap[(SUSAMUNE_FINISH_BREAKDOWN_CFG_OFFSET + sizeof(struct SusamuneFinishBreakdownCfg) <= SUSAMUNE_PROGRESS_CFG_OFFSET && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) <= 0x71901000u) ? 1 : -1];
 typedef char susamune_finish_breakdown_staging_gap[(SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) == SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE % 32 == 0 && SUSAMUNE_DOLPHIN_FINISH_BREAKDOWN_STAGE_PPC_BASE + sizeof(struct SusamuneFinishBreakdownCfg) <= 0x71901000u) ? 1 : -1];
 typedef char susamune_settings_tail_dolphin_check[(SUSAMUNE_DOLPHIN_MARIO_COLORS_PPC_BASE + SUSAMUNE_CFG_SETTINGS_TAIL_OFFSET - SUSAMUNE_MARIO_COLORS_CFG_OFFSET == SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE && SUSAMUNE_DOLPHIN_SETTINGS_TAIL_PPC_BASE + SUSAMUNE_CFG_SETTINGS_TAIL_SIZE <= SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];

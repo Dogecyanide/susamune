@@ -111,8 +111,8 @@ unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
         code += keys[:keys.index("};") + 2]
         code += kernel[kernel.index("static const char *const PracticeDisplayKeys"):kernel.index("static u8 ApplyPracticeDisplayStyleKey")]
         for name in ("BuildSectionName", "IsSpace", "Trim", "ParseU8", "ParseU16", "ParseQftU8", "ParseQftRgb", "ClassifySection",
-                     "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "OnlineNameValid", "ApplyOnlineNameKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
-                     "ParseIni", "Emit", "EmitStr", "EmitILEpisodes", "EmitMovementOverlayStyle", "EmitPracticeDisplayStyles", "EmitFailureBannerStyle", "EmitFinishBreakdown"):
+                     "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "OnlineNameValid", "ParseOnlineList", "ApplyOnlineKey", "ApplyOnlineNameKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
+                     "ParseIni", "Emit", "EmitStr", "EmitILEpisodes", "EmitMovementOverlayStyle", "EmitPracticeDisplayStyles", "EmitFailureBannerStyle", "EmitFinishBreakdown", "EmitOnline"):
             code += function(kernel, name)
         for name in ("EmitNativeTimerStyle", "EmitMarioColors", "EmitFluddColors"):
             code += f"template<class... T>void {name}(T...){{}}\n"

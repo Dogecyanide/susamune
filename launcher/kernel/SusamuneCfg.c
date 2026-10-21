@@ -5584,10 +5584,56 @@ static int OnlineNameValid(const char *name)
 	return 0;
 }
 
+/* Comma-separated decimal values, each 0..65535, exactly `count` of them. */
+static int ParseOnlineList(const char *s, u32 *out, u32 count)
+{
+	u32 i;
+	for (i = 0; i < count; ++i)
+	{
+		u32 v = 0, digits = 0;
+		while (*s == ' ') ++s;
+		while (*s >= '0' && *s <= '9' && digits < 6) { v = v * 10 + (u32)(*s++ - '0'); ++digits; }
+		if (!digits || v > 65535) return 0;
+		out[i] = v;
+		while (*s == ' ') ++s;
+		if (i + 1 < count) { if (*s != ',') return 0; ++s; }
+	}
+	return *s == '\0';
+}
+
+/* Online prototype 19: per-console room secret and its day, last public
+ * endpoint, last friend, opponent model, hide flags and score bar layout. */
+static void ApplyOnlineKey(struct SusamuneOnlineNameCfg *cfg, const char *key, const char *text)
+{
+	u32 v[6], i;
+	if (strcmp(key, "online_secret") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] && v[0] <= 8191) cfg->secret = (u16)v[0];
+	} else if (strcmp(key, "online_day") == 0) {
+		if (ParseOnlineList(text, v, 1)) cfg->secretDay = (u16)v[0];
+	} else if (strcmp(key, "online_model") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] <= 2) cfg->model = (u8)v[0];
+	} else if (strcmp(key, "online_flags") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] <= 3) cfg->flags = (u8)v[0];
+	} else if (strcmp(key, "online_score") == 0) {
+		if (ParseOnlineList(text, v, 3) && v[0] <= 640 && v[1] <= 480 && v[2] >= 50 && v[2] <= 200) {
+			cfg->scoreX = (u16)v[0]; cfg->scoreY = (u16)v[1]; cfg->scoreScale = (u8)v[2];
+		}
+	} else if (strcmp(key, "online_last") == 0 || strcmp(key, "online_friend") == 0) {
+		const int last = key[7] == 'l';
+		u8 *out = last ? cfg->last : cfg->friendCode;
+		if (!ParseOnlineList(text, v, last ? 5 : 6)) return;
+		for (i = 0; i < 4; ++i) if (v[i] > 255) return;
+		for (i = 0; i < 4; ++i) out[i] = (u8)v[i];
+		out[4] = (u8)(v[4] >> 8); out[5] = (u8)v[4];
+		if (!last) { out[6] = (u8)(v[5] >> 8); out[7] = (u8)v[5]; }
+	}
+}
+
 static void ApplyOnlineNameKey(const char *key, const char *text)
 {
 	struct SusamuneOnlineNameCfg *cfg = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
 	u32 length = (u32)strlen(text);
+	ApplyOnlineKey(cfg, key, text);
 	if (strcmp(key, "online_name") != 0 || length >= SUSAMUNE_ONLINE_NAME_SIZE ||
 	    !OnlineNameValid(text)) return;
 	memset(cfg->name, 0, sizeof(cfg->name));
@@ -5910,6 +5956,32 @@ static u32 FormatBindMask(char *buf, u16 mask)
 
 // Append to an output file, latching the first error so the caller can check
 // once at the end instead of after every line.
+static void Emit(FIL *f, int *err, const char *s, u32 len);
+
+/* Keys stay absent until the game first sets them, so older files stay as they were. */
+static void EmitOnline(FIL *f, int *err, const struct SusamuneOnlineNameCfg *o)
+{
+	char line[96];
+	if (o->magic != SUSAMUNE_ONLINE_NAME_MAGIC) return;
+	if (o->secret && o->secret <= 8191)
+		Emit(f, err, line, (u32)_sprintf(line, "online_secret = %u\r\nonline_day = %u\r\n",
+			(u32)o->secret, (u32)o->secretDay));
+	if (o->last[0])
+		Emit(f, err, line, (u32)_sprintf(line, "online_last = %u,%u,%u,%u,%u\r\n", (u32)o->last[0],
+			(u32)o->last[1], (u32)o->last[2], (u32)o->last[3], (u32)o->last[4] << 8 | o->last[5]));
+	if (o->friendCode[0])
+		Emit(f, err, line, (u32)_sprintf(line, "online_friend = %u,%u,%u,%u,%u,%u\r\n",
+			(u32)o->friendCode[0], (u32)o->friendCode[1], (u32)o->friendCode[2], (u32)o->friendCode[3],
+			(u32)o->friendCode[4] << 8 | o->friendCode[5], (u32)o->friendCode[6] << 8 | o->friendCode[7]));
+	if (o->model && o->model <= 2)
+		Emit(f, err, line, (u32)_sprintf(line, "online_model = %u\r\n", (u32)o->model));
+	if (o->flags && o->flags <= 3)
+		Emit(f, err, line, (u32)_sprintf(line, "online_flags = %u\r\n", (u32)o->flags));
+	if (o->scoreScale >= 50 && o->scoreScale <= 200 && o->scoreX <= 640 && o->scoreY <= 480)
+		Emit(f, err, line, (u32)_sprintf(line, "online_score = %u,%u,%u\r\n",
+			(u32)o->scoreX, (u32)o->scoreY, (u32)o->scoreScale));
+}
+
 static void Emit(FIL *f, int *err, const char *s, u32 len)
 {
 	UINT wrote;
@@ -6462,6 +6534,7 @@ static void EmitCreationSection(FIL *f, int *err,
 		const struct SusamuneOnlineNameCfg *name = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
 		if (name->magic == SUSAMUNE_ONLINE_NAME_MAGIC && OnlineNameValid(name->name))
 			Emit(f, err, line, (u32)_sprintf(line, "online_name = %s\r\n", name->name));
+		EmitOnline(f, err, name);
 	}
 	EmitFailureBannerStyle(f, err, &cfg->wallkickStyle);
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
