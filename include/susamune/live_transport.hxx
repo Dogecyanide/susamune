@@ -21,8 +21,9 @@ bool receive(Packet &packet);
 void stop();
 }
 
-// Phase-0 NAT probe: one socket sends RFC 5389 Binding Requests to two STUN
-// servers on different IPs and compares the public endpoints they report.
+// NAT probe: one socket sends RFC 5389 Binding Requests to two STUN servers on
+// different IPs and compares the public endpoints they report. Online play uses
+// the reported endpoint as this player's address in the room code.
 namespace LiveStun {
 enum { REQUEST_BYTES = 20, TRANSACTION_BYTES = 12, SERVER_COUNT = 2, ATTEMPTS = 6 };
 enum State { IDLE, RUNNING, DONE, FAILED };
@@ -35,7 +36,13 @@ struct Result {
 void request(unsigned char *out, const unsigned char *transaction);
 // Only a Binding Success Response to this transaction with an IPv4 XOR-MAPPED-ADDRESS.
 bool mapped(const void *data, unsigned bytes, const unsigned char *transaction, TWLiveEndpoint *out);
+// Standalone probe: owns the transport for its run.
 bool start(unsigned short localPort);
+// Probe on a transport the caller already runs and polls; the caller hands
+// every received packet to accept() first.
+bool startShared();
+bool accept(const LiveTransport::Packet &packet);
+void cancel();
 void update();
 const Result &result();
 }

@@ -94,6 +94,14 @@ API void inject(const TWLiveEndpoint *from, const void *data, unsigned bytes) {
 }
 API bool stopped() { return gStopped; }
 API const LiveStun::Result *result() { return &LiveStun::result(); }
+API bool startShared() { return LiveStun::startShared(); }
+API bool accept(const TWLiveEndpoint *from, const void *data, unsigned bytes) {
+    Packet p = Packet{}; p.endpoint = *from; p.bytes = bytes;
+    for (unsigned i = 0; i < bytes; ++i) p.data[i] = static_cast<const unsigned char *>(data)[i];
+    return LiveStun::accept(p);
+}
+API void cancel() { LiveStun::cancel(); }
+API unsigned rxRead() { return gRxRead; }
 '''
         cpp = folder / "fixture.cpp"
         cpp.write_text(code)
@@ -117,6 +125,9 @@ API const LiveStun::Result *result() { return &LiveStun::result(); }
         lib.sentPacket.restype = C.c_void_p
         lib.result.restype = C.c_void_p
         lib.inject.argtypes = [C.POINTER(Endpoint), C.c_char_p, C.c_uint]
+        lib.startShared.restype = C.c_bool
+        lib.accept.argtypes = [C.POINTER(Endpoint), C.c_char_p, C.c_uint]
+        lib.accept.restype = C.c_bool
 
     def parse(self, data, transaction):
         out = Endpoint()
@@ -228,6 +239,44 @@ API const LiveStun::Result *result() { return &LiveStun::result(); }
         result = self.run_probe({}, failure=(5, -116))
         self.assertEqual((result["state"], result["error"]), (3, -116))
         self.assertTrue(self.lib.stopped())
+
+    def test_shared_probe_uses_the_owners_transport_and_packets(self):
+        lib = self.lib
+        lib.reset()
+        self.assertTrue(lib.startShared())
+        self.assertFalse(lib.startShared())
+        self.assertFalse(lib.start(48222))
+        lib.update(1)  # No READY needed: the online session already polls the transport.
+        sent = self.requests()
+        self.assertEqual([s for s, _ in sent], list(SERVERS))
+        lib.inject(self.endpoint(*SERVERS[0]), response(sent[0][1][8:20], "84.83.141.41", 48222), 32)
+        self.assertFalse(lib.accept(self.endpoint("9.9.9.9", 3478), b"\0" * 32, 32))
+        for (server, data) in sent:
+            reply = response(data[8:20], "84.83.141.41", 48222)
+            self.assertTrue(lib.accept(self.endpoint(*server), reply, len(reply)))
+        lib.update(1)
+        result = self.result()
+        self.assertEqual((result["state"], result["verdict"], result["answered"]), (2, 2, 3))
+        self.assertEqual(lib.rxRead(), 0)
+        self.assertFalse(lib.stopped())
+        self.assertFalse(lib.accept(self.endpoint(*SERVERS[0]), reply, len(reply)))
+
+    def test_shared_probe_cancel_and_time_limit(self):
+        lib = self.lib
+        lib.reset()
+        self.assertTrue(lib.startShared())
+        lib.update(1)
+        lib.cancel()
+        self.assertEqual((self.result()["state"], self.result()["error"]), (3, -1))
+        self.assertFalse(lib.stopped())
+        lib.reset()
+        lib.setSendOk(False)
+        self.assertTrue(lib.startShared())
+        for _ in range(40):
+            lib.update(5000)
+        result = self.result()
+        self.assertEqual((result["state"], result["verdict"], result["attempts"]), (2, 0, 0))
+        self.assertFalse(lib.stopped())
 
     @unittest.skipUnless(os.environ.get("MOONSHINE_STUN_LIVE"), "set MOONSHINE_STUN_LIVE=1 for real servers")
     def test_codec_against_real_servers(self):

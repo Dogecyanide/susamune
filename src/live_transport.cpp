@@ -246,6 +246,7 @@ const TWLiveEndpoint kServers[SERVER_COUNT] = {
 Result sResult;
 unsigned char sTransaction[TRANSACTION_BYTES];
 unsigned sStarted, sSent;
+bool sShared;
 bool same(const TWLiveEndpoint &a, const TWLiveEndpoint &b) {
     for (unsigned i = 0; i < 4; ++i) if (a.ip[i] != b.ip[i]) return false;
     return a.port == b.port;
@@ -255,18 +256,16 @@ void transaction(unsigned char *out, unsigned index) {
     out[TRANSACTION_BYTES - 1] ^= static_cast<unsigned char>(index + 1);
 }
 void finish(int error) {
-    LiveTransport::stop();
+    if (!sShared) LiveTransport::stop();
     sResult.error = error;
     sResult.verdict = sResult.answered == (1u << SERVER_COUNT) - 1 ?
         (same(sResult.mapped[0], sResult.mapped[1]) ? SAME_MAPPING : DIFFERENT_MAPPING) :
         sResult.answered ? ONE_REPLY : NO_REPLY;
     sResult.state = error && !sResult.answered ? FAILED : DONE;
 }
-}
-const Result &result() { return sResult; }
-bool start(unsigned short localPort) {
-    if (sResult.state == RUNNING || !LiveTransport::begin(localPort)) return false;
+bool begin(bool shared) {
     sResult = Result{};
+    sShared = shared;
     const OSTime stamp = OSGetTime();
     const unsigned tick = OSGetTick();
     for (unsigned i = 0; i < TRANSACTION_BYTES; ++i)
@@ -276,37 +275,52 @@ bool start(unsigned short localPort) {
     sSent = tick - OSMillisecondsToTicks(500);
     return true;
 }
+}
+const Result &result() { return sResult; }
+bool start(unsigned short localPort) {
+    return sResult.state != RUNNING && LiveTransport::begin(localPort) && begin(false);
+}
+bool startShared() { return sResult.state != RUNNING && begin(true); }
+void cancel() { if (sResult.state == RUNNING && sShared) finish(-1); }
+bool accept(const LiveTransport::Packet &packet) {
+    if (sResult.state != RUNNING) return false;
+    bool server = false;
+    unsigned char id[TRANSACTION_BYTES];
+    for (unsigned i = 0; i < SERVER_COUNT; ++i) {
+        if (!same(packet.endpoint, kServers[i])) continue;
+        server = true;
+        transaction(id, i);
+        if (!(sResult.answered >> i & 1u) && mapped(packet.data, packet.bytes, id, &sResult.mapped[i]))
+            sResult.answered |= 1u << i;
+    }
+    return server;
+}
 void update() {
     if (sResult.state != RUNNING) return;
     const unsigned now = OSGetTick();
-    const LiveTransport::Status status = LiveTransport::poll();
-    unsigned char id[TRANSACTION_BYTES];
-    if (status.state == TW_LIVE_READY) {
-        LiveTransport::Packet packet;
-        for (unsigned n = 0; n < TW_LIVE_RING_COUNT && LiveTransport::receive(packet); ++n)
-            for (unsigned i = 0; i < SERVER_COUNT; ++i) {
-                transaction(id, i);
-                if (!(sResult.answered >> i & 1u) && same(packet.endpoint, kServers[i]) &&
-                    mapped(packet.data, packet.bytes, id, &sResult.mapped[i]))
-                    sResult.answered |= 1u << i;
-            }
-        if (sResult.answered == (1u << SERVER_COUNT) - 1) { finish(0); return; }
-        if (now - sSent < OSMillisecondsToTicks(500)) return;
-        if (sResult.attempts == ATTEMPTS) { finish(0); return; }
-        unsigned char data[REQUEST_BYTES];
-        bool sent = false;
-        for (unsigned i = 0; i < SERVER_COUNT; ++i) {
-            if (sResult.answered >> i & 1u) continue;
-            transaction(id, i);
-            request(data, id);
-            if (LiveTransport::sendControl(kServers[i], data, sizeof(data))) sent = true;
+    if (!sShared) {
+        const LiveTransport::Status status = LiveTransport::poll();
+        if (status.state != TW_LIVE_READY) {
+            // Opening, or a bounded unavailable read; anything else ends the probe.
+            if (status.state == TW_LIVE_FAILED || status.state == TW_LIVE_IDLE || status.state == TW_LIVE_RETIRING ||
+                now - sStarted > OSMillisecondsToTicks(15000)) finish(status.error ? status.error : -1);
+            return;
         }
-        if (sent) { ++sResult.attempts; sSent = now; }
-        return;
+        LiveTransport::Packet packet;
+        for (unsigned n = 0; n < TW_LIVE_RING_COUNT && LiveTransport::receive(packet); ++n) accept(packet);
     }
-    // Opening, or a bounded unavailable read; anything else ends the probe.
-    if (status.state == TW_LIVE_FAILED || status.state == TW_LIVE_IDLE || status.state == TW_LIVE_RETIRING ||
-        now - sStarted > OSMillisecondsToTicks(15000)) finish(status.error ? status.error : -1);
+    if (sResult.answered == (1u << SERVER_COUNT) - 1) { finish(0); return; }
+    if (now - sSent < OSMillisecondsToTicks(500)) return;
+    if (sResult.attempts == ATTEMPTS || now - sStarted > OSMillisecondsToTicks(15000)) { finish(0); return; }
+    unsigned char id[TRANSACTION_BYTES], data[REQUEST_BYTES];
+    bool sent = false;
+    for (unsigned i = 0; i < SERVER_COUNT; ++i) {
+        if (sResult.answered >> i & 1u) continue;
+        transaction(id, i);
+        request(data, id);
+        if (LiveTransport::sendControl(kServers[i], data, sizeof(data))) sent = true;
+    }
+    if (sent) { ++sResult.attempts; sSent = now; }
 }
 }
 // STUN probe end

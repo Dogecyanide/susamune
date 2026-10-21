@@ -1,4 +1,5 @@
 #include "susamune/live_race_session.hxx"
+#include "susamune/live_p2p.hxx"
 
 #if TIMEWARP_LIVE_RACING
 namespace LiveRaceSession {
@@ -311,4 +312,207 @@ bool receivePacket(Session &s, const Endpoint &from, const void *data,
     return true;
 }
 }
+
+// P2P codec begin
+namespace LiveP2P {
+namespace {
+const char kAlphabet[] = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const unsigned kMagic = 0x4d535031u; // "MSP1"
+unsigned nextKey(unsigned &key) {
+    key ^= key << 13; key ^= key >> 17; key ^= key << 5;
+    return key;
+}
+unsigned checksum(const Code &code) {
+    const unsigned char bytes[] = {code.endpoint.ip[0], code.endpoint.ip[1], code.endpoint.ip[2],
+        code.endpoint.ip[3], static_cast<unsigned char>(code.endpoint.port >> 8),
+        static_cast<unsigned char>(code.endpoint.port), static_cast<unsigned char>(code.secret >> 16),
+        static_cast<unsigned char>(code.secret >> 8), static_cast<unsigned char>(code.secret), code.role};
+    unsigned hash = 0x811c9dc5u;
+    for (unsigned i = 0; i < sizeof(bytes); ++i) hash = (hash ^ bytes[i]) * 0x01000193u;
+    return (hash ^ hash >> 11 ^ hash >> 22) & 0x7ffu;
+}
+bool usable(const Code &code) {
+    return code.role <= JOINER && code.secret && code.secret <= SECRET_MAX && code.endpoint.port &&
+        !code.endpoint.reserved && code.endpoint.ip[0] && code.endpoint.ip[0] < 224;
+}
+// Bytes 0-5 hold the endpoint under a keystream seeded by the secret; bytes
+// 6-9 hold secret, role and checksum under a fixed mask.
+void mask(unsigned char *bytes, unsigned secret, unsigned role) {
+    unsigned key = (secret * 0x9e3779b1u) ^ kMagic ^ role;
+    for (unsigned i = 0; i < 6; ++i) bytes[i] ^= static_cast<unsigned char>(nextKey(key) >> 7);
+}
+const unsigned kWordMask = 0xa5c3963cu;
+bool samePeer(const TWLiveEndpoint &a, const TWLiveEndpoint &b) {
+    return a.port == b.port && a.ip[0] == b.ip[0] && a.ip[1] == b.ip[1] &&
+        a.ip[2] == b.ip[2] && a.ip[3] == b.ip[3];
+}
+unsigned read32(const unsigned char *p) {
+    return static_cast<unsigned>(p[0]) << 24 | static_cast<unsigned>(p[1]) << 16 | p[2] << 8 | p[3];
+}
+void write32(unsigned char *p, unsigned value) {
+    p[0] = static_cast<unsigned char>(value >> 24); p[1] = static_cast<unsigned char>(value >> 16);
+    p[2] = static_cast<unsigned char>(value >> 8); p[3] = static_cast<unsigned char>(value);
+}
+}
+
+bool encode(const Code &code, char *out) {
+    if (!usable(code)) return false;
+    unsigned char bytes[10];
+    for (unsigned i = 0; i < 4; ++i) bytes[i] = code.endpoint.ip[i];
+    bytes[4] = static_cast<unsigned char>(code.endpoint.port >> 8);
+    bytes[5] = static_cast<unsigned char>(code.endpoint.port);
+    mask(bytes, code.secret, code.role);
+    write32(bytes + 6, (code.secret << 12 | static_cast<unsigned>(code.role) << 11 | checksum(code)) ^ kWordMask);
+    for (unsigned i = 0; i < CODE_CHARS; ++i) {
+        unsigned value = 0;
+        for (unsigned bit = 5 * i; bit < 5 * i + 5; ++bit)
+            value = value << 1 | (bytes[bit >> 3] >> (7 - (bit & 7)) & 1u);
+        out[i] = kAlphabet[value];
+    }
+    out[CODE_CHARS] = 0;
+    return true;
+}
+
+bool decode(const char *text, Code *out) {
+    unsigned char bytes[10] = {};
+    unsigned count = 0;
+    for (; *text; ++text) {
+        char c = *text;
+        if (c == '-' || c == ' ') continue;
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        unsigned value = 0;
+        while (kAlphabet[value] && kAlphabet[value] != c) ++value;
+        if (!kAlphabet[value] || count == CODE_CHARS) return false;
+        for (unsigned k = 0; k < 5; ++k) {
+            const unsigned bit = 5 * count + k;
+            if (value >> (4 - k) & 1u) bytes[bit >> 3] |= static_cast<unsigned char>(0x80u >> (bit & 7));
+        }
+        ++count;
+    }
+    if (count != CODE_CHARS) return false;
+    const unsigned word = read32(bytes + 6) ^ kWordMask;
+    Code code = {};
+    code.secret = word >> 12;
+    code.role = static_cast<unsigned char>(word >> 11 & 1u);
+    mask(bytes, code.secret, code.role);
+    for (unsigned i = 0; i < 4; ++i) code.endpoint.ip[i] = bytes[i];
+    code.endpoint.port = static_cast<unsigned short>(bytes[4] << 8 | bytes[5]);
+    if (!usable(code) || (word & 0x7ffu) != checksum(code)) return false;
+    *out = code;
+    return true;
+}
+
+void format(const char *code, char *out) {
+    for (unsigned i = 0, o = 0; i < CODE_CHARS; ++i) {
+        if (i && !(i & 3)) out[o++] = '-';
+        out[o++] = code[i];
+        out[o] = 0;
+    }
+}
+
+void reset(Punch &punch, unsigned pin, unsigned char self) {
+    punch = Punch{};
+    punch.pin = pin;
+    punch.self = self;
+}
+
+int add(Punch &punch, const TWLiveEndpoint &endpoint, unsigned char participant) {
+    int empty = -1;
+    for (unsigned i = 0; i < MAX_PEERS - 1; ++i) {
+        const Peer &peer = punch.peers[i];
+        if (peer.state && samePeer(peer.endpoint, endpoint)) return static_cast<int>(i);
+        if (!peer.state && empty < 0) empty = static_cast<int>(i);
+    }
+    if (empty < 0 || participant >= MAX_PEERS || participant == punch.self) return -1;
+    Peer &peer = punch.peers[empty];
+    peer = Peer{};
+    peer.endpoint = endpoint;
+    peer.endpoint.reserved = 0;
+    peer.participant = participant;
+    peer.state = PUNCHING;
+    return empty;
+}
+
+unsigned due(Punch &punch, unsigned index, unsigned nowMs, unsigned char *packet) {
+    if (index >= MAX_PEERS - 1) return 0;
+    Peer &peer = punch.peers[index];
+    if (!peer.state || (peer.sent && nowMs - peer.lastSentMs < PUNCH_INTERVAL_MS)) return 0;
+    peer.sent = 1;
+    peer.lastSentMs = nowMs;
+    write32(packet, kMagic);
+    write32(packet + 4, punch.pin);
+    packet[8] = punch.self;
+    packet[9] = peer.state == OPEN ? 1 : 0;   // "I hear you"
+    packet[10] = packet[11] = 0;
+    return PUNCH_BYTES;
+}
+
+unsigned roster(const Punch &punch, unsigned index, unsigned char *packet) {
+    unsigned bytes = PUNCH_BYTES;
+    if (punch.self != HOST || index >= MAX_PEERS - 1 || punch.peers[index].state != OPEN) return 0;
+    for (unsigned i = 0; i < MAX_PEERS - 1; ++i) {
+        const Peer &peer = punch.peers[i];
+        if (i == index || peer.state != OPEN) continue;
+        unsigned char *entry = packet + bytes;
+        for (unsigned k = 0; k < 4; ++k) entry[k] = peer.endpoint.ip[k];
+        entry[4] = static_cast<unsigned char>(peer.endpoint.port >> 8);
+        entry[5] = static_cast<unsigned char>(peer.endpoint.port);
+        entry[6] = peer.participant;
+        entry[7] = 0;
+        bytes += ROSTER_ENTRY_BYTES;
+    }
+    if (bytes == PUNCH_BYTES) return 0;
+    write32(packet, kMagic);
+    write32(packet + 4, punch.pin);
+    packet[8] = HOST;
+    packet[9] = 2;   // roster
+    packet[10] = static_cast<unsigned char>((bytes - PUNCH_BYTES) / ROSTER_ENTRY_BYTES);
+    packet[11] = 0;
+    return bytes;
+}
+
+bool receive(Punch &punch, const TWLiveEndpoint &from, const void *data, unsigned bytes,
+             unsigned nowMs, bool adopt) {
+    const unsigned char *p = static_cast<const unsigned char *>(data);
+    if (bytes < PUNCH_BYTES || read32(p) != kMagic) return false;
+    if (read32(p + 4) != punch.pin || p[8] >= MAX_PEERS || p[8] == punch.self || p[9] > 2 || p[11])
+        return true;
+    int slot = -1;
+    for (unsigned i = 0; i < MAX_PEERS - 1; ++i)
+        if (punch.peers[i].state && samePeer(punch.peers[i].endpoint, from)) slot = static_cast<int>(i);
+    if (p[9] == 2) {
+        if (p[8] != HOST || slot < 0 || punch.peers[slot].state != OPEN ||
+            bytes != PUNCH_BYTES + ROSTER_ENTRY_BYTES * p[10]) return true;
+        for (const unsigned char *entry = p + PUNCH_BYTES; entry < p + bytes; entry += ROSTER_ENTRY_BYTES) {
+            const TWLiveEndpoint peer = {{entry[0], entry[1], entry[2], entry[3]},
+                static_cast<unsigned short>(entry[4] << 8 | entry[5]), 0};
+            if (peer.port && peer.ip[0] && peer.ip[0] < 224 && entry[6] != HOST && !entry[7])
+                add(punch, peer, entry[6]);
+        }
+        return true;
+    }
+    if (bytes != PUNCH_BYTES || p[10]) return true;
+    if (slot < 0 && adopt) {
+        // The player reached us from another port than its code says (its NAT maps
+        // per destination): punch back to where it really is.
+        for (unsigned i = 0; i < MAX_PEERS - 1; ++i)
+            if (punch.peers[i].state == PUNCHING && punch.peers[i].participant == p[8]) slot = static_cast<int>(i);
+        if (slot >= 0) { punch.peers[slot].endpoint = from; punch.peers[slot].endpoint.reserved = 0; }
+        else slot = add(punch, from, p[8]);
+    }
+    if (slot < 0) return true;
+    Peer &peer = punch.peers[slot];
+    peer.state = OPEN;
+    peer.lastHeardMs = nowMs;
+    peer.participant = p[8];
+    return true;
+}
+
+bool open(const Punch &punch) {
+    for (unsigned i = 0; i < MAX_PEERS - 1; ++i)
+        if (punch.peers[i].state == OPEN) return true;
+    return false;
+}
+}
+// P2P codec end
 #endif
