@@ -37,7 +37,7 @@ struct State {
     u32 first, count, sequence, sceneEpoch, originMs, token, latchedMs;  // ring of samples
     // Local minus remote clock along the fastest path seen, the average lateness
     // beyond it, and the playback delay that follows that lateness.
-    u32 offset, jitter, delayMs;  // delayMs: added to kMinDelayMs
+    u32 offset, jitter, delayMs, creep;  // delayMs: added to kMinDelayMs
     bool received, visible, timed;
     char name[17];
 };
@@ -127,13 +127,15 @@ bool submit(const Ghost::VisualState &pose, u32 sequence, u32 remoteMs,
     if (newScene || delta(remoteMs, at(s.count - 1).remoteMs) > 1000 ||
         discontinuity(pose, at(s.count - 1).pose)) newTimeline(remoteMs);
     if (s.count == kSamples) { ++s.first; --s.count; }
-    // The fastest packet sets the clock offset; it creeps up 1 ms per later
-    // packet so a new route or clock drift is followed.
+    // The fastest packet sets the clock offset; it creeps up 1 ms per 32 later
+    // packets so a new route or clock drift is followed. Creeping every packet
+    // slowed playback ~3% and then snapped it forward, mostly between 25 and
+    // 30 Hz senders (PAL and NTSC).
     const u32 lag = receivedMs - remoteMs;
     if (!s.timed || delta(lag, s.offset) < 0) { s.offset = lag; s.timed = true; }
     const u32 late = lag - s.offset;
     s.jitter = (s.jitter * 7 + (late > 67u ? 67u : late)) / 8;
-    if (late) ++s.offset;
+    if (late && !(++s.creep & 31)) ++s.offset;
     Sample &slot = at(s.count++);
     slot.pose = pose; slot.remoteMs = remoteMs; slot.receivedMs = receivedMs;
     slot.input = input ? *input : SusamunePracticeInput{};

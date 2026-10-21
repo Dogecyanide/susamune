@@ -355,7 +355,7 @@ API unsigned scenario(unsigned test){
   char code[20];codeOf(kJoiner,77,0,code);CHECK(enterCode(code)==nullptr);
   CHECK(savedBlock.friendCode[0]==198&&savedBlock.friendCode[4]==(50123>>8)&&savedBlock.friendCode[7]==77);
  }else if(test==22){
-  // Read-only round clock: a retry 1001 ms after the first attempt adds 240 qf.
+  // Read-only round clock: a retry 1001 ms after the first attempt adds 120 qf.
   s.phase=RUNNING;gQFTTimer.serial=5;sampleAttempt(100);CHECK(x.attemptSeen&&x.firstAttemptMs==100);
   sampleAttempt(500);CHECK(x.lastAttemptMs==100);gQFTTimer.serial=6;sampleAttempt(1101);CHECK(x.lastAttemptMs==1101&&x.firstAttemptMs==100);
   s.phase=WAIT_READY;gQFTTimer.serial=7;sampleAttempt(2000);CHECK(x.lastAttemptMs==1101);

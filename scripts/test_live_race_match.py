@@ -254,7 +254,7 @@ API unsigned scenario(unsigned test){
   CHECK(race());
   // Deaths and resets keep the clock: the second attempt starts 1001 ms after the first.
   select(0);++gQFTTimer.serial;sampleAttempt(5000);++gQFTTimer.serial;sampleAttempt(6001);
-  onILResult(2,100,true);CHECK(s.localQf==100+240);keep();
+  onILResult(2,100,true);CHECK(s.localQf==100+120);keep();
   select(1);++gQFTTimer.serial;sampleAttempt(7000);onILResult(2,100,true);CHECK(s.localQf==100);keep();
  }
  return 0;

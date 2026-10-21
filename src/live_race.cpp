@@ -815,8 +815,8 @@ void onILResult(int entry, s32 qf, bool eligible) {
     // Resets, deaths and loads keep the round clock running: add the wall time
     // from the first attempt of the round to the start of this one.
     if (x.attemptSeen && qf >= 0) {
-        // 239.76 quarter-frames per second; u32 holds about 4.9 hours.
-        qf += static_cast<s32>((x.lastAttemptMs - x.firstAttemptMs) * 240u / 1001u);
+        // A QF is 1001/120 ms (4 per 29.97 fps game frame); u32 holds about 9.9 hours.
+        qf += static_cast<s32>((x.lastAttemptMs - x.firstAttemptMs) * 120u / 1001u);
     }
     s.localQf = qf; s.localEligible = eligible && qf >= 0;
     s.localResult = true;
@@ -1010,7 +1010,7 @@ void drawScore(Menu *menu, const Prefs &prefs) {
     // The opponent finished first: their time, in the score bar, away from QFT.
     const char *message = s.message ? s.message : Text::empty;
     if (s.phase == RUNNING && s.peerResult && !s.localResult && s.peerEligible) {
-        const u32 cs = static_cast<u32>(s.peerQf) * 1001u / 2400u;
+        const u32 cs = static_cast<u32>(s.peerQf) * 1001u / 1200u;  // QF to centiseconds
         snprintf(opponent, sizeof(opponent), Text2::opponentFormat, cs / 6000u, cs / 100u % 60u, cs % 100u);
         message = opponent;
     }
