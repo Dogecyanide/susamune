@@ -7,6 +7,19 @@ from dol_c_kit import Project
 import patches
 
 
+MEM2_HEADER = Path(__file__).parent.parent / "include" / "susamune" / "mem2_map.h"
+
+
+def mem2_hex_define(name):
+    """Read one hex constant from the shared MEM2 map (also used by the pinned linker)."""
+    match = re.search(
+        r"^#define\s+{}\s+(0x[0-9a-fA-F]+)u?\s*$".format(re.escape(name)),
+        MEM2_HEADER.read_text(), re.M)
+    if not match:
+        raise RuntimeError("{} not found as a hex constant in {}".format(name, MEM2_HEADER))
+    return int(match.group(1), 16)
+
+
 def check_shared_layout():
     """Keep the build-side layout in lockstep with the shared launcher header."""
     header = Path(__file__).parent.parent / "include" / "susamune" / "mod_bin.h"
@@ -41,17 +54,6 @@ def check_shared_layout():
             raise RuntimeError(
                 "{} is {:#x} in {} but {:#x} in patches.py".format(
                     name, header_value, header, value))
-
-    mem2_header = header.parent / "mem2_map.h"
-    mem2_text = mem2_header.read_text()
-    def mem2_hex_define(name):
-        match = re.search(
-            r"^#define\s+{}\s+(0x[0-9a-fA-F]+)u?\s*$".format(
-                re.escape(name)), mem2_text, re.M)
-        if not match:
-            raise RuntimeError("{} not found as a hex constant in {}".format(
-                name, mem2_header))
-        return int(match.group(1), 16)
 
     staged_max = mem2_hex_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE")
     vault_offset = mem2_hex_define("SUSAMUNE_GHOST_ASSET_VAULT_OFFSET")
