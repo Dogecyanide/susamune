@@ -81,15 +81,9 @@ class ModBinTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ceiling"):
             packer.build_mod_bin(value)
 
-    def test_jp_file_cannot_overlap_immutable_translation(self):
-        low = 0x58000
-        upper = packer.JP_STAGED_FILE_MAX_SIZE - low - 64 - 8
-        value = manifest(low, upper, low, upper)
-        self.assertEqual(len(packer.build_mod_bin(value)), packer.JP_STAGED_FILE_MAX_SIZE)
-        value['segments'][1]['code'] += '00000000'
-        value['segments'][1]['memory_size'] += 4
-        with self.assertRaisesRegex(ValueError, 'Japanese UI'):
-            packer.build_mod_bin(value)
+    def test_jp_shares_the_regional_ceiling(self):
+        # The Japanese UI asset moved to the patch-file tail, outside staging.
+        self.assertEqual(packer.JP_STAGED_FILE_MAX_SIZE, packer.STAGED_FILE_MAX_SIZE)
 
     def test_host_rejects_holes_overflow_wrong_revision(self):
         for change in (lambda m: m["segments"][0].update(memory_size=0x58004),

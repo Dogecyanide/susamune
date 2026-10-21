@@ -112,8 +112,7 @@ static inline int SusamuneModHeaderValid(const struct SusamuneModHeader *h,
         unsigned int code = SusamuneModQuickWord(p + 16);
         unsigned int count = SusamuneModQuickWord(p + 20);
         unsigned int memory = SusamuneModQuickWord(p + 28);
-        unsigned int ceiling = gameId == SUSAMUNE_MOD_GAME_ID_JP
-            ? SUSAMUNE_JP_UI_OFFSET : SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE;
+        unsigned int ceiling = SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE;
         if (!SUSAMUNE_MOD_BASE_FOR_GAME_ID(gameId) ||
             SusamuneModQuickWord(p + 8) != gameId ||
             SusamuneModQuickWord(p + 12) != SUSAMUNE_MOD_BASE_FOR_GAME_ID(gameId) ||

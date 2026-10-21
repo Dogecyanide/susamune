@@ -101,8 +101,7 @@ void SusamuneLoadMod(u32 gameID)
 
 	sizeOnDisk = fd.obj.objsize;
 	if (sizeOnDisk < SUSAMUNE_MOD_HEADER_SIZE ||
-		sizeOnDisk > SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE ||
-		(gameID == 0x474D534Au && sizeOnDisk > SUSAMUNE_JP_UI_OFFSET))
+		sizeOnDisk > SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE)
 	{
 		gprintf("Susamune: %s has a bad size (%llu)\r\n", path,
 			(unsigned long long)sizeOnDisk);

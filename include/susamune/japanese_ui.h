@@ -3,18 +3,14 @@
 
 #include "mem2_map.h"
 
-#define SUSAMUNE_JP_UI_OFFSET 0x00086700u
-#define SUSAMUNE_JP_UI_SIZE 0x00018900u
-#define SUSAMUNE_JP_UI_PPC_BASE (SUSAMUNE_MEM2_MODBIN_PPC_BASE + SUSAMUNE_JP_UI_OFFSET)
+/* Immutable after the loader writes it, like the patch prefix before it, so it
+ * survives warm resets; it no longer shares the mod staging window. */
+#define SUSAMUNE_JP_UI_PPC_BASE (SUSAMUNE_JP_UI_PHYS_BASE + 0x80000000u)
 #define SUSAMUNE_JP_UI_DOLPHIN_BASE 0x71C00000u
 #define SUSAMUNE_JP_UI_DISC_OFFSET 0x004AA8C0u
 #define SUSAMUNE_JP_UI_MAGIC 0x4D4A5549u
 #define SUSAMUNE_JP_UI_VERSION 1u
 #define SUSAMUNE_JP_UI_FILENAME "ja_ui.bin"
-
-#if SUSAMUNE_JP_UI_OFFSET + SUSAMUNE_JP_UI_SIZE != SUSAMUNE_GHOST_ASSET_VAULT_OFFSET
-#error Japanese UI asset must end at the immutable model vault
-#endif
 
 static inline unsigned int SusamuneJpUiWord(const unsigned char *p)
 {

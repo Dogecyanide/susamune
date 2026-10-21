@@ -149,7 +149,7 @@ static inline int SusamuneModV4Validate(const void *source, unsigned int fileSiz
     unsigned int i, order;
     const unsigned char *p = (const unsigned char *)source;
     const unsigned int base = SusamuneModV4Base(game);
-    const unsigned int ceiling = game == SUSAMUNE_MOD_GAME_ID_JP ? SUSAMUNE_JP_UI_OFFSET : SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE;
+    const unsigned int ceiling = SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE;
     if (!base || flags > 1 || sourceVma != SusamuneModV4Stage(flags) ||
         fileSize < 128u || fileSize > ceiling || (fileSize & 31u) ||
         !SusamuneModQuickRange(source, fileSize)) return SUSAMUNE_MOD_V4_INVALID;

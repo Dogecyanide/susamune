@@ -27,7 +27,7 @@ CAPS = ((0, shared_define("SUSAMUNE_MOD_MEM1_WORKING_CAP_SIZE")),
 ARENA = shared_define("SUSAMUNE_MOD_REGION_SIZE") + shared_define("SUSAMUNE_DEBUG_STACK_SIZE")
 STAGE = shared_define("SUSAMUNE_MEM2_MODBIN_PPC_BASE", "mem2_map.h")
 CEILING = shared_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE", "mem2_map.h")
-JP_CEILING = shared_define("SUSAMUNE_JP_UI_OFFSET", "japanese_ui.h")
+JP_CEILING = CEILING
 BLOCK = 0x20000
 
 

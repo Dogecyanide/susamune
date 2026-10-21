@@ -311,14 +311,13 @@ class ModV4Tests(unittest.TestCase):
     def test_regional_ceiling_exact_and_above(self):
         game = GAMES["jp"]
         segments = [dict(offset=0, raw=bytes(0x57F80), memory_size=0x57F80),
-                    dict(offset=0x80000, raw=bytes(0x2E700), memory_size=0x2E700)]
+                    dict(offset=0x80000, raw=bytes(0x2E704), memory_size=0x2E704)]
+        # Past the old JP-only 0x86700 ceiling: JP now shares the US/PAL one.
+        import mod_transport
+        self.assertEqual(mod_transport.JP_CEILING, mod_transport.CEILING)
         data = build_mod_v4(game, segments, [])
-        self.assertEqual(len(data), 0x86700)
+        self.assertEqual(len(data), 0x86720)
         self.assertEqual(self.h.run(data)[0], 0)
-        segments[1]["raw"] += bytes(4)
-        segments[1]["memory_size"] += 4
-        with self.assertRaises(ValueError):
-            build_mod_v4(game, segments, [])
         self.reject(data + bytes(32))
 
     def test_packer_rejects_wrong_cold_vma_bad_raw_and_wrong_quick(self):

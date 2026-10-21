@@ -81,7 +81,7 @@ __declspec(dllexport) unsigned cleared(void){for(unsigned i=0;i<64;i++)if(SUSAMU
         self.assertEqual(self.lib.result(5),ord('M'))
         self.assertEqual(self.lib.result(2),2)
         for game,errors,size in ((0x474D5345,0,96),(0x474D5350,0,96),(0,0,96),
-                                 (0x474D534A,1,96),(0x474D534A,2,96),(0x474D534A,0,0x86004)):
+                                 (0x474D534A,1,96),(0x474D534A,2,96),(0x474D534A,0,0x9F004)):
             self.lib.run(1,game,errors,size)
             self.assertEqual(self.lib.result(0),0)
             self.assertEqual(self.lib.cleared(),1)

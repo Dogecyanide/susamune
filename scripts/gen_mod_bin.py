@@ -41,7 +41,8 @@ HEADER_SIZE = shared_int_define("SUSAMUNE_MOD_HEADER_SIZE", "mod_bin.h")
 # that cannot be staged. Read the shared C header rather than duplicating it.
 STAGING_WINDOW_SIZE = shared_int_define("SUSAMUNE_MEM2_MODBIN_SIZE")
 STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE")
-JP_STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_JP_UI_OFFSET", "japanese_ui.h")
+# The Japanese UI asset lives after the patch-file prefix, so JP shares the ceiling.
+JP_STAGED_FILE_MAX_SIZE = STAGED_FILE_MAX_SIZE
 BLOB_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_BLOB_MAX_SIZE", "mod_bin.h")
 
 
