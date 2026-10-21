@@ -6511,7 +6511,6 @@ Menu::Menu() : mText(gpSystemFont->mFont, " ") {
     mNumTabs     = 0;
     mTabFirst    = 0;
     mToastBuf[0] = '\0';
-    sMenuRuntime.search = {};
     mToastFrames = 0;
     mSaveWatch   = false;
     mCRepeatFrames = 0;
@@ -7105,6 +7104,8 @@ Menu *gMenu = nullptr;
 #endif
 void menuInit() {
     gMenu = new (sMenuBuf) Menu();
+    // Not in the constructor: its frozen input precedes timer-facing helpers.
+    sMenuRuntime.search = {};
 #if TIMEWARP_LIVE_RACING
     static_assert(Menu::kMaxTabs >= 10, "online tab exceeds debug menu capacity");
     gMenu->mTabs[gMenu->mNumTabs++] = new (sMenuRuntime.online) OnlineTab();
