@@ -56,7 +56,12 @@ typedef long long OSTime;
 unsigned gTick;
 OSTime OSGetTime() { return 0x0123456789abcdefll + gTick; }
 unsigned OSGetTick() { return gTick; }
-#define OSMillisecondsToTicks(ms) ((ms) * 10u)
+// The real conversion on a 32-bit OSTick; 40,000 Hz bus keeps the older tests at 10 ticks/ms.
+unsigned gBusClock = 40000;
+#undef OS_TIMER_CLOCK
+#define OS_TIMER_CLOCK (gBusClock / 4u)
+#undef OSMillisecondsToTicks
+#define OSMillisecondsToTicks(val) (((val) * (OS_TIMER_CLOCK)) / 1000u)
 namespace LiveTransport {
 Status gStatus; bool gBegun, gStopped, gSendOk = true;
 Packet gTx[64]; unsigned gTxCount;
@@ -80,7 +85,8 @@ API void request(unsigned char *out, const unsigned char *id) { LiveStun::reques
 API bool mapped(const void *data, unsigned bytes, const unsigned char *id, TWLiveEndpoint *out) {
     return LiveStun::mapped(data, bytes, id, out);
 }
-API void reset() { LiveStun::sResult = LiveStun::Result{}; gStatus = Status{}; gBegun = gStopped = false; gSendOk = true; gTxCount = gRxCount = gRxRead = 0; gTick = 1000; }
+API void reset() { LiveStun::sResult = LiveStun::Result{}; gStatus = Status{}; gBegun = gStopped = false; gSendOk = true; gTxCount = gRxCount = gRxRead = 0; gTick = 1000; gBusClock = 40000; }
+API void setBusClock(unsigned hz) { gBusClock = hz; }
 API void setState(unsigned state, int error) { gStatus.state = state; gStatus.error = error; }
 API void setSendOk(bool ok) { gSendOk = ok; }
 API bool start(unsigned short port) { return LiveStun::start(port); }
@@ -122,6 +128,7 @@ API unsigned rxRead() { return gRxRead; }
         lib.setSendOk.argtypes = [C.c_bool]
         lib.setState.argtypes = [C.c_uint, C.c_int]
         lib.update.argtypes = [C.c_uint]
+        lib.setBusClock.argtypes = [C.c_uint]
         lib.sentPacket.restype = C.c_void_p
         lib.result.restype = C.c_void_p
         lib.inject.argtypes = [C.POINTER(Endpoint), C.c_char_p, C.c_uint]
@@ -309,6 +316,26 @@ API unsigned rxRead() { return gRxRead; }
         result = self.result()
         self.assertEqual((result["state"], result["verdict"], result["attempts"]), (2, 0, 0))
         self.assertFalse(lib.stopped())
+
+    def test_shared_probe_keeps_its_time_at_console_bus_clocks(self):
+        # Wii 51ce99c: "STUN no reply ... tries 0" because 15000 ms wrapped to under a frame.
+        lib = self.lib
+        for bus in (162_000_000, 243_000_000):
+            with self.subTest(bus=bus):
+                lib.reset()
+                lib.setBusClock(bus)
+                frame = bus // 4 * 33 // 1000
+                self.assertTrue(lib.startShared())
+                for _ in range(90):  # About 3 s of 30 fps frames.
+                    lib.update(frame)
+                result = self.result()
+                self.assertEqual(result["state"], 1)
+                self.assertGreaterEqual(result["attempts"], 5)
+                for _ in range(450):  # Past the 15 s limit.
+                    lib.update(frame)
+                result = self.result()
+                self.assertEqual((result["state"], result["verdict"], result["attempts"]), (2, 0, 6))
+                self.assertEqual(lib.sent(), 12)
 
     @unittest.skipUnless(os.environ.get("MOONSHINE_STUN_LIVE"), "set MOONSHINE_STUN_LIVE=1 for real servers")
     def test_codec_against_real_servers(self):

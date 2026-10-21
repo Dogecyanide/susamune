@@ -247,6 +247,9 @@ Result sResult;
 unsigned char sTransaction[TRANSACTION_BYTES];
 unsigned sStarted, sSent;
 bool sShared, sReady;
+// OSMillisecondsToTicks multiplies before dividing and wraps u32 past ~106 ms on a
+// 40.5 MHz timer (~70 ms at 60.75 MHz): 15 s became 47 ms (12 at 243 MHz), so STUN quit before sending.
+unsigned ticks(unsigned ms) { return ms * (OS_TIMER_CLOCK / 1000u); }
 bool same(const TWLiveEndpoint &a, const TWLiveEndpoint &b) {
     for (unsigned i = 0; i < 4; ++i) if (a.ip[i] != b.ip[i]) return false;
     return a.port == b.port;
@@ -272,7 +275,7 @@ bool begin(bool shared) {
         sTransaction[i] = static_cast<unsigned char>((i < 8 ? stamp >> (i * 8) : tick >> ((i - 8) * 8)) ^ (0x5d * i));
     sResult.state = RUNNING;
     sStarted = tick;
-    sSent = tick - OSMillisecondsToTicks(500);
+    sSent = tick - ticks(500);
     return true;
 }
 }
@@ -306,19 +309,19 @@ void update() {
             // failed transport, or IDLE after READY, ends the probe early.
             if (status.state == TW_LIVE_FAILED || status.state == TW_LIVE_RETIRING ||
                 (status.state == TW_LIVE_IDLE && sReady) ||
-                now - sStarted > OSMillisecondsToTicks(sReady ? 15000 : 30000)) finish(status.error ? status.error : -1);
+                now - sStarted > ticks(sReady ? 15000 : 30000)) finish(status.error ? status.error : -1);
             return;
         }
         if (!sReady) {
             // The probe's own 15 s and the first request start once the address is known.
-            sReady = true; sStarted = now; sSent = now - OSMillisecondsToTicks(500);
+            sReady = true; sStarted = now; sSent = now - ticks(500);
         }
         LiveTransport::Packet packet;
         for (unsigned n = 0; n < TW_LIVE_RING_COUNT && LiveTransport::receive(packet); ++n) accept(packet);
     }
     if (sResult.answered == (1u << SERVER_COUNT) - 1) { finish(0); return; }
-    if (now - sSent < OSMillisecondsToTicks(500)) return;
-    if (sResult.attempts == ATTEMPTS || now - sStarted > OSMillisecondsToTicks(15000)) { finish(0); return; }
+    if (now - sSent < ticks(500)) return;
+    if (sResult.attempts == ATTEMPTS || now - sStarted > ticks(15000)) { finish(0); return; }
     unsigned char id[TRANSACTION_BYTES], data[REQUEST_BYTES];
     bool sent = false;
     for (unsigned i = 0; i < SERVER_COUNT; ++i) {
