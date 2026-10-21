@@ -38,7 +38,13 @@ namespace SavestateManager {bool diskBusy(){return false;}}
 namespace TasProject {bool busy(){return false;}}
 namespace WarpWheel {bool shown(){return false;}bool promptPending(){return false;}}
 enum {SETTING_DISABLE_WARPS};
-struct Settings {bool getBool(int){return false;}}gSettings;
+static unsigned dirtyMarks,stores;
+struct Settings {bool getBool(int){return false;}void markDirty(){++dirtyMarks;}}gSettings;
+struct SusamuneOnlineNameCfg {unsigned magic;char name[28];};
+#define SUSAMUNE_ONLINE_NAME_MAGIC 0x534F4E4Du
+static SusamuneOnlineNameCfg savedBlock;static bool savedAvailable;
+static void DCStoreRange(void*,unsigned){++stores;}
+extern "C" int memcmp(const void*p,const void*q,unsigned long long n){auto*a=(const u8*)p;auto*b=(const u8*)q;for(;n--;++a,++b)if(*a!=*b)return *a<*b?-1:1;return 0;}
 class Menu {public:void hide(){}};static Menu*gMenu;
 namespace ILing {
 int count(){return 16;}
@@ -61,6 +67,7 @@ static bool transmit(void*,const TWLiveEndpoint&to,const void*p,unsigned n){
         code += match[match.index("namespace LiveRace {"):match.index("u32 nowMs()")]
         code += r'''
 bool sendControl(void*,const Session::Endpoint&to,const void*p,unsigned n){return transmit(nullptr,to,p,n);}
+SusamuneOnlineNameCfg*savedName(){return savedAvailable?&savedBlock:nullptr;}
 bool sendPose(void*,const Session::Endpoint&,const void*,unsigned){return true;}
 void receivedPose(void*,const MSRHeader&,const MSRPose&,unsigned){}
 '''
@@ -169,6 +176,12 @@ API unsigned scenario(unsigned test){
  }else if(test==7){
   select(0);s.active=false;Options option=sOptions;for(unsigned i=2;i<16;++i)option.name[i]='x';option.name[1]=0;
   CHECK(configure(option));for(unsigned i=1;i<17;++i)CHECK(!sOptions.name[i]);
+  CHECK(!dirtyMarks&&!stores);  // a kernel without the name block keeps nothing
+  savedAvailable=true;savedBlock={};CHECK(configure(option));
+  CHECK(savedBlock.magic==SUSAMUNE_ONLINE_NAME_MAGIC&&savedBlock.name[0]==sOptions.name[0]&&!savedBlock.name[1]);
+  CHECK(dirtyMarks==1&&stores==1);CHECK(configure(option));CHECK(dirtyMarks==1&&stores==1);
+  option.name[1]='y';CHECK(configure(option));CHECK(savedBlock.name[1]=='y'&&savedBlock.name[2]=='x'&&!savedBlock.name[16]&&dirtyMarks==2);
+  savedAvailable=false;
  }else if(test==8){
   CHECK(setReady(1));blocked[1]=1;CHECK(setReady(1));
   CHECK(!peers[1].localReady);blocked[1]=0;CHECK(setReady(0));pump();
