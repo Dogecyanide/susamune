@@ -133,7 +133,7 @@ __declspec(dllexport) unsigned adler(unsigned seed,const unsigned char*p,unsigne
  return mz_adler32(seed,p,size);
 }
 __declspec(dllexport) int referenceQuick(void *w,const char *source,char *dest,int size,int capacity) {
- return LZ4_compress_fast_extState(w,source,dest,size,capacity,1);
+ return LZ4_compress_fast_extState(w,source,dest,size,capacity,8);
 }
 void *memcpy(void *d,const void *s,__SIZE_TYPE__ n) {
     unsigned char *o=(unsigned char*)d;const unsigned char *i=(const unsigned char*)s;
@@ -184,6 +184,10 @@ __declspec(dllexport) int unpack(void *w,unsigned int ws,const StateCodec::ReadS
 __declspec(dllexport) int unpackVerified(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
  unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
  return StateCodec::decompressVerified(w,ws,s,n,d,dn,raw,adler);
+}
+__declspec(dllexport) int unpackExperimental(void *w,unsigned int ws,const StateCodec::ReadSpan *s,
+ unsigned int n,const StateCodec::WriteSpan *d,unsigned int dn,unsigned int raw,unsigned int adler) {
+ return StateCodec::decompressExperimental(w,ws,s,n,d,dn,raw,adler);
 }
 __declspec(dllexport) int checkStream(void*w,unsigned int ws,const StateCodec::StreamSource*s,
  unsigned int raw,unsigned int adler){return StateCodec::validateStream(w,ws,*s,raw,adler);}
@@ -273,6 +277,7 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
                                    C.POINTER(Span), C.c_uint, C.c_uint, C.c_uint]
         cls.lib.unpackPolicy.argtypes = cls.lib.unpack.argtypes + [C.POINTER(C.c_uint)]
         cls.lib.unpackVerified.argtypes = cls.lib.unpack.argtypes
+        cls.lib.unpackExperimental.argtypes = cls.lib.unpack.argtypes
         cls.lib.unpackVerifiedPolicy.argtypes = cls.lib.unpackPolicy.argtypes
         cls.lib.unpackDirect.argtypes = cls.lib.unpack.argtypes + [C.POINTER(DirectPolicy)]
         cls.lib.unpackRetained.argtypes = cls.lib.unpackPolicy.argtypes
@@ -548,7 +553,7 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
             (self.work.ptr+1,self.work.size,source,1,INVALID),
             (self.work.ptr,self.work.size-1,source,1,WORKSPACE),
             (self.work.ptr,self.work.size,source,0,INVALID),
-            (self.work.ptr,self.work.size,source,65,INVALID),
+            (self.work.ptr,self.work.size,source,258,INVALID),
             (self.work.ptr,self.work.size,C.cast(self.work.ptr,C.POINTER(Span)),1,INVALID),
             (self.work.ptr,self.work.size,(Span*1)(Span(self.work.ptr,1)),1,INVALID),
         ]
@@ -715,6 +720,24 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
                                           output_sizes=[capacity])
             self.assertEqual((status, decoded), (INVALID, bytes([0xA7]) * capacity))
 
+    def test_shared_quick_root_at_maximum_input_span_count(self):
+        header = C.create_string_buffer(struct.pack('>II', 0x4d534c34, QUICK_BLOCK))
+        block = b'q' * QUICK_BLOCK
+        encoded = C.create_string_buffer(struct.pack('>II', QUICK_BLOCK, QUICK_BLOCK | 0x80000000) + block)
+        source = (Span * 257)(Span(C.addressof(header), 8),
+                             *(Span(C.addressof(encoded), QUICK_BLOCK + 8) for _ in range(256)))
+        raw = block * 256
+        target = Guarded(len(raw))
+        output = (Span * 1)(Span(target.ptr, target.size))
+        self.assertEqual(self.lib.check(self.work.ptr, self.work.size, source, 257,
+                                       len(raw), zlib.adler32(raw)), SUCCESS)
+        self.assertEqual(self.lib.unpackVerified(self.work.ptr, self.work.size, source, 257,
+                         output, 1, len(raw), zlib.adler32(raw)), SUCCESS)
+        self.assertEqual(target.data(), raw)
+        self.assertTrue(target.guards() and self.work.guards())
+        self.assertEqual(self.lib.check(self.work.ptr, self.work.size, source, 258,
+                                       len(raw), zlib.adler32(raw)), INVALID)
+
     def test_arguments_overlap_and_workspace_bounds(self):
         data = b"guard test" * 100
         source = self.source(data)
@@ -723,7 +746,7 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
                 (self.work.ptr + 1, self.work.size, 1, INVALID),
                 (self.work.ptr, self.work.size - 1, 1, WORKSPACE),
                 (self.work.ptr, self.work.size, 0, INVALID),
-                (self.work.ptr, self.work.size, 65, INVALID)):
+                (self.work.ptr, self.work.size, 258, INVALID)):
             self.lib.pack(pointer, size, source, count, None, C.byref(result))
             self.assertEqual(result.status, expected)
         for bad in ((Span * 1)(Span(self.work.ptr, 4)),
@@ -1033,6 +1056,33 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
             self.assertTrue(target.guards())
             if status == SUCCESS:
                 self.assertEqual(target.data(), data)
+
+    def test_experimental_quick_decode_keeps_malformed_frame_and_lz4_bounds(self):
+        data = random.Random(93).randbytes(QUICK_BLOCK) + b'A' * (QUICK_BLOCK + 17)
+        measured, _ = self.pack(self.source(data), quick=True)
+        _, encoded = self.pack(self.source(data), [measured.compressed], quick=True)
+        cases = [(encoded, SUCCESS)]
+        cases += [(encoded[:n], COMMIT) for n in (1, 7, 8, 15, 16, QUICK_BLOCK + 17, len(encoded) - 1)]
+        cases += [(encoded + b'x', COMMIT)]
+        for offset, value in ((0, 0), (4, 0), (8, 0xffffffff), (12, 0xffffffff)):
+            changed = bytearray(encoded); struct.pack_into('>I', changed, offset, value)
+            cases.append((bytes(changed), COMMIT))
+        for item, expected in cases:
+            with self.subTest(size=len(item), prefix=item[:16]):
+                source = self.source(item, sorted({1, min(7, len(item)), len(item)}))
+                target = Guarded(len(data)); output = (Span * 1)(Span(target.ptr, target.size))
+                status = self.lib.unpackExperimental(self.work.ptr, self.work.size, source, len(source),
+                    output, 1, len(data), zlib.adler32(data) ^ 1)
+                self.assertEqual(status, expected)
+                if status == SUCCESS: self.assertEqual(target.data(), data)
+                self.assertTrue(target.guards()); self.assertTrue(self.work.guards())
+        for packed in (b'\x10A\x02\x00', b'\x10A\x01', b'\xf0\xff', b'\x1fA\x01\x00\xff'):
+            item = struct.pack('>IIII', 0x4D534C34, QUICK_BLOCK, 100, len(packed)) + packed
+            source = self.source(item, [15, 16]); target = Guarded(100)
+            output = (Span * 1)(Span(target.ptr, target.size))
+            self.assertEqual(self.lib.unpackExperimental(self.work.ptr, self.work.size, source, len(source),
+                output, 1, 100, 0), COMMIT)
+            self.assertTrue(target.guards()); self.assertTrue(self.work.guards())
 
     def test_quick_corrupt_lz4_offsets_and_extensions_never_reach_destinations(self):
         payloads = (b'\x10A\x00\x00', b'\x10A\x02\x00', b'\x10A\x01',

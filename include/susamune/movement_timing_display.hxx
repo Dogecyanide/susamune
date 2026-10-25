@@ -9,7 +9,7 @@ void onStageSetup();
 void onSavestateLoaded();
 void beforeDirect(bool active);
 void afterDirect(bool active);
-// Shares the wallkick layout; true reserves it for this popup.
+// Each result has its own layout; true means at least one was drawn.
 bool draw(Menu *menu);
 
 }  // namespace MovementTimingDisplay

@@ -34,7 +34,8 @@ class PracticeControlsTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, signature) for signature in (
             'extern "C" void susamunePracticeClampPad(', "bool observerTransition()", "void cameraStick(",
-            "f32 cameraScale(", "f32 cameraSpeedScale()", "void resetCameraMotion()", "void smoothCameraGroup(", "bool smoothCameraInput(", "void updateCamera()"))
+            "f32 cameraScale(", "f32 cameraSpeedScale()", "void resetCameraMotion()", "void smoothCameraGroup(", "bool smoothCameraInput(", "bool cameraUpdateStage()", "void updateCamera()",
+            "void scheduleCameraUpdate()", "void prepareCameraUpdate("))
         source.write_text(r'''
 #include "susamune/practice_input.h"
 #include "Dolphin/PAD.h"
@@ -70,6 +71,11 @@ extern "C" void PADClamp(PADStatus *pad) {
     }
 }
 static bool sFreeCamera,sModal,sCameraWaitButtons,sControl,sNormal,sPaused;
+static bool sCameraUpdatePending,sFreeze,sHaveRead=true,sReady=true;
+struct TMarDirector { enum {STATE_STAGE_EXIT_2=12}; u32 mGameState,mCurState; } director={0,4}, replacement={0,4};
+static TMarDirector *gpMarDirector=&director;
+static void *gpCamera=&director,*sCamera=&director;
+static u32 sCameraGeneration,sStageGeneration;
 static bool sStepQueued,sSpinClockwise;
 static u8 sSpinRemaining,sMenuAction;
 static const u8 kSpinFrames=9;
@@ -80,7 +86,8 @@ float sinf(float x) { return sine(x); }
 float cosf(float x) { return cosine(x); }
 float retailSquareRoot(float x) { return squareRoot(x); }
 float Clamp(float x,float lo,float hi) { return x<lo?lo:(x>hi?hi:x); }
-bool controlStage() { return sControl; }
+bool controlStage() { return sControl && (gpMarDirector->mCurState==4 || gpMarDirector->mCurState==5); }
+bool stageReady() { return sReady; }
 bool normalStage() { return sNormal; }
 void message(const char *) {}
 void invalidate() { ++invalidations; }
@@ -131,6 +138,28 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
     out[4]=sCameraView.target.y;out[5]=sCameraView.target.z;
     out[6]=sYaw;out[7]=sPitch;out[8]=sCameraWaitButtons;
 }
+extern "C" __declspec(dllexport) void phaseReset() {
+    resetCameraMotion();sCameraView={};sYaw=sPitch=0;sPhysical={};sPhysical.stickY=80;
+    sCameraSticks[0]=sCameraSticks[2]=sCameraSticks[3]=0;sCameraSticks[1]=80;
+    sCameraWaitButtons=false;gSettings.choice=gSettings.sensitivity=2;gSettings.smoothing=gSettings.reverse=0;
+    director={0,4};replacement={0x4000,4};gpMarDirector=&director;gpCamera=sCamera=&director;
+    sCameraGeneration=sStageGeneration=0;sReady=true;
+}
+extern "C" __declspec(dllexport) void phaseQueue(unsigned flags) {
+    director.mCurState=4;sControl=!(flags&4);sFreeCamera=!(flags&1);sModal=flags&2;
+    sHaveRead=!(flags&8);sPhysical.error=(flags&16)?-1:0;sFreeze=flags&32;
+    scheduleCameraUpdate();
+}
+extern "C" __declspec(dllexport) void phaseMovement(unsigned last,unsigned state,unsigned changed) {
+    director.mGameState=last?0x4000:0;director.mCurState=state;
+    if(changed==1)gpMarDirector=&replacement;
+    if(changed==2)++sStageGeneration;
+    if(changed==3)sCamera=nullptr;
+    if(changed==4)sReady=false;
+    prepareCameraUpdate(&director);
+}
+extern "C" __declspec(dllexport) float phaseView(){return sCameraView.position.z;}
+extern "C" __declspec(dllexport) unsigned phasePending(){return sCameraUpdatePending;}
 ''', encoding="ascii")
         library = source.with_suffix(".dll")
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
@@ -148,6 +177,60 @@ extern "C" __declspec(dllexport) void camera(float yaw,unsigned choice,unsigned 
         cls.lib.smoothingFrame.argtypes = [C.c_uint, C.POINTER(Input), C.c_uint, C.POINTER(C.c_float)]
         cls.lib.camera.argtypes = [C.c_float, C.c_uint, C.c_uint, C.POINTER(Input),
                                   C.POINTER(C.c_float)]
+        cls.lib.phaseQueue.argtypes = [C.c_uint]
+        cls.lib.phaseMovement.argtypes = [C.c_uint] * 3
+        cls.lib.phaseView.restype = C.c_float
+
+    def test_camera_advance_follows_previous_draw_and_precedes_next_viewcalc(self):
+        self.lib.phaseReset()
+        self.lib.phaseQueue(0)
+        self.assertEqual(self.lib.phaseView(), 0)  # Initial draw keeps prepared view.
+        self.lib.phaseMovement(0, 4, 0)
+        self.assertEqual(self.lib.phaseView(), 0)
+        self.lib.phaseMovement(1, 4, 0)
+        self.assertEqual(self.lib.phaseView(), 20)
+        self.lib.phaseMovement(1, 4, 0)
+        self.assertEqual(self.lib.phaseView(), 20)
+        self.lib.phaseQueue(0)
+        self.assertEqual(self.lib.phaseView(), 20)  # Next draw matches that viewCalc.
+        self.lib.phaseMovement(1, 4, 0)
+        self.assertEqual(self.lib.phaseView(), 40)
+
+    def test_camera_prep_accepts_borrowed_pause_and_active_step(self):
+        for frozen, state in ((32, 12), (0, 4), (0, 5)):
+            self.lib.phaseReset()
+            self.lib.phaseQueue(frozen)
+            self.lib.phaseMovement(1, state, 0)
+            self.assertEqual(self.lib.phaseView(), 20)
+            self.assertFalse(self.lib.phasePending())
+        self.lib.phaseReset()
+        self.lib.phaseQueue(0)
+        self.lib.phaseMovement(1, 12, 0)
+        self.assertEqual(self.lib.phaseView(), 0)
+
+    def test_camera_prep_rejects_inactive_modal_no_input_and_changed_owner(self):
+        for flags in (1, 2, 4, 8, 16):
+            self.lib.phaseReset()
+            self.lib.phaseQueue(flags)
+            self.lib.phaseMovement(1, 4, 0)
+            self.assertEqual(self.lib.phaseView(), 0)
+            self.assertFalse(self.lib.phasePending())
+        for changed in (1, 2, 3, 4):
+            self.lib.phaseReset()
+            self.lib.phaseQueue(32)
+            self.lib.phaseMovement(1, 12, changed)
+            self.assertEqual(self.lib.phaseView(), 0)
+            self.assertFalse(self.lib.phasePending())
+        self.lib.phaseReset()
+
+    def test_camera_hook_order_preserves_retail_preparation_phase(self):
+        path = ROOT / "src/practice_session.cpp"
+        before = function_source(path, "void beforeDirect(")
+        movement = function_source(path, 'extern "C" void susamunePracticeMovement(')
+        self.assertIn("scheduleCameraUpdate();", before)
+        self.assertNotIn("updateCamera();", before)
+        self.assertLess(movement.index("(sMovementTail)(director)"),
+                        movement.index("prepareCameraUpdate(director)"))
 
     def vector_step(self, value, target, step):
         out = (C.c_float * len(value))(*value)

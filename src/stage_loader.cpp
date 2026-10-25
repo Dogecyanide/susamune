@@ -19,10 +19,19 @@
 #include "susamune/settings.hxx"
 #include "susamune/susamune_cfg.h"
 #include "susamune/warp_wheel.hxx"
+#if TIMEWARP_LIVE_RACING
+#include "susamune/live_playlist.hxx"
+#include "susamune/live_race.hxx"
+#endif
 
 namespace {
 
 typedef JUtility::TColor Color;
+#if TIMEWARP_LIVE_RACING
+const LivePlaylist::Plan *sOnlinePlan;
+#endif
+const char kCompletedTotalLabel[]
+    __attribute__((section(".rodata.stage_loader_completed_total"))) = "Total time";
 
 enum SessionState {
     STATE_INACTIVE,
@@ -291,6 +300,9 @@ bool shinePublishPending() {
 }
 
 void resetSession() {
+#if TIMEWARP_LIVE_RACING
+    sOnlinePlan = nullptr;
+#endif
     sRuntime.practiceLoaded = 0;
     sRuntime.totalObservedActiveQf = 0;
     sRuntime.completedQfTotal = 0;
@@ -571,7 +583,12 @@ bool requestCurrent() {
     if (entry < 0 || entry >= ILing::count()) return false;
 
     sRuntime.state = STATE_REQUESTING;
-    if (!WarpWheel::requestILStart(entry)) {
+    const bool requested =
+#if TIMEWARP_LIVE_RACING
+        sOnlinePlan ? ILing::startOnline(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
+#endif
+        WarpWheel::requestILStart(entry);
+    if (!requested) {
         sRuntime.state = STATE_BLOCKED;
         sRuntime.outcome = OUTCOME_WARPS_DISABLED;
         sRuntime.lastEntry = (u8)entry;
@@ -592,7 +609,12 @@ bool requestCurrentPostSave() {
     if (entry < 0 || entry >= ILing::count()) return false;
 
     sRuntime.state = STATE_REQUESTING;
-    if (!WarpWheel::requestILStart(entry)) {
+    const bool requested =
+#if TIMEWARP_LIVE_RACING
+        sOnlinePlan ? ILing::startOnline(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
+#endif
+        WarpWheel::requestILStart(entry);
+    if (!requested) {
         sRuntime.state = STATE_BLOCKED;
         sRuntime.outcome = OUTCOME_WARPS_DISABLED;
         sRuntime.lastEntry = (u8)entry;
@@ -655,7 +677,11 @@ void finishPlaylistBest() {
         return;
     }
     sRuntime.finalPlaylistQf = (u32)sRuntime.totalObservedActiveQf;
-    if (!sPlaylistsAvailable || sPlaylistSavePending ||
+    if (
+#if TIMEWARP_LIVE_RACING
+        sOnlinePlan ||
+#endif
+        !sPlaylistsAvailable || sPlaylistSavePending ||
         !sRuntime.playlistPbEligible ||
         sRuntime.activePlaylistId >= SUSAMUNE_STAGE_PLAYLIST_TOTAL_COUNT) {
         return;
@@ -720,6 +746,11 @@ void queueSuccess(int resultEntry, s32 qf) {
         sRuntime.retryFrames = 0;
         sRuntime.state = STATE_COMPLETE;
         finishPlaylistBest();
+#if TIMEWARP_LIVE_RACING
+        if (sOnlinePlan) LiveRace::onPlaylistResult(
+            sRuntime.finalPlaylistQf == SUSAMUNE_STAGE_PLAYLIST_BEST_UNSET ? -1 : (s32)sRuntime.finalPlaylistQf,
+            sRuntime.playlistPbEligible != 0);
+#endif
         sRuntime.modalWaitForShineDemo = normalShine;
         sRuntime.modalState = MODAL_PENDING;
     } else {
@@ -946,7 +977,12 @@ void drawFinalModal(Menu *menu) {
         drawModalRow(menu, rowY, "Average time", value);
     }
     rowY += 34;
-    drawModalRow(menu, rowY, "Golds", "--");
+    if (loader) {
+        formatDuration(sRuntime.completedQfTotal, value, sizeof(value));
+        drawModalRow(menu, rowY, kCompletedTotalLabel, value);
+    } else {
+        drawModalRow(menu, rowY, "Golds", "--");
+    }
 
     const char *hint = "A / B / START  Continue";
     menu->drawText(hint, 320 - Menu::textWidth(hint, 12) / 2,
@@ -1270,6 +1306,47 @@ int customPlaylistEntryCount(int slot) {
 u32 customPlaylistLastError() {
     return sPlaylistLastError;
 }
+
+#if TIMEWARP_LIVE_RACING
+bool copyOnlinePlaylist(LivePlaylist::Plan *out) {
+    if (!out || !sRuntime.draftCount || sPlaylistSavePending) return false;
+    *out = {};
+    out->count = sRuntime.draftCount;
+    out->fastAny = sRuntime.draftPlaylistId == 0;
+    for (unsigned i = 0; i < out->count; ++i) {
+        out->items[i].entry = sQueues.draft[i];
+        out->items[i].episode = ILing::selectedEpisode(sQueues.draft[i]) |
+            (actionAt(sQueues.draftActions, i) ? 0x80u : 0u);
+    }
+    return true;
+}
+bool onlinePlaylistActive() { return sOnlinePlan != nullptr; }
+bool startOnlinePlaylist(const LivePlaylist::Plan &plan) {
+    if (!plan.count || plan.count > QUEUE_CAPACITY || Ghost::observerPreparing() ||
+        Ghost::observerStatsSuppressed()) return false;
+    for (unsigned i = 0; i < plan.count; ++i) {
+        const unsigned entry = plan.items[i].entry;
+        if (entry >= (unsigned)ILing::count() || (plan.items[i].episode & 0x78u)) return false;
+        if ((plan.items[i].episode & 0x80u) &&
+            entry != SUSAMUNE_STAGE_PLAYLIST_ACTION_BIANCO_1 &&
+            entry != SUSAMUNE_STAGE_PLAYLIST_ACTION_GELATO_1 &&
+            entry != SUSAMUNE_STAGE_PLAYLIST_ACTION_PIANTA_5) return false;
+    }
+    resetSession();
+    sOnlinePlan = &plan; // Online owns this immutable plan through the race.
+    for (unsigned i = 0; i < plan.count; ++i) {
+        sQueues.active[i] = plan.items[i].entry;
+        setAction(sRuntime.activeActions, i, (plan.items[i].episode & 0x80u) != 0);
+    }
+    sRuntime.activeCount = sRuntime.goal = plan.count;
+    sRuntime.mode = MODE_LOADER;
+    sRuntime.activePlaylistId = plan.fastAny ? 0 : kInvalidPlaylistId;
+    sRuntime.playlistPbEligible = 1;
+    if (requestCurrent()) return true;
+    resetSession();
+    return false;
+}
+#endif
 
 bool startLoader() {
     if (!sRuntime.draftCount || sPlaylistSavePending ||

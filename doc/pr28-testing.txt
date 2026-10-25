@@ -1,0 +1,32 @@
+MOONSHINE PR28 — GROUP CONNECTION FIXES
+
+Host: choose 3 or 4 players before Create room. Share Your code with every
+guest. Enter their codes in Guest 1 / Guest 2 / Guest 3 separately.
+Each connected slot shows that guest's name. Guest slots are invitations;
+the draft's player order follows the order people connect.
+Guests: Join room, then enter only the host's code.
+
+1. Connect the first guest, wait a minute, then add the next guest.
+   Keep the existing guest moving: their connection should remain intact.
+2. For four players, enter two pending guest codes before either connects.
+   Both invitations should keep trying independently.
+3. Open Draft with only 2/4 connected. It should say Waiting for players,
+   with no fake Bianco 1 candidates. B returns to the guest-code slots.
+4. Fill the room. Four players get five ILs and one ban each; three players
+   get four ILs and one ban each. The draft opens on your turn.
+5. Finish a draft and ready up. Start waits until all players can warp.
+6. Check two-player racing and Wii/Dolphin crossplay still connect.
+7. In a Full secret IL (including Noki), enter the secret, die, respawn and
+   collect the shine. The online race should report the Full IL result with
+   the failed attempt's elapsed time included. It must not award a standalone
+   Full IL PB or valid Full-route split record for the secret-only retry.
+8. With the Sunshine timer visible, warp from file select and start Ricco
+   Enter online. Repeat stage transitions; the 3DP display must wait for the
+   new stage's HUD to finish loading, then resume normally.
+
+If a player cannot connect, capture the MAIN Online status immediately after
+the failure and Connection help. STUN no reply / RX 0 is a separate failure
+to receive address-discovery replies; extra invitation slots do not bypass it.
+
+The wire protocol remains 5. Use PR28 on all devices for this test so the
+host UI and routing fixes are consistent. No new relay/server is required.

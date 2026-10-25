@@ -22,6 +22,9 @@ class TMarDirector;
 
 namespace LevelWarp {
 
+// Online readiness must not overtake a queued departure or CARD operation.
+bool readyForOnlineRace();
+
 struct Dest {
     enum { POST_CORONA = 0x80 };
 

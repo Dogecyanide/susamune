@@ -86,6 +86,9 @@ class GhostKernelPagingTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="moonshine-kernel-page-")
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
+        fixture = (ROOT / 'scripts/ghost_kernel_fixture.h').read_text()
+        (path / 'ghost_kernel_fixture.h').write_text(
+            getattr(cls, 'fixture_transform', lambda text: text)(fixture))
         source = (ROOT / "launcher/kernel/SusamuneGhost.c").read_text()
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         (path / "kernel.c").write_text(
@@ -333,7 +336,18 @@ class GhostKernelPagingTests(unittest.TestCase):
         self.dll.writeFailure(AUTO, 1)
         self.assertNotEqual(self.request(1, AUTO, payload=ghost)["status"], 0)
         self.assertEqual(self.file(PERSONAL + "g00a.sgh"), old)
-        self.assertEqual(self.request(4, profile=5)["status"], -2)
+        self.assertEqual(self.request(4, profile=6)["status"], -2)
+
+    def test_hoverless_uses_separate_personal_namespace(self):
+        ordinary = build_ghost(source_profile=0)
+        hoverless = build_ghost(source_profile=5)
+        self.add(PERSONAL + "g00a.sgh", envelope(ordinary))
+        saved = self.request(1, AUTO, profile=5, payload=hoverless)
+        self.assertEqual(saved["status"], 0)
+        self.assertEqual(self.file(PERSONAL + "g00a.sgh")[64:], ordinary)
+        self.assertEqual(self.file("/Moonshine data/ghosts/jp/p5/g00a.sgh")[64:], hoverless)
+        self.assertNotEqual(self.request(1, AUTO, profile=5, payload=ordinary)["status"], 0)
+        self.assertNotEqual(self.request(1, AUTO, profile=0, payload=hoverless)["status"], 0)
 
     def test_missing_storage_directory_returns_clean_unavailable_response(self):
         self.add(PERSONAL + "g00a.sgh", envelope(build_ghost()))

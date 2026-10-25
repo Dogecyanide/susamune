@@ -18,7 +18,7 @@ INPUT = struct.Struct(">IHbbbbBBBBbB")
 SPLIT = struct.Struct(">IIHBB")
 
 
-def teaching_file(inputs=None, splits=None, base=None, flags=0, fludd=None):
+def teaching_file(inputs=None, splits=None, base=None, flags=0, fludd=None, extended=False):
     if base is None:
         base = build_ghost(version=4)
     if inputs is None:
@@ -33,12 +33,12 @@ def teaching_file(inputs=None, splits=None, base=None, flags=0, fludd=None):
     data = b"".join(INPUT.pack(*item) + (fludd[i] if fludd is not None else b"")
                     for i, item in enumerate(inputs))
     data += b"".join(SPLIT.pack(*item) for item in splits)
-    section = struct.pack(">IHH6I", 0x53475449, 2 if fludd is not None else 1, 32, len(inputs),
+    section = struct.pack(">IHH6I", 0x53475449, 3 if extended else 2 if fludd is not None else 1, 32, len(inputs),
                           len(splits), flags, zlib.crc32(data), 0, 0) + data
     out = bytearray(base + section)
-    struct.pack_into(">H", out, 4, 6 if fludd is not None else 5)
+    struct.pack_into(">H", out, 4, 7 if extended else 6 if fludd is not None else 5)
     struct.pack_into(">I", out, 8, len(out))
-    struct.pack_into(">I", out, 24, 7 if fludd is not None else 3)
+    struct.pack_into(">I", out, 24, 15 if extended else 7 if fludd is not None else 3)
     struct.pack_into(">I", out, 72, len(out) - 256)
     return rechecksum_ghost(bytes(out))
 
@@ -53,6 +53,31 @@ def mutate_section(data, offset, value):
 
 
 class TeachingTests(unittest.TestCase):
+    def test_v7_observations_and_legacy_rejection(self):
+        visuals = [bytes([0x38,0,25,0,0,0,0,65]),
+                   bytes([0x80,15,1,128,127,3,120,255]),
+                   bytes([0xb0,17,0,255,0,4,100,64])]
+        data = teaching_file(fludd=visuals, extended=True)
+        self.assertEqual(ghost.validate_ghost(data)['version'], 7)
+        storage.validate_slot_file(envelope(data), game_id=0x474D534A, profile=0, slot=0)
+        ghost.validate_ghost(teaching_file(fludd=[bytes([0x90,17,0,255,0,4,100,64])]*3, extended=True))
+        for visual in visuals:
+            with self.assertRaises(ghost.FormatError):
+                ghost.validate_ghost(teaching_file(fludd=[visual]*3))
+        for visual in (bytes([0x28,0,0,0,0,0,0,0]),
+                       bytes([0x3c,0,0,0,0,0,0,1]),
+                       bytes([0x81,15,0,0,0,0,0,0]),
+                       bytes([0xa0,15,0,0,0,0,0,0]),
+                       bytes([0xd0,15,0,0,0,0,0,0]),
+                       bytes([0x80,26,0,0,0,0,0,0]),
+                       bytes([0x80,17,0,0,1,0,0,0]),
+                       bytes([0x80,15,0,0,0,1,0,0]),
+                       bytes([0x80,15,0,0,0,0,1,0])):
+            with self.subTest(visual=visual), self.assertRaises(ghost.FormatError):
+                ghost.validate_ghost(teaching_file(fludd=[visual]*3, extended=True))
+        with self.assertRaises(ghost.FormatError):
+            ghost.validate_ghost(mutate_section(data, 4, b'\x00\x02'))
+
     def test_v6_all_nozzles_aim_and_emission(self):
         for nozzle in range(6):
             for pitch in (0, 1024, 3072, 4095):
@@ -169,13 +194,14 @@ class TeachingTests(unittest.TestCase):
             self.skipTest("bundled Windows compiler unavailable")
         kernel = (ROOT / "launcher/kernel/SusamuneGhost.c").read_text()
         globals_ = kernel[kernel.index("static const u8 *ValidationBytes;"):
-                          kernel.index("static volatile struct SusamuneGhostStorageMailbox *GhostBlock")]
+                          kernel.index("static int GhostCloseFile(")]
         functions = kernel[kernel.index("static u16 ReadBe16("):
                            kernel.index("static bool GenerationIsNewer(")]
         # Keep canonical decoding/validation, excluding envelope serialization and I/O.
         functions = functions[:functions.index("static void WriteBe16(")] + functions[
             functions.index("static bool BytesAreZero("):]
         shim = '''#include "susamune/ghost_storage.h"
+#include "susamune/ghost_camera.h"
  typedef unsigned char u8; typedef unsigned short u16;
  typedef unsigned int u32; typedef int s32; typedef _Bool bool;
  #define true 1
@@ -207,7 +233,10 @@ class TeachingTests(unittest.TestCase):
             decoder.validate.argtypes = [ctypes.c_void_p, ctypes.c_uint]
             decoder.validate.restype = ctypes.c_int
             try:
-                valid = [build_ghost(version=3), build_ghost(version=4), teaching_file(),
+                valid = [teaching_file(fludd=[bytes([0xb0,15,1,128,127,3,120,255])] * 3, extended=True),
+                         teaching_file(fludd=[bytes([0x90,17,0,255,0,4,100,64])] * 3, extended=True),
+                         teaching_file(fludd=[bytes([0x38,0,25,0,0,0,0,65])] * 3, extended=True),
+                         build_ghost(version=3), build_ghost(version=4), teaching_file(),
                          teaching_file(fludd=[bytes([0x18, 0, 25, 0, 0, 0, 0, 65])] * 3),
                          teaching_file(base=build_ghost(version=4, run_flags=0x21)),
                          teaching_file(inputs=[], splits=[]),
@@ -218,7 +247,11 @@ class TeachingTests(unittest.TestCase):
                                            build_ghost(version=4, samples=samples, start_qf=0)))
                 for data in valid:
                     self.assertEqual(decoder.validate(data, len(data)), 1)
-                bad = [teaching_file(base=build_ghost(version=4, run_flags=0x20)),
+                bad = [teaching_file(fludd=[bytes([0x80,26,0,0,0,0,0,0])] * 3, extended=True),
+                       teaching_file(fludd=[bytes([0xa0,15,0,0,0,0,0,0])] * 3, extended=True),
+                       teaching_file(fludd=[bytes([0xd0,15,0,0,0,0,0,0])] * 3, extended=True),
+                       teaching_file(fludd=[bytes([0x28,0,0,0,0,0,0,0])] * 3, extended=True),
+                       teaching_file(base=build_ghost(version=4, run_flags=0x20)),
                        teaching_file(fludd=[bytes([0x18, 0, 0, 0, 0, 4, 1, 65])] * 3),
                        mutate_section(teaching_file(fludd=[bytes(8)] * 3), 4, b'\x00\x01'),
                        mutate_section(teaching_file(), 48, struct.pack(">I", 100)),

@@ -37,6 +37,8 @@ class DataMigrationFatFsTests(unittest.TestCase):
 #define f_stat_char migration_stat
 #define f_mkdir_char migration_mkdir
 ''' + production + r'''
+API const char*errorPath(void){return MoonshineDataErrorPath();}
+API const char*errorOperation(void){return MoonshineDataErrorOperation();}
 API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=diskWrites[1]=0;return MoonshineDataPrepare(device);}
 ''', encoding='utf-8')
         fatfs = ROOT / 'launcher/fatfs'
@@ -55,6 +57,7 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
         cls.lib.get.argtypes = [C.c_char_p, C.c_void_p, C.c_uint]
         cls.lib.entries.argtypes = [C.c_char_p, C.c_void_p, C.c_uint]
         cls.lib.prepare.argtypes = [C.c_char_p]
+        cls.lib.errorPath.restype = cls.lib.errorOperation.restype = C.c_char_p
         cls.lib.attributes.argtypes = cls.lib.mkdirs.argtypes = [C.c_char_p]
         cls.lib.fail.argtypes = [C.c_uint, C.c_uint]
         cls.lib.failRenamePath.argtypes = [C.c_char_p]
@@ -167,6 +170,8 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
             self.put(f'sd:/Moonshine_Theme/image{i}.png', bytes([i]))
         self.lib.fail(1, 3)
         self.assertNotEqual(self.prepare(), 0)
+        self.assertEqual(self.lib.errorOperation(), b"Move old data")
+        self.assertTrue(self.lib.errorPath().startswith(b"sd:/Moonshine_Theme/"))
         self.assertFalse(self.exists('sd:' + MARKER))
         self.assertEqual(self.get('sd:' + DATA + '/theme/image0.png'), b'\0')
         self.assertEqual(self.lib.reboot(), 0)

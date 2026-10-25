@@ -2,6 +2,7 @@
 
 #include "SMS/Player/MarioGamePad.hxx"
 #include "susamune/menu.hxx"
+#include "susamune/menu_theme.hxx"
 
 namespace {
 
@@ -42,9 +43,8 @@ bool updatePositionScale(u32 rapid, u16 &x, u16 &y, u8 &scale, int maxScale,
 }
 
 void drawHeader(Menu *menu, int boxHeight, const char *title, const char *status) {
-    menu->fillBox(8, 8, 624, boxHeight, JUtility::TColor(0, 0, 0, 205));
-    menu->drawText(title, 18, 15, 16, 16, JUtility::TColor(255, 255, 255, 255));
-    menu->drawText(status, 18, 38, 11, 11, JUtility::TColor(190, 220, 255, 255));
+    MenuTheme::panel(menu, 8, 8, 624, boxHeight, title);
+    menu->drawText(status, 18, 43, 11, 11, MenuTheme::textColor());
 }
 
 }  // namespace LayoutEditor

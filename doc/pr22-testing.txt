@@ -1,0 +1,48 @@
+Moonshine 3.0.0 Timewarp - Prototype 22
+
+Use the Moonshine Prototype 22 app. Existing settings and recordings stay in
+their usual locations. This package includes JP, US and PAL support.
+
+Priority checks
+
+1. Sunshine timer: check that the third decimal follows the preceding digit
+   along the same slope, at normal and edited sizes. With a gradient enabled,
+   it should receive the final colour. Native Piantissimo/blooper race timers
+   should still use two decimals.
+
+2. Creation: Position & size is one page. D-pad moves, L/R resize, and A opens
+   the exact size keypad when resizing is supported. Check the scroll arrows
+   and position indicator on longer Colours pages. Try Shimmer and Steps,
+   including saving settings and relaunching.
+
+3. HUD previews: edit normally hidden counters, especially red coin streak
+   with no active streak. The edited item should appear while editing and
+   return to its normal visibility afterwards. The FLUDD water tank still
+   requires FLUDD to be present in the stage.
+
+4. Mario/FLUDD colours: the editor should frame Mario automatically. Use the
+   main stick to rotate the preview; the C-stick and D-pad retain editing
+   controls. Check that closing or cancelling restores the gameplay camera.
+
+5. Guidebook: inspect row text/hand alignment, selection trim, icon padding,
+   stepped icon poses and long help text. An unassigned bind's None should
+   stay clear of the scroll arrow. Try all categories on your usual display.
+
+6. Online menus: Home should make creating/joining a room clear. Race setup,
+   Opponent display and Connection help are separate pages. Check Ready,
+   completed match -> Race setup -> Apply, and score Show versus Edit when
+   another tester is available. Search should open the correct page.
+
+Short regression pass
+
+Save/load all three slots, overwrite an occupied slot, restart a secret-red
+IL, and watch a ghost. Confirm normal practice controls after closing each
+editor. Please report region and the last action if anything freezes.
+
+Remaining limitations
+
+Ricco object wobble in Free camera is still under investigation. This build
+changes the online menus; connection and transport code are unchanged.
+Two-player connection behavior and Wii performance require console testing.
+The Boo and sunglasses use their original artwork; rejected generated poses
+are not included. Mario, Pianta, coins and Shines use native game artwork.

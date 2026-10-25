@@ -1,0 +1,49 @@
+Moonshine PR32 - invited rooms, host kicks and saved connection logs
+
+Install the COMPLETE PR32 app on every Wii. Dolphin needs the PR32 patch and
+the included companion. All players must use protocol 7; older builds cannot
+join. PAL must use 60 Hz. Existing apps and user data can be kept.
+
+1. Start with TWO players in the same Plaza area for five minutes. Compare
+   host-to-guest and guest-to-host delay, movement gaps and reconnect messages.
+   Then repeat with three and four players. Controller displays are disabled
+   for group rooms and the eight controller bytes are omitted from group poses.
+2. The host enters each intended guest's code in Guest 1 / Guest 2 / Guest 3.
+   Guests enter only the host's code. An old AFK guest holding the room code
+   should no longer claim an uninvited slot. Everyone on one router uses
+   Same-network codes; different houses use Your code.
+3. Select a connected guest on the host and confirm Kick. Other players stay.
+   The removed player should stop retrying; re-enter their code to reinvite.
+   B cancels the confirmation. Replace that guest with a different person.
+4. Temporarily interrupt one connection. The local menu should stay open and
+   the room should recover without changing area. Check all guest slots.
+5. Test an IL race, draft, Stageloader and Forfeit race. In group rooms make
+   sure each guest gets fresh movement while reliable room controls are busy.
+
+CONNECTION LOGS - automatic, no menu action needed
+Wii: /Moonshine data/logs/connection_*.log on the device running the launcher.
+Dolphin: connection-logs beside bridge.py; the companion prints the filename.
+Send the newest log from EVERY participant, identifying which person hosted.
+Note roughly when ghosts disappeared, a guest joined, or you changed areas.
+After leaving Online, keep the game running for five seconds before powering
+off so the Wii can save its remaining buffer. Sudden power loss can lose that
+last buffer. Logs cap at 4 MiB per boot/run and never overwrite previous logs.
+They contain network addresses but no room secrets or raw controller inputs.
+Writes use the existing safe storage service; logging failure leaves play on.
+
+Logs report packet/control sequences, per-peer and per-relayed-player timing,
+queue occupancy, dropped/replaced packets, transport changes, kick messages,
+and maximum IOS completion times (Wii) or polling gaps (Dolphin). Different
+devices use independent clocks; remote timestamps are not one-way latency.
+
+OLD FOXTROT UPGRADE ERROR
+If the launcher still stops, photograph the whole new error: it now names the
+operation and file/folder. Error 1 is a disk I/O error, not proof the SD has the
+wrong format. The cause on the affected friend's card is still unconfirmed.
+Existing data stays protected; do not erase/reformat it to try this build.
+
+Tests cover overloaded three-peer queues, control delivery, explicit guest
+admission, kick retries, real FatFs logging and interrupted old-data upgrades.
+These do not prove actual Wii smoothness; collect logs if delay remains.
+The separate PR29 Pineapple search instruction overwrite remains unresolved.
+Timers, recording/savestate capacity and memory reservations are unchanged.

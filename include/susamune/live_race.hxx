@@ -1,0 +1,107 @@
+#pragma once
+#include <Dolphin/types.h>
+#include "susamune/live_draft.hxx"
+#include "susamune/live_group_rules.hxx"
+
+class Menu;
+
+#if TIMEWARP_LIVE_RACING
+namespace LiveRace {
+#if IS_EMULATOR
+enum { LOCAL_PORT = 0 };      // A second Dolphin on this PC needs its own port.
+#else
+enum { LOCAL_PORT = 48222 };  // A fixed port keeps the public mapping stable between tries.
+#endif
+struct Options {
+    char name[17];
+    int entry;
+    u8 bestOf, episode;
+    bool freeRoam, draft, setBo5;
+    u8 pool;
+    bool playlist;
+    u32 playlistHash;
+    u8 players; // 0/2 retain the two-player format; 3/4 use group rules.
+};
+struct Diagnostics {
+    u32 submitted, received, accepted;
+    s32 socketError;
+    u16 socketSent, socketReceived;
+    u8 dropped, sendErrors, receiveErrors;
+    bool socketAvailable;
+    // Wii network as last seen: NET_OFF, NET_WAITING (no address yet), NET_UP or NET_FAILED.
+    u8 net, waitedS;           // waitedS: seconds from Create/Join until the address was known
+    u8 forwarded;              // packets the ARM kernel took from the PPC send ring this attempt
+    bool trouble;              // the last attempt failed; the tab shows these lines
+    u8 ip[4];                  // last local address, kept after disconnect
+    u16 port;
+};
+enum { NET_OFF, NET_WAITING, NET_UP, NET_FAILED };
+struct Status {
+    const char *connection;
+    const char *race;
+    const char *hint;          // Room-code help or why a direct connection failed.
+    char code[20], friendCode[20]; // XXXX-XXXX-XXXX-XXXX while connecting, else empty
+    char localCode[20];        // Same secret through the local network address.
+    char peerName[17];
+    u32 pingMs;
+    s32 networkError;
+    u8 localIp[4];
+    u16 localPort;
+    u8 localWins, peerWins;
+    bool active, connected, hosting, localReady, peerReady, racing, matchDone;
+    bool freeRoam, setupEditable, canForfeit;
+    bool drafting, draftPending;
+    bool reconnecting;         // the link dropped; the room is being restored silently
+    bool codeChanged;          // this console's public address or secret changed since last time
+    LiveDraft::State draft;
+    Diagnostics diagnostics;
+};
+void init();
+void update();
+void beforeStageSetup();
+void draw(Menu *menu);
+const Options &options();
+bool configure(const Options &options);
+Status status();
+bool host();
+bool join();
+// Takes the friend's room code; returns null or the reason it was refused.
+const char *enterCode(const char *text);
+bool kickGuest(unsigned slot);
+const char *enterGuestCode(unsigned slot, const char *text);
+const char *guestName(unsigned slot);
+bool guestCode(unsigned slot, char *out);
+void disconnect();
+bool ready();
+bool forfeit();
+// A published Ready reserves the local scene until Start or cancellation.
+bool holdingStart();
+bool racingEntry(int entry);
+bool newMatch();
+bool chooseDraft(unsigned candidate);
+void onILResult(int entry, s32 qf, bool eligible);
+void onPlaylistResult(s32 qf, bool eligible);
+unsigned playlistCount();
+const LiveGroupRules::State *groupState();
+unsigned groupPlayer();
+const char *playerName(unsigned player);
+unsigned playersConnected();
+// Preferences of this console only, kept in susamune.ini with the online name.
+enum { MODEL_SHADOW, MODEL_PIANTA, MODEL_MARIO, MODEL_COUNT };
+struct Prefs {
+    u8 model;                  // opponent model
+    bool hideOpponent, hideScore;
+    u8 scoreScale;             // CreationStyle scale (100 = normal)
+    u16 scoreX, scoreY;        // centre top of the score bar
+};
+const Prefs &prefs();
+// The score bar (and the opponent's time) at `prefs`; draw() uses the saved prefs.
+void drawScore(Menu *menu, const Prefs &prefs);
+void setPrefs(const Prefs &prefs);
+// The opponent model while a live opponent is shown, else -1.
+int opponentModel();
+bool opponentShown();
+// The last friend's code (CODE_CHARS + NUL, no dashes) or false.
+bool lastFriend(char *out);
+}
+#endif

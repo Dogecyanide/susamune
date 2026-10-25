@@ -1,6 +1,7 @@
 """Exercise HSL conversion and the production Creation editor input path."""
 
 import ctypes as C
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,7 +19,7 @@ class CreationHslTests(unittest.TestCase):
         compiler = ROOT / "toolchain/clang++.exe"
         if not compiler.exists():
             raise unittest.SkipTest("Bundled Windows compiler required")
-        cls.temp = tempfile.TemporaryDirectory(prefix="moonshine-hsl-")
+        cls.temp = tempfile.TemporaryDirectory(prefix="moonshine-hsl-", dir=ROOT / "build")
         cls.addClassCleanup(cls.temp.cleanup)
         work = Path(cls.temp.name)
         (work / "Dolphin").mkdir()
@@ -32,10 +33,23 @@ class CreationHslTests(unittest.TestCase):
 #define private public
 #include "susamune/creation.hxx"
 #include "susamune/creation_color.hxx"
+#include "susamune/gradient_motion.hxx"
 #undef private
 #define API extern "C" __declspec(dllexport)
 extern "C" void *memset(void*p,int v,unsigned long long n){u8*b=(u8*)p;while(n--)*b++=(u8)v;return p;}
 extern "C" void *memcpy(void*d,const void*s,unsigned long long n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
+class Menu {}; Menu *gMenu;
+namespace NumberEditor { const void *owner; unsigned low, high, pending, commit;
+ bool active(const void *who){return owner==who;}void cancel(const void *who){if(owner==who)owner=0;}
+ void begin(const void *who,const char*,unsigned value,unsigned lo,unsigned hi,const char*){owner=who;low=lo;high=hi;pending=value;commit=0;}
+ int update(Menu*,unsigned *value){if(!commit)return 0;*value=pending;owner=0;return 1;}
+}
+enum SettingId { SETTING_QFT_VERTICAL_GRADIENT, SETTING_NATIVE_VERTICAL_GRADIENT,
+ SETTING_QFT_GRADIENT_MOTION, SETTING_QFT_GRADIENT_SPEED,
+ SETTING_NATIVE_GRADIENT_MOTION, SETTING_NATIVE_GRADIENT_SPEED };
+struct Settings {u8 values[6];u8 get(SettingId id){return values[id];}
+ void set(SettingId id,u8 v){values[id]=v;}
+ void cycle(SettingId id,int dir){unsigned n=id<2?2:(id==2||id==4)?5:3;values[id]=(values[id]+n+dir)%n;}}gSettings;
 struct TMarioGamePad {
  enum{A=1,B=2,X=4,Y=8,Z=16,START=32,L=64,R=128,DPAD_LEFT=256,DPAD_RIGHT=512,
  DPAD_UP=1024,DPAD_DOWN=2048,CSTICK_LEFT=4096,CSTICK_RIGHT=8192,CSTICK_UP=16384,CSTICK_DOWN=32768};
@@ -47,8 +61,8 @@ struct TMarioGamePad {
         code += function(creation, "clampi")
         code += "namespace LayoutEditor {" + function(layout, "updatePositionScale") + "}\n"
         code += "\n".join(function(creation, name) for name in (
-            "textChannel", "adjustTextChannel", "resetOption", "CreationEditor::reset",
-            "CreationEditor::begin", "CreationEditor::optionEnabled", "CreationEditor::moveOption",
+            "textChannel", "adjustTextChannel", "gradientRange", "applyGradient", "stopIndex", "blendStops", "editGradientStops", "resetOption", "CreationEditor::reset",
+            "CreationEditor::begin", "CreationEditor::setOriginalColourSetting", "CreationEditor::setGradientOptions", "CreationEditor::setScaleLimits", "gradientSetting", "CreationEditor::setGradientDirectionSetting", "CreationEditor::optionEnabled", "CreationEditor::groupEnabled", "CreationEditor::optionInGroup", "CreationEditor::moveOption",
             "CreationEditor::repeatInput", "CreationEditor::update"))
         code += r'''
 CreationEditor editor;
@@ -66,22 +80,83 @@ API void begin(u8*rgb,u8*backup,unsigned count,const u8*background,int modes){
 API unsigned editing(){return editor.editing();}
 API void target(unsigned slot){editor.selectTarget(slot);}
 API unsigned adjust(unsigned option,int direction,unsigned fine){
- editor.mOption=(u8)option;TMarioGamePad pad={};
+ editor.mOption=(u8)option;editor.mGroup=option==13||option==14?GROUP_ANIMATION:GROUP_COLOURS;TMarioGamePad pad={};
  pad.mButtons.mInput=pad.mButtons.mFrameInput=direction<0?TMarioGamePad::CSTICK_LEFT:TMarioGamePad::CSTICK_RIGHT;
  if(fine)pad.mButtons.mInput|=TMarioGamePad::Y;
  return editor.update(&pad,defaults,white);
 }
 API unsigned finish(unsigned keep){
- TMarioGamePad pad={};pad.mButtons.mRapidInput=keep?TMarioGamePad::A:TMarioGamePad::B;
- editor.update(&pad,defaults,white);pad.mButtons.mRapidInput=TMarioGamePad::A;
+ editor.mGroup=GROUP_HOME;sEditorHomeRow=GROUP_COUNT+(keep?0:1);
+ TMarioGamePad pad={};pad.mButtons.mRapidInput=TMarioGamePad::A;
+ unsigned result=editor.update(&pad,defaults,white);if(keep)return result;
+ pad.mButtons.mRapidInput=TMarioGamePad::A;
  return editor.update(&pad,defaults,white);
 }
 API void resetOptionAt(unsigned option){
- editor.mOption=(u8)option;TMarioGamePad pad={};pad.mButtons.mRapidInput=TMarioGamePad::Z;
+ editor.mOption=(u8)option;editor.mGroup=option==13||option==14?GROUP_ANIMATION:GROUP_COLOURS;TMarioGamePad pad={};pad.mButtons.mRapidInput=TMarioGamePad::Z;
  editor.update(&pad,defaults,white);pad.mButtons.mRapidInput=TMarioGamePad::A;
  editor.update(&pad,defaults,white);
 }
+API unsigned homeFlow(unsigned save){
+ if(editor.mGroup!=GROUP_HOME)return 0;
+ TMarioGamePad pad={};pad.mButtons.mRapidInput=TMarioGamePad::A;
+ editor.update(&pad,defaults,white);
+ if(editor.mGroup!=GROUP_LAYOUT)return 0;
+ pad.mButtons.mRapidInput=TMarioGamePad::DPAD_RIGHT;editor.update(&pad,defaults,white);
+ if(style.x==defaults.x)return 0;
+ pad.mButtons.mRapidInput=TMarioGamePad::B;editor.update(&pad,defaults,white);
+ if(editor.mGroup!=GROUP_HOME)return 0;
+ sEditorHomeRow=GROUP_COUNT+(save?0:1);pad.mButtons.mRapidInput=TMarioGamePad::A;
+ editor.update(&pad,defaults,white);editor.update(&pad,defaults,white);
+ return !editor.mEditing&&((style.x!=defaults.x)==(save!=0));
+}
+API unsigned originalRestore(){
+ gSettings.values[0]=1;editor.setOriginalColourSetting(0);
+ editor.mGroup=GROUP_COLOURS;editor.mOption=OPTION_ORIGINAL_COLOURS;
+ TMarioGamePad pad={};pad.mButtons.mFrameInput=TMarioGamePad::CSTICK_RIGHT;
+ editor.update(&pad,defaults,white);if(gSettings.values[0])return 0;
+ editor.mGroup=GROUP_HOME;sEditorHomeRow=GROUP_COUNT+1;pad.mButtons.mRapidInput=TMarioGamePad::A;
+ editor.update(&pad,defaults,white);editor.update(&pad,defaults,white);
+ return gSettings.values[0]==1&&!editor.mEditing;
+}
 API unsigned mode(){return custom;}
+API void enableDirection(unsigned initial){gSettings.values[0]=initial;editor.setGradientDirectionSetting(0);}
+API unsigned direction(){return gSettings.values[0];}
+API unsigned directionAvailable(){return editor.optionEnabled(OPTION_GRADIENT_DIRECTION);}
+API unsigned enableMotion(unsigned native,unsigned motion,unsigned speed){
+ gSettings.values[2+native*2]=motion;gSettings.values[3+native*2]=speed;
+ editor.setGradientDirectionSetting(native?SETTING_NATIVE_VERTICAL_GRADIENT:SETTING_QFT_VERTICAL_GRADIENT);
+ return editor.optionEnabled(OPTION_GRADIENT_MOTION)&&editor.optionEnabled(OPTION_GRADIENT_SPEED);
+}
+API unsigned motion(unsigned native,unsigned speed){return gSettings.values[2+native*2+speed];}
+API unsigned motionAvailable(){return editor.optionEnabled(OPTION_GRADIENT_MOTION);}
+API unsigned sizeEntry(unsigned low,unsigned high,unsigned value){
+ editor.setScaleLimits(low,high);editor.mGroup=GROUP_LAYOUT;TMarioGamePad pad={};
+ pad.mButtons.mInput=TMarioGamePad::X|TMarioGamePad::A;pad.mButtons.mRapidInput=TMarioGamePad::A;
+ editor.update(&pad,defaults,white);
+ if(!NumberEditor::active(&editor)||NumberEditor::low!=low||NumberEditor::high!=high)return 0;
+ NumberEditor::pending=value;NumberEditor::commit=1;pad={};editor.update(&pad,defaults,white);
+ return style.scale;
+}
+API unsigned sizeStep(unsigned low,unsigned high,unsigned current,int delta){
+ editor.setScaleLimits(low,high);editor.mGroup=GROUP_LAYOUT;style.scale=current;TMarioGamePad pad={};
+ pad.mButtons.mInput=pad.mButtons.mFrameInput=delta<0?TMarioGamePad::L:TMarioGamePad::R;
+ editor.update(&pad,defaults,white);return style.scale;
+}
+API unsigned moveOption(int direction){editor.moveOption(direction);return editor.mOption;}
+API void selectOption(unsigned option){editor.mOption=(u8)option;editor.mGroup=option==13||option==14?GROUP_ANIMATION:GROUP_COLOURS;}
+API unsigned preset(){return sGradientPreset;}
+u8 gradientOptions;
+API void options(unsigned value,unsigned animation){gradientOptions=value;editor.setGradientOptions(&gradientOptions,animation);}
+API unsigned getOptions(){return gradientOptions;}
+API unsigned stop(){return sGradientStop;}
+API void group(unsigned value){editor.mGroup=value;}
+
+API void enableGradient(unsigned timer,unsigned visible){
+ editor.mCapabilities|=CreationEditor::CAP_GRADIENT;
+ if(timer)editor.mCapabilities|=CreationEditor::CAP_TIMER_GRADIENT;
+ if(visible&&visible<editor.mTargetSlots)editor.mTargetSlots=visible;
+}
 API unsigned value(unsigned slot,unsigned channel){return sHsl[slot].channel[channel];}
 API unsigned background(unsigned channel){return (&style.bgR)[channel];}
 API unsigned alpha(){return style.textA;}
@@ -102,7 +177,7 @@ API unsigned roundtripAllRgb(){
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
                         "-nostdlib", "-fno-builtin", "-fuse-ld=lld", "-Wl,/noentry", "-O2",
                         "-I", str(work), "-I", str(ROOT / "include"), str(source), "-o", str(dll)],
-                       check=True)
+                       check=True, env={**os.environ, "TEMP": str(work), "TMP": str(work)})
         cls.lib = C.CDLL(str(dll))
         from _ctypes import FreeLibrary
         cls.addClassCleanup(FreeLibrary, cls.lib._handle)
@@ -112,6 +187,15 @@ API unsigned roundtripAllRgb(){
         self.backup = (C.c_ubyte * len(self.rgb))()
         bg = (C.c_ubyte * 3)(*background)
         self.lib.begin(self.rgb, self.backup, len(colors), bg, modes)
+
+    def test_item_home_back_save_and_discard(self):
+        for save in (0, 1):
+            self.begin([(255, 255, 255)])
+            self.assertEqual(self.lib.homeFlow(save), 1)
+
+    def test_original_background_choice_is_part_of_editor_cancel(self):
+        self.begin([(255, 255, 255)])
+        self.assertEqual(self.lib.originalRestore(), 1)
 
     def rgb_at(self, slot):
         return tuple(self.rgb[slot * 3:slot * 3 + 3])
@@ -248,6 +332,170 @@ API unsigned roundtripAllRgb(){
         self.lib.finish(1)
         self.begin([(255, 255, 255)] * 257)
         self.assertFalse(self.lib.editing())
+
+    def test_five_stop_anchors_roundtrip_and_cancel(self):
+        for slots in (9, 15, 32):
+            original = [(20 + i * 5, 70 + i * 3, 160 - i * 2) for i in range(slots)]
+            self.begin(original)
+            self.lib.enableGradient(slots == 15, slots)
+            self.lib.options(0x20, slots == 32)
+            # Choosing five directly preserves each exact palette anchor.
+            self.lib.adjust(15, -1, 0)
+            self.assertEqual(self.lib.getOptions() & 7, 5)
+            source = 6 if slots == 15 else slots
+            anchors = [(i * (source - 1) + 2) // 4 for i in range(5)]
+            for index in anchors:
+                self.assertEqual(self.rgb_at(index), original[index])
+            self.lib.adjust(16, 1, 0)
+            self.lib.adjust(2, -1, 1)
+            self.assertNotEqual(self.rgb_at(anchors[1]), original[anchors[1]])
+            for index in (anchors[0], anchors[2], anchors[3], anchors[4]):
+                self.assertEqual(self.rgb_at(index), original[index])
+            if slots == 15:
+                self.assertEqual(self.rgb_at(13), original[13])
+                self.assertEqual(self.rgb_at(14), original[14])
+                self.assertEqual(self.rgb_at(9), self.rgb_at(5))
+            self.lib.finish(0)
+            self.assertEqual(self.lib.getOptions(), 0x20)
+            self.assertEqual(bytes(self.rgb), bytes(c for color in original for c in color))
+
+    def test_custom_animation_options_keep_cancel_reset(self):
+        self.begin([(200, 80, 20)] * 32)
+        self.lib.options(0x20, 1)
+        self.lib.adjust(13, 1, 0)
+        self.lib.adjust(14, 1, 0)
+        self.assertEqual(self.lib.getOptions(), 0x48)
+        self.lib.finish(0)
+        self.assertEqual(self.lib.getOptions(), 0x20)
+        self.begin([(200, 80, 20)] * 32)
+        self.lib.options(0x48, 1)
+        self.lib.resetOptionAt(13)
+        self.assertEqual(self.lib.getOptions(), 0x40)
+        self.lib.resetOptionAt(14)
+        self.assertEqual(self.lib.getOptions(), 0x20)
+        self.lib.finish(1)
+
+    def test_gradient_blends_custom_endpoints_and_preserves_unused_text_slots(self):
+        self.begin([(255, 0, 0), (9, 9, 9), (0, 0, 255), (33, 44, 55)])
+        self.lib.enableGradient(0, 3)
+        self.lib.target(2)
+        self.lib.adjust(11, -1, 0)  # One colour
+        self.lib.adjust(11, -1, 0)  # Blend ends
+        self.assertEqual(self.rgb_at(0), (255, 0, 0))
+        self.assertEqual(self.rgb_at(1), (128, 0, 128))
+        self.assertEqual(self.rgb_at(2), (0, 0, 255))
+        self.assertEqual(self.rgb_at(3), (33, 44, 55))
+        self.assertEqual(self.lib.finish(0), 6)
+        self.assertEqual(self.rgb_at(1), (9, 9, 9))
+
+    def test_gradient_presets_fill_and_reset_existing_colors(self):
+        self.begin([(255, 255, 255)] * 9)
+        self.lib.enableGradient(0, 9)
+        self.lib.adjust(11, 1, 0)  # sunset
+        self.assertEqual(self.rgb_at(0), (255, 180, 55))
+        self.assertEqual(self.rgb_at(8), (210, 65, 170))
+        self.lib.adjust(11, 1, 0)  # ocean
+        self.assertEqual(self.rgb_at(0), (70, 245, 205))
+        self.assertEqual(self.rgb_at(8), (85, 115, 255))
+        self.lib.adjust(11, 1, 0)  # rainbow
+        self.assertNotEqual(self.rgb_at(0), self.rgb_at(4))
+        self.lib.adjust(11, 1, 0)  # blend original ends
+        self.assertEqual(bytes(self.rgb), bytes([255] * 27))
+        self.lib.adjust(11, 1, 0)  # solid
+        self.assertTrue(all(self.rgb_at(i) == self.rgb_at(0) for i in range(9)))
+        self.lib.resetOptionAt(11)
+        self.assertEqual(bytes(self.rgb), bytes([255] * 27))
+
+    def test_native_timer_gradient_maps_digit_groups_and_keeps_image_background(self):
+        self.begin([(11, 22, 33)] * 15, modes=1)
+        original = bytes(self.rgb)
+        self.lib.enableGradient(1, 15)
+        self.lib.adjust(11, 1, 0)
+        self.assertEqual(self.rgb_at(0), self.rgb_at(6))
+        self.assertEqual(self.rgb_at(5), self.rgb_at(9))
+        self.assertEqual(self.rgb_at(13), (11, 22, 33))
+        self.assertEqual(self.rgb_at(14), (11, 22, 33))
+        self.assertEqual(self.rgb_at(10), tuple((a+b+1)//2 for a,b in zip(self.rgb_at(1), self.rgb_at(2))))
+        self.assertEqual(self.lib.mode(), 0)
+        self.lib.finish(0)
+        self.assertEqual(bytes(self.rgb), original)
+
+    def test_option_navigation_follows_visible_rows_and_presets_have_no_noop(self):
+        self.begin([(255, 0, 0), (0, 0, 255)], modes=1)
+        self.lib.enableGradient(0, 2)
+        self.lib.selectOption(10)
+        self.assertEqual([self.lib.moveOption(1) for _ in range(12)],
+                         [11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(self.lib.moveOption(-1), 9)
+        for expected in (1, 2, 3, 4, 5, 1):
+            self.assertTrue(self.lib.adjust(11, 1, 0) & 8)
+            self.assertEqual(self.lib.preset(), expected)
+        self.lib.adjust(11, -1, 0)
+        self.assertEqual(self.lib.preset(), 5)
+        self.assertEqual(self.rgb_at(0), (255, 0, 0))
+        self.assertEqual(self.rgb_at(1), (255, 0, 0))
+
+    def test_option_navigation_reaches_every_gradient_option_once(self):
+        self.begin([(255, 0, 0), (0, 0, 255)], modes=1)
+        self.lib.enableGradient(0, 2)
+        self.lib.enableDirection(0)
+        self.assertTrue(self.lib.motionAvailable())
+        self.lib.selectOption(10)
+        forward = [self.lib.moveOption(1) for _ in range(13)]
+        self.assertEqual(forward, [11, 12, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        backward = [self.lib.moveOption(-1) for _ in range(13)]
+        self.assertEqual(backward, forward[-2::-1] + [10])
+        self.lib.finish(0)
+
+    def test_vertical_direction_keep_cancel_reset_and_other_editor_isolation(self):
+        self.begin([(255, 0, 0), (0, 0, 255)])
+        self.lib.enableGradient(0, 2)
+        self.lib.enableDirection(0)
+        self.assertTrue(self.lib.directionAvailable())
+        self.lib.selectOption(11)
+        self.assertEqual(self.lib.moveOption(1), 12)
+        self.lib.adjust(12, 1, 0)
+        self.assertEqual(self.lib.direction(), 1)
+        self.lib.finish(0)
+        self.assertEqual(self.lib.direction(), 0)
+        self.begin([(255, 0, 0), (0, 0, 255)])
+        self.lib.enableDirection(1)
+        self.lib.resetOptionAt(12)
+        self.assertEqual(self.lib.direction(), 0)
+        self.lib.finish(1)
+        self.begin([(255, 255, 255)])
+        self.assertFalse(self.lib.directionAvailable())
+
+    def test_size_keypad_uses_a_and_retains_owner_specific_bounds(self):
+        self.begin([(255, 255, 255)] * 3)
+        self.assertEqual(self.lib.sizeEntry(25, 150, 37), 37)
+        self.assertEqual(self.lib.sizeStep(25, 150, 25, -1), 25)
+        self.assertEqual(self.lib.sizeStep(25, 150, 25, 1), 27)
+        self.assertEqual(self.lib.sizeStep(25, 150, 150, 1), 150)
+        self.assertEqual(self.lib.sizeStep(50, 200, 200, 1), 200)
+
+    def test_animation_controls_keep_cancel_reset_and_owner_isolation(self):
+        for native in (0, 1):
+            self.begin([(255, 0, 0), (0, 0, 255)])
+            self.assertTrue(self.lib.enableMotion(native, 0, 1))
+            self.lib.adjust(13, 1, 0)
+            self.lib.adjust(14, 1, 0)
+            self.assertEqual((self.lib.motion(native, 0), self.lib.motion(native, 1)), (1, 2))
+            self.lib.finish(0)
+            self.assertEqual((self.lib.motion(native, 0), self.lib.motion(native, 1)), (0, 1))
+            self.begin([(255, 0, 0), (0, 0, 255)])
+            self.lib.enableMotion(native, 1, 2)
+            self.lib.adjust(13, 1, 0)
+            self.lib.finish(1)
+            self.assertEqual((self.lib.motion(native, 0), self.lib.motion(native, 1)), (2, 2))
+            self.begin([(255, 0, 0), (0, 0, 255)])
+            self.lib.enableMotion(native, 2, 2)
+            self.lib.resetOptionAt(13)
+            self.lib.resetOptionAt(14)
+            self.assertEqual((self.lib.motion(native, 0), self.lib.motion(native, 1)), (0, 1))
+            self.lib.finish(1)
+        self.begin([(255, 255, 255)])
+        self.assertFalse(self.lib.motionAvailable())
 
 
 if __name__ == "__main__":

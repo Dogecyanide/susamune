@@ -53,23 +53,33 @@ unsigned int update(const void *workspace, unsigned int crc,
         CRC_BYTE();
         --size;
     }
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define CRC_WORD(N) do { \
+    unsigned int first = crc ^ words[N]; \
+    crc = tables->slices[3][(first >> 24) & 255] ^ \
+          tables->slices[2][(first >> 16) & 255] ^ \
+          tables->slices[1][(first >> 8) & 255] ^ \
+          tables->slices[0][first & 255]; \
+} while (0)
+#else
+#define CRC_WORD(N) do { \
+    unsigned int first = crc ^ words[N]; \
+    crc = tables->slices[3][first & 255] ^ \
+          tables->slices[2][(first >> 8) & 255] ^ \
+          tables->slices[1][(first >> 16) & 255] ^ \
+          tables->slices[0][(first >> 24) & 255]; \
+} while (0)
+#endif
+    while (size >= 16) {
+        const Word *words = reinterpret_cast<const Word *>(bytes);
+        CRC_WORD(0); CRC_WORD(1); CRC_WORD(2); CRC_WORD(3);
+        bytes += 16; size -= 16;
+    }
     while (size >= 4) {
         const Word *words = reinterpret_cast<const Word *>(bytes);
-        unsigned int first = crc ^ words[0];
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-        crc = tables->slices[3][(first >> 24) & 255] ^
-              tables->slices[2][(first >> 16) & 255] ^
-              tables->slices[1][(first >> 8) & 255] ^
-              tables->slices[0][first & 255];
-#else
-        crc = tables->slices[3][first & 255] ^
-              tables->slices[2][(first >> 8) & 255] ^
-              tables->slices[1][(first >> 16) & 255] ^
-              tables->slices[0][(first >> 24) & 255];
-#endif
-        bytes += 4;
-        size -= 4;
+        CRC_WORD(0); bytes += 4; size -= 4;
     }
+#undef CRC_WORD
     while (size) {
         CRC_BYTE();
         --size;
@@ -81,4 +91,13 @@ unsigned int update(const void *workspace, unsigned int crc,
     return crc;
 }
 
+}
+
+extern "C" __attribute__((noinline)) int TWCrcSharedInit(void *workspace, unsigned int bytes) {
+    return StateCrc::init(workspace, bytes);
+}
+
+extern "C" __attribute__((noinline)) unsigned int TWCrcSharedUpdate(
+    const void *workspace, unsigned int crc, const void *data, unsigned int bytes) {
+    return StateCrc::update(workspace, crc, data, bytes);
 }

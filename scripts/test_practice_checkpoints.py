@@ -28,7 +28,7 @@ class PracticeCheckpointTests(unittest.TestCase):
 #include "susamune/mem2_map.h"
 extern "C" void *memcpy(void*d,const void*s,size_t n){for(size_t i=0;i<n;++i)((volatile u8*)d)[i]=((const u8*)s)[i];return d;}
 extern "C" void *memset(void*d,int v,size_t n){for(size_t i=0;i<n;++i)((volatile u8*)d)[i]=(u8)v;return d;}
-const u32 kMaxFrames=4096,kSavedTakeVersion=2;
+const u32 kMaxFrames=4096,kSavedTakeVersion=2,kFrameFingerprintMask=0x7fffffff;
 enum SavedTakeFlags {SAVED_PAD=1,SAVED_RNG=2,SAVED_TAKE=4,SAVED_RECORDING=8,SAVED_PAUSED=16};
 struct Frame {SusamunePracticeInput input;u32 fingerprint;};
 struct PadHistory {u8 shared[80],controls[80],meaning[0x4c];};
@@ -67,7 +67,7 @@ void warnDesync(u32 frame){if(sDesyncFrame<0){sDesyncFrame=frame;message("desync
 void invalidate(){}
 namespace Ghost {bool observerStatsSuppressed(){return observer;}}
 const int SETTING_SAVE_RNG_STATE=1,BIND_SAVESTATE_LOAD=2;
-struct JUTGamePad {enum{A=0x100};};
+struct JUTGamePad {enum{A=0x100,B=0x200,START=0x1000};};
 static struct {bool getBool(int){return rng;}} gSettings;
 static struct {u16 get(int){return 2;}void suppressUntilRelease(){}} gBinds;
 static PracticeSession::SavestateData metadata[3];
@@ -179,6 +179,77 @@ extern "C" __declspec(dllexport) int resume(){return PracticeSession::requestCon
 extern "C" __declspec(dllexport) int origin(){return findTakeStart();}
 extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
 '''
+        seek = production.read_text(encoding='utf-8').split('// TAS seek extension:', 1)[1]
+        seek = seek[seek.index('namespace {'):]
+        text += r'''
+static bool sStepping,sFreeze,sTransitionSetup,sModal;
+static unsigned sMenuAction,sTransitionMode;
+static u16 sPriorButtons,sStartRelease;
+static SusamunePracticeInput sPhysical;
+static bool busy,loadFails,loadedDiverges,loadPending;
+enum {CARD_ERROR_BUSY=-1};
+static struct {int state;int getLastStatus(){return state;}} card,*gpCardManager=&card;
+namespace WarpWheel {bool shown(){return false;}bool promptPending(){return false;}}
+namespace StageLoader {bool resultOwnsInput(){return false;}}
+void restoreCamera(){}
+static bool sFreeCamera;
+struct TMarDirector {enum {STATE_GAME_STARTING=2,STATE_STAGE_EXIT=9,STATE_STAGE_EXIT_2=12};u32 mCurState;};
+static TMarDirector director,*gpMarDirector=&director;
+bool stageReady(){return gameplay;}
+namespace PracticeSession {
+bool starting(){return false;}
+bool projectAvailable(){return gameplay&&!observer&&storageReady;}
+void cancelLoadHold(){}
+}
+bool SavestateManager::diskBusy(){return busy;}
+bool SavestateManager::loadPending()const{return ::loadPending;}
+u32 SavestateManager::slotSceneKey(u32 slot)const{return archives[slot].scene;}
+bool SavestateManager::loadSlot(u32 slot,u32 generation){
+    if(loadFails||infos[slot].generation!=generation)return false;
+    const bool result=load(slot,sOwnLoad);
+    if(loadedDiverges)++liveFingerprint;
+    return result;
+}
+''' + seek + r'''
+extern "C" __declspec(dllexport) void seekReset(){
+    sSeek={};sPhysical={};sStepping=sFreeze=sTransitionSetup=sModal=sFreeCamera=false;
+    busy=loadFails=loadedDiverges=loadPending=false;card.state=0;sMenuAction=sTransitionMode=0;
+}
+extern "C" __declspec(dllexport) int seekRequest(unsigned slot,unsigned frame){
+    return PracticeSession::requestSeek(slot,infos[slot].generation,frame);
+}
+extern "C" __declspec(dllexport) int seekValid(unsigned slot,unsigned frame){
+    return PracticeSession::seekAnchorValid(slot,infos[slot].generation,frame);
+}
+extern "C" __declspec(dllexport) void seekPoll(){PracticeSession::seekAfterDraw();}
+extern "C" __declspec(dllexport) void seekCancel(){PracticeSession::cancelSeek();}
+extern "C" __declspec(dllexport) void seekTick(unsigned failure){
+    if(failure==1)sDesyncFrame=(s32)sCursor;
+    if(failure==2)sReplay=false;
+    if(failure==3)gameplay=false;
+    if(failure==4)sModal=true;
+    if(failure==5)sPhysical.error=-1;
+    PracticeSession::seekBeforeDirect();
+    if(sSeek.phase!=PracticeSession::SEEK_PLAYING)return;
+    if(sReplay && !sFreeze && sCursor<sCount) {
+        ++sCursor;sTakePosition=sCursor;liveFingerprint=sFrames[sCursor-1].fingerprint;
+    }
+    PracticeSession::seekAfterDirect();
+}
+extern "C" __declspec(dllexport) unsigned seekState(unsigned field){
+    switch(field){case 0:return PracticeSession::seekOutcome();case 1:return PracticeSession::seekPosition();
+    case 2:return PracticeSession::seekTarget();case 3:return sFreeze;default:return PracticeSession::seekBusy();}
+}
+extern "C" __declspec(dllexport) void seekMutate(unsigned field,unsigned value){
+    switch(field){case 0:infos[0].generation++;break;case 1:metadata[1].frameHash^=1;break;
+    case 2:sFrames[0].input.buttons^=1;break;case 3:sPhysical.buttons=(u16)value;break;
+    case 4:loadFails=value;break;case 5:loadedDiverges=value;break;case 6:card.state=(int)value;break;
+    case 7:metadata[1].originKey[1]^=1;break;case 8:metadata[1].transitionHash^=1;break;
+    case 9:sTransitionMode=value;break;case 10:director.mCurState=value;break;
+    case 11:metadata[1].savedFingerprint^=1;break;case 12:loadPending=value;break;}
+}
+extern "C" __declspec(dllexport) int attemptLabel(){return PracticeSession::attemptLabelVisible();}
+'''
         source = Path(cls.temp.name) / "checkpoint.cpp"
         source.write_text(text)
         library = source.with_suffix(".dll")
@@ -191,6 +262,7 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
 
     def setUp(self):
         self.lib.reset()
+        self.lib.seekReset()
 
     def checkpoint(self):
         self.assertTrue(self.lib.save(0))
@@ -404,6 +476,121 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
         self.assertEqual(self.lib.value(8), 0x1abcde)
         self.lib.config(14, 0x200000)
         self.assertFalse(self.lib.save(2))
+
+    def seek_take(self):
+        self.checkpoint()
+        self.lib.append(40)
+        self.lib.append(50)
+        self.lib.config(8, 0)
+
+    def test_seek_beginning_then_middle_preserves_future_until_explicit_continue(self):
+        self.seek_take()
+        self.assertTrue(self.lib.seekRequest(0, 2))
+        self.lib.seekPoll()
+        self.assertEqual(self.lib.seekState(0), 2)
+        self.lib.seekTick(0)
+        self.assertEqual(self.lib.seekState(1), 1)
+        self.lib.seekTick(0)
+        self.assertEqual(self.lib.seekState(0), 3)
+        self.assertEqual((self.lib.value(0), self.lib.value(7), self.lib.value(2)), (5, 2, 1))
+        self.assertEqual([self.lib.input(i) for i in range(5)], [10, 20, 30, 40, 50])
+        self.assertFalse(self.lib.value(12))
+        self.assertTrue(self.lib.resume())
+        self.assertEqual((self.lib.value(0), self.lib.value(7)), (2, 2))
+
+    def test_seek_checkpoint_and_zero_distance_arrive_paused(self):
+        self.seek_take()
+        self.assertTrue(self.lib.seekRequest(1, 3))
+        self.lib.seekPoll()
+        self.assertEqual((self.lib.seekState(0), self.lib.seekState(1)), (3, 3))
+        self.assertEqual((self.lib.value(0), self.lib.value(3)), (5, 77))
+        self.assertTrue(self.lib.seekRequest(1, 5))
+        self.lib.seekPoll()
+        self.lib.seekTick(0); self.lib.seekTick(0)
+        self.assertEqual((self.lib.seekState(0), self.lib.seekState(1)), (3, 5))
+
+    def test_seek_refuses_pending_ordinary_load_without_changing_take(self):
+        self.seek_take()
+        before = [self.lib.value(i) for i in (0, 1, 2, 6, 7, 12)]
+        self.lib.seekMutate(12, 1)
+        self.assertFalse(self.lib.seekRequest(0, 2))
+        self.assertEqual(self.lib.seekState(0), 0)
+        self.assertEqual([self.lib.value(i) for i in (0, 1, 2, 6, 7, 12)], before)
+        self.assertEqual([self.lib.input(i) for i in range(5)], [10, 20, 30, 40, 50])
+        self.lib.seekMutate(12, 0)
+        self.assertTrue(self.lib.seekRequest(0, 2))
+
+    def test_seek_refuses_wrong_branch_even_when_frame_count_matches(self):
+        for field in (1, 7, 8, 11):
+            self.setUp(); self.seek_take()
+            self.lib.seekMutate(field, 0)
+            self.assertFalse(self.lib.seekValid(1, 5))
+            self.assertFalse(self.lib.seekRequest(1, 5))
+            self.assertEqual(self.lib.value(0), 5)
+        self.assertFalse(self.lib.seekValid(0, 6))
+        self.assertFalse(self.lib.seekValid(1, 2))
+
+    def test_seek_rechecks_generation_tape_and_settings_at_restore_barrier(self):
+        for field in (0, 2, 100):
+            self.setUp(); self.seek_take()
+            self.assertTrue(self.lib.seekRequest(0, 2))
+            if field == 100: self.lib.config(1, 999)
+            else: self.lib.seekMutate(field, 0)
+            self.lib.seekPoll()
+            self.assertEqual(self.lib.seekState(0), 5)
+            self.assertEqual(self.lib.value(0), 5)
+
+    def test_seek_cancel_before_and_during_replay_never_truncates_tape(self):
+        self.seek_take()
+        self.assertTrue(self.lib.seekRequest(0, 2))
+        self.lib.seekCancel()
+        self.lib.seekPoll()
+        self.assertEqual((self.lib.seekState(0), self.lib.value(7)), (4, 5))
+        self.assertTrue(self.lib.seekRequest(0, 3))
+        self.lib.seekPoll(); self.lib.seekTick(0); self.lib.seekCancel()
+        self.assertEqual((self.lib.seekState(0), self.lib.value(7)), (4, 1))
+        self.assertEqual(self.lib.value(0), 5)
+
+    def test_seek_accepted_command_buttons_must_release_but_other_input_may_stay(self):
+        self.seek_take()
+        self.lib.seekMutate(3, 0x120)
+        self.assertTrue(self.lib.seekRequest(0, 0))
+        self.lib.seekPoll()
+        self.assertEqual(self.lib.seekState(0), 1)
+        self.lib.seekMutate(3, 0x20)
+        self.lib.seekPoll()
+        self.assertEqual(self.lib.seekState(0), 3)
+
+    def test_seek_failed_or_divergent_restore_keeps_take_and_refuses_edit(self):
+        for field in (4, 5):
+            self.setUp(); self.seek_take()
+            self.assertTrue(self.lib.seekRequest(0, 3))
+            self.lib.seekMutate(field, 1)
+            self.lib.seekPoll()
+            self.assertEqual(self.lib.seekState(0), 5)
+            self.assertEqual(self.lib.value(0), 5)
+            self.assertFalse(self.lib.resume())
+
+    def test_seek_runtime_divergence_and_overlay_stop_before_another_input(self):
+        for failure, outcome in ((1, 5), (2, 4), (4, 4), (5, 5)):
+            self.setUp(); self.seek_take()
+            self.assertTrue(self.lib.seekRequest(0, 3))
+            self.lib.seekPoll(); self.lib.seekTick(failure)
+            self.assertEqual(self.lib.seekState(0), outcome)
+            self.assertEqual((self.lib.value(0), self.lib.value(7)), (5, 0))
+
+    def test_seek_unpausable_destination_never_reports_arrival(self):
+        self.seek_take()
+        self.assertTrue(self.lib.seekRequest(0, 1))
+        self.lib.seekPoll(); self.lib.seekTick(3)
+        self.assertEqual(self.lib.seekState(0), 5)
+        self.assertFalse(self.lib.value(6))
+        self.assertEqual(self.lib.value(0), 5)
+
+    def test_attempt_label_hides_only_during_loading_and_departure(self):
+        for state, visible in ((0, 0), (1, 0), (2, 1), (4, 1), (5, 1), (7, 1), (9, 0), (12, 0)):
+            self.lib.seekMutate(10, state)
+            self.assertEqual(self.lib.attemptLabel(), visible)
 
     def test_corrupt_or_oversized_prefix_cannot_resume(self):
         self.checkpoint()

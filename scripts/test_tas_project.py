@@ -29,13 +29,14 @@ static SusamuneTasTransition liveTransitions[32];
 static u32 liveTransitionCount,tapeExportCount,tapeImportCount,saveCount,failTapeExport,restoreTakeCount;
 static bool takePresent,tapePayloadFails,restoreCheckpointFails,worldLoadFails,recordedScene;
 static u32 worldLoadAttempts,continueCalls;
+static bool seeking,pendingLoad;static u32 seekSlot,seekInvalidMask;
 static SavestateManager::SlotInfo memory[3];
 static PracticeSession::SavestateData stateData[3];
 static SavestateManager::TransferResult transfer;
 static StateStorage::Result response;
 static SusamuneTasManifest published,projects[32];
 static u32 nextProjectId,beginCount;
-static bool failBegin,failCommit;
+static bool failBegin,failCommit,storageBorrow;static u32 storageGeneration,ownershipErrors;
 static SusamuneStateCatalog catalogData;
 static bool transferReady,responseReady,tapeAttached,tapeRecord,tapePause,saveFails,compatible,canStart,readyCheckpoint;
 static u32 nextGeneration,exportCount,commitCount,importCount,loadCount,clearCount,failExport,liveFrames,liveKey[2],liveRevision,lastLoaded;
@@ -52,6 +53,7 @@ SavestateManager*gSavestateMgr=&manager;
 SavestateManager::SlotInfo SavestateManager::slotInfo(u32 slot)const{return slot<3?memory[slot]:SlotInfo{};}
 bool SavestateManager::practiceData(u32 slot,PracticeSession::SavestateData*out)const{if(slot>=3||!memory[slot].valid)return false;*out=stateData[slot];return true;}
 bool SavestateManager::diskBusy(){return false;}
+bool SavestateManager::loadPending()const{return pendingLoad;}
 const char*SavestateManager::sdStatus()const{return "fake transfer refusal";}
 bool SavestateManager::projectCompatible(const SusamuneTasManifest&)const{return compatible;}
 u32 SavestateManager::currentSceneKey()const{return currentScene;}
@@ -65,6 +67,7 @@ bool SavestateManager::saveSlotExplicit(u32 slot,bool rng,bool omit){
 }
 bool SavestateManager::clearSlot(u32 slot,u32 gen){if(slot>=3||memory[slot].generation!=gen)return false;memory[slot].valid=false;memory[slot].generation=++nextGeneration;++clearCount;return true;}
 bool SavestateManager::exportSlotExplicit(u32 slot,u32 gen,const SusamuneTasRequest*request){
+ if(storageBorrow){++ownershipErrors;return false;}
  if(!exportContextValid(request)||!memory[slot].valid||memory[slot].generation!=gen)return false;
  const u32 id=++nextFileId;++exportCount;transfer={};transfer.command=SUSAMUNE_STATE_CMD_EXPORT;transfer.id=id;transfer.slot=slot;transfer.generation=gen;
  transfer.status=exportCount==failExport?SUSAMUNE_STATE_IO_ERROR:SUSAMUNE_STATE_OK;
@@ -92,6 +95,9 @@ bool SavestateManager::loadSlot(u32 slot,u32 gen){++worldLoadAttempts;if(worldLo
  liveKey[0]=d.originKey[0];liveKey[1]=d.originKey[1];++liveRevision;return true;
 }
 namespace PracticeSession {
+bool seekBusy(){return seeking;}
+bool seekAnchorValid(u32 slot,u32 gen,u32 target){return !(seekInvalidMask&(1u<<slot))&&memory[slot].valid&&memory[slot].generation==gen&&stateData[slot].frames<=target&&slotScenes[slot]==currentScene;}
+bool requestSeek(u32 slot,u32 gen,u32 target){if(!seekAnchorValid(slot,gen,target))return false;seekSlot=slot;seeking=true;return true;}
 bool projectSavestateMatches(const SavestateData&d,const u32(&key)[2],u32 role,u32 frames){
  return (d.flags&3)==3&&d.frames==frames&&(role?((d.flags&4)&&d.originKey[0]==key[0]&&d.originKey[1]==key[1]):
  (!frames&&!(d.flags&4)&&d.stateKey[0]==key[0]&&d.stateKey[1]==key[1]));}
@@ -109,6 +115,7 @@ bool captureTake(SusamuneTasTakeData&out,StateCodec::ReadSpan(&spans)[2]){
  spans[0]={liveFrameWords,liveFrames*16};spans[1]={liveTransitions,liveTransitionCount*16};return true;
 }
 bool restoreTake(const SusamuneTasTakeData&data,const void*frames,const void*transitions,const SavestateData*checkpoint){
+ if(!storageBorrow){++ownershipErrors;return false;}
  ++restoreTakeCount;
  if(!SusamuneTasTakeValid(&data)||(checkpoint&&(restoreCheckpointFails||checkpoint->frames>data.frames)))return false;
  memcpy(liveFrameWords,frames,data.frames*16);memcpy(liveTransitions,transitions,data.transitionCount*16);
@@ -128,9 +135,15 @@ bool requestPlayback(){return takePresent;}
 const char*status(){return runtimeStatus;}
 }
 namespace StateStorage {
+u32 archiveCapacity(){return SUSAMUNE_STATE_POOL_EXPANDED_SIZE;}
 bool available(){return true;}bool busy(){return false;}
+bool consumeResult(ResultToken token,bool){if(!storageBorrow||token.generation!=response.token.generation){++ownershipErrors;return false;}storageBorrow=false;return true;}
+bool consumeResult(const Result&r,bool keep){return consumeResult(r.token,keep);}
+bool releaseOwner(){return !storageBorrow&&!responseReady;}
+
 bool startTapeExport(const SusamuneStateArchiveHeader&identity,const SusamuneTasTakeData&data,
                      const void*frames,const void*transitions,const SusamuneTasRequest&request){
+ if(storageBorrow){++ownershipErrors;return false;}
  if(!exportContextValid(&request)||request.role!=SUSAMUNE_TAS_TAPE_ROLE||!SusamuneTasTakeValid(&data))return false;
  const u32 id=++nextFileId;++tapeExportCount;auto&file=tapeData[id];file.data=data;file.header=identity;
  memcpy(file.frames,frames,data.frames*16);memcpy(file.transitions,transitions,data.transitionCount*16);
@@ -141,6 +154,7 @@ bool startTapeExport(const SusamuneStateArchiveHeader&identity,const SusamuneTas
  response.status=tapeExportCount==failTapeExport?SUSAMUNE_STATE_IO_ERROR:SUSAMUNE_STATE_OK;responseReady=true;return true;
 }
 bool startTapeImport(const SusamuneTasManifest&manifest){
+ if(storageBorrow){++ownershipErrors;return false;}
  if(!SusamuneTasManifestValid(&manifest)||manifest.tape.componentId>=32)return false;
  ++tapeImportCount;response={};response.command=SUSAMUNE_STATE_CMD_IMPORT;response.id=manifest.tape.componentId;
  response.header=tapeData[response.id].header;
@@ -148,15 +162,17 @@ bool startTapeImport(const SusamuneTasManifest&manifest){
  responseReady=true;return true;
 }
 bool tapePayload(const Result&result,SusamuneTasTakeData&data,const void*&frames,const void*&transitions){
+ if(!storageBorrow){++ownershipErrors;return false;}
  if(tapePayloadFails||result.id>=32||!SusamuneTasTapeMetadataValid(&result.header,&tapeData[result.id].data))return false;
  data=tapeData[result.id].data;frames=tapeData[result.id].frames;transitions=tapeData[result.id].transitions;return true;
 }
-bool takeResult(Result&out){if(!responseReady||response.command>=SUSAMUNE_STATE_CMD_TAS_BEGIN)return false;out=response;responseReady=false;return true;}
+bool takeResult(Result&out){if(!responseReady||response.command>=SUSAMUNE_STATE_CMD_TAS_BEGIN)return false;response.token.generation=++storageGeneration;out=response;responseReady=false;storageBorrow=true;return true;}
 bool projectBegin(const char*){++beginCount;if(failBegin)return false;
  response={};response.command=SUSAMUNE_STATE_CMD_TAS_BEGIN;response.id=++nextProjectId;responseReady=true;return true;}
 bool projectRead(u32 id,u32 crc){response={};response.command=SUSAMUNE_STATE_CMD_TAS_READ;response.project=published;
  if(id!=published.projectId||crc!=published.checksum)response.status=SUSAMUNE_STATE_STALE;responseReady=true;return true;}
 bool projectCommit(const SusamuneTasManifest&value,u32 old){
+ if(storageBorrow){++ownershipErrors;return false;}
  if(failCommit||!SusamuneTasManifestValid(&value)||value.projectId>=32)return false;
  const auto&prior=projects[value.projectId];
  if(old!=prior.checksum||value.generation!=prior.generation+1)return false;
@@ -178,15 +194,16 @@ bool projectDelete(u32 id,u32 crc){response={};response.command=SUSAMUNE_STATE_C
  if(id!=published.projectId||crc!=published.checksum)response.status=SUSAMUNE_STATE_STALE;
  else {memset(&projects[id],0,sizeof(projects[id]));memset(&published,0,sizeof(published));}responseReady=true;return true;}
 bool projectCatalog(u32){response={};response.command=SUSAMUNE_STATE_CMD_TAS_CATALOG;responseReady=true;return true;}
-bool takeProjectResult(Result&out){if(!responseReady||response.command<SUSAMUNE_STATE_CMD_TAS_BEGIN)return false;out=response;responseReady=false;return true;}
+bool takeProjectResult(Result&out){if(!responseReady||response.command<SUSAMUNE_STATE_CMD_TAS_BEGIN)return false;response.token.generation=++storageGeneration;out=response;responseReady=false;storageBorrow=true;return true;}
 bool catalogReady(){return true;}const SusamuneStateCatalog&catalog(){return catalogData;}
 }
 """ + '\n'.join(line for line in (ROOT / 'src/tas_project.cpp').read_text().splitlines() if not line.startswith('#pragma clang section')) + r"""
 extern "C" __declspec(dllexport) void reset(){
+ seeking=pendingLoad=false;seekSlot=99;seekInvalidMask=0;
  memset(memory,0,sizeof(memory));memset(stateData,0,sizeof(stateData));memset(fileData,0,sizeof(fileData));
  memset(tapeData,0,sizeof(tapeData));memset(liveFrameWords,0,sizeof(liveFrameWords));memset(liveTransitions,0,sizeof(liveTransitions));memset(slotScenes,0,sizeof(slotScenes));
  memset(&published,0,sizeof(published));memset(projects,0,sizeof(projects));memset(&catalogData,0,sizeof(catalogData));
- nextProjectId=6;beginCount=0;failBegin=failCommit=false;
+ nextProjectId=6;beginCount=0;failBegin=failCommit=storageBorrow=false;storageGeneration=ownershipErrors=0;
  transferReady=responseReady=tapeAttached=tapeRecord=tapePause=saveFails=false;
  compatible=canStart=readyCheckpoint=recordedScene=true;nextGeneration=100;
  takePresent=tapePayloadFails=restoreCheckpointFails=worldLoadFails=false;worldLoadAttempts=continueCalls=0;
@@ -217,7 +234,7 @@ extern "C" __declspec(dllexport) void option(u32 code,u32 value){switch(code){ca
  case 17:tapeData[published.tape.componentId].data.originKey[1]=value;break;
  case 18:tapeData[published.tape.componentId].data.frames=value;break;
  case 19:worldLoadFails=value;break;case 20:recordedScene=value;break;
- case 21:failBegin=value;break;case 22:failCommit=value;break;
+ case 21:failBegin=value;break;case 22:failCommit=value;break;case 23:pendingLoad=value;break;
  }}
 extern "C" __declspec(dllexport) u32 value(u32 code){switch(code){case 0:return TasProject::active();case 1:return TasProject::busy();case 2:return TasProject::replacementNeeded();case 3:return exportCount;case 4:return commitCount;case 5:return importCount;case 6:return loadCount;case 7:return clearCount;case 8:return published.generation;case 9:return published.componentCount;case 10:return published.currentRole;case 11:return TasProject::dirty();case 12:return liveFrames;case 13:return ordinarySave;case 14:return ordinaryLoad;case 15:return lastLoaded;case 16:return TasProject::named();case 17:return TasProject::checkpointOverwritePending();
  case 18:return tapeExportCount;case 19:return tapeImportCount;case 20:return saveCount;case 21:return livePosition;case 22:return tapeAttached;
@@ -249,15 +266,19 @@ extern "C" __declspec(dllexport) const char*projectName(){return TasProject::nam
 extern "C" __declspec(dllexport) u32 generation(u32 slot){return memory[slot].generation;}
 extern "C" __declspec(dllexport) u32 role(u32 role){return TasProject::sRefs[role].slot;}
 extern "C" __declspec(dllexport) u32 allowed(u32 slot){return TasProject::replacementAllowed(slot);}
+extern "C" __declspec(dllexport) u32 ownership(){return ownershipErrors+(storageBorrow?1:0);}
 extern "C" __declspec(dllexport) const char*status(){return TasProject::status();}
+extern "C" __declspec(dllexport) unsigned seek(unsigned target,unsigned mask){seeking=false;seekInvalidMask=mask;return TasProject::seek(target)?seekSlot:99;}
 """, encoding="utf-8")
         dll=source.with_suffix('.dll')
-        result=subprocess.run([str(ROOT/'toolchain/clang++.exe'),'--target=x86_64-pc-windows-msvc','-shared','-nostdlib','-fuse-ld=lld','-Wl,/noentry','-O2','-std=c++17','-I',str(ROOT/'include'),str(source),'-o',str(dll)],capture_output=True,text=True)
+        result=subprocess.run([str(ROOT/'toolchain/clang++.exe'),'--target=x86_64-pc-windows-msvc','-shared','-nostdlib','-fuse-ld=lld','-Wl,/noentry','-O2','-std=c++17','-fno-exceptions','-I',str(ROOT/'include'),str(source),'-o',str(dll)],capture_output=True,text=True)
         if result.returncode: raise AssertionError(result.stderr)
         cls.lib=C.CDLL(str(dll));cls.lib.status.restype=C.c_char_p
         cls.lib.projectName.restype=C.c_char_p
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
     def setUp(self): self.lib.reset()
+
+    def tearDown(self): self.assertEqual(self.lib.ownership(),0,"TAS result borrow leaked or chained before consumption")
     def finish(self):
         for _ in range(30):
             if not self.lib.value(1) or self.lib.value(2):break
@@ -265,10 +286,35 @@ extern "C" __declspec(dllexport) const char*status(){return TasProject::status()
         self.assertFalse(self.lib.value(1), self.lib.status())
     def new(self): self.assertTrue(self.lib.action(0,0));self.finish()
     def save(self): self.assertTrue(self.lib.action(2,0));self.finish()
+    def test_seek_chooses_nearest_valid_prefix_and_blocks_other_state_actions(self):
+        self.new()
+        self.lib.append();self.lib.action(1,1);self.finish()
+        self.lib.append();self.lib.append();self.lib.action(1,2);self.finish()
+        self.lib.append()
+        self.assertEqual(self.lib.seek(2,0),self.lib.role(1))
+        self.assertFalse(self.lib.action(1,1))
+        self.assertFalse(self.lib.action(2,0))
+        self.assertEqual(self.lib.seek(4,0),self.lib.role(2))
+        self.assertEqual(self.lib.seek(4,1<<self.lib.role(2)),self.lib.role(1))
+        self.assertEqual(self.lib.seek(0,0),self.lib.role(0))
+        self.assertEqual(self.lib.seek(4,7),99)
+        self.assertEqual((self.lib.value(12),self.lib.value(7)),(4,0))
     def test_new_captures_beginning_without_touching_other_slots_or_selections(self):
         self.lib.ordinary(0);before=self.lib.generation(0);self.new()
         self.assertEqual(self.lib.role(0),1);self.assertEqual(self.lib.generation(0),before)
         self.assertEqual((self.lib.value(13),self.lib.value(14)),(2,1))
+
+    def test_seek_refuses_pending_load_and_preserves_tape_and_slots(self):
+        self.new(); self.lib.append(); self.lib.append()
+        generations = [self.lib.generation(i) for i in range(3)]
+        self.lib.option(23, 1)
+        self.assertEqual(self.lib.seek(1, 0), 99)
+        self.assertFalse(self.lib.action(5, 0))
+        self.assertFalse(self.lib.action(12, 0))
+        self.assertEqual((self.lib.value(12), self.lib.value(21)), (2, 2))
+        self.assertEqual([self.lib.generation(i) for i in range(3)], generations)
+        self.lib.option(23, 0)
+        self.assertEqual(self.lib.seek(1, 0), self.lib.role(0))
     def test_new_project_reuses_its_own_slots_after_discard(self):
         self.new();self.lib.append();self.lib.action(1,1);self.finish();self.lib.action(1,2);self.finish()
         start=self.lib.role(0);self.new()

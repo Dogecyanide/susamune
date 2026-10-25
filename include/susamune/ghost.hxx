@@ -8,6 +8,7 @@
 
 class Menu;
 class TMarDirector;
+namespace GhostCamera { struct View; }
 
 namespace Ghost {
 
@@ -68,7 +69,7 @@ void afterDirect(s32 appState);
 void update();
 void draw(Menu *menu);
 void onSavestateLoaded();
-enum { kSavestateSpanCount = 3 };
+enum { kSavestateSpanCount = 4 };
 struct SavestateData { u32 words[128]; };
 // Prefix bytes join the game snapshot; metadata never supplies restore addresses.
 bool captureSavestate(SavestateData &out,
@@ -99,19 +100,53 @@ bool importObserverTrack(const void *data, u32 size, bool secondary);
 bool observerTrackReady(bool secondary);
 bool startObserver();
 void stopObserver();
+bool takeOverObserver();
 bool observerPreparing();
 bool observerActive();
+bool displayEnabled();
+bool recordedCameraAvailable();
+bool recordedCameraView(GhostCamera::View *out);
 // Includes the viewer-owned reload after playback has stopped.
 bool observerStatsSuppressed();
 bool observerCleanupPending();
 int observerGhostCount();
 bool observerLoading();
 int observerVisibleCount();
+struct ObserverTimeline {
+    u32 startQf, endQf, qf;
+    u32 secondaryStartQf;
+    s32 secondaryOffsetQf;
+    u8 splitCount;
+    s8 alignedSplit;
+    bool paused;
+};
+struct ObserverSplit {
+    u32 qf, secondaryQf;
+    u32 schema;
+    u16 route;
+    u8 endpoint;
+    bool comparable;
+};
+bool observerTimeline(ObserverTimeline *out);
+bool observerSplit(u8 index, ObserverSplit *out);
+bool observerPause(bool paused);
+bool observerPaused();
+bool observerSeek(u32 qf);
+// Pause both at their own checkpoint; resume advances equal elapsed QFs.
+bool observerAlignSplit(u8 index);
+bool observerClearAlignment();
+// Historical presentation only, bounded to the currently loaded Watch scene.
+bool observerVisualAt(unsigned runner, u32 qf, VisualState *out);
 bool playbackInfo(PlaybackInfo *out);
 bool playbackIsTas(bool secondary = false);
 // A successful snapshot may still be hidden outside its matching route/QFT.
 bool visualState(VisualState *out);
 bool secondaryVisualState(VisualState *out);
+#if TIMEWARP_LIVE_RACING
+// Observation only; the live transport supplies its own clock and token.
+bool captureLiveVisual(VisualState *out);
+bool renderVisualState(unsigned int runner, VisualState *out);
+#endif
 // Rendering runs inside director->direct(), one QF after the normal update.
 // Refresh only the playback cursor there; recording remains post-direct.
 void prepareVisual();

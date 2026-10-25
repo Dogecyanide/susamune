@@ -22,7 +22,7 @@ int events, moves; bool ready, pending, busy;
 void event(int value){events=events*10+value;}
 struct TPauseMenu2{void setDrawEnd(){event(2);}}pause;
 struct TMarDirector {
-    enum{STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_DEATH=7,STATE_STAGE_EXIT=9,STATE_SAVE_CARD=11};
+    enum{STATE_INTRO_PLAYING=1,STATE_GAME_STARTING=2,STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_DEATH=7,STATE_STAGE_EXIT=9,STATE_SAVE_CARD=11};
     u8 mCurState;int _260;TPauseMenu2 *mPauseMenu;
     void moveStage(){event(1);++moves;}
     void currentStateFinalize(u8 n){if(n==9)event(3);}
@@ -32,12 +32,18 @@ struct Card{int getLastStatus(){return busy?-1:0;}}card;
 Card *gpCardManager=&card;constexpr int CARD_ERROR_BUSY=-1;
 bool sArmed,sQueuedSessionDeathRestart,sWaitForRetailDeathTail,sWaitForSave;
 int sSaveIdleFrames;
+TMarDirector *gpMarDirector=&director;
+struct TSMSFader{enum{FADE_OFF=1};int mFadeStatus;}fader;
+struct Application{TMarDirector *mDirector;TSMSFader *mFader;}gpApplication;
+bool sTailPending,sPendingTitleExit,sHoldNaturalDeparture;
+enum{DEFERRED_RESTART_NONE,HELD_SESSION_DEPARTURE_NONE=0};
+int sDeferredRestart,sHeldSessionDeparture;
 namespace StageLoader {bool departureResultPending(){return pending;}}
 bool saveFlowActive(){return busy;}
 bool armedCourseWarpReady(){return ready;}
 void prepareArmedDeparture(){sArmed=false;}
 namespace LevelWarp {
-'''+function(source,'kick')+'}\n'+function(source,'servicePausedWarp')+r'''
+'''+function(source,'readyForOnlineRace')+function(source,'kick')+'}\n'+function(source,'servicePausedWarp')+r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(int state){
     director={(u8)state,1,&pause};events=moves=0;
@@ -53,6 +59,17 @@ API void set(int option,int value){
 API int tick(){return servicePausedWarp(&director);}
 API int value(int id){return id==0?director.mCurState:id==1?events:id==2?moves:sArmed;}
 API int nullDirector(){return servicePausedWarp(nullptr);}
+API int onlineGate(int fault){
+ director={4,1,&pause};fader.mFadeStatus=1;gpApplication={&director,&fader};gpMarDirector=&director;
+ sArmed=sTailPending=sPendingTitleExit=sHoldNaturalDeparture=busy=false;sDeferredRestart=sHeldSessionDeparture=0;
+ switch(fault){case 1:gpMarDirector=nullptr;break;case 2:gpApplication.mDirector=nullptr;break;
+ case 3:director._260=0;break;case 4:director.mCurState=1;break;case 5:director.mCurState=9;break;
+ case 6:director.mCurState=11;break;case 7:fader.mFadeStatus=3;break;case 8:gpApplication.mFader=nullptr;break;
+ case 9:sArmed=true;break;case 10:sTailPending=true;break;case 11:busy=true;break;
+ case 12:sPendingTitleExit=true;break;case 13:sHoldNaturalDeparture=true;break;
+ case 14:sDeferredRestart=1;break;case 15:sHeldSessionDeparture=1;break;}
+ return LevelWarp::readyForOnlineRace();
+}
 '''
         path = Path(cls.temp.name)/'paused.cpp';path.write_text(code)
         result=subprocess.run([str(ROOT/'toolchain/clang++.exe'),
@@ -62,6 +79,13 @@ API int nullDirector(){return servicePausedWarp(nullptr);}
         if result.returncode:raise RuntimeError(result.stdout+result.stderr)
         cls.lib=C.CDLL(str(path.with_suffix('.dll')))
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
+
+    def test_online_requires_loaded_stable_scene_without_pending_work(self):
+        self.assertEqual(self.lib.onlineGate(0), 1)
+        for fault in range(1, 16):
+            with self.subTest(fault=fault):
+                self.assertEqual(self.lib.onlineGate(fault), 0)
+        self.assertEqual(self.lib.onlineGate(0), 1)
 
     def test_pause_closes_retail_ui_and_transitions_once(self):
         self.lib.reset(5)
@@ -76,7 +100,7 @@ API int nullDirector(){return servicePausedWarp(nullptr);}
         self.assertEqual([self.lib.value(i)for i in range(4)],[9,134,1,0])
 
     def test_busy_card_result_and_pb_decision_keep_departure_armed(self):
-        for state in (5,7,11):
+        for state in (1,2,5,7,11):
             for option,blocked,allowed in ((2,1,0),(3,0,1),(4,1,0),(7,1,0)):
                 self.lib.reset(state);self.lib.set(option,blocked)
                 self.assertEqual(self.lib.tick(),0,(state,option))
@@ -106,8 +130,16 @@ API int nullDirector(){return servicePausedWarp(nullptr);}
         self.assertEqual(self.lib.tick(),0)
         self.assertEqual(self.lib.tick(),1)
 
+    def test_loaded_intros_depart_but_async_setup_never_does(self):
+        for state in (1, 2):
+            self.lib.reset(state); self.lib.set(1, 0)
+            self.assertEqual(self.lib.tick(), 0)
+            self.lib.set(1, 1)
+            self.assertEqual(self.lib.tick(), 1)
+            self.assertEqual([self.lib.value(i) for i in range(3)], [9, 134, 1])
+
     def test_unready_normal_borrowed_and_unarmed_states_are_untouched(self):
-        for state in (0,1,4,6,9,12):
+        for state in (0,4,6,9,12):
             self.lib.reset(state)
             self.assertEqual(self.lib.tick(),0,state)
             self.assertEqual([self.lib.value(i)for i in range(3)],[state,0,0])

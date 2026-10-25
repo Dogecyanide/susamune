@@ -108,18 +108,26 @@ struct SusamuneGhostPiantaAsset {
         SUSAMUNE_CONSOLE_GHOST_PLAY_PHYS_BASE + \
         SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE))
 
+#if IS_EMULATOR
+// Model heaps moved to GPU-visible MEM1; their original CPU spans hold masters.
+#define SUSAMUNE_GHOST_SHADOW_MASTER_PPC_PTR \
+    ((volatile struct SusamuneGhostShadowAsset *)SUSAMUNE_GHOST_MODEL_HEAP_PPC_BASE)
+#define SUSAMUNE_GHOST_PIANTA_MASTER_PPC_PTR \
+    ((volatile struct SusamuneGhostPiantaAsset *)SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE)
+#else
 #define SUSAMUNE_GHOST_SHADOW_MASTER_PPC_PTR \
     ((volatile struct SusamuneGhostShadowAsset *)( \
         SUSAMUNE_GHOST_ASSET_VAULT_PPC_BASE + \
-        SUSAMUNE_GHOST_SHADOW_MASTER_OFFSET))
-#define SUSAMUNE_GHOST_SHADOW_MASTER_PHYS_PTR \
-    ((volatile struct SusamuneGhostShadowAsset *)( \
-        SUSAMUNE_GHOST_ASSET_VAULT_PHYS_BASE + \
         SUSAMUNE_GHOST_SHADOW_MASTER_OFFSET))
 #define SUSAMUNE_GHOST_PIANTA_MASTER_PPC_PTR \
     ((volatile struct SusamuneGhostPiantaAsset *)( \
         SUSAMUNE_GHOST_ASSET_VAULT_PPC_BASE + \
         SUSAMUNE_GHOST_PIANTA_MASTER_OFFSET))
+#endif
+#define SUSAMUNE_GHOST_SHADOW_MASTER_PHYS_PTR \
+    ((volatile struct SusamuneGhostShadowAsset *)( \
+        SUSAMUNE_GHOST_ASSET_VAULT_PHYS_BASE + \
+        SUSAMUNE_GHOST_SHADOW_MASTER_OFFSET))
 #define SUSAMUNE_GHOST_PIANTA_MASTER_PHYS_PTR \
     ((volatile struct SusamuneGhostPiantaAsset *)( \
         SUSAMUNE_GHOST_ASSET_VAULT_PHYS_BASE + \

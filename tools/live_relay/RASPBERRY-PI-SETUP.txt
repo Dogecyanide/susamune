@@ -1,0 +1,120 @@
+MOONSHINE TIMEWARP - RASPBERRY PI RELAY
+Server 5 protocol; compatible with Prototype 12. Both players use the same build.
+
+WHAT TO PUT ON THE PI
+A current Raspberry Pi OS installation with Python 3.10 or newer, the included
+server.py and moonshine-relay.service, and Playit for access without forwarding
+router ports. No game, ISO, emulator, database or pip packages are needed.
+A modern Pi should comfortably handle a small private test group; this package
+has not been benchmarked on your particular Pi. Ethernet is preferable.
+
+1. COPY AND EXTRACT
+Copy Moonshine-Raspberry-Pi-Relay-5.zip into your Pi user's home folder.
+Open a terminal on the Pi (local desktop or SSH). Run these commands in order:
+
+sudo apt update
+sudo apt install -y python3 unzip curl gnupg ca-certificates tmux
+python3 --version
+unzip -n ~/Moonshine-Raspberry-Pi-Relay-5.zip -d ~/moonshine-relay-5
+cd ~/moonshine-relay-5
+
+Check the version is at least Python 3.10. If it is older, stop and update to a
+supported Raspberry Pi OS installation first; do not replace system Python.
+
+2. INSTALL THE RELAY AS A BACKGROUND SERVICE
+These commands install the included source and enable startup after reboot:
+
+sudo install -d -m 755 /opt/moonshine-relay
+sudo install -m 644 server.py /opt/moonshine-relay/server.py
+sudo install -m 644 moonshine-relay.service /etc/systemd/system/moonshine-relay.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now moonshine-relay
+sudo systemctl status moonshine-relay --no-pager
+
+Expect active (running), with a message about listening on UDP 38400.
+That confirms local startup only; a Wii room creation tests the Internet path.
+If replacing an already running version, also run:
+sudo systemctl restart moonshine-relay
+Restarting closes existing rooms. Run only one relay on this port.
+
+3. INSTALL PLAYIT ON THE PI
+The following is Playit's Debian/Ubuntu package installation method, checked
+2026-10-15. Raspberry Pi OS is Debian-based; apt selects the CPU architecture.
+Official source: https://playit.gg/support/run-on-linux/
+
+curl -fsSL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+sudo apt update
+sudo apt install -y playit
+
+Stop if any installation command fails. If apt has no package for the Pi's OS,
+use the ARM download matching that OS from https://playit.gg/download (Linux
+ARM64 for 64-bit ARM; never the amd64/x86 PC download).
+
+4. CLAIM THE PI'S PLAYIT AGENT AND CREATE A UDP TUNNEL
+Run:
+
+tmux new -s moonshine-playit
+playit
+
+Open the claim/login URL shown by Playit in a browser and sign in to your own
+Playit account. On its dashboard, add a tunnel assigned to THIS Pi's agent:
+
+Tunnel type: Custom UDP / UDP
+Port count: 1
+Local IP: 127.0.0.1
+Local port: 38400
+Proxy protocol: Off, if offered
+
+Keep Playit running. Press Ctrl+B, release both, then press D to detach from
+tmux; the process continues when you close SSH. To see it again, run:
+tmux attach -t moonshine-playit
+
+The Moonshine service restarts automatically after reboot. This tmux session
+does not: after a Pi reboot, repeat the two startup commands in this step.
+If Playit is already running as a configured service, use that one instance
+instead of starting a second copy.
+
+5. SEND BACK THE PUBLIC ENDPOINT
+Send the PUBLIC IPv4 address and PUBLIC UDP port shown by Playit, plus its
+hostname if available. Do not send 127.0.0.1 or the Pi's 192.168.x.x address.
+The public port can differ from 38400. Do not send account tokens or secrets.
+
+If Playit shows only a hostname, obtain its IPv4 with:
+getent ahostsv4 YOUR-PLAYIT-HOSTNAME
+Replace YOUR-PLAYIT-HOSTNAME with the assigned hostname, without :port.
+
+Both Wiis enter that public IPv4 and public port on Moonshine's Online page.
+The old 147.185.221.213:48222 endpoint belongs to the earlier setup: do not assume
+it points at this Pi. Create a fresh room on one Wii, then join on the other.
+The Pi's owner needs no Wii/game and players need no Playit installation.
+Keep the Pi and its Playit process online throughout the session.
+
+6. IF IT DOES NOT CONNECT
+Check that the tunnel says UDP, targets the Pi agent, and uses 127.0.0.1:38400.
+Check both players entered its PUBLIC address/port and use the same prototype.
+Collect these outputs; they do not contain room codes or player addresses:
+
+sudo systemctl status moonshine-relay --no-pager
+sudo journalctl -u moonshine-relay --no-pager -n 30
+
+For temporary aggregate diagnostics, stop the service and run in a terminal:
+sudo systemctl stop moonshine-relay
+python3 ~/moonshine-relay-5/server.py --bind 127.0.0.1 --port 38400 --diagnostics
+After testing, Ctrl+C stops that foreground relay. Restore the service with:
+sudo systemctl start moonshine-relay
+
+To disable hosting:
+sudo systemctl disable --now moonshine-relay
+Stop Playit with Ctrl+C in its tmux session as well.
+
+SCOPE
+This is the existing private, two-player room relay. It forwards ghost and race
+messages; it does not simulate Sunshine or implement accounts/friends/rankings.
+It is not a four-player game server. Room codes are invitations, not passwords.
+Western Canada is usable for the test; Internet routes determine ghost delay.
+Local gameplay does not wait for remote inputs. No Pi hardware run is claimed.
+
+Source references:
+https://playit.gg/support/run-on-linux/
+https://playit.gg/download

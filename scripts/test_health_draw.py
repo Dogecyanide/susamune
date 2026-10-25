@@ -32,7 +32,8 @@ struct TGCConsole2 {u32 pad[6],mode;J2DScreen*mMainScreen;struct {J2DPicture*mAc
 struct Director {bool _260;TGCConsole2*mGCConsole;} *gpMarDirector;
 struct TApplication {enum {CONTEXT_DIRECT_STAGE=5};int mContext;} gpApplication;
 namespace RetailInput {Director*stageDirector(){return gpApplication.mContext==5?gpMarDirector:nullptr;}}
-struct CreationExtras {enum {EDIT_HEALTH=1};J2DScreen*mHudScreen;struct{bool active;bool editing(){return active;}}mEditor;
+namespace HudEditorPreview {bool beginDraw(TGCConsole2*,unsigned){return false;}void endDraw(){}}
+struct CreationExtras {enum {EDIT_HEALTH=1,EDIT_COLOR=2};J2DScreen*mHudScreen;struct{bool active;bool editing(){return active;}}mEditor;
  unsigned mEditMode,mEditFirst,mColorPresent;u8 mHealthRgb[2][3];
  bool beginHudDraw(J2DScreen*);void endHudDraw();};
 '''

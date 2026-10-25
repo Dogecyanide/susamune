@@ -51,7 +51,9 @@ still dropped, since those sections are regenerated wholesale.
 
 */
 
+#include "susamune/hoverless.h"
 #include "SusamuneCfg.h"
+#include "susamune/gradient_options.h"
 #include "string.h"
 #include "alloc.h"
 #include "debug.h"
@@ -878,6 +880,8 @@ static int WritePbProfilesFile(const struct SusamuneILingProfilesCfg *profiles)
 	}
 	return ret;
 }
+
+#include "SusamuneHoverless.inc"
 
 // ---------------------------------------------------------------------
 // Global achievement/statistics binary files
@@ -4645,6 +4649,13 @@ static char *Trim(char *s)
 
 	while (*s && IsSpace(*s))
 		s++;
+	/* A UTF-8 byte order mark (some editors add one) can only open the first line. */
+	if ((u8)s[0] == 0xEF && (u8)s[1] == 0xBB && (u8)s[2] == 0xBF)
+	{
+		s += 3;
+		while (*s && IsSpace(*s))
+			s++;
+	}
 
 	end = s + strlen(s);
 	while (end > s && IsSpace(end[-1]))
@@ -4969,6 +4980,17 @@ static void ApplyQftDisplayKey(struct SusamuneQftDisplayCfg *cfg,
 	u32 i;
 	u8  rgb[3];
 
+    if (strcmp(key, "section_history_style") == 0 && ParseQftU8(text, &v8) && v8 < 96) {
+        cfg->reservedV1[7] = v8; cfg->reservedV1[8] = 0x48;
+        return;
+    }
+	if (strcmp(key, "gradient_stops") == 0 && ParseQftU8(text, &v8) && v8 <= 5)
+	{
+		cfg->reserved[0] = v8;
+		cfg->reserved[1] = 0x47;
+		return;
+	}
+
 	if (strlen(key) == 10 && memcmp(key, "text_", 5) == 0 &&
 	    key[5] >= '1' && key[5] <= '9' && strcmp(key + 6, "_rgb") == 0 &&
 	    ParseQftRgb(text, rgb))
@@ -5173,6 +5195,11 @@ static void ApplyMetadataStyleKey(struct SusamuneMetadataStyleCfg *cfg,
 		cfg->reserved0[3] = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_COMPACT;
 	}
+	else if (strcmp(key, "value_gap") == 0 && v8 <= 32)
+	{
+		cfg->reserved0[4] = v8;
+		cfg->present |= SUSAMUNE_METADATA_STYLE_VALUE_GAP;
+	}
 }
 
 static bool ParseCreationWordKey(const char *key, u32 *word, const char **field)
@@ -5217,6 +5244,12 @@ static void ApplyCreationKey(struct SusamuneCreationCfg *cfg,
 	u32 word;
 	u32 slot;
 	const char *field;
+
+	if (strcmp(key, "native_timer_gradient_stops") == 0 && ParseQftU8(text, &v8) && v8 <= 5)
+	{
+		cfg->reservedAchievement0 = 0xd0 | v8;
+		return;
+	}
 
 	for (i = 0; i < SUSAMUNE_CREATION_COLOR_COUNT; i++)
 	{
@@ -5396,6 +5429,21 @@ static void ApplyCreationKey(struct SusamuneCreationCfg *cfg,
 	}
 	if (!ParseCreationWordKey(key, &word, &field))
 		return;
+	if (strcmp(field, "gradient_stops") == 0 || strcmp(field, "gradient_motion") == 0 ||
+	    strcmp(field, "gradient_speed") == 0)
+	{
+		const u8 shift = strcmp(field, "gradient_motion") == 0 ? 3 : strcmp(field, "gradient_speed") == 0 ? 5 : 0;
+		const u8 mask = shift ? 3 : 7;
+		if (ParseQftU8(text, &v8) && v8 <= (shift == 3 ? SUSAMUNE_GRADIENT_MOTION_COUNT - 1 : shift ? 2 : 5)) {
+			if (!(cfg->words[word].reserved & 0x80)) cfg->words[word].reserved = 0xa0;
+			cfg->words[word].reserved = (cfg->words[word].reserved & ~(mask << shift)) | ((v8 & mask) << shift);
+			if (shift == 3) {
+				cfg->stageSessionReserved = SusamuneWordMotionExtra(cfg->stageSessionReserved, word, v8);
+			}
+		}
+		return;
+	}
+
 	if (strcmp(field, "text") == 0)
 	{
 		u32 length = (u32)strlen(text);
@@ -5541,6 +5589,95 @@ static void ApplyMovementStyleKey(struct SusamuneMovementStyleCfg *cfg,
 	                             SUSAMUNE_ROLLOUT_STYLE_COLOR_COUNT);
 	ApplyMovementOverlayStyleKey(&cfg->dust, "dust", key, text,
 	                             SUSAMUNE_DUST_STYLE_COLOR_COUNT);
+}
+
+static void ApplyFinishBreakdownKey(const char *key, const char *text)
+{
+	struct SusamuneFinishBreakdownCfg next = *SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR;
+	struct SusamuneMovementOverlayStyleCfg style;
+	u8 value;
+	if (strncmp(key, "finish_breakdown_", 17) != 0) return;
+	if (strcmp(key + 17, "rows") == 0) {
+		if (!ParseQftU8(text, &value)) return;
+		next.rows = value;
+	} else if (strcmp(key + 17, "duration_half_seconds") == 0) {
+		if (!ParseQftU8(text, &value)) return;
+		next.halfSeconds = value;
+	} else {
+		memset(&style, 0, sizeof(style));
+		memcpy(&style, &next.x, 21);
+		if (!ApplyMovementOverlayStyleKey(&style, "finish_breakdown", key, text, 3)) return;
+		memcpy(&next.x, &style, 21);
+	}
+	if (SusamuneFinishBreakdownValid(&next)) *SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR = next;
+}
+
+static int OnlineNameValid(const char *name)
+{
+	u32 i;
+	if (!name[0]) return 0;
+	for (i = 0; i < SUSAMUNE_ONLINE_NAME_SIZE; ++i)
+	{
+		if (!name[i]) return 1;
+		if ((u8)name[i] < 0x20 || (u8)name[i] > 0x7e) return 0;
+	}
+	return 0;
+}
+
+/* Comma-separated decimal values, each 0..65535, exactly `count` of them. */
+static int ParseOnlineList(const char *s, u32 *out, u32 count)
+{
+	u32 i;
+	for (i = 0; i < count; ++i)
+	{
+		u32 v = 0, digits = 0;
+		while (*s == ' ') ++s;
+		while (*s >= '0' && *s <= '9' && digits < 6) { v = v * 10 + (u32)(*s++ - '0'); ++digits; }
+		if (!digits || v > 65535) return 0;
+		out[i] = v;
+		while (*s == ' ') ++s;
+		if (i + 1 < count) { if (*s != ',') return 0; ++s; }
+	}
+	return *s == '\0';
+}
+
+/* Online prototype 19: per-console room secret and its day, last public
+ * endpoint, last friend, opponent model, hide flags and score bar layout. */
+static void ApplyOnlineKey(struct SusamuneOnlineNameCfg *cfg, const char *key, const char *text)
+{
+	u32 v[6], i;
+	if (strcmp(key, "online_secret") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] && v[0] <= 8191) cfg->secret = (u16)v[0];
+	} else if (strcmp(key, "online_day") == 0) {
+		if (ParseOnlineList(text, v, 1)) cfg->secretDay = (u16)v[0];
+	} else if (strcmp(key, "online_model") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] <= 2) cfg->model = (u8)v[0];
+	} else if (strcmp(key, "online_flags") == 0) {
+		if (ParseOnlineList(text, v, 1) && v[0] <= 3) cfg->flags = (u8)v[0];
+	} else if (strcmp(key, "online_score") == 0) {
+		if (ParseOnlineList(text, v, 3) && v[0] <= 640 && v[1] <= 480 && v[2] >= 50 && v[2] <= 200) {
+			cfg->scoreX = (u16)v[0]; cfg->scoreY = (u16)v[1]; cfg->scoreScale = (u8)v[2];
+		}
+	} else if (strcmp(key, "online_last") == 0 || strcmp(key, "online_friend") == 0) {
+		const int last = key[7] == 'l';
+		u8 *out = last ? cfg->last : cfg->friendCode;
+		if (!ParseOnlineList(text, v, last ? 5 : 6)) return;
+		for (i = 0; i < 4; ++i) if (v[i] > 255) return;
+		for (i = 0; i < 4; ++i) out[i] = (u8)v[i];
+		out[4] = (u8)(v[4] >> 8); out[5] = (u8)v[4];
+		if (!last) { out[6] = (u8)(v[5] >> 8); out[7] = (u8)v[5]; }
+	}
+}
+
+static void ApplyOnlineNameKey(const char *key, const char *text)
+{
+	struct SusamuneOnlineNameCfg *cfg = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
+	u32 length = (u32)strlen(text);
+	ApplyOnlineKey(cfg, key, text);
+	if (strcmp(key, "online_name") != 0 || length >= SUSAMUNE_ONLINE_NAME_SIZE ||
+	    !OnlineNameValid(text)) return;
+	memset(cfg->name, 0, sizeof(cfg->name));
+	memcpy(cfg->name, text, length);
 }
 
 static void ApplyFailureBannerStyleKey(struct SusamuneWallkickStyleCfg *wallkick,
@@ -5808,6 +5945,8 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 			ApplyCreationKey(&cfg->creation, Trim(line), Trim(eq + 1));
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
+			ApplyFinishBreakdownKey(Trim(line), Trim(eq + 1));
+			ApplyOnlineNameKey(Trim(line), Trim(eq + 1));
 			ApplyFailureBannerStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			practiceStylesPresent |= ApplyPracticeDisplayStyleKey(Trim(line), Trim(eq + 1));
 			ApplyNativeTimerStyleKey(&cfg->nativeTimerStyle, Trim(line), Trim(eq + 1));
@@ -5857,6 +5996,32 @@ static u32 FormatBindMask(char *buf, u16 mask)
 
 // Append to an output file, latching the first error so the caller can check
 // once at the end instead of after every line.
+static void Emit(FIL *f, int *err, const char *s, u32 len);
+
+/* Keys stay absent until the game first sets them, so older files stay as they were. */
+static void EmitOnline(FIL *f, int *err, const struct SusamuneOnlineNameCfg *o)
+{
+	char line[96];
+	if (o->magic != SUSAMUNE_ONLINE_NAME_MAGIC) return;
+	if (o->secret && o->secret <= 8191)
+		Emit(f, err, line, (u32)_sprintf(line, "online_secret = %u\r\nonline_day = %u\r\n",
+			(u32)o->secret, (u32)o->secretDay));
+	if (o->last[0])
+		Emit(f, err, line, (u32)_sprintf(line, "online_last = %u,%u,%u,%u,%u\r\n", (u32)o->last[0],
+			(u32)o->last[1], (u32)o->last[2], (u32)o->last[3], (u32)o->last[4] << 8 | o->last[5]));
+	if (o->friendCode[0])
+		Emit(f, err, line, (u32)_sprintf(line, "online_friend = %u,%u,%u,%u,%u,%u\r\n",
+			(u32)o->friendCode[0], (u32)o->friendCode[1], (u32)o->friendCode[2], (u32)o->friendCode[3],
+			(u32)o->friendCode[4] << 8 | o->friendCode[5], (u32)o->friendCode[6] << 8 | o->friendCode[7]));
+	if (o->model && o->model <= 2)
+		Emit(f, err, line, (u32)_sprintf(line, "online_model = %u\r\n", (u32)o->model));
+	if (o->flags && o->flags <= 3)
+		Emit(f, err, line, (u32)_sprintf(line, "online_flags = %u\r\n", (u32)o->flags));
+	if (o->scoreScale >= 50 && o->scoreScale <= 200 && o->scoreX <= 640 && o->scoreY <= 480)
+		Emit(f, err, line, (u32)_sprintf(line, "online_score = %u,%u,%u\r\n",
+			(u32)o->scoreX, (u32)o->scoreY, (u32)o->scoreScale));
+}
+
 static void Emit(FIL *f, int *err, const char *s, u32 len)
 {
 	UINT wrote;
@@ -6052,6 +6217,8 @@ static void EmitMetadataDisplaySection(FIL *f, int *err, const struct SusamuneCf
 	                    SUSAMUNE_METADATA_STYLE_COLUMNS);
 	EmitMetadataStyleU8(f, err, "compact", s->reserved0[3], s->present,
 	                    SUSAMUNE_METADATA_STYLE_COMPACT);
+	EmitMetadataStyleU8(f, err, "value_gap", s->reserved0[4], s->present,
+	                    SUSAMUNE_METADATA_STYLE_VALUE_GAP);
 	for (i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++)
 	{
 		if (s->slotPresent[i >> 3] & (1u << (i & 7)))
@@ -6089,6 +6256,11 @@ static void EmitQftDisplaySection(FIL *f, int *err, const struct SusamuneCfg *cf
 	EmitStr(f, err, "[");
 	EmitStr(f, err, QftDisplaySection);
 	EmitStr(f, err, "]\r\n");
+	if (d->reserved[1] == 0x47 && d->reserved[0] <= 5)
+		Emit(f, err, line, (u32)_sprintf(line, "gradient_stops = %u\r\n", d->reserved[0]));
+
+    if (d->reservedV1[8] == 0x48 && d->reservedV1[7] < 96)
+        Emit(f, err, line, (u32)_sprintf(line, "section_history_style = %u\r\n", d->reservedV1[7]));
 	EmitQftU16(f, err, "x", d->x, p, SUSAMUNE_QFT_DISPLAY_X);
 	EmitQftU16(f, err, "y", d->y, p, SUSAMUNE_QFT_DISPLAY_Y);
 	EmitQftU8(f, err, "scale", d->scale, p, SUSAMUNE_QFT_DISPLAY_SCALE);
@@ -6165,6 +6337,19 @@ static void EmitPracticeDisplayStyles(FIL *f, int *err)
 		memcpy(&style, &cfg->entries[i], sizeof(cfg->entries[i]));
 		EmitMovementOverlayStyle(f, err, PracticeDisplayKeys[i], &style, SUSAMUNE_PRACTICE_DISPLAY_COLOR_COUNT);
 	}
+}
+
+static void EmitFinishBreakdown(FIL *f, int *err)
+{
+	const struct SusamuneFinishBreakdownCfg *cfg = SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR;
+	struct SusamuneMovementOverlayStyleCfg style;
+	char line[80];
+	if (!SusamuneFinishBreakdownValid(cfg)) return;
+	memset(&style, 0, sizeof(style));
+	memcpy(&style, &cfg->x, 21);
+	EmitMovementOverlayStyle(f, err, "finish_breakdown", &style, 3);
+	Emit(f, err, line, (u32)_sprintf(line, "finish_breakdown_rows = %u\r\n", cfg->rows));
+	Emit(f, err, line, (u32)_sprintf(line, "finish_breakdown_duration_half_seconds = %u\r\n", cfg->halfSeconds));
 }
 
 static void EmitFailureBannerStyle(FIL *f, int *err,
@@ -6252,6 +6437,9 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitStr(f, err, "[");
 	EmitStr(f, err, CreationSection);
 	EmitStr(f, err, "]\r\n");
+	if ((d->reservedAchievement0 & 0xf8) == 0xd0 && (d->reservedAchievement0 & 7) <= 5)
+		Emit(f, err, line, (u32)_sprintf(line, "native_timer_gradient_stops = %u\r\n", d->reservedAchievement0 & 7));
+
 	for (i = 0; i < SUSAMUNE_CREATION_COLOR_COUNT; i++)
 	{
 		if (d->colorPresent & SUSAMUNE_CREATION_COLOR(i))
@@ -6389,6 +6577,13 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitFluddColors(f, err, FluddColorsBlock());
 	EmitILEpisodes(f, err);
 	EmitPracticeDisplayStyles(f, err);
+	EmitFinishBreakdown(f, err);
+	{
+		const struct SusamuneOnlineNameCfg *name = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
+		if (name->magic == SUSAMUNE_ONLINE_NAME_MAGIC && OnlineNameValid(name->name))
+			Emit(f, err, line, (u32)_sprintf(line, "online_name = %s\r\n", name->name));
+		EmitOnline(f, err, name);
+	}
 	EmitFailureBannerStyle(f, err, &cfg->wallkickStyle);
 	if (cfg->wallkickStyle.nativeTimerModesMagic == SUSAMUNE_NATIVE_TIMER_MODES_MAGIC)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_custom_mask = %u\r\n",
@@ -6398,6 +6593,13 @@ static void EmitCreationSection(FIL *f, int *err,
 	{
 		const struct SusamuneCreationWordCfg *w = &d->words[word];
 		const u32 n = word + 1;
+		if (w->reserved & 0x80) {
+			Emit(f, err, line, (u32)_sprintf(line, "word%u_gradient_stops = %u\r\n", n, w->reserved & 7));
+			const u32 motion = SusamuneWordMotion(w->reserved, d->stageSessionReserved, word);
+			Emit(f, err, line, (u32)_sprintf(line, "word%u_gradient_motion = %u\r\n", n, motion));
+			Emit(f, err, line, (u32)_sprintf(line, "word%u_gradient_speed = %u\r\n", n, (w->reserved >> 5) & 3));
+		}
+
 		Emit(f, err, line, (u32)_sprintf(line, "word%u_text = %s\r\n", n, w->text));
 		Emit(f, err, line, (u32)_sprintf(line, "word%u_visible = %u\r\n", n, w->visible));
 		Emit(f, err, line, (u32)_sprintf(line, "word%u_x = %u\r\n", n, w->x));
@@ -6941,6 +7143,9 @@ void SusamuneCfgInit(void)
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->version = SUSAMUNE_IL_EPISODE_VERSION;
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->count = SUSAMUNE_IL_EPISODE_COUNT;
 	SusamunePracticeDisplayStyleInit(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR);
+	SusamuneFinishBreakdownInit(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR);
+	memset(SUSAMUNE_ONLINE_NAME_PHYS_PTR, 0, sizeof(struct SusamuneOnlineNameCfg));
+	SUSAMUNE_ONLINE_NAME_PHYS_PTR->magic = SUSAMUNE_ONLINE_NAME_MAGIC;
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -6959,12 +7164,15 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
 	                 SUSAMUNE_CFG_FLAG_IL_EPISODES |
 	                 SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE | SUSAMUNE_CFG_FLAG_SETTINGS_TAIL |
+	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG | SUSAMUNE_ONLINE_NAME_FLAG |
 	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
 	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED |
 	                 MOONSHINE_LAYOUT_CFG_FLAG;
 	if (InitPbFiles(cfg, region))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_ILING_PBS |
 		              SUSAMUNE_CFG_FLAG_ILING_PROFILES;
+	InitHoverless(region);
+	cfg->flags |= SUSAMUNE_HOVERLESS_FLAG;
 	if (InitProgressFiles(progress))
 		cfg->flags |= SUSAMUNE_CFG_FLAG_PROGRESS;
 	if (InitStagePlaylistFiles(playlists))
@@ -7054,6 +7262,8 @@ void SusamuneCfgInit(void)
 	sync_after_write(fluddColors, sizeof(*fluddColors));
 	sync_after_write(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_after_write(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
+	sync_after_write(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_after_write(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
 	sync_after_write((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
@@ -7098,6 +7308,8 @@ void SusamuneCfgService(void)
 	sync_before_read(FluddColorsBlock(), sizeof(struct SusamuneFluddColorsCfg));
 	sync_before_read(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_before_read(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
+	sync_before_read(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_before_read(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
 	sync_before_read((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	seq = cfg->saveSeq;
 
@@ -7199,7 +7411,7 @@ bool SusamunePbPending(void)
 
 	if (!CfgReady)
 		return false;
-	return PbSavePending(profiles) || ProgressSavePending(progress) ||
+	return PbSavePending(profiles) || HoverlessPending() || ProgressSavePending(progress) ||
 	       StagePlaylistSavePending(playlists) || StageTargetSavePending(targets) ||
 	       SplitStatsSavePending(splitStats);
 }
@@ -7236,6 +7448,8 @@ void SusamunePbService(void)
 		sync_after_write(&profiles->ackSeq, 32);
 		return;
 	}
+
+	if (HoverlessPending()) { ServiceHoverless(); return; }
 
 	if (ProgressSavePending(progress))
 	{

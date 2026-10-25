@@ -19,7 +19,7 @@ struct ModelColorEditor {
 
     static constexpr u16 promptButtons = JUTGamePad::A | JUTGamePad::B |
         JUTGamePad::Z | JUTGamePad::START;
-    static constexpr CreationStyle defaults = {320, 420, 100, 255, 0, 0, 0, 0, 100, 255};
+    static constexpr CreationStyle defaults = {320, 120, 100, 255, 0, 0, 0, 0, 100, 255};
     static constexpr u8 white[1][3] = {{255, 255, 255}};
 
     __attribute__((noinline, section(".foxtrot.text")))

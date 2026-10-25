@@ -4,10 +4,11 @@
 #include "susamune/state_slot_pool.h"
 
 /* Callers supply compiled bank addresses and sizes, never archive fields.
- * A zero second size disables that bank for an older launcher. */
+ * Zero sizes disable banks for older launchers. */
+enum { STATE_POOL_MEMORY_BANKS = 5 };
 typedef struct StatePoolMemory {
-    unsigned char *banks[2];
-    unsigned int sizes[2];
+    unsigned char *banks[STATE_POOL_MEMORY_BANKS];
+    unsigned int sizes[STATE_POOL_MEMORY_BANKS];
 } StatePoolMemory;
 
 typedef struct StatePoolMemorySpan {
@@ -28,27 +29,33 @@ SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryBufferValid(const void *data, uns
 }
 
 SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryValid(const StatePoolMemory *memory) {
-    if (!memory || !memory->sizes[0] ||
-        memory->sizes[1] > ~0u - memory->sizes[0]) return 0;
-    for (unsigned int i = 0; i < 2; ++i)
-        if (!StatePoolMemoryBufferValid(memory->banks[i], memory->sizes[i])) return 0;
-    if (memory->sizes[1]) {
-        const StatePoolAddress a = (StatePoolAddress)memory->banks[0];
-        const StatePoolAddress b = (StatePoolAddress)memory->banks[1];
-        if (a < b + memory->sizes[1] && b < a + memory->sizes[0]) return 0;
+    if (!memory || !memory->sizes[0]) return 0;
+    unsigned int total = 0;
+    for (unsigned int i = 0; i < STATE_POOL_MEMORY_BANKS; ++i) {
+        const unsigned int size = memory->sizes[i];
+        if (size > ~0u - total || !StatePoolMemoryBufferValid(memory->banks[i], size)) return 0;
+        total += size;
+        if (!size) continue;
+        const StatePoolAddress a = (StatePoolAddress)memory->banks[i];
+        for (unsigned int j = 0; j < i; ++j) {
+            const StatePoolAddress b = (StatePoolAddress)memory->banks[j];
+            if (memory->sizes[j] && a < b + memory->sizes[j] && b < a + size) return 0;
+        }
     }
     return 1;
 }
 
 static inline unsigned int StatePoolMemoryCapacity(const StatePoolMemory *memory) {
-    return StatePoolMemoryValid(memory) ? memory->sizes[0] + memory->sizes[1] : 0;
+    if (!StatePoolMemoryValid(memory)) return 0;
+    unsigned int total = 0;
+    for (unsigned int i = 0; i < STATE_POOL_MEMORY_BANKS; ++i) total += memory->sizes[i];
+    return total;
 }
 
 SUSAMUNE_POOL_SHARED_INLINE int StatePoolMemoryRangeValid(const StatePoolMemory *memory,
                                            unsigned int offset, unsigned int size) {
-    if (!StatePoolMemoryValid(memory)) return 0;
-    const unsigned int capacity = memory->sizes[0] + memory->sizes[1];
-    return offset <= capacity && size <= capacity - offset;
+    const unsigned int capacity = StatePoolMemoryCapacity(memory);
+    return capacity && offset <= capacity && size <= capacity - offset;
 }
 
 /* Returns the first physical piece of a completely validated logical range. */
@@ -59,12 +66,16 @@ static inline int StatePoolMemorySpanAt(const StatePoolMemory *memory,
     span->data = 0;
     span->size = 0;
     if (!size) return 1;
-    unsigned int bank = 0;
-    if (offset >= memory->sizes[0]) { bank = 1; offset -= memory->sizes[0]; }
-    const unsigned int available = memory->sizes[bank] - offset;
-    span->data = memory->banks[bank] + offset;
-    span->size = size < available ? size : available;
-    return 1;
+    for (unsigned int bank = 0; bank < STATE_POOL_MEMORY_BANKS; ++bank) {
+        if (offset < memory->sizes[bank]) {
+            const unsigned int available = memory->sizes[bank] - offset;
+            span->data = memory->banks[bank] + offset;
+            span->size = size < available ? size : available;
+            return 1;
+        }
+        offset -= memory->sizes[bank];
+    }
+    return 0;
 }
 
 /* External copies reject bank aliases; use logical Move for internal overlap. */
@@ -73,7 +84,7 @@ static inline int StatePoolMemoryExternalBuffer(const StatePoolMemory *memory,
     if (!StatePoolMemoryValid(memory) || !StatePoolMemoryBufferValid(data, size)) return 0;
     if (!size) return 1;
     const StatePoolAddress address = (StatePoolAddress)data;
-    for (unsigned int i = 0; i < 2; ++i) {
+    for (unsigned int i = 0; i < STATE_POOL_MEMORY_BANKS; ++i) {
         const StatePoolAddress base = (StatePoolAddress)memory->banks[i];
         if (memory->sizes[i] && address < base + memory->sizes[i] && base < address + size)
             return 0;
@@ -115,7 +126,7 @@ static inline int StatePoolMemoryCopyOut(const StatePoolMemory *memory,
     return 1;
 }
 
-/* Direction follows logical offsets; the second physical bank may be lower. */
+/* Direction follows logical offsets, independent of physical bank order. */
 static inline int StatePoolMemoryMove(const StatePoolMemory *memory,
                                      unsigned int destination, unsigned int source,
                                      unsigned int size) {
@@ -137,9 +148,16 @@ static inline int StatePoolMemoryMove(const StatePoolMemory *memory,
             const unsigned int lastDestination = destination + size - 1;
             if (!StatePoolMemorySpanAt(memory, lastSource, 1, &from) ||
                 !StatePoolMemorySpanAt(memory, lastDestination, 1, &to)) return 0;
-            const unsigned int firstSize = memory->sizes[0];
-            const unsigned int a = lastSource - (lastSource < firstSize ? 0 : firstSize) + 1;
-            const unsigned int b = lastDestination - (lastDestination < firstSize ? 0 : firstSize) + 1;
+            unsigned int a = lastSource, b = lastDestination;
+            for (unsigned int i = 0; i < STATE_POOL_MEMORY_BANKS; ++i) {
+                if (a < memory->sizes[i]) break;
+                a -= memory->sizes[i];
+            }
+            for (unsigned int i = 0; i < STATE_POOL_MEMORY_BANKS; ++i) {
+                if (b < memory->sizes[i]) break;
+                b -= memory->sizes[i];
+            }
+            ++a; ++b;
             count = a < b ? a : b;
             if (count > size) count = size;
             unsigned char *dst = to.data - (count - 1);

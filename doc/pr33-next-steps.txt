@@ -1,0 +1,14 @@
+PR33 follow-up
+
+1. Confirm movement/name tags and absence of native disc errors on the Wii with
+   two, three and four players, all using the complete PR33 launcher package.
+2. Compare the connection logs for actual send/receive throughput and replace
+   counts. Check storage flush time if frame pacing still suffers.
+3. Keep investigating the separate PR31 search-instruction corruption; the ARM
+   queue failure is not evidence that the Search crash is repaired.
+
+Maintainer note: launcher/kernel/utils_asm.S supplies memcpy for compiler-generated
+struct assignments too. A PC fixture replacing it with libc cannot validate that
+ABI. scripts/test_kernel_arm_copy.py executes a supplied KERNEL_ELF with Unicorn.
+The kernel copy must return its original destination, including unaligned MEM1
+copies that use word writes because byte writes are unsafe there.

@@ -78,7 +78,15 @@ extern "C" __declspec(dllexport) void rate(float value){cadence=value;}
             "SETTING_SYSTEM_MESSAGES", "SETTING_SAVESTATE_ERRORS",
             "SETTING_STREAK_FAILURE_BANNER", "SETTING_STREAK_FAILURE_X",
             "SETTING_STREAK_FAILURE_Y", "SETTING_STREAK_FAILURE_SIZE",
-            "SETTING_STREAK_FAILURE_DURATION"}
+            "SETTING_STREAK_FAILURE_DURATION"} | {
+            f"SETTING_FAVORITES_EXTRA_{i}" for i in (10, 11)} | {
+            f"SETTING_DISPLAY_FAVORITES_{i}" for i in range(4)} | {
+            "SETTING_QFT_VERTICAL_GRADIENT", "SETTING_QFT_GRADIENT_SPEED",
+            "SETTING_QFT_GRADIENT_MOTION", "SETTING_NATIVE_VERTICAL_GRADIENT",
+            "SETTING_NATIVE_GRADIENT_MOTION", "SETTING_NATIVE_GRADIENT_SPEED",
+            "SETTING_GAMEPLAY_SPEED", "SETTING_SLOWDOWN_PRESET", "SETTING_COLLISION_VIEWER",
+            "SETTING_COLLISION_LEGEND", "SETTING_GHOST_CAMERA", "SETTING_FINISH_BREAKDOWN",
+            "SETTING_MENU_SOUNDS", "SETTING_EXPERIMENTAL_RAM_LOAD"}
         actual = {name for i, name in enumerate(self.ids) if self.lib.excluded(i)}
         self.assertEqual(actual, expected)
 

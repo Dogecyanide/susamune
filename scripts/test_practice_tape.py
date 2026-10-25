@@ -13,7 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def function_source(path, signature):
     source = path.read_text(encoding="utf-8")
     start = source.index(signature)
-    brace = source.index("{", start)
+    parameters = source.index("(", start)
+    depth = 1
+    end = parameters + 1
+    while depth:
+        depth += (source[end] == "(") - (source[end] == ")")
+        end += 1
+    brace = source.index("{", end)
     depth = 0
     for index in range(brace, len(source)):
         if source[index] == "{":

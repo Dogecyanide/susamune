@@ -1,0 +1,43 @@
+MOONSHINE 3.0.0 TIMEWARP - PROTOTYPE 20
+
+Install the app folder under /apps on the SD card. Keep Moonshine data and
+personal ghosts, states and settings. English is the package default; the
+current Japanese catalogue/font asset is included. The Japanese ZIP selects
+Japanese initially; both ZIPs contain the same program binaries. JP, US and
+PAL have separate mod payloads in the same app. Install only one variant.
+
+PR20 hardware checks
+- Record/export a new ghost and inspect its V9 initial RNG-seed metadata.
+  Confirm existing V3-V8 ghosts still load. Watching, loading and racing a
+  ghost must leave live RNG behaviour untouched; boss-pattern replay is
+  outside this change.
+- Enable Path in Ghost visuals during Watch and Watch 2. Check cyan/gold
+  paths, scrubbing and scene changes. Off, ordinary racing and online play
+  must show no path. This is a simplified screen overlay without depth.
+- In Creation, X + C-stick left/right switches Position, Size, Colours and
+  Animation. C-stick up/down selects a colour control; left/right changes
+  it. Cycle Colour stops through per-character and 1-5 stops. START selects
+  a stop for H/S/L editing; X+A retains exact-size entry.
+- Check the five-stop palette and custom text animation in the editor and
+  live display, including native timers and Sunshine black outlines.
+  A Keep must survive reopening, reboot and profile load; B Cancel must
+  restore stops, colours and animation. Check the Z Reset confirmation.
+  Five stops apply horizontally and to animation; vertical gradients still
+  use their top and bottom endpoints.
+- Toggle Original guidebook colours and compare the guidebook with the
+  custom-colour view; verify that unrelated colours keep their settings.
+- Smoke-test a stage transition, RAM save/load and existing ghost playback.
+
+Validation scope
+The package receipt records fresh console and Dolphin JP/US/PAL builds,
+96 protected timer symbols, five protected strings, nine dependency anchors
+and 34 retail hooks per build. It also records the production installer
+check and complete ZIP readback. These checks do not establish Wii/Wii U
+runtime, visual quality or online reliability. Online code is outside this
+change; existing online behaviour still needs its own hardware checks.
+
+Rebuild from this checkout with the build virtualenv Python:
+  scripts/package_pr20.py build
+  scripts/package_pr20.py package
+Outputs: build/pr20-console, build/pr20-emu and build/pr20-package.
+Package output is create-only so an earlier package is never overwritten.

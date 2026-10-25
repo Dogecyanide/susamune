@@ -138,6 +138,8 @@ def add_operation(operations, target_offset, kind, value, size=None):
 
 
 def build_operations(layout, mod_manifest, ui_language="en"):
+    if "cold_image" in mod_manifest or "pinned_link_receipt" in mod_manifest:
+        raise ValueError("Cold-image BPS export requires an early-copy boot path")
     if ui_language not in ("en", "ja"):
         raise ValueError("UI language must be en or ja")
     if ui_language == "ja" and (

@@ -61,6 +61,7 @@ public:
     void endHudDraw();
     const CreationStyle &nativeTimerStyle() const { return mNativeTimerStyle; }
     bool nativeTimerColorsEnabled() const;
+    bool nativeTimerGradient(const J2DPane *pane, u8 colors[2][3]) const;
     const u8 *nativeTimerRgb(const J2DPane *pane, bool *custom = nullptr) const;
     bool editingNativeTimer() const {
         return mEditMode == EDIT_NATIVE_TIMER && mEditor.editing();
@@ -114,6 +115,10 @@ public:
     void updateEditor(TMarioGamePad *pad);
     void drawEditor(Menu *menu) const;
     bool editing() const { return mEditor.editing() || mKeyboard; }
+    bool editingMenuBackground() const {
+        return mEditMode == EDIT_COLOR && mEditFirst == SUSAMUNE_CREATION_MENU_BG &&
+            mEditor.editing();
+    }
 
     bool dirty() const { return mDirty; }
     void clearDirty() { mDirty = false; }
@@ -150,9 +155,6 @@ private:
     void updateKeyboard(TMarioGamePad *pad);
     void drawKeyboard(Menu *menu) const;
     void applyHud();
-    void beginHudPreview(int color);
-    void endHudPreview();
-    void addPreviewPane(J2DPane *pane);
     void clampWord(int index);
 
     CreationStyle mWordStyle[SUSAMUNE_CREATION_WORD_COUNT];
@@ -194,6 +196,8 @@ private:
     const char *mEditTitle;
     u8 mWordLength[SUSAMUNE_CREATION_WORD_COUNT];
     u8 mWordVisible[SUSAMUNE_CREATION_WORD_COUNT];
+    u8 mWordGradient[SUSAMUNE_CREATION_WORD_COUNT];
+    u8 mNativeGradient;
     u8 mEditMode;
     u8 mEditFirst;
     u8 mEditCount;

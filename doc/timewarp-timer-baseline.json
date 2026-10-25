@@ -1,0 +1,3143 @@
+{
+  "release": "703b33d948c44138a9a201857254f843121c1d5e",
+  "timer_git_blob": "c31dda5ddc9d5b1a0cfc3fd985f8d907fa4f5890",
+  "sources": {
+    "include/susamune/qft_timer.hxx": "ea2168c8f1ec0283277021989b77ed7988ba3fcb7d0dd72e17a6150d3ceade28",
+    "src/native_timer_layout.cpp": "66a133860fd715328df79c1fb800405cec504bf48ed2d8010adbe09b406fded4",
+    "src/qft_timer.cpp": "06d8334c489d20f3191b7ba64c08725ea0a98f806e4f65b6f5c582cab35ff373"
+  },
+  "builds": {
+    "console-jp": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151833632,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152357856,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152357856,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152357868,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152357872,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152357888,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152357892,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152357896,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152357900,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 2446270464
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2152005372,
+          "size": 12,
+          "sha256": "86ede9c068f56fb153f00ca6f06ad318ddaf983721a3fc892b2bacebe868f108"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2152001668,
+          "size": 644,
+          "sha256": "22461f2b8f77473f5d8bb264194a82acdb34c722699ae7c59f7eeed0ed7e5ca2"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2152002312,
+          "size": 208,
+          "sha256": "6b9e3b874b8246f52df61f229ffdeeddbaae4fc99fcc217af869f73596a97451"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2152006672,
+          "size": 280,
+          "sha256": "fef017015ba7b85314012f6ccd760a10b994e1b49b7af697be21ed1eb0d6f493"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2152006356,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2152006396,
+          "size": 276,
+          "sha256": "8cd097d6e4a657e1966e4b9cfd51ecba1714ec9c487596b44eab97565377ee66"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2152006156,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2152006012,
+          "size": 144,
+          "sha256": "4c134d303b9e3fb66a302bedf0874021ada305bb5e19b6e456e30657bad25059"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2152005384,
+          "size": 156,
+          "sha256": "c2d3a3c331674a163b57fadbc8def0a1865a04f1303025608df5524b594fa20b"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2152003872,
+          "size": 948,
+          "sha256": "44de346aba08cf617549f45a30081dad780692f7f2bd6461bcd9e6fbfae69791"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2152002520,
+          "size": 332,
+          "sha256": "309a8dda85563e2034e7b0082642e7ff7e8d4bfebec7fcd6ce121555d2250c83"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2152005204,
+          "size": 124,
+          "sha256": "73d0638e21085234d41ea7060aaa9c129a039770e1e6e6966f3934af7efde185"
+        },
+        "global:gQFTTimer": {
+          "address": 2152190780,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2151999672,
+          "size": 664,
+          "sha256": "c35b25910564b4e6c647eb7b9344ed86ba5008de27d7054926d7142821c332ad"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2152002852,
+          "size": 16,
+          "sha256": "7e236b4f4cbf10c47e94326db613a0a7b7455cc53c08e5396c4f74d752c20ba3"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2152002880,
+          "size": 292,
+          "sha256": "b426d008d4154498c7520a824dc73ba9297c392a193ddfccf90a766ecb98d572"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2152002868,
+          "size": 12,
+          "sha256": "e092882de4ca5d97589c0a2f0566a27f0659082c76ff3e80aadb3622ee590267"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2152005100,
+          "size": 104,
+          "sha256": "d4c0ae5d40406fa63844c35d80d246244708562a1bcf3e8104565e5aa6d263e0"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2152006952,
+          "size": 336,
+          "sha256": "9dc30f33b208e3aed08b610c1e315d13eaef179afe7a70a956066ae501573ac6"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2152005748,
+          "size": 128,
+          "sha256": "bece81e252d6d1447ddeabf28f909c32148d39843fcf267144bc1964cb9c7a48"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2152003172,
+          "size": 700,
+          "sha256": "4c91037aa597d6751d7c5282fd476ad8628d7421ba857caa2ed2cd883ffda5b4"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2152000696,
+          "size": 972,
+          "sha256": "801532a38aa24a0b83a3c914866b4ed9557519130e108edbe0572844092d9679"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2152007288,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2152004820,
+          "size": 280,
+          "sha256": "27c8139f2563e6f5c658e558bc464e41b6b58a4185943496c61fcb4ad8eb2e94"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2152006196,
+          "size": 160,
+          "sha256": "884b655305ed22e0c820e267c198a9e9a91398d899070a95abedfb64e1f00bee"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2152007396,
+          "size": 44,
+          "sha256": "29b939d87eda50a20b4e1d46104c1009f022bf260dc777414be43302a9d3c5af"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2152007328,
+          "size": 68,
+          "sha256": "bd394c5116df8282ad4b89a468dacf1718b47555d54601de11597bdd1cd46272"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2152005328,
+          "size": 44,
+          "sha256": "1f9b1324cdcc70c26ed79a5924cc6e53425fa19cc53a1abbdbb120c168726a0d"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2152005876,
+          "size": 136,
+          "sha256": "33b37d12111fa09230ae8e1ce8a1728ed9352816eb8f7b6b701164819b80c27c"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2152007508,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2152000336,
+          "size": 128,
+          "sha256": "3fd2076dae608057503bff7b6b8d528435daae60e52fd1e175f0bb9a9b28e005"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2152000464,
+          "size": 112,
+          "sha256": "b8381a28c2c4e983d98983c6a5732e65bee7ac09753c474fb1f8bf44224cd065"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152164040,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152164016,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152178716,
+          "size": 84,
+          "sha256": "4f045814bba18a005f079655ff34df74e7e4b4a8a87c44fa7c7e2d98b780a927"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152164036,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152164032,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152164024,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152164028,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152164044,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152178960,
+          "size": 280,
+          "sha256": "61bd32133e6d016868fdede951ad89e869ac0675833663d3e3c0d031c3032216"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152164020,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152164000,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152163984,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152164008,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152163992,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152179552,
+          "size": 156,
+          "sha256": "a8c94ea7c982b30f5c96240dabb332379b50dede2ba6765b38eb94d40349c8b4"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152163988,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152164004,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2152005540,
+          "size": 112,
+          "sha256": "cfedd5b9b89ad7f14e99a773722f0c2613a72b7bf634d424d7cfec73597f248d"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2152007440,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2152000576,
+          "size": 120,
+          "sha256": "494064ab269ab102ac2ade39612db39a0efc00e6d3050731e7634f72c19429af"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152190788,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152190786,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152190785,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152190804,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152190808,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152178920,
+          "size": 40,
+          "sha256": "957c7a6bd356cd7ee65aa9bc3e55c3001ac46cba44fc1354d519413948dda1c8"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152179332,
+          "size": 48,
+          "sha256": "cff7bf0a7603d283d5050dca7c4aad463fd9fdc3069e083614f43c245bd29df5"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152179244,
+          "size": 40,
+          "sha256": "23bbd6e1c167907e3dac68bc82367c186034d51eec24f8a2b4f8f37d08e5e3b5"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152179396,
+          "size": 40,
+          "sha256": "64019283ff9007fb7c881a21032aafed7dafa46c5efaf85b06ff254a6ce9761b"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152179436,
+          "size": 48,
+          "sha256": "6068c1ce66b4a0267f63504355f3681e84fb420832c35db9694f2803e201c07b"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152179484,
+          "size": 40,
+          "sha256": "eeaa2a86f4bbdc39aff0f78ab68ff07b0e6bafb15d9a4a735798fd9331b1adb4"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152179380,
+          "size": 16,
+          "sha256": "593347aaac5033941062ee11854d550daefd96955313a5064273f69399a3e407"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152179284,
+          "size": 48,
+          "sha256": "bd002b67d59e65f14ec5f728a40e3737ab897c445b65dd353d6fdff41e420230"
+        },
+        "local:sDropCave__0": {
+          "address": 2152178824,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152179240,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152178872,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152178896,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152190784,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152179524,
+          "size": 28,
+          "sha256": "7957409d208d656dd561e338c137c07ba5dae9f4015370e3d561dea76bb52f82"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152190812,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152190809,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152190856,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152178848,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152190820,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152190840,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152190824,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152190836,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152190821,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152190844,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152190828,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152190832,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152190848,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152190852,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152190783,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152190787,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152190860,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152190861,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152190864,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152190796,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152190782,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152190781,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152190928,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152190816,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152178800,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "fe4cedc8287f5ada1b60d3962b3ae5a552670ff12cd98cc8f555acf2b7064e92"
+    },
+    "console-us": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151847936,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152372160,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152372160,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152372172,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152372176,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152372192,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152372196,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152372200,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152372204,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 2446270464
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2152015656,
+          "size": 12,
+          "sha256": "2cf6c44c4543fdeaadff39b1b46ed2904267acb853bdbded08cd699299eeacd8"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2152011952,
+          "size": 644,
+          "sha256": "85240983a2d4ee70987a904310009a9b38ee8ff57a9ebf5823826082c58b1acd"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2152012596,
+          "size": 208,
+          "sha256": "25ccfd4f0d3eeadaa6032d86214cfa7c6239f75885c3128a821e99f0d9e77e48"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2152016956,
+          "size": 280,
+          "sha256": "1391ba7242a545847795db66c81726119e4a48f7ad9fe935b067136a9c05b717"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2152016640,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2152016680,
+          "size": 276,
+          "sha256": "d47db44e9d8b34725a81e405905a588b9c9134f6e7402506ec101b17dd00d27b"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2152016440,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2152016296,
+          "size": 144,
+          "sha256": "8af192413e728c1f49e55b4117cc478513985faaa76047b3527197c7bbbe3453"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2152015668,
+          "size": 156,
+          "sha256": "d257a7904a4b1e07257f1536cd2d30856801c8c84a163c0d495371b2ed488547"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2152014156,
+          "size": 948,
+          "sha256": "74bc84d5723f53dc9bc411ad9400946ca490f08e3205e10ee5a93370d193b7e6"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2152012804,
+          "size": 332,
+          "sha256": "90994cdf72b17fe188c2da66424e58a1d6db08b727aad77fdce11e1d50562121"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2152015488,
+          "size": 124,
+          "sha256": "a47c2eeece66264d0ebf2f02379d6f0f08c4bc126bf97cca0b8115a841c1a53f"
+        },
+        "global:gQFTTimer": {
+          "address": 2152191772,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2152009956,
+          "size": 664,
+          "sha256": "d4e2824bf6928fa338cd18bed3432f85e9934495cc023fca8fa9026967d73d98"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2152013136,
+          "size": 16,
+          "sha256": "3962c35e959cfff011794990310d1fda42a404152b5c6ad42197b98183bf8e77"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2152013164,
+          "size": 292,
+          "sha256": "f340a572aa586cec09353bcd2c090f41cbb867746caf7662798d17c42399ac73"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2152013152,
+          "size": 12,
+          "sha256": "d6b7200bd963ed4638d16b9749977a5bb6a3e4b305336f4f0e10ada23baab390"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2152015384,
+          "size": 104,
+          "sha256": "2e78007eda549d4349aea6825a6cccc2b943e3518d957fc2eadc7f58f41f10ed"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2152017236,
+          "size": 336,
+          "sha256": "733ace8c4c666ae7773dd15341bf2d607b39bad363c41a9d7043cc8b6e4bd1bd"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2152016032,
+          "size": 128,
+          "sha256": "1b44e9f436e8a4ed9a05b33e08161e1e1e1db89cee35ea655d19a31be602b84d"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2152013456,
+          "size": 700,
+          "sha256": "da375bf54e98bc716a47c51c8af9a79845c09a33957f434684817a89431ca6d0"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2152010980,
+          "size": 972,
+          "sha256": "29a8ebe7360648b7591db85f1fa17e3b36d3dc40c4fe9f0bed8b647f6f568c44"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2152017572,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2152015104,
+          "size": 280,
+          "sha256": "23b5c484d0015589a71008579ca09686761dd9341da74fa11b7bd758a0cff2d0"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2152016480,
+          "size": 160,
+          "sha256": "753a46b42f307e302324d0a97c472b28c08bf336e4c4c766b1215c035a499c1a"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2152017680,
+          "size": 44,
+          "sha256": "fc56600d6fd96b3a6b4222713d2350114e5d322246eb3c6dfe92dc384d4ba74e"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2152017612,
+          "size": 68,
+          "sha256": "60b1430ca61b7256c3bd2f81324af850baa664518b779839906ac409c91d3358"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2152015612,
+          "size": 44,
+          "sha256": "393a0cdc426accfd4ee922dd7e767d17139aeb9bc9d3a30bdb5ef570aa71cc4d"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2152016160,
+          "size": 136,
+          "sha256": "a2e24a36520f0ff7d0dd18e4b5965519c94fc593718d05ce0c09cd629d6a75b0"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2152017792,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2152010620,
+          "size": 128,
+          "sha256": "0cce0535fc6870ec8dfc493d9409595d20444d0bcf024c6a64f6d64218341361"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2152010748,
+          "size": 112,
+          "sha256": "d396db1809160b16219cae0e4f984d61434b5dd113952741722989e85779cbad"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152173404,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152173380,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152188056,
+          "size": 84,
+          "sha256": "16f572d641673252c614e4ae601babe07ffea27e72595045639a7864fabd4eef"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152173400,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152173396,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152173388,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152173392,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152173408,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152188300,
+          "size": 280,
+          "sha256": "516e3158bee44c209f6b7af1fbd92b982d205699399a3f7ba83e67797b494dad"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152173384,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152173364,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152173348,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152173372,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152173356,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152188892,
+          "size": 156,
+          "sha256": "6f9da46d2b843dae68c403ac544ef61d4c0c370c4dd1513c76133fefdb8fc2dd"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152173352,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152173368,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2152015824,
+          "size": 112,
+          "sha256": "437f17539fa421d4bff863e5d1336a90f5b3bb76d17281de41e344099502e348"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2152017724,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2152010860,
+          "size": 120,
+          "sha256": "d1b3cc4c5544f158e1c52c5849ebe09c98ff59a9811746d452d02a6f7624d76e"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152191780,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152191778,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152191777,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152191796,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152191800,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152188260,
+          "size": 40,
+          "sha256": "0bc439dcb3a9204114c93be08f2fe5dc82cdc3299b5953669b11e1ca6e147e4c"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152188672,
+          "size": 48,
+          "sha256": "d36c199c1fe42782cbcc812b2dbfb3891dda1e54dcfd85011df90e91c6ba6f36"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152188584,
+          "size": 40,
+          "sha256": "fb2878b6d2670c4f21f062557c0b6b5b773ec51c75c213ab0b1eca21a943944a"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152188736,
+          "size": 40,
+          "sha256": "fc4f0867463b6d80cf31961adf5078ca3c63e26990b73c55610746b17698ae15"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152188776,
+          "size": 48,
+          "sha256": "23c3dc8499cd743760387aaa95f3b25be64986ad8a3442abb2f66a13be04e483"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152188824,
+          "size": 40,
+          "sha256": "80e0ae547fc2bd0f39597abec8d80f4fe40c98db28d5cc3cd4d72c2d1f5a229f"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152188720,
+          "size": 16,
+          "sha256": "585b1b4a940de582efdc1f917c0f0cc2af933190bae25f45ffa287b6fff78894"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152188624,
+          "size": 48,
+          "sha256": "367614d0e410ca91b6abe56cea6db5dc8b75c2a84383d3134d0e47209d10477b"
+        },
+        "local:sDropCave__0": {
+          "address": 2152188164,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152188580,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152188212,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152188236,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152191776,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152188864,
+          "size": 28,
+          "sha256": "cf53219c1705184bf4d22fb0e03239a9d7ef4ce01ab80377e99d19590d365778"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152191804,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152191801,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152191848,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152188188,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152191812,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152191832,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152191816,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152191828,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152191813,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152191836,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152191820,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152191824,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152191840,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152191844,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152191775,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152191779,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152191852,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152191853,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152191856,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152191788,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152191774,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152191773,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152191920,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152191808,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152188140,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "4f4cd82962fc7ee5e569a011ce421b6e01ace17cc2037f6f98a767fde72f9a8e"
+    },
+    "console-pal": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151812448,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152336672,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152336672,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152336684,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152336688,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152336704,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152336708,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152336712,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152336716,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 2446270464
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2151980180,
+          "size": 12,
+          "sha256": "3b0d3fdc07ddf31faea5bd2ed2897fe2ae3590effd360f4ef0db2b365440bf0e"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2151976476,
+          "size": 644,
+          "sha256": "c25ef83c60ad85e420474b38509a2d8da65ca798546bf7a1d97d56157ad82388"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2151977120,
+          "size": 208,
+          "sha256": "577c6f4227e639f101272fac420b647c984fa2aecbd7126beae71d8fe76c5d28"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2151981480,
+          "size": 280,
+          "sha256": "f74256025209ffee5ab580fde1159d11253327c9bd83e544ec4640fb9de0f15a"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2151981164,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2151981204,
+          "size": 276,
+          "sha256": "dc9b65c5248ce8dd4613184b3c14aaf1ef2b6e13149e00a6ea3495d96f6404a0"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2151980964,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2151980820,
+          "size": 144,
+          "sha256": "38405fc20f8adb5aa6007d3d361e7e684205940602cd274596f679290bcf6ae6"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2151980192,
+          "size": 156,
+          "sha256": "44a28c1af3c01eae5bb1d7af3f364d4b8640ead4d16118be751f0c3f155e4eb8"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2151978680,
+          "size": 948,
+          "sha256": "8375ddbedfe7df3cc02222a48f6168b5dc26f9a38ce2a3bd524b3be35b12b39f"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2151977328,
+          "size": 332,
+          "sha256": "d0f625885a94c1708ea68c817ca3c80c3dbc8187e21faf9404214dee2f48aaa0"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2151980012,
+          "size": 124,
+          "sha256": "a319036fc68c970a11ea0d43ec864f439aa3fb420670f8f57fc4fd177ee1ce14"
+        },
+        "global:gQFTTimer": {
+          "address": 2152156220,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2151974480,
+          "size": 664,
+          "sha256": "1e809ba1ce3a007427ab7d7fad6781422127da500566c1a377cc6a3e27f6a97b"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2151977660,
+          "size": 16,
+          "sha256": "75fb20338069b72662339937f14ba53ff5feeed056d569cb236f2dfda4ebd897"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2151977688,
+          "size": 292,
+          "sha256": "0898449006c09b8e7a0c50c4146900b943559e610ae2955be6d5360df7446b51"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2151977676,
+          "size": 12,
+          "sha256": "5c3dec90659f790b33fb13345df97fb305da8271d624b543c4da22c5a4d7c75c"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2151979908,
+          "size": 104,
+          "sha256": "6013853aaaead202fb2533e86ca087edf6ecb8d9b9e979ed4dc748710288800e"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2151981760,
+          "size": 336,
+          "sha256": "a74bace90ac7b226b27b949e22f3637b1e1ae8fc7653b17d7e98ef7bc7f8bde9"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2151980556,
+          "size": 128,
+          "sha256": "11109d6846ccbec5b0ac665c1800e3828e4c4edcf1b9ceb773eae6d73cdc88a5"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2151977980,
+          "size": 700,
+          "sha256": "9bd4bc94a331a199011ae5c56658383c0af4593577c61a8826dd376af9fcbba2"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2151975504,
+          "size": 972,
+          "sha256": "c6304ed90d218ee0c79c9ba810a3608d27a0b0600e7e7ef6eca8247693a0d129"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2151982096,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2151979628,
+          "size": 280,
+          "sha256": "9fe2dd542c940141d47fe8a5def1f12b1c85a1ddc42c0cf5c6a85f0739f54fc9"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2151981004,
+          "size": 160,
+          "sha256": "1b0bdcc80312a53b7151851e9e18db8b5afe564efce0d740d3cd03d668c2f3ff"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2151982204,
+          "size": 44,
+          "sha256": "e3c85435340f67b3360861f36372b92e772f2934a60054a0fb3be63ae201a2d7"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2151982136,
+          "size": 68,
+          "sha256": "3fd3cbe885bda70f2a3b8ac0e8dda575c1a5d2a0ec4b90d3b13e8463392d4640"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2151980136,
+          "size": 44,
+          "sha256": "9918936bf3141bf25bf251988a93d6ae23f8a088bd96a49d4594ab27748ad8a4"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2151980684,
+          "size": 136,
+          "sha256": "57748f38a3df5d612cc4f305958f69e6074aacb9c3f793b11f0ec958e9738208"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2151982316,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2151975144,
+          "size": 128,
+          "sha256": "5ad3391ec8e5e81623aa8d0e4e6ae6fbf501673ce35f001812fa8ffbcc7f6d7d"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2151975272,
+          "size": 112,
+          "sha256": "d8cbada68d1d348edb4d87f396771a5e42c897fa997e3d1f45e81ca0e306e14d"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152137868,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152137844,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152152520,
+          "size": 84,
+          "sha256": "2792919a5dae32eacb14d63cb28ed9d50a279d2c47b3068695fbb832b262ea18"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152137864,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152137860,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152137852,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152137856,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152137872,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152152764,
+          "size": 280,
+          "sha256": "2d01ed837ca6a8421a45fed45589df828301c69705f7333438a7b1ed9506e026"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152137848,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152137828,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152137812,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152137836,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152137820,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152153356,
+          "size": 156,
+          "sha256": "021c4b7c9280a270fe679521957164e20b57dfa00bc044710a631109c72aa400"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152137816,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152137832,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2151980348,
+          "size": 112,
+          "sha256": "259b29289c28647fbd22380b8df0c063c17b4b3b8fb18b1152f89935c8bb24f8"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2151982248,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2151975384,
+          "size": 120,
+          "sha256": "d6fbca80505620b37d191e13c737d44559469cc45ac52ff7bfe0c8b448db63ea"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152156228,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152156226,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152156225,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152156244,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152156248,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152152724,
+          "size": 40,
+          "sha256": "4b4a373f93362fed7cfab5dee7783210c521dd83ba1d2eb4f59ec120183f03fe"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152153136,
+          "size": 48,
+          "sha256": "578a60515635bb950ae55c1f8dd184284dcf4c82cdaba2347cff9de15fed63c8"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152153048,
+          "size": 40,
+          "sha256": "c0d0bd5933cb0f9d8e24460112665e18bbf242075cbd0cc1a311450ce00b3aee"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152153200,
+          "size": 40,
+          "sha256": "0613d7462b62bf1f7a2b9f5ebf63c425146c13b6333f1e4edb7153209b5bd2a7"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152153240,
+          "size": 48,
+          "sha256": "09eed2b663dbd50fab167bb1b7b703879c3b5fc71017b10d1ef11329d1a26cda"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152153288,
+          "size": 40,
+          "sha256": "3e00d75cfbe6558a2db520c6c26c4ca9588321840544d4c22e3e949f10bd3c80"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152153184,
+          "size": 16,
+          "sha256": "ff14aef1579c3455f3a3311e20a47dc434e5781f3b7bbff230407f405ab6f0a6"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152153088,
+          "size": 48,
+          "sha256": "9ecf2006a9f71c2fd0e6315863f9158bbff8a83b6514bf569f8732286ceeb1fb"
+        },
+        "local:sDropCave__0": {
+          "address": 2152152628,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152153044,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152152676,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152152700,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152156224,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152153328,
+          "size": 28,
+          "sha256": "af7c72ba059d60978f45976a196cf0547316fc43053d672e40d9aea2bde2c790"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152156252,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152156249,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152156296,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152152652,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152156260,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152156280,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152156264,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152156276,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152156261,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152156284,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152156268,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152156272,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152156288,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152156292,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152156223,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152156227,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152156300,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152156301,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152156304,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152156236,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152156222,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152156221,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152156368,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152156256,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152152604,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "2389e52045aa88b25106447afe486d69a33a7313207a6df26a8fda0598fca28c"
+    },
+    "emu-jp": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151833632,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152357856,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152357856,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152357868,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152357872,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152357888,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152357892,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152357896,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152357900,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 1899704320
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2152004924,
+          "size": 12,
+          "sha256": "c1763bc041d6fba0c10a528dc863c0ef6ac86a99ca559a01ffa4cdba0f2f1f17"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2152001220,
+          "size": 644,
+          "sha256": "8fa34afaed3ffb998c27b9d6ad6c6339bc86ddddecf8c6a7e9f214017dbe934c"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2152001864,
+          "size": 208,
+          "sha256": "611e4b18ec55312672fbb97baf6057fc02eca71db045c76844285cc1331acc6d"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2152006224,
+          "size": 280,
+          "sha256": "294f00995fad61c278561641100466622680ac6ec8a745d22433218d65acb569"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2152005908,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2152005948,
+          "size": 276,
+          "sha256": "8d71bb32866a94c5c3512ef2952a4b338b1c3bf381fac4a05ccf0b93d4bccfe8"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2152005708,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2152005564,
+          "size": 144,
+          "sha256": "13497032308a3c7fcb6b6885e0948218a38f784c57cfec2783117417f471b087"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2152004936,
+          "size": 156,
+          "sha256": "6c9496daf41fecf17ed5f21e36ee281622ba7a3377de881ac879dd674b9bfcc5"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2152003424,
+          "size": 948,
+          "sha256": "1207a0a0dd2c029747bb0506c54688882a1214797d6dea506f2c9f0c820f8e6b"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2152002072,
+          "size": 332,
+          "sha256": "28188ec343a18f7b709cccfee8368b05b4674456a2eb1666f83438715354ee06"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2152004756,
+          "size": 124,
+          "sha256": "15739db170ad9d4a3931d3229db3c75bbb6a6a6d7ac389cd8f6329ce710dec01"
+        },
+        "global:gQFTTimer": {
+          "address": 2152180924,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2151999224,
+          "size": 664,
+          "sha256": "9d77ca1e1229665fb7a0a5218f650981a444e3d021219ed706752d78c9482fc1"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2152002404,
+          "size": 16,
+          "sha256": "666184d4144ddce821f3cd113935d604be3a7981f3e53994851219086b9f4852"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2152002432,
+          "size": 292,
+          "sha256": "e7370cfc715a51ea9c5f75a59d9570c1d0d08a457d332131f2987bad0b2eb997"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2152002420,
+          "size": 12,
+          "sha256": "c08a70d8b31bfcda2f00e0ca5c7d582e01d53414489dd9a391063aba42a91723"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2152004652,
+          "size": 104,
+          "sha256": "fffc754e2c5e74f92a09992c42d2e7e80b0d6d9861397a4c4d2a4c12b2e9eb8d"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2152006504,
+          "size": 336,
+          "sha256": "126897c9bfe7aae921aa251c7028e49789f4e447734c5bedadb4e95ce9e5944f"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2152005300,
+          "size": 128,
+          "sha256": "bece81e252d6d1447ddeabf28f909c32148d39843fcf267144bc1964cb9c7a48"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2152002724,
+          "size": 700,
+          "sha256": "9737695667e5ac00872ecbcfe205e1fbe6d0e24c25692fcf3759e5d772a42b2c"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2152000248,
+          "size": 972,
+          "sha256": "35948f147cb3a70cca41ec74ce35a699325bb22750f0ef2bb2eb347ff0b89189"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2152006840,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2152004372,
+          "size": 280,
+          "sha256": "1882613c2d17a4500ce6046900c92213fe3395d4b089352c567aed236e960255"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2152005748,
+          "size": 160,
+          "sha256": "0050e3aa8cc01f6508b744a08fb8d850f662497039f9ca2b3be83c863e6dfe1e"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2152006948,
+          "size": 44,
+          "sha256": "b778d628e877b6d9834d4c650c786eb9649607dc6ec0a80f7f116959c09c92bf"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2152006880,
+          "size": 68,
+          "sha256": "db7ac3895f1161168df7e3717969836b0c92fb108d013e16c4aa357e0880a79f"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2152004880,
+          "size": 44,
+          "sha256": "3808b773d19c926a44ffd179877a4e9dbf3762b0ccb72e6f1dce0e5445a40b36"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2152005428,
+          "size": 136,
+          "sha256": "33b37d12111fa09230ae8e1ce8a1728ed9352816eb8f7b6b701164819b80c27c"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2152007060,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2151999888,
+          "size": 128,
+          "sha256": "54eff0459c054397bec1f0016c0c502d764ff470ee7ccfda12b142557fcecd40"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2152000016,
+          "size": 112,
+          "sha256": "b8554a429eb9f6c788e45e4987131549b1c4b7b31be87af7e0f5b20485869599"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152154636,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152154612,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152169256,
+          "size": 84,
+          "sha256": "eae5df90b515dd26623177c0731a56c51ccac129c5a4f80e60c4d3825eb0f6c1"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152154632,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152154628,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152154620,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152154624,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152154640,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152169500,
+          "size": 280,
+          "sha256": "b56d91732be29c1a95a3bd20ad5baf924f42e946a4109a410fe165e822bf2487"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152154616,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152154596,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152154580,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152154604,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152154588,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152170092,
+          "size": 156,
+          "sha256": "d8b29658f6acbb0b61b12dcc1696beae81973412a35364896b87d6777277752a"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152154584,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152154600,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2152005092,
+          "size": 112,
+          "sha256": "084aa05f55f5067343d7d6ba9a2189ac4c76592caeb7a6bc3e432e2d982776cb"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2152006992,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2152000128,
+          "size": 120,
+          "sha256": "2aa7b9149b4a6dc649b8e9e9ec16e0eadc84777b599b24853bc1f86ddf36560c"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152180932,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152180930,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152180929,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152180948,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152180952,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152169460,
+          "size": 40,
+          "sha256": "957c7a6bd356cd7ee65aa9bc3e55c3001ac46cba44fc1354d519413948dda1c8"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152169872,
+          "size": 48,
+          "sha256": "cff7bf0a7603d283d5050dca7c4aad463fd9fdc3069e083614f43c245bd29df5"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152169784,
+          "size": 40,
+          "sha256": "23bbd6e1c167907e3dac68bc82367c186034d51eec24f8a2b4f8f37d08e5e3b5"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152169936,
+          "size": 40,
+          "sha256": "64019283ff9007fb7c881a21032aafed7dafa46c5efaf85b06ff254a6ce9761b"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152169976,
+          "size": 48,
+          "sha256": "6068c1ce66b4a0267f63504355f3681e84fb420832c35db9694f2803e201c07b"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152170024,
+          "size": 40,
+          "sha256": "eeaa2a86f4bbdc39aff0f78ab68ff07b0e6bafb15d9a4a735798fd9331b1adb4"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152169920,
+          "size": 16,
+          "sha256": "593347aaac5033941062ee11854d550daefd96955313a5064273f69399a3e407"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152169824,
+          "size": 48,
+          "sha256": "bd002b67d59e65f14ec5f728a40e3737ab897c445b65dd353d6fdff41e420230"
+        },
+        "local:sDropCave__0": {
+          "address": 2152169364,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152169780,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152169412,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152169436,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152180928,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152170064,
+          "size": 28,
+          "sha256": "7957409d208d656dd561e338c137c07ba5dae9f4015370e3d561dea76bb52f82"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152180956,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152180953,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152181000,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152169388,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152180964,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152180984,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152180968,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152180980,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152180965,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152180988,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152180972,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152180976,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152180992,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152180996,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152180927,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152180931,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152181004,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152181005,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152181008,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152180940,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152180926,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152180925,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152181072,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152180960,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152169340,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "5334d9f2f283c6dfab4f715cf49be11ec79a38bbf125601e8fb86710d7787ee3"
+    },
+    "emu-us": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151847936,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152372160,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152372160,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152372172,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152372176,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152372192,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152372196,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152372200,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152372204,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 1899704320
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2152014916,
+          "size": 12,
+          "sha256": "3c4918d57f9ca5240452a0e8f76b2baeaa345f4e8c8359910174b40eb34758db"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2152011212,
+          "size": 644,
+          "sha256": "38656fb5928e2e9ab2d78f6b0a091300b021a739402a3d7e25455446d0142f2a"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2152011856,
+          "size": 208,
+          "sha256": "6b180d3e68af4746f0ee7268950503fcfe566ab5d388efb4e4e46bf446f336cf"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2152016216,
+          "size": 280,
+          "sha256": "d6cd6dead282bf9633f3a5722c0e33f8c14328bcab0512966eb648fa09f6b5e1"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2152015900,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2152015940,
+          "size": 276,
+          "sha256": "e3e2933d50ee7becd837361ec948f01ceefbc2f68db149cec0814609de593ab0"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2152015700,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2152015556,
+          "size": 144,
+          "sha256": "9abb3d6e44778d63f854e3e2e2cd4e6afcf686063753c3fc6f91735231dfed69"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2152014928,
+          "size": 156,
+          "sha256": "d726392aea407837cdefcd35039c3742a9383e7e2e0704e434334527ba9211b7"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2152013416,
+          "size": 948,
+          "sha256": "61c9a40fcf76f7279a58ce2be1f846e9790021d29654b39ada6606c9f235cf49"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2152012064,
+          "size": 332,
+          "sha256": "a780ad8ff48c4cac5ddeeb9fa35f0f31cd24a52b3397639028a5db2e63ce31ef"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2152014748,
+          "size": 124,
+          "sha256": "bc0735c90dca0dc7fee0d26b6b3860ac2e1a9256776389f2a951cd85647259e2"
+        },
+        "global:gQFTTimer": {
+          "address": 2152181560,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2152009216,
+          "size": 664,
+          "sha256": "b4cd71a0600fed706981b5ee0dfe16db357d78b20d997f1d8f7cadc86b3b40cd"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2152012396,
+          "size": 16,
+          "sha256": "e1e8fa172be3bea3e39c34d26feca394d0a0c9fa5dfb0f601e84a1f6ffadf5a8"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2152012424,
+          "size": 292,
+          "sha256": "f97bfc08faba96d955f7015dd283759455829ca718b509e23431c59e814c3f4a"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2152012412,
+          "size": 12,
+          "sha256": "8112338a1c5ffd8de36e2bf64d1da2d6cd618c6d9b4fb9a692a1ce0fff78946e"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2152014644,
+          "size": 104,
+          "sha256": "75f13257d29d981321cbf17b8fd143489871e58f964876c4d971dab7b1729210"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2152016496,
+          "size": 336,
+          "sha256": "579e06475e2ccc0972cb42e72c0bc621eb7404f57dfe4392f766b56d009eea15"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2152015292,
+          "size": 128,
+          "sha256": "1b44e9f436e8a4ed9a05b33e08161e1e1e1db89cee35ea655d19a31be602b84d"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2152012716,
+          "size": 700,
+          "sha256": "2dec6d8a8c4f58d6389a97532c5d0833fd607fa4f2e759ece8c7c014b178ae1d"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2152010240,
+          "size": 972,
+          "sha256": "ef69ff913abc1b453dd537913363ce89248f91dff2eeb1932259d6e104ce6655"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2152016832,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2152014364,
+          "size": 280,
+          "sha256": "0b33369800120d8dbdaa3c797a8e7c73284462ed6195885973d85337ce81a14d"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2152015740,
+          "size": 160,
+          "sha256": "3ad245fe118ff15a4190392df3dc2226feb7133a8c430fa50bfda1217f98d5de"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2152016940,
+          "size": 44,
+          "sha256": "8f91de96ef7cdecb6c925bc4488764aa08ae54884c7072387e20e84fe15b1686"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2152016872,
+          "size": 68,
+          "sha256": "ae5766b4d77618d79226e11ecc1dab48e3ea0e18569674e52e199c84d3a943d7"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2152014872,
+          "size": 44,
+          "sha256": "70b6d4a8dcc4018f6eb79b2dd1675ed734c200c706af11b2df854ca7d8d2cd07"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2152015420,
+          "size": 136,
+          "sha256": "a2e24a36520f0ff7d0dd18e4b5965519c94fc593718d05ce0c09cd629d6a75b0"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2152017052,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2152009880,
+          "size": 128,
+          "sha256": "4ec3c1c7148144426a4305d578225c2e02d11879fcbb13413b15a19e08faff11"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2152010008,
+          "size": 112,
+          "sha256": "2f1c7081372bb19fafc703c7d1ed9119a3f0006a6ea109237ce04bcafc19d088"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152163648,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152163624,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152178244,
+          "size": 84,
+          "sha256": "772aadff06b80852af596556df3c64f68aa4d771d3140917b1954e0689aa0067"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152163644,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152163640,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152163632,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152163636,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152163652,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152178488,
+          "size": 280,
+          "sha256": "bc7afa95b0b938fedecf33821da206f751dc7f8e1ecce02523ceab323fc16e4f"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152163628,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152163608,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152163592,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152163616,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152163600,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152179080,
+          "size": 156,
+          "sha256": "6c7679d1f79ba50438e4f05acd5c9aaf428f8fd72e8e6101837d3d19042f6889"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152163596,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152163612,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2152015084,
+          "size": 112,
+          "sha256": "81791b7c8567d5263aba1bae062be7e6db13fb69e398d52282f136cc734f26b0"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2152016984,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2152010120,
+          "size": 120,
+          "sha256": "c81a518b7b6a3e5dd85748c6dbf36807def9b7d536f52b2083abdd96c2bc8b3a"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152181568,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152181566,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152181565,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152181584,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152181588,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152178448,
+          "size": 40,
+          "sha256": "0bc439dcb3a9204114c93be08f2fe5dc82cdc3299b5953669b11e1ca6e147e4c"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152178860,
+          "size": 48,
+          "sha256": "d36c199c1fe42782cbcc812b2dbfb3891dda1e54dcfd85011df90e91c6ba6f36"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152178772,
+          "size": 40,
+          "sha256": "fb2878b6d2670c4f21f062557c0b6b5b773ec51c75c213ab0b1eca21a943944a"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152178924,
+          "size": 40,
+          "sha256": "fc4f0867463b6d80cf31961adf5078ca3c63e26990b73c55610746b17698ae15"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152178964,
+          "size": 48,
+          "sha256": "23c3dc8499cd743760387aaa95f3b25be64986ad8a3442abb2f66a13be04e483"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152179012,
+          "size": 40,
+          "sha256": "80e0ae547fc2bd0f39597abec8d80f4fe40c98db28d5cc3cd4d72c2d1f5a229f"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152178908,
+          "size": 16,
+          "sha256": "585b1b4a940de582efdc1f917c0f0cc2af933190bae25f45ffa287b6fff78894"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152178812,
+          "size": 48,
+          "sha256": "367614d0e410ca91b6abe56cea6db5dc8b75c2a84383d3134d0e47209d10477b"
+        },
+        "local:sDropCave__0": {
+          "address": 2152178352,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152178768,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152178400,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152178424,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152181564,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152179052,
+          "size": 28,
+          "sha256": "cf53219c1705184bf4d22fb0e03239a9d7ef4ce01ab80377e99d19590d365778"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152181592,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152181589,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152181636,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152178376,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152181600,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152181620,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152181604,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152181616,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152181601,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152181624,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152181608,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152181612,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152181628,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152181632,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152181563,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152181567,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152181640,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152181641,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152181644,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152181576,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152181562,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152181561,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152181708,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152181596,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152178328,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "2c93bfccddaf0d2d38cfaca0444d9a5da1cdad5e88452a42fb080d8f707b2ffa"
+    },
+    "emu-pal": {
+      "globals": [
+        "attemptSerial__8QFTTimerCFv",
+        "beginFrame__8QFTTimerFv",
+        "beginPracticePause__8QFTTimerFv",
+        "captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData",
+        "consumeBowser__8QFTTimerFPl",
+        "consumeCustom__8QFTTimerFbPl",
+        "consumeShine__8QFTTimerFPl",
+        "consumeTransition__8QFTTimerFPlPUs",
+        "currentQf__8QFTTimerCFPlPb",
+        "draw__8QFTTimerCFP4Menu",
+        "endPracticePause__8QFTTimerFv",
+        "freezeEvent__8QFTTimerFv",
+        "gQFTTimer",
+        "init__8QFTTimerFv",
+        "markPracticeAssisted__8QFTTimerFv",
+        "onSavestateLoaded__8QFTTimerFv",
+        "onSavestateSaved__8QFTTimerFv",
+        "onStageSetup__8QFTTimerFP12TMarDirector",
+        "practiceAssisted__8QFTTimerCFv",
+        "requestReset__8QFTTimerFv",
+        "restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData",
+        "transitionEntryQf__8QFTTimerCFPlPUs",
+        "update__8QFTTimerFv"
+      ],
+      "layout": {
+        "SUSAMUNE_ADDR_MOD_BASE": 2151812448,
+        "SUSAMUNE_ADDR_MOD_SCRATCH": 2152336672,
+        "SUSAMUNE_ADDR_SHINE_TOUCH_FRAME": 2152336672,
+        "SUSAMUNE_ADDR_LAST_SHINE_ID": 2152336684,
+        "SUSAMUNE_ADDR_QFT_STATE": 2152336688,
+        "SUSAMUNE_ADDR_QFT_DEATH_QF": 2152336704,
+        "SUSAMUNE_ADDR_QFT_PLANT_QF": 2152336708,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_QF": 2152336712,
+        "SUSAMUNE_ADDR_QFT_TRANSITION_TARGET": 2152336716,
+        "SUSAMUNE_NATIVE_TIMER_DRAW_PPC_BASE": 1899704320
+      },
+      "symbols": {
+        "global:attemptSerial__8QFTTimerCFv": {
+          "address": 2151979424,
+          "size": 12,
+          "sha256": "b613160e6d95335a095f7d8bf35fc7e4bf1c1c6de334061cd56cecd42cb7dfb6"
+        },
+        "global:beginFrame__8QFTTimerFv": {
+          "address": 2151975720,
+          "size": 644,
+          "sha256": "772ce30cf3725dc8c4f7b870bd896825cc897517932b9d2bdb74be00f951b029"
+        },
+        "global:beginPracticePause__8QFTTimerFv": {
+          "address": 2151976364,
+          "size": 208,
+          "sha256": "b8eed24b99591f8ab443575c7d34c5284c6deaad054ec75633b2e16748c89876"
+        },
+        "global:captureSavestate__8QFTTimerCFRQ28QFTTimer13SavestateData": {
+          "address": 2151980724,
+          "size": 280,
+          "sha256": "cb629185c050731b0766bd79bf7ad7942b65df060e17ce21f7a5a5e55e62d75d"
+        },
+        "global:consumeBowser__8QFTTimerFPl": {
+          "address": 2151980408,
+          "size": 40,
+          "sha256": "daa83388bf835cf6ae439a6b2d773ed32136c4e83b1abab0240a0d4a8e84c9eb"
+        },
+        "global:consumeCustom__8QFTTimerFbPl": {
+          "address": 2151980448,
+          "size": 276,
+          "sha256": "5f1cebba6a2d6db908de0135741a458e097aee1cd20b2e3d9bbcabc8af6adddb"
+        },
+        "global:consumeShine__8QFTTimerFPl": {
+          "address": 2151980208,
+          "size": 40,
+          "sha256": "ca80a650387d95fb6316ca58452b8073f5bcf3ea4495c484695bc57d3bf4c1a1"
+        },
+        "global:consumeTransition__8QFTTimerFPlPUs": {
+          "address": 2151980064,
+          "size": 144,
+          "sha256": "75026993fd5ea95a9017db0e7ff83b126662057fcf39733d44dcc190c88f6ef9"
+        },
+        "global:currentQf__8QFTTimerCFPlPb": {
+          "address": 2151979436,
+          "size": 156,
+          "sha256": "35d309b6d67feb516ea5b035a8b9bae8ffe0cce45688b998b2e0a04c2efecd72"
+        },
+        "global:draw__8QFTTimerCFP4Menu": {
+          "address": 2151977924,
+          "size": 948,
+          "sha256": "5085dedf55efbc57d9503b77698e2650122ce8d90be13a09fcc4844babd4464e"
+        },
+        "global:endPracticePause__8QFTTimerFv": {
+          "address": 2151976572,
+          "size": 332,
+          "sha256": "05bbd128ce65f9c7684f699a8ddb3bc393a226057c98836887c3638a74573dd5"
+        },
+        "global:freezeEvent__8QFTTimerFv": {
+          "address": 2151979256,
+          "size": 124,
+          "sha256": "6fc9ee28ac067a400fea701a502fb8ad9405ba02dad5bad29b4c5a434406305a"
+        },
+        "global:gQFTTimer": {
+          "address": 2152146072,
+          "size": 1,
+          "sha256": null
+        },
+        "global:init__8QFTTimerFv": {
+          "address": 2151973724,
+          "size": 664,
+          "sha256": "bdcb41536ab3f83d0267fd5ef55f89e2bab4bf88657c9979701755974f8fae98"
+        },
+        "global:markPracticeAssisted__8QFTTimerFv": {
+          "address": 2151976904,
+          "size": 16,
+          "sha256": "45510e848113d313ff3253fadf491a01b420c5494450107dbc9d0945066d6eed"
+        },
+        "global:onStageSetup__8QFTTimerFP12TMarDirector": {
+          "address": 2151976932,
+          "size": 292,
+          "sha256": "854aaef11317da70d381b2e1da709e090c73043d0fdf20164557573a6964fa39"
+        },
+        "global:practiceAssisted__8QFTTimerCFv": {
+          "address": 2151976920,
+          "size": 12,
+          "sha256": "e848c7426a9767cdd349a9f5439c67664f28b81e6f62a9aed7bfc73651cf29fa"
+        },
+        "global:requestReset__8QFTTimerFv": {
+          "address": 2151979152,
+          "size": 104,
+          "sha256": "c522f1ca615350a68d52c1318238a9f8a15bcfaa8c1ffd1a4a75ed63a6960e46"
+        },
+        "global:restoreSavestate__8QFTTimerFRCQ28QFTTimer13SavestateData": {
+          "address": 2151981004,
+          "size": 336,
+          "sha256": "77aec4d683ed988b86d83ccbb8d5be9e83c1537660d6a3f3a9866a54f068a5ed"
+        },
+        "global:transitionEntryQf__8QFTTimerCFPlPUs": {
+          "address": 2151979800,
+          "size": 128,
+          "sha256": "11109d6846ccbec5b0ac665c1800e3828e4c4edcf1b9ceb773eae6d73cdc88a5"
+        },
+        "global:update__8QFTTimerFv": {
+          "address": 2151977224,
+          "size": 700,
+          "sha256": "97ebe17149b4e61e4424935c414f0cc02323a094ee39196abeaff2ebe4577b1c"
+        },
+        "local:applyFreezeConfig__0Fv": {
+          "address": 2151974748,
+          "size": 972,
+          "sha256": "c9a0e1353a534c5983ef4eaeb05ea327b68d3aa949e5b489668d5fc71ae9ff2a"
+        },
+        "local:bigTimerPane__0FPC11TGCConsole2": {
+          "address": 2151981340,
+          "size": 40,
+          "sha256": "39e5fd2de2b3c941927866a54e0259d6c539b76418ec714b222982163c427805"
+        },
+        "local:compactQf__0Fv": {
+          "address": 2151978872,
+          "size": 280,
+          "sha256": "becc032cdd617b17838e909b1dd2b70cae754de5dd0acb26c55b9ec163cab982"
+        },
+        "local:consumeStop__FPlUc": {
+          "address": 2151980248,
+          "size": 160,
+          "sha256": "158af9ae4b444ec1213c436aec1efc2158d6e28d6fa3d1d24a501d54c29a0a01"
+        },
+        "local:ensureWord__0FUlUl": {
+          "address": 2151981448,
+          "size": 44,
+          "sha256": "4cdec8667ca16fe1df7055ad20955711c684fae87034ad81462b583a106d07f6"
+        },
+        "local:flushCode__0FPvUl": {
+          "address": 2151981380,
+          "size": 68,
+          "sha256": "b3e428f4762cce8268536fbc33e3b900af4a12d846c3e78cf30565d8006c41de"
+        },
+        "local:freezeDuration__0Fv": {
+          "address": 2151979380,
+          "size": 44,
+          "sha256": "5c4364e57b0deaebf3dcca608ae700f4e413d447e1325f48109e21effc88dac9"
+        },
+        "local:frozenDisplayQf__0Fv": {
+          "address": 2151979928,
+          "size": 136,
+          "sha256": "57748f38a3df5d612cc4f305958f69e6074aacb9c3f793b11f0ec958e9738208"
+        },
+        "local:hudPane__0FPC11TGCConsole2Ul": {
+          "address": 2151981560,
+          "size": 76,
+          "sha256": "b034ef9c3d7eca208d1b6e39d29cc7261bfc766e4cd4ae7a45204ceffac64618"
+        },
+        "local:installCave__0FUlPUli": {
+          "address": 2151974388,
+          "size": 128,
+          "sha256": "1b6199e4f336d9b7f33d9f2c4771b721caffaf2d9ebad47105504228f4e76eea"
+        },
+        "local:installSpecialHook__0FPUli": {
+          "address": 2151974516,
+          "size": 112,
+          "sha256": "e0a09fb1d65b60585afd7abcbefeb6bac0deb60c532fb23c73168a0f0d6a222c"
+        },
+        "local:kAirgrabStatuses__0": {
+          "address": 2152128156,
+          "size": 4,
+          "sha256": "cb5f66339aa4e2aa800cd484ff17db92095295998454996900292631fe153e2a"
+        },
+        "local:kBounceStatuses__0": {
+          "address": 2152128132,
+          "size": 4,
+          "sha256": "be0989220cdf49c8940bbf8afcf486ffbc88e34606a006f32709792558688870"
+        },
+        "local:kCoreHooks__0": {
+          "address": 2152142752,
+          "size": 84,
+          "sha256": "92cd04da200e33fe3c49f3e9e6aae2eec45c3e1e4f4517cb653bd1c5ead796d8"
+        },
+        "local:kDiveGetupStatuses__0": {
+          "address": 2152128152,
+          "size": 4,
+          "sha256": "57fcd1b32a884ccfcba764fe3c419b3f6375a9eabd951d9b87abc7611e034a68"
+        },
+        "local:kDiveRolloutStatuses__0": {
+          "address": 2152128148,
+          "size": 4,
+          "sha256": "20ccc9f083555c516a89228aefdc27d1fe6ac51a469e1f4e1b1f88dffe3e0ee1"
+        },
+        "local:kDiveStatuses__0": {
+          "address": 2152128140,
+          "size": 4,
+          "sha256": "6a159930d836ec30458c633966a962b62d2eea797163c0eaee38e948e6332040"
+        },
+        "local:kDoubleStatuses__0": {
+          "address": 2152128144,
+          "size": 4,
+          "sha256": "1dedcab07a10a50bf5789cfd1b0de959b59784737803ec748b469da4dbd7b62e"
+        },
+        "local:kFreezeFrames__0": {
+          "address": 2152128160,
+          "size": 6,
+          "sha256": "02b415ae568d85fed3cecf1f9092d02a7a4b16a87013752a31102e5631abea5a"
+        },
+        "local:kFreezeHooks__0": {
+          "address": 2152142996,
+          "size": 280,
+          "sha256": "f2e6bb5953afe358e2bcb1331142687ca35e2846bef32fe0ca71ec638c369d09"
+        },
+        "local:kJumpStatuses__0": {
+          "address": 2152128136,
+          "size": 4,
+          "sha256": "e8228a7be96d734212f3c5b06875616c7c18f3e30f38d93748c8c30d1d58f5e6"
+        },
+        "local:kLedgeStatuses__0": {
+          "address": 2152128116,
+          "size": 4,
+          "sha256": "596c9d9809a1e0dd0cadc9df3b8e18d6a911d7996e60c0972dc148089ab0f761"
+        },
+        "local:kPutStatuses__0": {
+          "address": 2152128100,
+          "size": 4,
+          "sha256": "e44405291d01c8e704a9de81936b28db720e7c7f019913e5ad842236785ff63e"
+        },
+        "local:kRopeStatuses__0": {
+          "address": 2152128124,
+          "size": 8,
+          "sha256": "d970d15b4e29f32c38d8e573f132f163c837856f86a49540539c82887dbac14a"
+        },
+        "local:kSpinStatuses__0": {
+          "address": 2152128108,
+          "size": 8,
+          "sha256": "52b7394108a649fe76e3712122aec1ffedfcab3a630223e753cf7161f542ec3c"
+        },
+        "local:kStatusFreezes__0": {
+          "address": 2152143588,
+          "size": 156,
+          "sha256": "5d07b6c4ead54f2e6c8cb220d3720213b3bcceba66b5d7054cd0ad059209a265"
+        },
+        "local:kTripleStatuses__0": {
+          "address": 2152128104,
+          "size": 4,
+          "sha256": "98e29fda7b5ae04a0ebb8393f3204b4cd0589bfb3d78cc3d19e7be7615f8e3f1"
+        },
+        "local:kWallStatuses__0": {
+          "address": 2152128120,
+          "size": 4,
+          "sha256": "9d7b5fd60cca91343dc2ed75e9094c33cc9065575ecfd786734da0343319578a"
+        },
+        "local:liveQf__0Fv": {
+          "address": 2151979592,
+          "size": 112,
+          "sha256": "ee15314e2246c2f4028f7dd688499b863c2390ad54ccbfa60e02f430d6e0a6dc"
+        },
+        "local:paneOnScreen__0FPC7J2DPane": {
+          "address": 2151981492,
+          "size": 68,
+          "sha256": "6f3dfe2e3a114aeb1900ce18b3852f0eb99a106392e7c07b76977185dbb6ab8e"
+        },
+        "local:restoreSpecialHook__0FPUl": {
+          "address": 2151974628,
+          "size": 120,
+          "sha256": "3d4580135e204d1c6d1829d577df1ecef7d9a584ceedf9003086b8c096ee5d81"
+        },
+        "local:sAttemptSerial__0": {
+          "address": 2152146080,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigRaised__0": {
+          "address": 2152146078,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigShown__0": {
+          "address": 2152146077,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBigTimerPane__0": {
+          "address": 2152146096,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sBigUpdatePass__0": {
+          "address": 2152146100,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sBlueCoinCave__0": {
+          "address": 2152142956,
+          "size": 40,
+          "sha256": "4b4a373f93362fed7cfab5dee7783210c521dd83ba1d2eb4f59ec120183f03fe"
+        },
+        "local:sCaveBowserStop__0": {
+          "address": 2152143368,
+          "size": 48,
+          "sha256": "578a60515635bb950ae55c1f8dd184284dcf4c82cdaba2347cff9de15fed63c8"
+        },
+        "local:sCaveDirectorDtor__0": {
+          "address": 2152143280,
+          "size": 40,
+          "sha256": "c0d0bd5933cb0f9d8e24460112665e18bbf242075cbd0cc1a311450ce00b3aee"
+        },
+        "local:sCaveFreezeTransitionA__0": {
+          "address": 2152143432,
+          "size": 40,
+          "sha256": "0613d7462b62bf1f7a2b9f5ebf63c425146c13b6333f1e4edb7153209b5bd2a7"
+        },
+        "local:sCaveFreezeTransitionB__0": {
+          "address": 2152143472,
+          "size": 48,
+          "sha256": "09eed2b663dbd50fab167bb1b7b703879c3b5fc71017b10d1ef11329d1a26cda"
+        },
+        "local:sCavePlant__0": {
+          "address": 2152143520,
+          "size": 40,
+          "sha256": "3e00d75cfbe6558a2db520c6c26c4ca9588321840544d4c22e3e949f10bd3c80"
+        },
+        "local:sCaveRestartFromInit__0": {
+          "address": 2152143416,
+          "size": 16,
+          "sha256": "ff14aef1579c3455f3a3311e20a47dc434e5781f3b7bbff230407f405ab6f0a6"
+        },
+        "local:sCaveShineStop__0": {
+          "address": 2152143320,
+          "size": 48,
+          "sha256": "9ecf2006a9f71c2fd0e6315863f9158bbff8a83b6514bf569f8732286ceeb1fb"
+        },
+        "local:sDropCave__0": {
+          "address": 2152142860,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sDuration__0": {
+          "address": 2152143276,
+          "size": 4,
+          "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+        },
+        "local:sEelActivateCave__0": {
+          "address": 2152142908,
+          "size": 24,
+          "sha256": "9129199a014d653496a2089fa2bb1f358e73f2bb035b6237b2593a12d303775a"
+        },
+        "local:sEelToothCave__0": {
+          "address": 2152142932,
+          "size": 24,
+          "sha256": "d938004236362b5d6ef7f5ed2d622d8737a033172ce31bf92425a8ad6a57eafc"
+        },
+        "local:sFinalConsumed__0": {
+          "address": 2152146076,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sFreezeCave__0": {
+          "address": 2152143560,
+          "size": 28,
+          "sha256": "af7c72ba059d60978f45976a196cf0547316fc43053d672e40d9aea2bde2c790"
+        },
+        "local:sGuardedHookMask__0": {
+          "address": 2152146104,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sHaveSavedState__0": {
+          "address": 2152146101,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sLastSectionQf__0": {
+          "address": 2152146148,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPeteyWakeupCave__0": {
+          "address": 2152142884,
+          "size": 24,
+          "sha256": "c8c6391c4da0294640da26e23e4790b29bfbac70cb4c694e855ea4bc20d69df2"
+        },
+        "local:sPracticeAssisted__0": {
+          "address": 2152146112,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticeDeathQf__0": {
+          "address": 2152146132,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeDirector__0": {
+          "address": 2152146116,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeFreezeQf__0": {
+          "address": 2152146128,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeHolding__0": {
+          "address": 2152146113,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sPracticePlantQf__0": {
+          "address": 2152146136,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeSerial__0": {
+          "address": 2152146120,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeStartQf__0": {
+          "address": 2152146124,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionQf__0": {
+          "address": 2152146140,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sPracticeTransitionTarget__0": {
+          "address": 2152146144,
+          "size": 2,
+          "sha256": null
+        },
+        "local:sResetRequested__0": {
+          "address": 2152146075,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sRetailTimerOwned__0": {
+          "address": 2152146079,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionCount__0": {
+          "address": 2152146152,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionNext__0": {
+          "address": 2152146153,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sSectionQf__0": {
+          "address": 2152146156,
+          "size": 64,
+          "sha256": null
+        },
+        "local:sStageDirector__0": {
+          "address": 2152146088,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sStagePending__0": {
+          "address": 2152146074,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStageReady__0": {
+          "address": 2152146073,
+          "size": 1,
+          "sha256": null
+        },
+        "local:sStatusCave__0": {
+          "address": 2152146220,
+          "size": 208,
+          "sha256": null
+        },
+        "local:sStatusSignature__0": {
+          "address": 2152146108,
+          "size": 4,
+          "sha256": null
+        },
+        "local:sTakeCave__0": {
+          "address": 2152142836,
+          "size": 24,
+          "sha256": "262935802ca2c64fa3836661a9c47a235f564f93ef4d838c282380671820b853"
+        }
+      },
+      "mod_sha256": "b12157b390ef681f198d462aa94b7401e776fd040029e2873a32c9e40928d871"
+    }
+  }
+}

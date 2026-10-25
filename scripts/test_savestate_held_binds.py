@@ -23,7 +23,7 @@ static Binds localBinds;
 Binds &gBinds=localBinds;
 enum {SETTING_ATTEMPT_COUNTER, SETTING_ATTEMPT_IN_STAGE_CONTROLS};
 struct Settings {bool counter; bool getBool(int){return counter;}} gSettings;
-static u32 saves,loads,cycles,holdMask;
+static u32 saves,loads,cycles,holdMask,savedSlot;
 static bool sAwaitingLoadApproval;
 static u32 sLoadSlot,sPendingSlot,sPendingGeneration,sSelectedSD,sPendingSD;
 namespace PracticeSession {void armLoadHold(u32 m){holdMask=m;}void cancelLoadHold(){holdMask=0;}}
@@ -39,7 +39,7 @@ public:
  bool mLoadPending;u32 mLoadWaitFrames;
  bool diskBusy(){return false;}
  struct Info{u32 generation;};Info slotInfo(u32){return {123};}
- void saveState(){++saves;}
+ void saveState(){++saves;}void saveSlotExplicit(u32 slot){++saves;savedSlot=slot;}
  void cycleSlot(){++cycles;}void cycleSaveSlot(){++cycles;}void cycleLoadSlot(){++cycles;}
  void updateHook();
 } manager,*gSavestateMgr=&manager;
@@ -49,7 +49,7 @@ public:
         source += r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(){
- saves=loads=cycles=holdMask=0;sAwaitingLoadApproval=false;
+ saves=loads=cycles=holdMask=0;savedSlot=99;sAwaitingLoadApproval=false;
  manager.mLoadPending=false;manager.mLoadWaitFrames=0;
  sLoadSlot=sPendingSlot=sPendingGeneration=sSelectedSD=sPendingSD=0;
  WarpWheel::prompt=WarpWheel::approved=gSettings.counter=false;
@@ -64,21 +64,24 @@ API void reset(){
 API void frame(unsigned buttons,unsigned blockers,unsigned recording){
  localBinds.mPrevHeld=localBinds.mHeld;localBinds.mHeld=(u16)buttons;
  localBinds.mRecState=(u8)recording;
- const bool observerFrame=blockers&1,creationEditing=blockers&2,
+ const bool seekOwnsInput=blockers&64,observerFrame=blockers&1,creationEditing=blockers&2,
      sessionOwnsInput=blockers&4,stateDiskBusy=blockers&8,
      practiceModal=blockers&16,practiceStepConsumed=blockers&32;
 '''
         source += function_source(ROOT/'src/main.cpp',
-                                  'if (gSavestateMgr && !observerFrame && !creationEditing')
+                                  'if (gSavestateMgr && !seekOwnsInput && !observerFrame && !creationEditing')
         source += r'''
  if(manager.mLoadPending){++loads;manager.mLoadPending=false;}
 }
 API unsigned get(unsigned n){switch(n){case 0:return saves;case 1:return loads;
  case 2:return cycles;case 3:return holdMask;case 4:return localBinds.mHeld;
  case 5:return gBinds.wasPressed(BIND_FAST_FORWARD_4X)||gBinds.wasPressed(BIND_FAST_FORWARD_8X);
- case 6:return sPendingGeneration;}return 0;}
+ case 6:return sPendingGeneration;case 7:return savedSlot;case 8:return sPendingSlot;case 9:return sLoadSlot;}return 0;}
 API void bind(unsigned save,unsigned load){localBinds.mMask[BIND_SAVESTATE_SAVE]=(u16)save;
  localBinds.mMask[BIND_SAVESTATE_LOAD]=(u16)load;}
+API void fixed(unsigned slot,unsigned save,unsigned load){
+ localBinds.mMask[slot==1?BIND_SAVESTATE_SAVE_2:BIND_SAVESTATE_SAVE_3]=(u16)save;
+ localBinds.mMask[slot==1?BIND_SAVESTATE_LOAD_2:BIND_SAVESTATE_LOAD_3]=(u16)load;}
 API void counter(unsigned on){gSettings.counter=on;
  localBinds.mMask[BIND_ATTEMPT_SHOW]=1;localBinds.mMask[BIND_ATTEMPT_ADD]=2;}
 '''
@@ -125,7 +128,7 @@ API void counter(unsigned on){gSettings.counter=on;
         self.assertEqual(self.lib.get(1),1)
 
     def test_every_modal_owner_and_step_commit_block_state_shortcuts(self):
-        for block in (1,2,4,8,16,32):
+        for block in (1,2,4,8,16,32,64):
             with self.subTest(block=block):
                 self.lib.reset()
                 self.lib.frame(0x301,block,0)
@@ -148,6 +151,17 @@ API void counter(unsigned on){gSettings.counter=on;
             self.lib.frame(buttons,0,0)
             self.assertEqual(self.lib.get(index),1)
             self.assertEqual(self.lib.get(5),0)
+
+    def test_fixed_shortcuts_win_over_selected_shortcut_subsets_without_repeating(self):
+        for slot in (1, 2):
+            self.lib.reset();self.lib.fixed(slot, 0x401, 0x402)
+            self.lib.frame(0x701, 0, 0)
+            self.lib.frame(0x701, 0, 0)
+            self.assertEqual((self.lib.get(0), self.lib.get(7)), (1, slot))
+            self.lib.frame(0x700, 0, 0)
+            self.lib.frame(0x702, 0, 0)
+            self.lib.frame(0x702, 0, 0)
+            self.assertEqual((self.lib.get(1), self.lib.get(8), self.lib.get(9)), (1, slot, 0))
 
     def test_unassigned_and_incomplete_chords_remain_inert(self):
         self.lib.bind(0,0)

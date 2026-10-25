@@ -14,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Memory(C.Structure):
-    _fields_ = [("banks", C.c_void_p * 2), ("sizes", C.c_uint * 2)]
+    _fields_ = [("banks", C.c_void_p * 5), ("sizes", C.c_uint * 5)]
+
+    def __init__(self, banks=(), sizes=()):
+        super().__init__((C.c_void_p * 5)(*banks), (C.c_uint * 5)(*sizes))
 
 
 class Span(C.Structure):
@@ -250,9 +253,87 @@ __declspec(dllexport) unsigned mergeBig(unsigned a,unsigned b,unsigned shift){re
         self.assertEqual(bytes(storage), before)
         bad = Memory((C.c_void_p * 2)(memory.banks[0], memory.banks[0] + 1), (C.c_uint * 2)(13, 11))
         self.assertFalse(self.lib.valid(C.byref(bad)))
-        bad.sizes[:] = (0xFFFFFFFF, 1)
+        bad.sizes[:] = (0xFFFFFFFF, 1, 0, 0, 0)
         self.assertFalse(self.lib.valid(C.byref(bad)))
         self.assertFalse(self.lib.valid(None))
+
+    def test_four_bank_moves_match_memmove_in_every_physical_order(self):
+        sizes = (7, 5, 3, 9)
+        original = bytes(range(sum(sizes)))
+        for order in itertools.permutations(range(4)):
+            storage = (C.c_ubyte * 160)(*([0xA7] * 160))
+            base = C.addressof(storage)
+            starts = [16 + 32 * order[i] for i in range(4)]
+            memory = Memory([base + at for at in starts], sizes)
+            self.assertTrue(self.lib.valid(C.byref(memory)))
+            for size in range(25):
+                for src in range(25 - size):
+                    for dst in range(25 - size):
+                        self.put(memory, original)
+                        expected = bytearray(original)
+                        expected[dst:dst + size] = original[src:src + size]
+                        self.assertTrue(self.lib.move(C.byref(memory), dst, src, size))
+                        self.assertEqual(self.get(memory), expected)
+            covered = {at + i for at, size in zip(starts, sizes) for i in range(size)}
+            self.assertTrue(all(storage[i] == 0xA7 for i in range(160) if i not in covered))
+
+    def test_four_bank_staged_replacement_retains_other_slots_and_guards(self):
+        storage = (C.c_ubyte * 160)(*([0xA7] * 160))
+        base = C.addressof(storage)
+        starts, sizes = (112, 16, 80, 48), (7, 5, 3, 9)
+        memory = Memory([base + at for at in starts], sizes)
+        for slot, stage_size in itertools.product(range(3), range(13)):
+            pool = Pool((Entry * 3)(Entry(0, 5), Entry(5, 6), Entry(11, 7)), 18)
+            old = [bytes([i + 1]) * n for i, n in enumerate((5, 6, 7))]
+            self.put(memory, b''.join(old))
+            candidate = b'REPLACEMENT'
+            first = min(stage_size, len(candidate))
+            self.put(memory, candidate[first:first + 6], 18)
+            staging = C.create_string_buffer(candidate[:first])
+            before = metadata(pool), self.get(memory, 0, 18)
+            fits = len(candidate) - first <= 6
+            self.assertEqual(bool(self.lib.commit(C.byref(pool), C.byref(memory), slot,
+                len(candidate), staging, stage_size)), fits)
+            if fits:
+                old[slot] = candidate
+                for i, data in enumerate(old):
+                    self.assertEqual(self.get(memory, pool.slots[i].offset, pool.slots[i].size), data)
+            else:
+                self.assertEqual((metadata(pool), self.get(memory, 0, 18)), before)
+        covered = {at + i for at, size in zip(starts, sizes) for i in range(size)}
+        self.assertTrue(all(storage[i] == 0xA7 for i in range(160) if i not in covered))
+
+    def test_later_bank_overlap_wrap_and_alias_are_rejected(self):
+        memory, storage = self.fixture()
+        before = bytes(storage)
+        for bank in (2, 3, 4):
+            memory.banks[bank], memory.sizes[bank] = memory.banks[0] + 2, 4
+            self.assertFalse(self.lib.valid(C.byref(memory)))
+            memory.banks[bank], memory.sizes[bank] = (1 << (C.sizeof(C.c_void_p) * 8)) - 3, 4
+            self.assertFalse(self.lib.valid(C.byref(memory)))
+            memory.banks[bank], memory.sizes[bank] = C.addressof(storage) + 96, 8
+            self.assertTrue(self.lib.valid(C.byref(memory)))
+            self.assertFalse(self.lib.copyIn(C.byref(memory), 0, memory.banks[bank], 4))
+            self.assertFalse(self.lib.copyOut(C.byref(memory), 0, memory.banks[bank], 4))
+            memory.banks[bank], memory.sizes[bank] = None, 0
+        self.assertEqual(bytes(storage), before)
+
+    def test_fifth_bank_boundary_moves_preserve_disjoint_guards(self):
+        storage = (C.c_ubyte * 192)(*([0xA7] * 192))
+        base = C.addressof(storage)
+        starts, sizes = (144, 48, 112, 16, 80), (7, 5, 3, 9, 11)
+        memory = Memory([base + at for at in starts], sizes)
+        original = bytes(range(sum(sizes)))
+        self.assertEqual(self.lib.capacity(C.byref(memory)), len(original))
+        for source, destination, count in ((0, 7, 28), (7, 0, 28), (21, 23, 12),
+                                           (23, 21, 12), (24, 2, 11), (2, 24, 11)):
+            self.put(memory, original)
+            expected = bytearray(original)
+            expected[destination:destination + count] = original[source:source + count]
+            self.assertTrue(self.lib.move(C.byref(memory), destination, source, count))
+            self.assertEqual(self.get(memory), expected)
+        covered = {at + i for at, size in zip(starts, sizes) for i in range(size)}
+        self.assertTrue(all(storage[i] == 0xA7 for i in range(192) if i not in covered))
 
 
 if __name__ == "__main__":

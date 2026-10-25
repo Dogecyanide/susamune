@@ -14,6 +14,8 @@
 #define SUSAMUNE_STATE_MAX_ARCHIVE_ID 99999999u
 #define SUSAMUNE_STATE_NAME_BYTES 32u
 #define SUSAMUNE_STATE_NAME_MAGIC 0x4D53534Eu
+#define SUSAMUNE_STATE_WINDOW_TAIL 0x80000000u
+#define SUSAMUNE_STATE_WINDOW_SIZE_MASK 0x7FFFFFFFu
 
 enum SusamuneStateCommand {
     SUSAMUNE_STATE_CMD_NONE, SUSAMUNE_STATE_CMD_EXPORT,
@@ -168,14 +170,17 @@ SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateNameValid(const char *name) {
 SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateGameValid(unsigned int id) {
     return id == 0x474D534Au || id == 0x474D5345u || id == 0x474D5350u;
 }
-static inline int SusamuneStateHeaderValid(const struct SusamuneStateArchiveHeader *h) {
+static inline int SusamuneStateHeaderValidCapacity(const struct SusamuneStateArchiveHeader *h, unsigned int capacity) {
     if (h->magic != SUSAMUNE_STATE_ARCHIVE_MAGIC || h->version != SUSAMUNE_STATE_ARCHIVE_VERSION ||
         h->headerSize != sizeof(*h) || !h->metadataSize || h->metadataSize > SUSAMUNE_STATE_METADATA_SIZE ||
-        !h->packedSize || h->packedSize > SUSAMUNE_STATE_POOL_EXPANDED_SIZE ||
+        !h->packedSize || h->packedSize > capacity ||
         !h->rawSize || h->rawSize > 0x02000000u || !SusamuneStateGameValid(h->gameId) ||
         !h->buildCrc || !h->snapshotVersion || !h->configId || h->reserved[0] || h->reserved[1] ||
         h->headerCrc != SusamuneStateHeaderCrc(h)) return 0;
     return SusamuneStateNameValid(h->name);
+}
+static inline int SusamuneStateHeaderValid(const struct SusamuneStateArchiveHeader *h) {
+    return SusamuneStateHeaderValidCapacity(h, SUSAMUNE_STATE_POOL_EXPANDED_SIZE);
 }
 static inline int SusamuneStatePoolRange(unsigned int offset, unsigned int size) {
     return size && offset <= SUSAMUNE_STATE_POOL_EXPANDED_SIZE &&
@@ -212,7 +217,7 @@ SUSAMUNE_STATE_SHARED_INLINE unsigned int SusamuneTasManifestCrc(const struct Su
     crc = SusamuneStateCrcUpdate(crc, &zero, 4);
     return ~SusamuneStateCrcUpdate(crc, bytes + 44, sizeof(*project) - 44);
 }
-SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValid(const struct SusamuneTasManifest *project) {
+SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValidCapacity(const struct SusamuneTasManifest *project, unsigned int capacity) {
     unsigned int i, j, count = 0, total = 0;
     if (project->magic != SUSAMUNE_TAS_MAGIC || project->version != SUSAMUNE_TAS_VERSION ||
         !project->projectId || project->projectId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || !project->generation ||
@@ -231,7 +236,7 @@ SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValid(const struct SusamuneT
             continue;
         }
         if (component->componentId > SUSAMUNE_STATE_MAX_ARCHIVE_ID || component->componentId == project->tape.componentId ||
-            !component->packedBytes || component->packedBytes > SUSAMUNE_STATE_POOL_EXPANDED_SIZE - total ||
+            !component->packedBytes || component->packedBytes > capacity - total ||
             component->frames > SUSAMUNE_TAS_MAX_FRAMES) return 0;
         for (j = 0; j < i; ++j)
             if (project->components[j].componentId == component->componentId) return 0;
@@ -241,6 +246,9 @@ SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValid(const struct SusamuneT
     return count == project->componentCount && project->components[0].componentId &&
         !project->components[0].frames && project->components[0].sceneKey == project->sceneKey &&
         project->components[project->currentRole].componentId;
+}
+SUSAMUNE_STATE_SHARED_INLINE int SusamuneTasManifestValid(const struct SusamuneTasManifest *project) {
+    return SusamuneTasManifestValidCapacity(project, SUSAMUNE_STATE_POOL_EXPANDED_SIZE);
 }
 
 static inline int SusamuneTasTakeValid(const struct SusamuneTasTakeData *take) {

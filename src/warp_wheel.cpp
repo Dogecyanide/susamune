@@ -8,6 +8,7 @@
 #include "susamune/warp_wheel.hxx"
 
 #include "Dolphin/string.h"
+#include "SMS/GC2D/SmplFader.hxx"
 #include "SMS/Manager/FlagManager.hxx"
 #include "SMS/System/Application.hxx"
 #include "SMS/System/CardManager.hxx"
@@ -805,6 +806,7 @@ void prepareArmedDeparture() {
 
 __attribute__((noinline)) void armWarp(const LevelWarp::Dest &dest,
                                        bool keepSpawn, bool overrideSource) {
+    PracticeSession::resetGameplaySpeed();
     PracticeSession::releaseForDeparture();
     sDest = dest;
     sArmed = true;
@@ -1039,6 +1041,16 @@ void restartFullAfterSave() {
     sSaveIdleFrames = 0;
 }
 
+bool readyForOnlineRace() {
+    return gpMarDirector && gpApplication.mDirector == gpMarDirector && gpMarDirector->_260 &&
+        gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
+        gpApplication.mFader && gpApplication.mFader->mFadeStatus == TSMSFader::FADE_OFF &&
+        !sArmed && !sTailPending && !sPendingTitleExit && !sHoldNaturalDeparture &&
+        sDeferredRestart == DEFERRED_RESTART_NONE &&
+        sHeldSessionDeparture == HELD_SESSION_DEPARTURE_NONE &&
+        (!gpCardManager || gpCardManager->getLastStatus() != CARD_ERROR_BUSY);
+}
+
 u8 kick(TMarDirector *director, u8 state) {
     if (!sArmed) {
         return state;
@@ -1072,6 +1084,10 @@ s32 onDirected(s32 appState) {
     if (appState == 0) {
         return appState;
     }
+    // A save/intro director can return MAIN_LOOP after the wheel arms, before
+    // the next frame services that command. It has not departed the stage.
+    if (sArmed && sCourseGuard &&
+        appState == TApplication::CONTEXT_DIRECT_MAIN_LOOP) return appState;
     // The app's two direct-loop values are ordinary director returns. An
     // automatic death retry must wait for retail's real post-animation exit.
     if (sDeathSequence &&
@@ -1514,12 +1530,22 @@ bool slotDest(int i, LevelWarp::Dest *out) {
     out->area     = kRoot[sRoot].episodeArea;
     out->episode  = (u8)i;
     out->gameInt3 = (u8)i;
+    if (out->area == TGameSequence::AREA_PINNABEACH) {
+        // Episodes 2 and 4 stay on the beach; the other IL starts are inside.
+        for (int park = 0; park < 6; ++park) {
+            if (kPinnaPark[park].gameInt3 == i) {
+                *out = kPinnaPark[park];
+                break;
+            }
+        }
+    }
     return true;
 }
 
 int stickSlot(TMarioGamePad *pad) {
-    f32 x = pad->mControlStick.mStickX;
-    f32 y = pad->mControlStick.mStickY;
+    // Retail disables Mario's processed pad during save boxes and intros.
+    const f32 x = JUTGamePad::mPadMStick[0].mStickX;
+    const f32 y = JUTGamePad::mPadMStick[0].mStickY;
     if (x * x + y * y < 0.25f) {
         return kCentreSlot;
     }
@@ -1834,6 +1860,8 @@ static bool servicePausedWarp(TMarDirector *director) {
     const u8 state = director->mCurState;
     if (state != TMarDirector::STATE_PAUSE_MENU &&
         state != TMarDirector::STATE_SAVE_CARD &&
+        state != TMarDirector::STATE_INTRO_PLAYING &&
+        state != TMarDirector::STATE_GAME_STARTING &&
         state != TMarDirector::STATE_DEATH) return false;
     const u8 next = LevelWarp::kick(director, state);
     if (next == state) return false;
@@ -1882,7 +1910,10 @@ void update(TMarioGamePad *pad) {
     const bool saveDialogOpen = state == TMarDirector::STATE_SAVE_CARD ||
         (state == TMarDirector::STATE_PAUSE_MENU && gpMarDirector->mPauseMenu &&
          gpMarDirector->mPauseMenu->mState == TPauseMenu2::MENU_SAVING);
-    if (state != TMarDirector::STATE_NORMAL && !saveDialogOpen) {
+    const bool readyIntro = gpMarDirector->_260 &&
+        (state == TMarDirector::STATE_INTRO_PLAYING ||
+         state == TMarDirector::STATE_GAME_STARTING);
+    if (state != TMarDirector::STATE_NORMAL && !saveDialogOpen && !readyIntro) {
         close();
         const u16 rawButtons = JUTGamePad::mPadStatus[0].mButton;
         if (sDeathSequence &&
@@ -1971,7 +2002,7 @@ void update(TMarioGamePad *pad) {
         return;
     }
 
-    const u32 pressed = pad->mButtons.mFrameInput;
+    const u32 pressed = JUTGamePad::mPadButton[0].mFrameInput;
     const int slot    = stickSlot(pad);
 
     if (pressed & JUTGamePad::B) {

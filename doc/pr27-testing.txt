@@ -1,0 +1,25 @@
+Moonshine PR27 - safe starts and automatic drafts
+
+Use PR27 on every participant. Online protocol 5 deliberately rejects PR26
+because its Ready message does not guarantee a safe, reserved stage.
+
+1. Ordinary IL race: choose Ready while the other player is loading/entering
+   a stage. Nobody should warp early. Once each ready player reaches normal
+   gameplay, their game waits on Online; both then depart exactly once.
+2. Repeat with host loading, guest loading, a shine exit/save prompt, and an
+   already-requested warp. Finish the current transition normally. A save
+   prompt may need dismissing. The race must not replace that transition.
+3. Cancel readiness with A or B while waiting. Neither player should become
+   stuck; choose Ready again to start. Disconnect/reconnect while waiting too.
+4. Draft: the IL list opens when your turn begins. B returns to Online without
+   reopening every frame. It opens again on the next turn. Check both opening
+   picks and counterpicks; an active editor/transition should defer the prompt.
+5. Repeat readiness and draft tests with 3 and 4 players. The last loading
+   player must hold up everyone. Each player bans once in the group draft.
+6. Stageloader: safe initial start, then independent advancement through the
+   host's playlist. Ordinary free roam must remain unpaused.
+7. Retest PR26 smoothness on Wii/Wii and Wii/Dolphin, all three ghost models,
+   level changes and reconnects. PR27 adds no further smoothing changes.
+
+Host checks and fixed-timer builds are not substitutes for these Wii checks.
+No timer formulas, savestate format, settings IDs or memory reservations change.

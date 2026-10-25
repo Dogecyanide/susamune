@@ -3,11 +3,14 @@
 #include "Dolphin/OS.h"
 #include "Dolphin/mem.h"
 #include "susamune/ghost.hxx"
+#include "susamune/ghost_camera.h"
 #include "susamune/crash_report.hxx"
 #include "susamune/iling.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/records.hxx"
 #include "susamune/records_persistence.hxx"
+#include "susamune/transfer_lease.hxx"
+#include "susamune/transfer_layout.h"
 
 namespace GhostStorage {
 namespace {
@@ -77,6 +80,94 @@ Identity sPendingIdentity, sLoadedIdentity;
 bool sLoadedValid, sAvailable, sReady[2], sRefreshQueued[2], sCachedRefresh[2];
 bool sImportScanQueued, sTimedOut;
 
+#if !IS_EMULATOR
+const char *statusForCode(s32 status);
+void clearCatalog(bool imported);
+enum TransferPhase { TRANSFER_NONE, TRANSFER_LOCAL, TRANSFER_SUBMIT,
+    TRANSFER_REMOTE, TRANSFER_READING, TRANSFER_CONSUME, TRANSFER_RELEASE };
+TransferLease::Token sTransferToken;
+TransferLease::Borrow sTransferBorrow;
+u8 sTransferPhase;
+bool sSharedBackend, sTransferFailed;
+
+void *transferPayload() {
+    return sTransferPhase != TRANSFER_NONE
+        ? reinterpret_cast<void *>(SUSAMUNE_TRANSFER_STAGE_PPC_BASE)
+        : (void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR;
+}
+
+void readBackend() {
+    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
+    DCInvalidateRange((void *)&mailbox->response, sizeof(mailbox->response));
+    SusamuneGhostStorageResponse response;
+    memcpy(&response, (const void *)&mailbox->response, sizeof(response));
+    sAvailable = false;
+    if (response.responseMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
+        response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION &&
+        (response.flags & ~(SUSAMUNE_GHOST_RESPONSE_READY |
+                            SUSAMUNE_GHOST_RESPONSE_BUSY)) == 0 &&
+        !(response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY)) {
+        sSequence = response.ackSeq;
+        sAvailable = (response.flags & SUSAMUNE_GHOST_RESPONSE_READY) != 0;
+        sStatus = sAvailable ? kReady : statusForCode(response.status);
+    }
+}
+
+bool transferReady() {
+    TransferLease::poll();
+    const TransferLease::Mode mode = TransferLease::init();
+    if (mode == TransferLease::FAILED ||
+        (sSharedBackend && mode != TransferLease::SHARED)) sTransferFailed = true;
+    if (sTransferFailed) { sStatus = kProtocol; return false; }
+    if (mode == TransferLease::SHARED && !sSharedBackend) {
+        // Activation may reset the ordinary mailbox only while every reader is idle.
+        if (busy()) { sTransferFailed = true; sStatus = kProtocol; return false; }
+        sSharedBackend = true;
+        readBackend();
+        clearCatalog(false); clearCatalog(true);
+        sRefreshQueued[0] = sRefreshQueued[1] = sAvailable;
+        sCachedRefresh[0] = sCachedRefresh[1] = false;
+    }
+    return mode == TransferLease::SHARED || TransferLease::legacyAllowed();
+}
+
+bool transferSucceeded(bool result) {
+    if (!result && TransferLease::mode() == TransferLease::FAILED) {
+        sTransferFailed = true;
+        sStatus = kProtocol;
+    }
+    return result;
+}
+
+bool claimTransfer() {
+    if (!transferReady() || !sAvailable || busy()) return false;
+    if (!sSharedBackend) return true;
+    TransferLease::Token token;
+    if (!transferSucceeded(TransferLease::claim(TransferLease::GHOST, token))) return false;
+    sTransferToken = token;
+    sTransferPhase = TRANSFER_LOCAL;
+    return true;
+}
+
+void finishTransfer() {
+    if (sTransferPhase == TRANSFER_CONSUME) {
+        if (!transferSucceeded(TransferLease::consumed(sTransferToken, sTransferBorrow))) return;
+        sTransferPhase = TRANSFER_RELEASE;
+    }
+    if (sTransferPhase == TRANSFER_RELEASE &&
+        transferSucceeded(TransferLease::release(sTransferToken))) {
+        sTransferToken = {}; sTransferBorrow = {};
+        sTransferPhase = TRANSFER_NONE;
+    }
+}
+
+void submitTransfer() {
+    if (sTransferPhase == TRANSFER_SUBMIT && transferSucceeded(TransferLease::submit(
+            sTransferToken, sPendingSequence, 0, sPendingCommand)))
+        sTransferPhase = TRANSFER_REMOTE;
+}
+#endif
+
 void notify(const char *status) {
     sStatus = status;
     if (gMenu) gMenu->toast(status);
@@ -88,6 +179,7 @@ void observeLoadedPlayback() {
 
 u8 activeProfile() {
     const int profile = ILing::pbProfile();
+    if (profile == 4) return SUSAMUNE_GHOST_HOVERLESS_PROFILE;
     return profile >= 0 && profile < (int)SUSAMUNE_GHOST_PROFILE_COUNT
         ? static_cast<u8>(profile) : 0;
 }
@@ -196,6 +288,8 @@ void makeUnsafe(SusamuneGhostSlotInfo *out, u32 generation) {
     out->status = SUSAMUNE_GHOST_STATUS_INVALID_FILE;
 }
 
+// Keep catalog validation tables outside the fixed update input.
+__attribute__((noinline))
 bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
                   SusamuneGhostSlotInfo *out, bool imported) {
     if (!out) return false;
@@ -250,7 +344,13 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
         ((raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
           raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5) ||
          (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V6 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6)) &&
+          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6) ||
+         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V7 &&
+          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7) ||
+         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V8 &&
+          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8) ||
+         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V9 &&
+          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9)) &&
         raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
     const bool foreign = raw.gameId != kGameId;
     const bool namespaceSane = imported
@@ -272,7 +372,9 @@ bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
         raw.durationQf > 0 &&
         raw.durationQf <= SusamuneGhostDurationLimit(raw.canonicalVersion) &&
         (canonicalTeaching ? raw.payloadSize >= expectedCanonicalSize +
-                                          SUSAMUNE_GHOST_TEACHING_HEADER_SIZE
+                                          SUSAMUNE_GHOST_TEACHING_HEADER_SIZE +
+            (raw.canonicalVersion >= SUSAMUNE_GHOST_FILE_VERSION_V8
+                ? SUSAMUNE_GHOST_CAMERA_HEADER_SIZE : 0)
                      : raw.payloadSize == expectedCanonicalSize) &&
         raw.payloadSize <= SUSAMUNE_GHOST_MAX_FILE_SIZE &&
         (raw.resultQf == SUSAMUNE_GHOST_RESULT_QF_NONE ||
@@ -330,8 +432,8 @@ bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
     const bool imported = response.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
     SusamuneGhostCatalogPage *page = &sPages[imported];
     clearCatalog(imported);
-    DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, kCatalogBytes);
-    memcpy(page, (const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, kCatalogBytes);
+    DCInvalidateRange(transferPayload(), kCatalogBytes);
+    memcpy(page, transferPayload(), kCatalogBytes);
     const u64 totalDuration = (static_cast<u64>(page->totalDurationQfHi) << 32) |
                               page->totalDurationQfLo;
     const u32 remaining = page->first < page->totalCount
@@ -439,14 +541,18 @@ void beginRequest(u16 command, u16 profile, u32 slot, u32 payloadSize,
     sWaitFrames = 0;
     sTimedOut = false;
     sStatus = status;
+    if (sTransferPhase == TRANSFER_LOCAL) {
+        sTransferPhase = TRANSFER_SUBMIT;
+        submitTransfer();
+    }
 }
 #endif
 
 bool beginRefresh(bool imported, u16 command = SUSAMUNE_GHOST_CMD_LIST,
                   bool cached = false) {
-    if (!sAvailable || sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) return false;
-    clearCatalog(imported);
 #if !IS_EMULATOR
+    if (!claimTransfer()) return false;
+    clearCatalog(imported);
     beginRequest(command, imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile,
                  sOffsets[imported], 0, 0,
                  command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ? kImportingShare : kRefreshing,
@@ -471,9 +577,11 @@ __attribute__((noinline)) bool requestImportedRefresh(u16 command) {
     sCachedRefresh[1] = false;
     sImportScanQueued = command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN;
     if (busy()) return true;
-    sRefreshQueued[1] = false;
-    sImportScanQueued = false;
-    return beginRefresh(true, command);
+    if (beginRefresh(true, command)) {
+        sRefreshQueued[1] = false;
+        sImportScanQueued = false;
+    }
+    return true;
 }
 
 void queueNamespaceRefresh(u16 profile) {
@@ -572,12 +680,12 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
             return;
         }
 #if !IS_EMULATOR
-        DCInvalidateRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, response.payloadSize);
+        DCInvalidateRange(transferPayload(), response.payloadSize);
         const bool accepted = loadDestination == LOAD_DESTINATION_RACE
-            ? Ghost::importPlayback((const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
+            ? Ghost::importPlayback(transferPayload(),
                                     response.payloadSize,
                                     requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
-            : Ghost::importObserverTrack((const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
+            : Ghost::importObserverTrack(transferPayload(),
                   response.payloadSize, loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY);
         if (!accepted) {
             cancelFailedObserverLoad(loadDestination);
@@ -604,8 +712,16 @@ void pollResponse() {
     memcpy(&response, (const void *)&mailbox->response, sizeof(response));
     if (response.responseMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
         response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION &&
-        response.ackSeq == sPendingSequence) {
+        response.ackSeq == sPendingSequence &&
+        (sTransferPhase == TRANSFER_NONE ||
+         (sTransferPhase == TRANSFER_REMOTE &&
+          TransferLease::take(sTransferToken, sTransferBorrow)))) {
+        if (sTransferPhase == TRANSFER_REMOTE) sTransferPhase = TRANSFER_READING;
         completeRequest(response);
+        if (sTransferPhase == TRANSFER_READING) {
+            sTransferPhase = TRANSFER_CONSUME;
+            finishTransfer();
+        }
         return;
     }
     if (sWaitFrames != 0xffffffffu) sWaitFrames++;
@@ -618,11 +734,14 @@ void pollResponse() {
 #endif
 
 __attribute__((noinline)) bool requestIdle() {
+#if !IS_EMULATOR
+    if (!transferReady()) { sStatus = kBusy; return false; }
+#endif
     if (!sAvailable) {
         sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
         return false;
     }
-    if (sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) {
+    if (busy()) {
         sStatus = sTimedOut ? kTimeout : kBusy;
         return false;
     }
@@ -682,10 +801,11 @@ __attribute__((noinline)) bool requestIdentity(const Identity &identity,
         return false;
     }
 #if !IS_EMULATOR
+    if (!claimTransfer()) { sStatus = kBusy; return false; }
     const u32 payloadSize = imported ? sizeof(identity.leaf) : 0;
     if (imported) {
-        memcpy((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, identity.leaf, payloadSize);
-        DCFlushRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, payloadSize);
+        memcpy(transferPayload(), identity.leaf, payloadSize);
+        DCFlushRange(transferPayload(), payloadSize);
     }
     sPendingIdentity = identity;
     sPendingLoadDestination = destination;
@@ -721,6 +841,8 @@ __attribute__((noinline)) bool requestPersonalCommand(int slot, u16 command,
 }  // namespace
 
 void init() {
+    // Never abandon a live transfer through a second initialization call.
+    if (!quiet()) return;
     memset(sPages, 0, 2 * kCatalogBytes);
     memset(&sPendingIdentity, 0, sizeof(sPendingIdentity));
     memset(&sLoadedIdentity, 0, sizeof(sLoadedIdentity));
@@ -737,24 +859,23 @@ void init() {
     sLoadedValid = sAvailable = sImportScanQueued = sTimedOut = false;
     sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
 #if !IS_EMULATOR
-    volatile SusamuneGhostStorageMailbox *mailbox = SUSAMUNE_GHOST_STORAGE_PPC_PTR;
-    DCInvalidateRange((void *)&mailbox->response, sizeof(mailbox->response));
-    SusamuneGhostStorageResponse response;
-    memcpy(&response, (const void *)&mailbox->response, sizeof(response));
-    if (response.responseMagic == SUSAMUNE_GHOST_STORAGE_MAGIC &&
-        response.protocolVersion == SUSAMUNE_GHOST_STORAGE_VERSION &&
-        (response.flags & ~(SUSAMUNE_GHOST_RESPONSE_READY |
-                            SUSAMUNE_GHOST_RESPONSE_BUSY)) == 0 &&
-        !(response.flags & SUSAMUNE_GHOST_RESPONSE_BUSY)) {
-        sSequence = response.ackSeq;
-        sAvailable = (response.flags & SUSAMUNE_GHOST_RESPONSE_READY) != 0;
-        sStatus = sAvailable ? kReady : statusForCode(response.status);
+    if (transferReady()) {
+        readBackend();
         sRefreshQueued[0] = sRefreshQueued[1] = sAvailable;
     }
 #endif
 }
 
 void update() {
+#if !IS_EMULATOR
+    if (!transferReady()) return;
+    if (sTransferPhase == TRANSFER_CONSUME || sTransferPhase == TRANSFER_RELEASE) {
+        finishTransfer();
+        return;
+    }
+    if (sTransferPhase == TRANSFER_LOCAL || sTransferPhase == TRANSFER_READING) return;
+    submitTransfer();
+#endif
     observeProfile();
     observeLoadedPlayback();
     if (sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) {
@@ -770,13 +891,14 @@ void update() {
     }
     for (int imported = 0; imported < 2; imported++) {
         if (!sRefreshQueued[imported]) continue;
-        sRefreshQueued[imported] = false;
         const u16 command = imported && sImportScanQueued
             ? SUSAMUNE_GHOST_CMD_IMPORT_SCAN : SUSAMUNE_GHOST_CMD_LIST;
         const bool cached = sCachedRefresh[imported];
-        sCachedRefresh[imported] = false;
-        if (imported) sImportScanQueued = false;
-        beginRefresh(imported != 0, command, cached);
+        if (beginRefresh(imported != 0, command, cached)) {
+            sRefreshQueued[imported] = false;
+            sCachedRefresh[imported] = false;
+            if (imported) sImportScanQueued = false;
+        }
         return;
     }
 }
@@ -808,9 +930,11 @@ bool refreshPage(bool imported, u32 offset) {
     sRefreshQueued[imported] = true;
     sCachedRefresh[imported] = cached;
     if (busy()) return true;
-    sRefreshQueued[imported] = false;
-    sCachedRefresh[imported] = false;
-    return beginRefresh(imported, SUSAMUNE_GHOST_CMD_LIST, cached);
+    if (beginRefresh(imported, SUSAMUNE_GHOST_CMD_LIST, cached)) {
+        sRefreshQueued[imported] = false;
+        sCachedRefresh[imported] = false;
+    }
+    return true;
 }
 
 bool refresh() { return refreshPage(false, sOffsets[0]); }
@@ -890,17 +1014,22 @@ bool saveNew(u32 expectedSelectionToken) {
             return false;
         }
     }
+    if (!claimTransfer()) { sStatus = kBusy; return false; }
     u32 size = 0, recordToken = 0;
-    if (!Ghost::exportLatest((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR,
-            SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile, ILing::pbProfileName(sProfile),
+    if (!Ghost::exportLatest(transferPayload(),
+            SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile, ILing::pbProfileName(ILing::pbProfile()),
             &size, &recordToken) || size < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
             size > SUSAMUNE_GHOST_MAX_FILE_SIZE) {
         sStatus = kExportFailed;
+        if (sTransferPhase == TRANSFER_LOCAL) {
+            sTransferPhase = TRANSFER_RELEASE;
+            finishTransfer();
+        }
         return false;
     }
-    DCFlushRange((void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR, size);
+    DCFlushRange(transferPayload(), size);
     const SusamuneGhostFileHeader *header = reinterpret_cast<const SusamuneGhostFileHeader *>(
-        (const void *)SUSAMUNE_GHOST_STORAGE_DATA_PPC_PTR);
+        transferPayload());
     beginRequest(SUSAMUNE_GHOST_CMD_SAVE, sProfile, SUSAMUNE_GHOST_SLOT_AUTO,
                  size, recordToken, kSaving, header->durationQf);
     return true;
@@ -951,7 +1080,13 @@ bool removeImported(int slot) {
     if (!copyIdentity(true, slot, &identity)) { sStatus = kCatalogNeeded; return false; }
     return remove(identity);
 }
-bool busy() { return sPendingCommand != SUSAMUNE_GHOST_CMD_NONE; }
+bool busy() {
+#if !IS_EMULATOR
+    if (sTransferPhase != TRANSFER_NONE || sTransferFailed) return true;
+#endif
+    return sPendingCommand != SUSAMUNE_GHOST_CMD_NONE;
+}
+bool quiet() { return !busy(); }
 bool timedOut() { return busy() && sTimedOut; }
 bool available() { return sAvailable; }
 bool catalogReady() { return sReady[0]; }

@@ -1777,8 +1777,9 @@ int main(int argc, char **argv)
 		FRESULT themeDirectory;
 		if (dataLayout != FR_OK)
 		{
-			char message[160];
-			snprintf(message, sizeof(message), "Could not prepare Moonshine data (%u).\nYour old files have been kept.\nCheck the SD/USB device and try again.", (unsigned int)dataLayout);
+			char message[256];
+			snprintf(message, sizeof(message), "Moonshine data upgrade stopped (%u).\n%s\n%.100s\nExisting data has been kept. Photograph this error.",
+                    (unsigned int)dataLayout, MoonshineDataErrorOperation(), MoonshineDataErrorPath());
 			ShowMessageScreen(message);
 			ExitToLoader(1);
 		}

@@ -66,11 +66,10 @@ extern "C"
                     odd += word & 0x00ff00ffu;               \
                     even_sum += even; odd_sum += odd;       \
                 }
-                for (unsigned j = 0; j < 16; j += 4)
-                {
-                    MZ_ADLER_WORD(j) MZ_ADLER_WORD(j + 1)
-                    MZ_ADLER_WORD(j + 2) MZ_ADLER_WORD(j + 3)
-                }
+                MZ_ADLER_WORD(0) MZ_ADLER_WORD(1) MZ_ADLER_WORD(2) MZ_ADLER_WORD(3)
+                MZ_ADLER_WORD(4) MZ_ADLER_WORD(5) MZ_ADLER_WORD(6) MZ_ADLER_WORD(7)
+                MZ_ADLER_WORD(8) MZ_ADLER_WORD(9) MZ_ADLER_WORD(10) MZ_ADLER_WORD(11)
+                MZ_ADLER_WORD(12) MZ_ADLER_WORD(13) MZ_ADLER_WORD(14) MZ_ADLER_WORD(15)
 #undef MZ_ADLER_WORD
                 mz_uint32 a = even >> 16, c = even & 65535;
                 mz_uint32 b = odd >> 16, d = odd & 65535;

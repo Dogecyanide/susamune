@@ -19,7 +19,8 @@ memcpy:
 	cmp		r2,		#0
 	bxeq	lr
 
-	stmfd	sp!,	{r4-r6}
+	/* Compiler-generated struct copies reuse memcpy's returned destination. */
+	stmfd	sp!,	{r0,r4-r6}
 	orr		r3,		r0,			r1
 	tst		r3,		#3
 	bne		_unaligned
@@ -83,7 +84,7 @@ _bytecopy:
 	sub		r2,		 r2,	#1
 	b		_bytecopy
 _done2:
-	ldmfd	sp!,	{r4-r6}
+	ldmfd	sp!,	{r0,r4-r6}
 	bx		lr
 	
 memset32:

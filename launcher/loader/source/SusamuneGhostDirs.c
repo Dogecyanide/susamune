@@ -34,8 +34,9 @@ bool SusamuneGhostEnsureDirectories(const char *device)
 		if (!EnsureDirectory(path))
 			return false;
 
-		for (profile = 0; profile < SUSAMUNE_GHOST_PROFILE_COUNT; profile++)
+		for (profile = 0; profile <= SUSAMUNE_GHOST_HOVERLESS_PROFILE; profile++)
 		{
+			if (!SusamuneGhostPersonalProfile(profile)) continue;
 			snprintf(path, sizeof(path), "%s:" MOONSHINE_DATA_ROOT MOONSHINE_GHOSTS_DIR "/%s/p%u",
 			         device, regions[region], profile);
 			if (!EnsureDirectory(path))
@@ -53,8 +54,9 @@ bool SusamuneGhostEnsureDirectories(const char *device)
 		         device, SUSAMUNE_GHOST_SHARE_DIRECTORY, regions[region]);
 		if (!EnsureDirectory(path))
 			return false;
-		for (profile = 0; profile < SUSAMUNE_GHOST_PROFILE_COUNT; profile++)
+		for (profile = 0; profile <= SUSAMUNE_GHOST_HOVERLESS_PROFILE; profile++)
 		{
+			if (!SusamuneGhostPersonalProfile(profile)) continue;
 			snprintf(path, sizeof(path), "%s:" MOONSHINE_DATA_ROOT MOONSHINE_GHOSTS_DIR "/%s/%s/p%u",
 			         device, SUSAMUNE_GHOST_SHARE_DIRECTORY, regions[region],
 			         profile);

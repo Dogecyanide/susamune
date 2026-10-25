@@ -1,0 +1,67 @@
+Moonshine 3.0.0 Timewarp - Prototype 23
+
+Use the Moonshine Prototype 23 app. Existing settings and recordings stay in
+their usual locations. This package includes JP, US and PAL support.
+
+Priority checks
+
+1. Guidebook: the three visible categories should keep equal widths as you
+   switch tabs. Icons and labels are slightly larger. Check the hand points
+   at the middle of the first letter without touching it. Boo and sunglasses
+   should alternate small held poses. Try the longest category names. The
+   sidebar should use the native level-name banner above its existing
+   postcard. Check the name matches the world, including Gelato and a
+   secret stage belonging to another world.
+
+2. Displays & styles: choose Timers, Inputs & movement, HUD & messages, or
+   Custom text before choosing an item. Check that Back returns to its group
+   and Search still opens the correct item. Per-item editors retain their
+   combined visibility, Position & size, Colours and Animation controls.
+
+3. Sunshine timer: switch Decimal separator between Colon and Dot. Check
+   the normal three-decimal timer at normal and edited sizes, a gradient,
+   then save settings and relaunch. Piantissimo/blooper native race timers
+   should retain their original colon and two-decimal layout.
+
+4. Ricco Free camera: pan and turn around the giant cage, boats and signs,
+   then stop moving the camera. Check whether the wobble is gone and whether
+   movement stays smooth. Also close Free camera and check ordinary gameplay.
+   This synchronization change is a candidate fix needing Wii confirmation.
+
+5. Ghost camera: record a short ghost, then Watch with Recorded camera and
+   Free camera. Enter Mario/FLUDD colours while watching and verify the model
+   preview wins while open; leaving the editor should restore Watch camera.
+
+6. Open the Warp Wheel over a retail save prompt. A/B and movement must
+   operate only the wheel, including the press that closes it. After closing,
+   the prompt should respond normally to a fresh press.
+
+7. Practice > Gameplay > World rules > Sirena pineapple: in Plaza, switch
+   Present/Removed, check visibility and pipe collision, then reset normally.
+   Sirena Enter IL should still apply its own starting setup. This edits the
+   current game flag; it is not an always-on override of an IL.
+
+8. Creation, text keyboards, numeric entry and breakdown options should share
+   the parchment, gold/green selection and animated native icons. Check light
+   and dark menu colours, selected-text readability, and Keep/Cancel.
+   The current colour target (for example Gloves) is larger, with an X Next
+   item hint beside it. X changes the target; START keeps its Save function.
+
+The L/R category buttons now have green backing and gold trim; check their
+contrast against your menu background colour.
+PAL/US Shined markers should be shines rather than sticks. Keyboard Cancel
+should show X & START, without an extra X icon. Percentage fields in Creation
+and number entry use pct because the native font's percent slot is a C button.
+Small header icons should stay inside their green bar in both poses.
+
+Short regression pass
+
+Save/load all three slots and overwrite one occupied slot. Check one hidden
+HUD preview and ordinary controls after closing an editor. Please report
+region and the last action if anything freezes.
+
+Remaining validation
+
+The Ricco synchronization change passed a limited emulator run without a
+freeze; a complete visual fix is not yet confirmed. Online transport is
+unchanged; the larger network test can wait until testers are available.

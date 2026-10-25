@@ -1,6 +1,8 @@
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 
+static const char kTasScrubMenuLabel[] = "Scrub recording";
 class TasProjectTab final : public MenuTab {
+    friend class Menu;
 public:
     TasProjectTab() : mPage(MAIN), mSel(0), mPending(0), mLength(0), mKeyPage(0),
         mCursor(0), mBinding(false), mUpper(false), mReplaceConfirm(false), mRename(false), mSlot(0), mGeneration(0), mId(0), mCrc(0) { mName[0] = 0; focus(); }
@@ -69,6 +71,7 @@ public:
             pad->mButtons.mRapidInput = old;
             return;
         }
+        if (scrubInput(menu, nav, pressed, false)) return;
         if (pressed & JUTGamePad::B) { mPage = MAIN; mSel = 0; focus(); return; }
         if (mPage == DELETE) {
             if (pressed & JUTGamePad::A) { TasProject::remove(mId, mCrc); mPage = MAIN; mSel = 4; focus(); }
@@ -112,7 +115,7 @@ public:
             focus(); return;
         }
         if (mPage == CHECKPOINTS || mPage == MAIN) {
-            navigate(nav, mPage == CHECKPOINTS ? 5 : 9);
+            navigate(nav, mPage == CHECKPOINTS ? 5 : 10);
             const BindId bind = selectedBind();
             if (bind != BIND_COUNT) {
                 if (pressed & JUTGamePad::X) {
@@ -139,6 +142,7 @@ public:
             menu->toast(TasProject::status()); focus(); return;
         }
         if (!(pressed & JUTGamePad::A)) return;
+        if (scrubInput(menu, nav, pressed, true)) return;
         bool close = false;
         switch (mSel) {
         case 0:
@@ -169,17 +173,18 @@ public:
         const int framesWidth = Menu::textWidth(frames, 12);
         int nameSize = 17;
         while (nameSize > 9 && Menu::textWidth(TasProject::name(), nameSize) > w - framesWidth - 38) --nameSize;
-        menu->drawText(TasProject::name(), x + 4, y, nameSize, nameSize, cTitle());
-        menu->drawText(frames, x + w - framesWidth - 22, y + 3, 12, 12, cValue());
+        menu->drawMenuText(TasProject::name(), x + 4, y, nameSize, nameSize, cTitle());
+        menu->drawMenuText(frames, x + w - framesWidth - 22, y + 3, 12, 12, cValue());
+        if (mPage == SCRUB) { TasScrub::draw(menu, x, y, w, h); return; }
         if (TasProject::checkpointOverwritePending()) {
             char question[64];
             snprintf(question, sizeof(question), "Replace %s?", JapaneseUi::text(TasProject::roleName(TasProject::pendingCheckpointRole())));
-            menu->drawText(question, x + 4, y + 44, 17, 17, cRowSel());
-            menu->drawText("This replaces the checkpoint with your current position.", x + 4, y + 84, 13, 13, cRow());
+            menu->drawMenuText(question, x + 4, y + 44, 17, 17, cRowSel());
+            menu->drawMenuText("This replaces the checkpoint with your current position.", x + 4, y + 84, 13, 13, cRow());
             drawHelpLine(menu, x, y, w, h, "A: replace checkpoint   B: keep it"); return;
         }
         if (TasProject::replacementNeeded()) {
-            menu->drawText(mReplaceConfirm ? "Replace this memory state?" : "Choose a memory state to replace", x + 4, y + 26, 15, 15, cRowSel());
+            menu->drawMenuText(mReplaceConfirm ? "Replace this memory state?" : "Choose a memory state to replace", x + 4, y + 26, 15, 15, cRowSel());
             for (u32 slot = 0; slot < 3; ++slot) {
                 const auto info = gSavestateMgr->slotInfo(slot);
                 char label[64];
@@ -191,17 +196,17 @@ public:
             return;
         }
         if (TasProject::busy()) {
-            menu->drawText(TasProject::status(), x + 4, y + 48, 13, 13, cRowSel());
+            menu->drawMenuText(TasProject::status(), x + 4, y + 48, 13, 13, cRowSel());
             drawHelpLine(menu, x, y, w, h, "Please wait until the current action finishes."); return;
         }
         if (mPage == DELETE) {
-            menu->drawText("Delete this TAS from SD?", x + 4, y + 32, 17, 17, cRowSel());
-            menu->drawText(mName, x + 4, y + 68, 16, 16, cValue());
-            menu->drawText("Its recording and checkpoint files will be deleted.", x + 4, y + 104, 13, 13, cRow());
+            menu->drawMenuText("Delete this TAS from SD?", x + 4, y + 32, 17, 17, cRowSel());
+            menu->drawMenuText(mName, x + 4, y + 68, 16, 16, cValue());
+            menu->drawMenuText("Its recording and checkpoint files will be deleted.", x + 4, y + 104, 13, 13, cRow());
             drawHelpLine(menu, x, y, w, h, "A: delete SD project   B: keep. Memory checkpoints stay."); return;
         }
         if (mPage == CONFIRM) {
-            menu->drawText("This TAS has unsaved edits.", x + 4, y + 28, 15, 15, cRowSel());
+            menu->drawMenuText("This TAS has unsaved edits.", x + 4, y + 28, 15, 15, cRowSel());
             static const char *const rows[] = {"Save TAS and stay here", "Discard edits and continue", "Cancel"};
             for (int i = 0; i < 3; ++i) drawValueRow(menu, x, y + 58 + i * ROW_H, w, rows[i], "", i == mSel, false, true);
             drawHelpLine(menu, x, y, w, h, "Other memory states stay unless you choose to replace one."); return;
@@ -209,19 +214,17 @@ public:
         const int listY = y + 28, listH = h - 98;
         const auto &files = TasProject::catalog();
         const int fileCount = TasProject::catalogReady() ? files.count : 0;
-        const int count = mPage == FILES ? fileCount + 2 : mPage == CHECKPOINTS ? 5 : 9;
+        const int count = mPage == FILES ? fileCount + 2 : mPage == CHECKPOINTS ? 5 : 10;
         const int start = listScrollStart(mSel, count, listH / ROW_H), end = clampi(start + listH / ROW_H, 0, count);
-        static const char *const mainRows[] = {"New TAS", "Continue", "Replay", "Save TAS", "Open TAS", "Checkpoints", "Pause / Resume", "Advance one frame", "TAS banner"};
-        static const char *const checkpointRows[] = {"Go to Beginning", "Save Checkpoint 1", "Go to Checkpoint 1", "Save Checkpoint 2", "Go to Checkpoint 2"};
         for (int i = start; i < end; ++i) {
             char value[32] = {}; const char *label;
             if (mPage == FILES) label = i < fileCount ? files.entries[i].name : i == fileCount ? "Refresh" : "Next page";
             else if (mPage == CHECKPOINTS) {
-                label = checkpointRows[i]; const auto cp = TasProject::checkpoint((i + 1) / 2);
+                label = rowName(mPage, i); const auto cp = TasProject::checkpoint((i + 1) / 2);
                 if (cp.present && !cp.loadableHere) memcpy(value, "Other area", 11);
                 else if (cp.present) snprintf(value, sizeof(value), "%lu frames", cp.frames);
                 else memcpy(value, "Empty", 6);
-            } else label = mainRows[i];
+            } else label = rowName(mPage, i);
             const bool banner = mPage == MAIN && i == 8;
             drawValueRow(menu, x, listY + (i - start) * ROW_H, w, label,
                 banner ? gSettings.valueLabel(SETTING_TAS_BANNER) : value, i == mSel,
@@ -233,9 +236,9 @@ public:
             char combo[kBindTextMax], line[kBindTextMax + 64];
             Binds::format(gBinds.recording() ? gBinds.recordPreview() : gBinds.get(bind), combo);
             snprintf(line, sizeof(line), gBinds.recording() ? "New bind: %s" : "Shortcut: %s   X: change   Z: clear", combo);
-            menu->drawText(line, x + 4, y + h - 64, 12, 12, cValue());
+            menu->drawMenuText(line, x + 4, y + h - 64, 12, 12, cValue());
         }
-        menu->drawText(TasProject::status(), x + 4, y + h - 42, 11, 11, cValue());
+        menu->drawMenuText(TasProject::status(), x + 4, y + h - 42, 11, 11, cValue());
         drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
             "Hold new buttons, then release to save. C-stick cancels." : mPage == FILES ? "A: open   Start: rename   X: delete   B: back" :
             mPage == CHECKPOINTS ? "A: choose action   B: back. Beginning is kept for Replay." :
@@ -243,7 +246,23 @@ public:
             "Continue stays paused. Hold Mario inputs, then use Step or Resume.");
     }
 private:
-    enum { MAIN, CHECKPOINTS, FILES, NAME, CONFIRM, DELETE };
+    enum { MAIN, CHECKPOINTS, FILES, NAME, CONFIRM, DELETE, SCRUB };
+    __attribute__((noinline, section(".text.tas_scrub_input")))
+    bool scrubInput(Menu *menu, u32 nav, u16 pressed, bool start) {
+        if (mPage == SCRUB) {
+            if (pressed & JUTGamePad::B) { mPage = MAIN; mSel = 9; focus(); }
+            else if (TasScrub::update(menu, nav, pressed)) { mPage = MAIN; mSel = 1; menu->hide(); }
+            return true;
+        }
+        if (!start || mPage != MAIN || mSel != 9) return false;
+        TasScrub::begin(); mPage = SCRUB; focus();
+        return true;
+    }
+    static const char *rowName(int page, int row) {
+        static const char main[] MENU_OWNED_RODATA("tas_rows") = "New TAS\0Continue\0Replay\0Save TAS\0Open TAS\0Checkpoints\0Pause / Resume\0Advance one frame\0TAS banner";
+        static const char checkpoints[] MENU_OWNED_RODATA("tas_checkpoint_rows") = "Go to Beginning\0Save Checkpoint 1\0Go to Checkpoint 1\0Save Checkpoint 2\0Go to Checkpoint 2";
+        return page == MAIN && row == 9 ? kTasScrubMenuLabel : PackedText::at(page == CHECKPOINTS ? checkpoints : main, row);
+    }
     BindId selectedBind() const {
         static const BindId checkpointBinds[] = {BIND_TAS_BEGINNING, BIND_TAS_SAVE_CHECKPOINT1,
             BIND_TAS_LOAD_CHECKPOINT1, BIND_TAS_SAVE_CHECKPOINT2, BIND_TAS_LOAD_CHECKPOINT2};

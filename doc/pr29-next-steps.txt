@@ -1,0 +1,12 @@
+PR29 focus: stable player slots and persistent rooms.
+
+Fixed: automatic network/STUN failures no longer close the local room; recovery
+retries in place. A peer leaving or two minutes without it does not erase the room.
+Listener retries retain the original guest endpoint, and group packets are routed
+to their owner before being offered to a vacant slot. Group ghost updates use the
+bounded queue with fair recipients instead of competing for one latest-pose slot.
+Online row values fit within the space left by their labels.
+
+Next: real Wii/Wii and Wii/Dolphin three/four-player feedback, then any remaining
+NAT interoperability and group race issues. Flatpak black-screen troubleshooting
+remains separate from these game networking changes.

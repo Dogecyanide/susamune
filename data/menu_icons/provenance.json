@@ -1,0 +1,57 @@
+{
+  "assets": [
+    {
+      "name": "controller",
+      "tool": "built-in image_gen.imagegen",
+      "status": "accepted; compiled",
+      "reference": "build/pr22-icon-refs/controller.png",
+      "output": "data/menu_icons/controller-pose2.png",
+      "sha256": "4e7a0f99008207b51541be88893f8cb5ca58ac06c1239ddfbc81c8b6d148d778",
+      "prompt": "Edit the attached tiny Super Mario Sunshine menu icon into a SECOND ANIMATION FRAME of the SAME icon. This is an actual game sprite, not a mockup. Subject: the purple GameCube controller: subtly tilt the two control sticks and rotate the controller a few degrees for an alternate resting pose; keep its purple shell and colored buttons. Preserve exact recognizable original silhouette proportions, original palette, thick black outline, simple painted cartoon shading and rough low-resolution Nintendo GameCube-era sprite feel. One isolated icon only, centered with ample transparent padding. No background, no letters added, no border or label, no other objects. The change should be clearly an alternate drawn pose, not only translating the whole image. Preserve the source style very closely. Output a square transparent PNG with the complete icon visible. This will be reduced to about 34 pixels high and alternated with the original every half second."
+    },
+    {
+      "name": "boo",
+      "tool": "built-in image_gen.imagegen",
+      "status": "rejected by user; not compiled",
+      "reference": "build/pr22-icon-refs/boo.png",
+      "output": "data/menu_icons/boo-pose2.png",
+      "sha256": "b8a8b6208375ecc11d2ecf80412064cd1938671d78e8ce1d87905997f6622640",
+      "prompt": "Edit the attached tiny Super Mario Sunshine menu icon into a SECOND ANIMATION FRAME of the SAME icon. This is an actual game sprite, not a mockup. Subject: the small pale-blue Boo ghost: slightly raise its tiny arms and change the open mouth subtly; keep its same round ghost shape and face. Preserve exact recognizable original silhouette proportions, original palette, thick black outline, simple painted cartoon shading and rough low-resolution Nintendo GameCube-era sprite feel. One isolated icon only, centered with ample transparent padding. No background, no letters added, no border or label, no other objects. The change should be clearly an alternate drawn pose, not only translating the whole image. Preserve the source style very closely. Output a square transparent PNG with the complete icon visible. This will be reduced to about 34 pixels high and alternated with the original every half second."
+    },
+    {
+      "name": "glasses",
+      "tool": "built-in image_gen.imagegen",
+      "status": "rejected by user; not compiled",
+      "reference": "build/pr22-icon-refs/glasses.png",
+      "output": "data/menu_icons/glasses-pose2.png",
+      "sha256": "dfb3be3275c987ffd2f51158a408d6b92a0d64bb44ee54ae75be216df03461ca",
+      "prompt": "Edit the attached tiny Super Mario Sunshine menu icon into a SECOND ANIMATION FRAME of the SAME icon. This is an actual game sprite, not a mockup. Subject: the black sunglasses: slight playful asymmetric tilt of the lenses, with shifted white lens gleam; keep thick black lenses and tiny white reflections. Preserve exact recognizable original silhouette proportions, original palette, thick black outline, simple painted cartoon shading and rough low-resolution Nintendo GameCube-era sprite feel. One isolated icon only, centered with ample transparent padding. No background, no letters added, no border or label, no other objects. The change should be clearly an alternate drawn pose, not only translating the whole image. Preserve the source style very closely. Output a square transparent PNG with the complete icon visible. This will be reduced to about 34 pixels high and alternated with the original every half second."
+    }
+  ],
+  "runtime_cadence": "90 native UI ticks (about 0.75 s per pose at 60 Hz output)",
+  "conversion": "Crop padding using alpha >= 16 bounding box; fit40x36 preserving aspect; transparent32-colour C8/RGB5A3 palette.",
+  "native_pairs": {
+    "Mario": {
+      "first": "game_6/timg/mario_icon.bti",
+      "second": "guide/timg/guide_mario.bti",
+      "second_size": [
+        17,
+        22
+      ],
+      "backup_bytes": 992,
+      "note": "Separate native side/front drawings; front head has no dedicated native second frame."
+    },
+    "Pianta": {
+      "first": "option/timg/monte_head1.bti",
+      "second": "option/timg/monte_head5.bti"
+    },
+    "Coin": {
+      "first": "game_6/timg/bluecoin_icon.bti",
+      "second": "option/timg/bluecoin_icon2.bti"
+    },
+    "Shine": {
+      "first": "game_6/timg/shine_icon.bti",
+      "second": "game_6/timg/shine_get_icon.bti"
+    }
+  }
+}

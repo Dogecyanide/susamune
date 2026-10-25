@@ -1,5 +1,16 @@
 # Moonshine — a Super Mario Sunshine practice mod
 
+> **Current source: Moonshine 3.0.0 Timewarp — Prototype 33.**
+> This is a development snapshot. See [PR33 changes and testing](doc/pr33-testing.txt)
+> and [remaining work](doc/pr33-next-steps.txt). Two-player Wii testing has been
+> positive; three/four-player stability still needs verification. The older stable
+> release information below is retained for reference.
+
+Contributing to the 3.0.0 development branch? Start with
+[the contributor guide](CONTRIBUTING.md) and [subsystem map](doc/architecture.md).
+PR27 and later use `scripts/release_prerelease.py --prototype N` instead of
+copying a new release script.
+
 **V2.3.1 — Frame By Frame** improves free camera with optional smoothing,
 adds HSL colour controls and fixes savestate and file-select issues.
 Settings and practice files now live together in `/Moonshine data`.

@@ -58,8 +58,10 @@ class GuideContentTests(unittest.TestCase):
         meta = (ROOT / "launcher/meta.xml.j2").read_text()
         self.assertIn('"Moonshine Launcher"', build)
         self.assertIn("<name>Moonshine Launcher</name>", meta)
-        for source in (build, guide, meta):
-            self.assertIn("V2.3.3 Frame By Frame", source)
+        # meta.xml takes its version from the packager template.
+        self.assertIn("<version>{{ version }}</version>", meta)
+        for source in (build, guide):
+            self.assertIn("3.0.0 Timewarp", source)
             for old in ("FOXTROT", "PRE-RELEASE", "RC1"):
                 self.assertNotIn(old, source.upper())
 

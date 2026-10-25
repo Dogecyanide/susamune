@@ -23,10 +23,10 @@ enum Result { EARLY, ON_TIME, LATE, CHECK_JUMP };
 
 TMario *sMario;
 TMarDirector *sDirector;
-u32 sFrame, sLandingFrame, sJumpFrame;
+u32 sFrame, sLandingFrame, sJumpFrame, sLandingQf, sJumpDelayQf;
 float sResultY, sResultV;
 u16 sResultFrames;
-u8 sPopupFrames, sResult, sJumpPhase, sJumpResultFrames, sJumpPopupFrames;
+u8 sPopupFrames, sResult, sJumpResultFrames, sJumpPopupFrames;
 bool sFrameActive, sLanded, sJumping, sHookReady;
 
 bool gbEnabled() { return gSettings.getBool(SETTING_GB_SKIP_DISPLAY); }
@@ -40,10 +40,11 @@ int buttslideStatus() {
         !director->_260 || director->mCurState != TMarDirector::STATE_NORMAL ||
         *reinterpret_cast<void ***>(mario) != marioTimingVtable ||
         !mario->mFloorTriangle || (mario->mState & ~1u) != 0x00840452u) return 0;
-    // Retail mode 1 also jumps through slippingBasic before the timed gate.
+    // The previous input word predates the last floor update. Query the floor
+    // that the next jump will use, rather than its stale slope/sit-up bit.
     const int mode = retailSlipJumpMode(mario);
     const bool ready = mode == 1 || (mode && mario->mSubStateTimer > 20 &&
-        (mario->mState == 0x00840452u || !(mario->mActionState & 8)));
+        (mario->mState == 0x00840452u || !mario->isSlipStart()));
     return ready ? 2 : 1;
 }
 
@@ -97,14 +98,20 @@ void perform(TMario *mario, u32 cue, JDrama::TGraphics *graphics) {
     }
     if ((before & TMario::STATE_AIRBORN) && grounded(after)) {
         sLandingFrame = sFrame;
+        sLandingQf = static_cast<u32>(sDirector->unk58);
         sLanded = true;
     } else if (grounded(before) && (after & TMario::STATE_AIRBORN) &&
                (pressed & TMarioControllerWork::A)) {
         if (jumpEnabled() && sLanded) {
             const u32 frames = sFrame - sLandingFrame;
-            sJumpResultFrames = frames > 6 ? 7 : frames ? (u8)frames : 1;
-            sJumpPhase = sDirector->unk58 & 3;
-            sJumpPopupFrames = 90;
+            const u32 quarters = static_cast<u32>(sDirector->unk58) - sLandingQf;
+            if (quarters < 0x80000000u) {
+                sJumpResultFrames = frames > 6 ? 7 : frames ? (u8)frames : 1;
+                sJumpDelayQf = quarters;
+                sJumpPopupFrames = 90;
+            } else {
+                sJumpPopupFrames = 0;
+            }
         }
         sLanded = false;
         if (gbEnabled() && after == TMario::STATE_JUMP) {
@@ -148,7 +155,7 @@ static __attribute__((noinline)) void drawResult(Menu *menu, unsigned display,
                                                 unsigned color, unsigned frames) {
     char text[80];
     formatPracticeDisplay(text, sizeof(text), display, color, frames,
-                          sJumpPhase, sResultY, sResultV);
+                          sJumpDelayQf, sResultY, sResultV);
     gCreationExtras.drawPracticeDisplay(menu, text, display, color);
 }
 

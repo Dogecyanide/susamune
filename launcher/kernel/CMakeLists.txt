@@ -9,12 +9,17 @@ set(_sources
     start.s common.c alloc.c GCAM.c JVSIO.c JVSIOMessage.c FST.c DI.c RealDI.c
     Patch.c PatchTimers.c TRI.c PatchWidescreen.c ISO.c Stream.c adp.c
     EXI.c SRAM.c GCNCard.c SI.c HID.c diskio.c Config.c SusamuneCfg.c
-    SusamuneGhost.c SusamuneCrash.c SusamuneStateStorage.c MoonshineLayout.c
+    SusamuneGhost.c SusamuneCrash.c SusamuneStateStorage.c SusamuneTransfer.c MoonshineLayout.c
     utils_asm.S ES.c NAND.c
     main.c syscalls.s ReadSpeed.c vsprintf.c string.c prs.c
     SDI.c usb.c usbstorage.c wdvd.c
     lwbt/bte.c lwbt/btmemb.c lwbt/btmemr.c lwbt/btpbuf.c lwbt/hci.c lwbt/l2cap.c
     lwbt/physbusif.c BT.c)
+if(TIMEWARP_LIVE_RACING)
+    list(APPEND _sources MoonshineNet.c MoonshineNetBridge.c MoonshineNetLog.c)
+    set_source_files_properties(MoonshineNet.c MoonshineNetBridge.c MoonshineNetLog.c
+        PROPERTIES COMPILE_OPTIONS "-std=gnu99")
+endif()
 
 add_executable(kernel ${_sources})
 set_target_properties(kernel PROPERTIES OUTPUT_NAME kernel SUFFIX ".elf")
@@ -28,6 +33,7 @@ target_compile_options(kernel PRIVATE
     $<$<COMPILE_LANGUAGE:ASM>:-D_LANGUAGE_ASSEMBLY>)
 
 target_compile_definitions(kernel PRIVATE
+    TIMEWARP_LIVE_RACING=$<BOOL:${TIMEWARP_LIVE_RACING}>
     $<$<BOOL:${LAUNCHER_DISABLE_SUSAMUNE_PATCH}>:LAUNCHER_DISABLE_SUSAMUNE_PATCH>)
 
 target_include_directories(kernel PRIVATE

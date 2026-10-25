@@ -5,6 +5,7 @@
 
 class Menu;
 class TMarDirector;
+namespace LivePlaylist { struct Plan; }
 namespace LevelWarp {
 struct Dest;
 }
@@ -41,6 +42,11 @@ void clearQueue();
 const char *builtinPlaylistName(int preset);
 bool loadBuiltinPlaylist(int preset);
 bool startLoader();
+#if TIMEWARP_LIVE_RACING
+bool copyOnlinePlaylist(LivePlaylist::Plan *out);
+bool startOnlinePlaylist(const LivePlaylist::Plan &plan);
+bool onlinePlaylistActive();
+#endif
 bool loadCustomPlaylist(int slot);
 bool saveCustomPlaylist(int slot);
 bool customPlaylistsAvailable();

@@ -17,6 +17,7 @@
 
 #include "susamune/addresses.hxx"  // SUSAMUNE_MEM1_ADDR
 #include "susamune/binds.hxx"
+#include "susamune/feature_binds.hxx"
 #include "susamune/features.hxx"  // writeGameCode, branchWord
 #include "susamune/iling.hxx"
 
@@ -372,6 +373,7 @@ extern "C" void susamuneOnEggYoshiControl(TEggYoshi *egg) {
 void actionsApply(bool allowBinds) {
     fastForward(allowBinds);
     if (allowBinds) {
+        FeatureBinds::update();
         regrabLastHeldObject();
         spawnYoshiFromBinds();
         positionFromBinds();

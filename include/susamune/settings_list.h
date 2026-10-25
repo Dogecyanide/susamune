@@ -222,7 +222,30 @@
     X(SETTING_STREAK_FAILURE_SIZE,            "streak_failure_size")          \
     X(SETTING_STREAK_FAILURE_DURATION,        "streak_failure_duration")      \
     X(SETTING_FAVORITES_EXTRA_8,              "favorites_extra_8")            \
-    X(SETTING_FAVORITES_EXTRA_9,              "favorites_extra_9")
+    X(SETTING_FAVORITES_EXTRA_9,              "favorites_extra_9")            \
+    X(SETTING_GAMEPLAY_SPEED,                "gameplay_speed")               \
+    X(SETTING_COLLISION_VIEWER,              "collision_viewer")             \
+    X(SETTING_SLOWDOWN_PRESET,               "slowdown_preset")              \
+    X(SETTING_EXPERIMENTAL_RAM_LOAD,         "experimental_ram_load")         \
+    X(SETTING_GHOST_CAMERA,                  "ghost_camera")                 \
+    X(SETTING_COLLISION_LEGEND,              "collision_legend")             \
+    X(SETTING_FAVORITES_EXTRA_10,            "favorites_extra_10")           \
+    X(SETTING_FAVORITES_EXTRA_11,            "favorites_extra_11")           \
+    X(SETTING_DISPLAY_FAVORITES_0,           "display_favorites_0")          \
+    X(SETTING_DISPLAY_FAVORITES_1,           "display_favorites_1")          \
+    X(SETTING_DISPLAY_FAVORITES_2,           "display_favorites_2")          \
+    X(SETTING_DISPLAY_FAVORITES_3,           "display_favorites_3")          \
+    X(SETTING_FINISH_BREAKDOWN,              "finish_breakdown")              \
+    X(SETTING_QFT_VERTICAL_GRADIENT,         "qft_vertical_gradient")         \
+    X(SETTING_NATIVE_VERTICAL_GRADIENT,      "native_vertical_gradient")      \
+    X(SETTING_MENU_SOUNDS,                   "menu_sounds")                   \
+    X(SETTING_QFT_GRADIENT_MOTION,           "qft_gradient_motion")           \
+    X(SETTING_QFT_GRADIENT_SPEED,            "qft_gradient_speed")            \
+    X(SETTING_NATIVE_GRADIENT_MOTION,        "native_gradient_motion")        \
+    X(SETTING_NATIVE_GRADIENT_SPEED,         "native_gradient_speed")         \
+    X(SETTING_GHOST_PATH,                    "ghost_path")                    \
+    X(SETTING_MENU_CUSTOM_BACKGROUND,        "menu_custom_background")        \
+    X(SETTING_NATIVE_TIMER_DECIMAL_SEPARATOR, "native_timer_decimal_separator")
 
 
 #endif  // SUSAMUNE_SETTINGS_LIST_H

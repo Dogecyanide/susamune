@@ -1,5 +1,11 @@
+#include "susamune/hoverless.hxx"
+#include "susamune/ghost_fludd.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/iling.hxx"
+#include "susamune/finish_breakdown.hxx"
+#if TIMEWARP_LIVE_RACING
+#include "susamune/live_race.hxx"
+#endif
 
 #include "Dolphin/OS.h"
 #include "Dolphin/mem.h"
@@ -32,6 +38,11 @@
 #include "susamune/warp_wheel.hxx"
 
 namespace {
+#if TIMEWARP_LIVE_RACING
+LevelWarp::Dest sOnlineStart;
+int sOnlineEntry;
+bool sOnlineStartValid;
+#endif
 
 typedef JUtility::TColor Color;
 
@@ -79,6 +90,8 @@ enum RejectionCause {
     REJECT_GHOST_WATCH,
     REJECT_CHILD_RETRY,
     REJECT_DIFFERENT_START,
+    REJECT_HOVER,
+    REJECT_PROFILE_CHANGED,
 };
 
 struct Entry {
@@ -462,6 +475,7 @@ constexpr int packedLabelCount(const char *pool, u32 bytes) {
 const u8 kPlazaStoryHigh[10] = {0x00, 0x10, 0xF0, 0xF0, 0xF0,
                                 0x30, 0xF0, 0xF0, 0xF0, 0xF0};
 const int kPbSlotCount = SUSAMUNE_ILING_PB_SLOT_COUNT;
+const char kHoverlessProfileName[] = "Hoverless";
 const int kEntryGelato4Inside = 31;
 const int kEntryGelatoGbs = 121;
 const int kEntryFullRedsFirst = 122;
@@ -565,7 +579,7 @@ struct AttemptState {
     u8 finish;
     bool secretOnly;
     u8 rejectionCause;
-    int selectedEntry;
+    int selectedEntry; // Disarmed secrets retain only their retry mode.
     u32 serial;
 };
 
@@ -739,9 +753,13 @@ void copyProfileName(char *out, const char *name, const char *fallback) {
     for (n++; n < SUSAMUNE_ILING_PROFILE_NAME_SIZE; n++) out[n] = '\0';
 }
 
-s32 *activePBs() { return sPbProfiles[sActivePbProfile]; }
+s32 *activePBs() { return sActivePbProfile == SUSAMUNE_HOVERLESS_PROFILE ? Hoverless::values() : sPbProfiles[sActivePbProfile]; }
 
 void reconcileRecordsPBs() {
+    if (sActivePbProfile == SUSAMUNE_HOVERLESS_PROFILE) {
+        Records::reconcilePBProfiles(Hoverless::values(), SUSAMUNE_ILING_PB_MAX_SLOTS, 1, 0);
+        return;
+    }
     Records::reconcilePBProfiles(
         &sPbProfiles[0][0], SUSAMUNE_ILING_PB_MAX_SLOTS,
         SUSAMUNE_ILING_PROFILE_COUNT, sActivePbProfile);
@@ -835,10 +853,19 @@ void loadPBs() {
                       sizeof(SusamuneILingProfilesCfg));
     adoptPBs(cfg);
 #endif
+    Hoverless::adopt(
+#if IS_EMULATOR
+        cfg
+#else
+        SUSAMUNE_CFG_PPC_PTR
+#endif
+    );
+    sActivePbProfile = Hoverless::selectedProfile(sActivePbProfile);
     reconcileRecordsPBs();
 }
 
 void markPBsDirty() {
+    if (sActivePbProfile == SUSAMUNE_HOVERLESS_PROFILE) { Hoverless::dirty(); return; }
     if (sPbBackend) {
         sPbDirty = true;
     }
@@ -866,7 +893,7 @@ void stagePBSave() {
     profiles->magic = SUSAMUNE_ILING_PROFILE_MAGIC;
     profiles->version = SUSAMUNE_ILING_PROFILE_VERSION;
     profiles->profileCount = SUSAMUNE_ILING_PROFILE_COUNT;
-    profiles->activeProfile = sActivePbProfile;
+    profiles->activeProfile = sActivePbProfile < SUSAMUNE_ILING_PROFILE_COUNT ? sActivePbProfile : 0;
     profiles->slotCount = SUSAMUNE_ILING_PB_MAX_SLOTS;
     profiles->nameSize = SUSAMUNE_ILING_PROFILE_NAME_SIZE;
 #if IS_EMULATOR
@@ -1129,7 +1156,9 @@ int entryForChildMode(const TGameSequence &scene, int active) {
     }
     if (secret >= 0) {
         bool replay;
-        if (active >= 0 && active < kEntryCount &&
+        if (fullRedsBaseShine(active) >= 0) {
+            replay = true;
+        } else if (active >= 0 && active < kEntryCount &&
             (kEntries[active].flags & ENTRY_CLEAR_RESULT)) {
             replay = false;
         } else if (active >= 0 && active < kEntryCount &&
@@ -1393,6 +1422,19 @@ void clearAttempt() {
     }
 }
 
+void clearAttemptForRetry() {
+    int child = sRunning || validEntry(sSelectedEntry)
+                    ? entryForChildMode(gpApplication.mCurrentScene, sSelectedEntry)
+                    : -1;
+    if (child >= 0 && !isSecretOnlyPbSlot(pbSlot(child)) &&
+        ((kEntries[child].flags & ENTRY_FLAG_MASK) != ENTRY_CARRY_OVERLAY ||
+         kEntries[child].prerequisite == kNoShine))
+        child = -1;
+    clearAttempt();
+    // Keep only the scene's Secret/Reds identity; loaded/finished time stays disarmed.
+    sSelectedEntry = child;
+}
+
 void captureGhostRace(int entry) {
     if (!validEntry(entry)) return;
 
@@ -1415,6 +1457,7 @@ void captureGhostRace(int entry) {
 
 u8 liveGlobalAssistReasons() {
     return (gSettings.getBool(SETTING_STAGE_INTRO_SKIP) ||
+            gSettings.getBool(SETTING_GAMEPLAY_SPEED) ||
             actionsFastForwardActive() || PracticeSession::assisted())
                ? Assist::OTHER
                : 0;
@@ -1549,6 +1592,13 @@ bool recordPB(int entry, s32 qf) {
 }
 
 void recordResult(int entry, s32 qf) {
+    FinishBreakdown::finish(entry, qf);
+#if TIMEWARP_LIVE_RACING
+    LiveRace::onILResult(entry, qf, (sRecordsEligible ||
+        (sChildRetryContinuation && LiveRace::racingEntry(entry) && sAssistReasons == 0)) &&
+        !sessionStartChanged() &&
+        sOnlineStartValid && entry == sOnlineEntry && sameDest(sAttemptStart, sOnlineStart));
+#endif
     if (sChildRetryContinuation || sessionStartChanged()) {
         // These are valid queue finishes, not comparable standalone IL times.
         StageLoader::onILResult(entry, qf, sAssistReasons == 0 &&
@@ -1605,6 +1655,7 @@ void formatTime(s32 qf, char *out, u32 size, const char *format) {
 }
 
 void init() {
+    Hoverless::init();
     memset(&sILingRuntime, 0, sizeof(sILingRuntime));
     resetPBProfiles();
     sSelectedEntry = -1;
@@ -1622,6 +1673,11 @@ int count() { return kEntryCount; }
 bool canChooseEpisode(int entry) { return episodeChoiceIndex(entry) >= 0; }
 
 bool choosesPlazaState(int entry) { return validEntry(entry) && pbSlot(entry) == 112; }
+int onlineDefaultEpisode(int entry) {
+    if (!validEntry(entry)) return -1;
+    if (choosesPlazaState(entry)) return 3;
+    return canChooseEpisode(entry) ? kEntries[entry].start.gameInt3 : 0;
+}
 const char *plazaStateName(int choice) {
     static const char names[] = "Bianco plant\0Shadow Mario\0Ricco / Gelato plants\0Peaceful\0Pinna unlock\0Yoshi unlock\0Flooded\0Post-Corona";
     return PackedText::at(names, choice);
@@ -1783,6 +1839,29 @@ int persistentSlot(int entry) {
     return validEntry(entry) ? pbSlot(entry) : -1;
 }
 
+bool onlinePoolContains(int entry, unsigned pool) {
+    if (!validEntry(entry) || pool >= ONLINE_POOL_COUNT) return false;
+    const int slot = pbSlot(entry);
+    switch (slot) {
+    case 24: case 54: case 65:   // Gelato 5, Noki 5, Pianta 2.
+    case 109: case 110:         // Bianco II Enter, Noki Enter.
+        return false;
+    }
+    if (pool == ONLINE_POOL_ALL) return true;
+    const bool secret = isSecretOnlyPbSlot(slot);
+    // EYG supplies the Any% Pinna 6 goal; other same-shine starts stay separate.
+    const int goal = kEntries[entry].result == 35 ? 121 : kEntries[entry].result;
+    bool any = false;
+    for (unsigned i = 0; i < sizeof(kAnyPercentTheorySlots); ++i) {
+        if (slot == kAnyPercentTheorySlots[i] ||
+            (secret && goal == kAnyPercentTheorySlots[i])) {
+            any = true;
+            break;
+        }
+    }
+    return pool == ONLINE_POOL_ANY_PERCENT ? any : !any;
+}
+
 bool anyPercentTheoryQf(s32 *out) {
     if (!out || sActivePbProfile != 0) return false;
     s32 total = 0;
@@ -1800,6 +1879,7 @@ int pbProfile() { return sActivePbProfile; }
 const char *pbProfileName(int profile) {
     if (profile == 0) return "Any percent";
     if (profile == 1) return "120 Shines";
+    if (profile == SUSAMUNE_HOVERLESS_PROFILE) return kHoverlessProfileName;
     if (profile >= 2 && profile < SUSAMUNE_ILING_PROFILE_COUNT) {
         return sCustomPbProfileNames[profile - 2];
     }
@@ -1812,9 +1892,13 @@ bool pbProfileNameEditable(int profile) {
 
 void cyclePbProfile(int direction) {
     SplitStats::invalidateAttempt();
-    sActivePbProfile = (u8)((sActivePbProfile +
-        SUSAMUNE_ILING_PROFILE_COUNT + direction) %
-        SUSAMUNE_ILING_PROFILE_COUNT);
+    if (sRunning && !sAwaitingStageSetup) {
+        sRejectionCause = REJECT_PROFILE_CHANGED;
+        invalidateForAssist(Assist::OTHER);
+    }
+    const int count = SUSAMUNE_ILING_PROFILE_COUNT + (Hoverless::available() ? 1 : 0);
+    sActivePbProfile = (u8)((sActivePbProfile + count + direction) % count);
+    Hoverless::setProfile(sActivePbProfile);
     sBannerFrames = 0;
     reconcileRecordsPBs();
     markPBsDirty();
@@ -2045,6 +2129,22 @@ bool start(int entry) {
     return start(entry, 0);
 }
 
+#if TIMEWARP_LIVE_RACING
+bool startOnline(int entry, int episode) {
+    if (!validEntry(entry) || episode < 0 || episode >= 8) return false;
+    const int index = episodeChoiceIndex(entry);
+    const u8 previous = index >= 0 ? sEpisodeChoices[index] : 0;
+    if (index >= 0) sEpisodeChoices[index] = static_cast<u8>(episode + 1);
+    char name[64]; u32 token;
+    const bool blocked = copyWarpDiscardName(entry, name, sizeof(name), &token);
+    const bool started = !blocked && start(entry);
+    if (index >= 0) sEpisodeChoices[index] = previous;
+    sOnlineStartValid = started;
+    if (started) { sOnlineStart = sAttemptStart; sOnlineEntry = entry; }
+    return started;
+}
+#endif
+
 bool copyWarpDiscardName(int entry, char *out, u32 size, u32 *outToken) {
     if (!validEntry(entry) ||
         gSettings.getBool(SETTING_DISABLE_WARPS)) return false;
@@ -2150,12 +2250,17 @@ void beforeStageSetup() {
         clearAttempt();
     }
 
-    const int entry = entryForStartScene(scene);
+    const int selected = validEntry(sSelectedEntry) &&
+                         sceneMatches(scene, kEntries[sSelectedEntry].start)
+                             ? sSelectedEntry : -1;
+    sSelectedEntry = -1;
+    const int entry = selected >= 0 ? selected : entryForStartScene(scene);
     if (entry >= 0) {
         // Natural entry and ordinary level reset arm every valid result from
         // this start scene; the exact TShine id chooses the PB at the finish.
-        armAttempt(kEntries[entry], -1);
+        armAttempt(kEntries[entry], selected);
         beginAttemptScene(entry);
+        if (selected >= 0) applyEntryOverlay(selected);
     }
 }
 
@@ -2205,12 +2310,41 @@ void onStageSetup() {
         sSelectedEntry == kEntryBowser;
 }
 
+const char *sirenaPineappleLabel() {
+    if (!stageObjectsLive() || gpApplication.mCurrentScene.mAreaID != 1)
+        return "Plaza only";
+    return TFlagManager::smInstance->getBool(0x1038B) ? "Removed" : "Present";
+}
+
+void toggleSirenaPineapple() {
+    if (!stageObjectsLive() || gpApplication.mCurrentScene.mAreaID != 1 ||
+        !TFlagManager::smInstance) return;
+    TMapObjBase *fruit = findCoverFruit();
+    if (!fruit) return;
+    const bool show = TFlagManager::smInstance->getBool(0x1038B);
+    // Detach a held fruit before restoring its original pipe position.
+    fruit->makeObjDead();
+    if (show) {
+        fruit->mTranslation = fruit->mInitialPosition;
+        fruit->mRotation = fruit->mInitialRotation;
+        fruit->makeObjAppeared();
+    }
+    TFlagManager::smInstance->setBool(!show, 0x1038B);
+    invalidateForAssist();
+    Ghost::invalidateForAssist();
+}
+
 void update() {
+    Hoverless::service();
     servicePBSave();
 
     const u8 globalAssistReasons = liveGlobalAssistReasons();
     if (sRunning && !sAwaitingStageSetup && globalAssistReasons)
         invalidateForAssist(globalAssistReasons);
+    if (sActivePbProfile == SUSAMUNE_HOVERLESS_PROFILE && GhostFludd::hoverEmitted()) {
+        sRejectionCause = REJECT_HOVER;
+        invalidateForAssist(Assist::OTHER);
+    }
     if (secretAttemptUsedFludd()) {
         sRejectionCause = REJECT_SECRET_FLUDD;
         invalidateForAssist(Assist::OTHER);
@@ -2270,7 +2404,8 @@ void update() {
         }
     }
 
-    if ((sOverlayCount != 0 || sHavePlazaStoryFlags) &&
+    if ((sOverlayCount != 0 || sHavePlazaStoryFlags ||
+         (!sRunning && validEntry(sSelectedEntry))) &&
         gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE &&
         gpApplication.mContext != TApplication::CONTEXT_DIRECT_MOVIE &&
         gpApplication.mContext != TApplication::CONTEXT_DIRECT_SHINE_SELECT) {
@@ -2321,7 +2456,11 @@ void update() {
     if (sAttemptReady && serial != sAttemptSerial) {
         const TGameSequence &scene = gpApplication.mCurrentScene;
         const bool sessionChildReset =
-            validEntry(sSelectedEntry) && StageLoader::active() &&
+            validEntry(sSelectedEntry) && (StageLoader::active()
+#if TIMEWARP_LIVE_RACING
+                || LiveRace::racingEntry(sSelectedEntry)
+#endif
+            ) &&
             isInternalScene(sAttemptStart, scene);
         if (sceneMatches(scene, sAttemptStart) || sessionChildReset ||
             (validEntry(sSelectedEntry) &&
@@ -2398,6 +2537,10 @@ void update() {
         }
     }
 
+    if (sActivePbProfile == SUSAMUNE_HOVERLESS_PROFILE && GhostFludd::hoverEmitted()) {
+        sRejectionCause = REJECT_HOVER;
+        invalidateForAssist(Assist::OTHER);
+    }
     s32 qf;
     int completedEntry = -1;
     if (sFinishKind == FINISH_TRANSITION) {
@@ -2436,7 +2579,7 @@ void update() {
         sAttemptReady = false;
         return;
     }
-    clearAttempt();
+    clearAttemptForRetry();
 }
 
 void onSavestateSaved() {
@@ -2474,6 +2617,7 @@ void restoreSavestate(const SavestateData &data) {
 }
 
 void onSavestateLoaded() {
+    FinishBreakdown::invalidate();
     sFanfareDelay = 0;
     sAchievementChimeBlockFrames = 0;
     sBannerFrames = 0;
@@ -2493,9 +2637,8 @@ void onSavestateLoaded() {
         sSelectedEntry = -1;
         return;
     }
-    // The restored game flags match the save-time attempt. Restore that
-    // attempt's temporary overlays, then disarm it: loaded time is never PB-
-    // eligible. A genuine reset or stage load arms the next attempt normally.
+    // Loaded time stays disarmed; retain Secret/Reds identity separately from
+    // the temporary progression flags that must be returned before gameplay.
     sAttemptState = sSavedAttemptState;
     sPinnaEygRestart = sSavedPinnaEygRestart;
     if (streakPractice) {
@@ -2504,7 +2647,7 @@ void onSavestateLoaded() {
         sAttemptSerial = gQFTTimer.attemptSerial();
         return;
     }
-    clearAttempt();
+    clearAttemptForRetry();
 }
 
 void invalidateForAssist(u8 reasons) {
@@ -2531,9 +2674,9 @@ const char *rejectionText(u8 cause) {
     static const char reasons[] = "Practice action used\0Intro skip on\0"
         "Fast-forward used\0Frame advance / TAS used\0FLUDD used in Secret\0"
         "Position / state loaded\0Ghost Watch used\0Restarted in subarea\0"
-        "Different route start";
+        "Different route start\0Hover nozzle fired\0PB profile changed";
     return PackedText::at(reasons,
-        cause <= REJECT_DIFFERENT_START ? cause : REJECT_PRACTICE);
+        cause <= REJECT_PROFILE_CHANGED ? cause : REJECT_PRACTICE);
 }
 
 u8 savestateGhostEndpoint() {

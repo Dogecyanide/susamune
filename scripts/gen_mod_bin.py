@@ -1,15 +1,16 @@
 """Pack the mod manifest produced by `link_mod.py launcher` into mod_<vers>.bin,
 the file the launcher ships next to boot.dol and loads at runtime.
 
-Format is struct SusamuneModHeader from include/susamune/mod_bin.h: a 32-byte
-big-endian header, two segment descriptors and initialized payloads, then
-the hook writes. The kernel zeroes each omitted BSS tail without touching the
-attachment heap or fixed timer scratch. The writes travel with the code because their addresses are
-version-specific -- a blob on its own is not applicable to anything.
+V3 is the default: a 32-byte big-endian header, two segment descriptors,
+initialized payloads and hook writes. Optional V4 compresses the initialized
+payloads with independent Quick blocks and validates the complete container
+before installation. Both formats preserve the attachment heap and timer scratch.
+The hook writes travel with the code because their addresses are version-specific.
 
 Usage: gen_mod_bin.py MANIFEST.json -o mod_jp.bin
 """
 import argparse
+import hashlib
 import json
 import re
 import struct
@@ -40,11 +41,75 @@ HEADER_SIZE = shared_int_define("SUSAMUNE_MOD_HEADER_SIZE", "mod_bin.h")
 # that cannot be staged. Read the shared C header rather than duplicating it.
 STAGING_WINDOW_SIZE = shared_int_define("SUSAMUNE_MEM2_MODBIN_SIZE")
 STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE")
-JP_STAGED_FILE_MAX_SIZE = shared_int_define("SUSAMUNE_JP_UI_OFFSET", "japanese_ui.h")
+# The Japanese UI asset lives after the patch-file prefix, so JP shares the ceiling.
+JP_STAGED_FILE_MAX_SIZE = STAGED_FILE_MAX_SIZE
 BLOB_MAX_SIZE = shared_int_define("SUSAMUNE_MOD_BLOB_MAX_SIZE", "mod_bin.h")
 
 
-def build_mod_bin(manifest):
+def verified_artifact(info, base_dir, label):
+    if not isinstance(info, dict) or not isinstance(info.get("path"), str):
+        raise ValueError(label + " requires an artifact path")
+    path = Path(info["path"])
+    if not path.is_absolute():
+        if base_dir is None:
+            raise ValueError(label + " needs the manifest directory for its relative path")
+        path = Path(base_dir) / path
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != info.get("sha256"):
+        raise ValueError(label + " artifact checksum mismatch")
+    return data
+
+
+def build_mod_bin(manifest, *, format_version=3, base_dir=None):
+    if format_version == 4:
+        from mod_transport import ARENA, BASES, GAMES, build_mod_v4, encode_quick
+        game = manifest["game_id"]
+        if BASES.get(game) != manifest["base_addr"] or manifest.get("region_reserve") != ARENA:
+            raise ValueError("manifest revision or arena reservation mismatch")
+        segments = []
+        for item in manifest["segments"]:
+            raw = bytes.fromhex(item["code"])
+            segment = dict(offset=item["offset"], memory_size=item["memory_size"], raw=raw)
+            if raw:
+                packed = encode_quick(raw)
+                if len(packed) < len(raw):
+                    segment["quick"] = packed
+            segments.append(segment)
+        cold = cold_vma = None
+        flags = 0
+        if "cold_image" in manifest or "pinned_link_receipt" in manifest:
+            info = manifest.get("cold_image")
+            cold = verified_artifact(info, base_dir, "cold image")
+            if type(info.get("size")) is not int or info["size"] != len(cold):
+                raise ValueError("cold image size mismatch")
+            cold_vma = info.get("vma")
+            if type(cold_vma) is not int:
+                raise ValueError("cold image VMA must be an integer")
+            environment = manifest.get("transport_environment")
+            if environment not in ("console", "dolphin"):
+                raise ValueError("cold image needs an explicit transport environment")
+            flags = int(environment == "dolphin")
+            proof = json.loads(verified_artifact(manifest.get("pinned_link_receipt"),
+                                                base_dir, "pinned link receipt"))
+            region = next(name for name, value in GAMES.items() if value == game)
+            if (proof.get("passed") is not True or proof.get("region") != region or
+                    proof.get("target") != ("emu" if flags else "console") or
+                    any(proof.get("cold_image", {}).get(key) != info[key]
+                        for key in ("vma", "size", "sha256"))):
+                raise ValueError("pinned link receipt does not bind this cold image")
+        menu_code = menu_vma = None
+        if "menu_code" in manifest:
+            info = manifest["menu_code"]
+            menu_code = verified_artifact(info, base_dir, "menu code")
+            menu_vma = info.get("vma")
+            if not cold or proof.get("menu_code") != info:
+                raise ValueError("Pinned receipt does not bind this menu code")
+        return build_mod_v4(game, segments, manifest["writes"], flags=flags,
+                            cold=cold, cold_vma=cold_vma, menu_code=menu_code, menu_vma=menu_vma)
+    if format_version != 3:
+        raise ValueError("unsupported mod format")
+    if "cold_image" in manifest or "pinned_link_receipt" in manifest:
+        raise ValueError("cold images require V4 transport")
     segments = manifest.get("segments")
     if not isinstance(segments, list) or len(segments) != 2:
         raise ValueError("V3 requires exactly two image segments")
@@ -102,10 +167,13 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("manifest", help="Mod manifest JSON from link_mod.py launcher")
     ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("--format", choices=("v3", "v4"), default="v3")
     args = ap.parse_args(argv)
 
-    manifest = json.loads(Path(args.manifest).read_text())
-    Path(args.output).write_bytes(build_mod_bin(manifest))
+    path = Path(args.manifest).resolve()
+    manifest = json.loads(path.read_text())
+    Path(args.output).write_bytes(build_mod_bin(manifest, format_version=int(args.format[1:]),
+                                              base_dir=path.parent))
     return 0
 
 

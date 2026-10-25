@@ -42,6 +42,7 @@ __declspec(dllexport) unsigned original(unsigned crc,const void*p,unsigned n){re
                 "#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__", "#if 1")
             text = text.replace("words[0]", "__builtin_bswap32(words[0])")
             text = text.replace("words[1]", "__builtin_bswap32(words[1])")
+            text = text.replace("words[N]", "__builtin_bswap32(words[N])")
             implementation = work / "crc_big.cpp"
             implementation.write_text(text)
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared", "-Oz",

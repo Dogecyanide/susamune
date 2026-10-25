@@ -22,6 +22,7 @@ FIXTURE = r'''
 #include "susamune/state_crc.hxx"
 #include "susamune/state_live_video.hxx"
 #include "susamune/state_restore_bindings.hxx"
+#include "susamune/state_store.hxx"
 static StateRestoreBindings::Words sRestoreBindings = {};
 typedef unsigned int u32;typedef unsigned char u8;typedef long long OSTime;
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){u8*a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
@@ -36,10 +37,17 @@ extern "C" int memcmp(const void*a,const void*b,__SIZE_TYPE__ n){const u8*x=(con
 #define OSSecondsToTicks(n) ((n)*1000ll)
 static const u32 kSnapshotVersion=16,kMaxRegions=1;
 static const u32 kStreamWindows=32;
-static u8 bank0[250064],bank1[250064],stage[4160],live[300064];
+alignas(32)static u8 bank0[250064],bank1[250064],stage[4160],live[300064];
 alignas(32)static u8 workspace[0x4E040];
 static StatePoolMemory sPoolMemory;
 static StateSlotPool sPool;
+static StateStore::Store sSharedStore;
+static TWBankMemory sharedBanks;
+static TWStageMemory sharedMemory;
+alignas(32)static u8 readerTable[TWR_TABLE_BYTES];
+static StateCodec::ReadSpan seed[3];
+static bool sharedMode;
+namespace TransferLease {static bool sharedMap(){return sharedMode;}}
 static __UINTPTR_TYPE__ kStagingBase=(__UINTPTR_TYPE__)(stage+32);
 struct Region{__UINTPTR_TYPE__ addr;u32 size,buf_offset;};
 struct SavestateHeader{u32 version,game_version,heap_addr,heap_size,area_id,episode_id,region_count;Region regions[1];};
@@ -47,10 +55,13 @@ struct StoredState{SavestateHeader header;u32 ghost,practice,archiveProfile,gene
 static StoredState sSlots[3],sCandidate;
 static SusamuneStateArchiveHeader sStreamHeader;
 static u32 sPackedChecksums[3],sLoadSlot,sStreamSeen,sStreamOffset,sStreamSize,sStreamCrc,sStreamId;
+static StateStore::Identity sharedIdentity(u32 slot){const StoredState&s=sSlots[slot];
+ return {s.generation,s.metadataTag,s.rawSize,s.packedSize,s.adler32,sPackedChecksums[slot],StateStore::DEFLATE};}
 static u32 sStreamChecksums[32],sLiveArchiveProfile,sDiskPoolUsed,sDurableSlots;
 static bool sStreamCommit,sDiskStream,sDiskRecovered;
 static StateLiveVideo::Range sLiveVideo = {};
 static u32 rawSize,reads,writes,cancelled,errorText,ownerFault,regionFault,transportFault,faultOffset;
+static u32 pinErrors;
 static const u8 *archiveBytes;static u32 archiveSize;
 static u32 clockValue;
 struct App{struct{u32 mAreaID,mEpisodeID;}mCurrentScene;}gpApplication;
@@ -72,11 +83,20 @@ static void copyGameBytes(void*,void*d,const void*s,u32 n){++writes;memcpy(d,s,n
 }
 static void captureArchiveProfile(u32&out){out=ownerFault?72:71;}
 namespace StateStorage{
-struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
-static Result result;static bool ready,pending;
+struct ResultToken{u32 generation;};
+struct Result{u32 command,status,id;SusamuneStateArchiveHeader header;const void*metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;ResultToken token;};
+static Result result;static bool ready,pending,borrowed;
+static u32 generation;
+static void*stagingBase(){return stage+32;}
+static u32 stagingSize(){return 4096;}
+static bool consumeResult(ResultToken t,bool=false){if(!borrowed||!t.generation||t.generation!=result.token.generation)return false;borrowed=false;return true;}
+static bool releaseOwner(){return !pending&&!borrowed;}
+
 static bool startWindow(u32 id,u32 crc,u32 packed,u32 offset,u32 size){
- ++reads;if(pending||id!=sStreamId||crc!=sStreamHeader.headerCrc||packed!=archiveSize||size>4096||offset+size>packed)return false;
- pending=ready=true;result={};result.command=SUSAMUNE_STATE_CMD_READ_WINDOW;
+ if(sharedMode&&(!sSharedStore.pin||!StateStore::check(sSharedStore,sSharedStore.pin,
+   sharedIdentity(TWRControl(&sharedMemory)->root))))++pinErrors;
+ ++reads;if(pending||borrowed||id!=sStreamId||crc!=sStreamHeader.headerCrc||packed!=archiveSize||size>4096||offset+size>packed)return false;
+ pending=ready=true;result={};result.token.generation=++generation;result.command=SUSAMUNE_STATE_CMD_READ_WINDOW;
  result.id=id;result.header=sStreamHeader;result.metadata=&sCandidate;
  result.window.offset=offset;result.window.size=size;
  if(sStreamCommit&&offset>=faultOffset&&transportFault==1){result.status=SUSAMUNE_STATE_IO_ERROR;return true;}
@@ -88,9 +108,10 @@ static bool startWindow(u32 id,u32 crc,u32 packed,u32 offset,u32 size){
  result.window.checksum=SusamuneStateCrc(stage+32,size);return true;
 }
 static void update(){}
-static bool takeResult(Result&out){if(!ready)return false;out=result;ready=pending=false;return true;}
-static bool cancel(){++cancelled;return true;}
+static bool takeResult(Result&out){if(!ready)return false;out=result;ready=pending=false;borrowed=true;return true;}
+static void abandon(){++cancelled;}
 }
+static StateStorage::ResultToken sDiskBorrow;
 '''
 
 EXPORTS = r'''
@@ -98,6 +119,7 @@ extern "C" {
 __declspec(dllexport) void reset(const StateCodec::ReadSpan*slots,const u32*adlers,u32 raw,
  const void*packed,u32 size,u32 adler){
  rawSize=raw;archiveBytes=(const u8*)packed;archiveSize=size;
+ sharedMode=false;pinErrors=0;for(u32 i=0;i<3;++i)seed[i]=slots[i];
  memset(bank0,0xC7,sizeof(bank0));memset(bank1,0xC7,sizeof(bank1));memset(stage,0xA5,sizeof(stage));
  memset(live,0xE3,sizeof(live));memset(workspace,0xB9,sizeof(workspace));memset(sSlots,0,sizeof(sSlots));
  sPool.used=slots[0].size+slots[1].size+slots[2].size;
@@ -112,12 +134,22 @@ __declspec(dllexport) void reset(const StateCodec::ReadSpan*slots,const u32*adle
  sStreamHeader.packedSize=size;sStreamHeader.metadataSize=sizeof(sCandidate);sStreamHeader.rawSize=raw;
  sStreamId=77;sLoadSlot=1;sLiveArchiveProfile=71;sStreamCommit=sDiskRecovered=false;sDiskStream=true;
  sStreamSeen=0;sStreamSize=0;sStreamCrc=0xffffffff;sStreamOffset=0;sDiskPoolUsed=sPool.used;
- StateStorage::pending=StateStorage::ready=false;
+ StateStorage::pending=StateStorage::ready=StateStorage::borrowed=false;sDiskBorrow={};
  gpApplication.mCurrentScene={1,2};reads=writes=cancelled=errorText=ownerFault=regionFault=transportFault=clockValue=0;
  faultOffset=8192;
  PracticeSession::ownReplay=false;sLiveVideo={0,0};
 }
 __declspec(dllexport) void replay(){PracticeSession::ownReplay=true;}
+__declspec(dllexport) bool share(){
+ sharedBanks={{bank0+32,bank1+32},{249984,249984},2};
+ sharedMemory={&sharedBanks,stage+32,4096};sSharedStore={};memset(bank0+32,0,0x8000);
+ if(!StateStore::init(sSharedStore,sharedMemory,73,readerTable,sizeof(readerTable)))return false;
+ for(u32 i=0;i<3;++i){StateStore::Identity empty={};
+  if(!StateStore::begin(sSharedStore,i,empty)||!StateStore::appendOpaque(sSharedStore,seed[i].data,seed[i].size)||
+   !StateStore::seal(sSharedStore,sharedIdentity(i),codecWorkspace(),SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE)||
+   !StateStore::commit(sSharedStore,sharedIdentity(i)))return false;}
+ sharedMode=true;return true;
+}
 __declspec(dllexport) void protectVideo(u32 offset,u32 size){
  sLiveVideo={(__UINTPTR_TYPE__)(live+32+offset),(__UINTPTR_TYPE__)(live+32+offset+size)};}
 __declspec(dllexport) void fault(u32 kind,u32 offset){transportFault=kind;faultOffset=offset;}
@@ -129,9 +161,16 @@ __declspec(dllexport) void change(u32 kind){
  if(kind==7)for(u32 i=0;i<3;++i)++sSlots[i].practice;
 }
 __declspec(dllexport) const void*output(){return live+32;}
-__declspec(dllexport) void slotBytes(u32 slot,void*out){StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset,out,sPool.slots[slot].size);}
+__declspec(dllexport) void slotBytes(u32 slot,void*out){
+ if(!sharedMode){StatePoolMemoryCopyOut(&sPoolMemory,sPool.slots[slot].offset,out,sPool.slots[slot].size);return;}
+ u32 pin=StateStore::pin(sSharedStore,slot,sharedIdentity(slot)),count=0;
+ const StateCodec::ReadSpan*source=StateStore::spans(sSharedStore,pin,count);u8*bytes=(u8*)out;
+ for(u32 i=0;i<count;++i){memcpy(bytes,source[i].data,source[i].size);bytes+=source[i].size;}
+ if(!StateStore::unpin(sSharedStore,pin))__builtin_trap();
+}
 __declspec(dllexport) u32 value(u32 key){switch(key){case 0:return sDiskRecovered;case 1:return writes;case 2:return reads;
-case 3:return cancelled;case 4:return errorText;case 5:return sCandidate.generation;case 6:return sPool.used;}return 0;}
+case 3:return cancelled;case 4:return errorText;case 5:return sCandidate.generation;case 6:return sPool.used;
+case 7:return sSharedStore.pin;case 8:return pinErrors;}return 0;}
 __declspec(dllexport) u32 generation(u32 slot){return sSlots[slot].generation;}
 __declspec(dllexport) bool guards(){
  for(u32 i=0;i<32;++i)if(bank0[i]!=0xC7||bank1[i]!=0xC7||stage[i]!=0xA5||stage[4128+i]!=0xA5||
@@ -149,7 +188,7 @@ class SavestateStreamingTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         text = FIXTURE
         for name in ('void poolWriteSpans(', 'void poolReadSpans(', 'u32 packedChecksum(',
-                     'bool waitStateWindow(', 'bool readStateWindow(',
+                     'bool waitStateWindow(', 'bool readStateWindow(', 'void finishDiskBorrow(',
                      'void copyBaseStateBytes(', 'void copyOwnedStateBytes(', 'void copyStateBytes(', 'bool directStateBytes('):
             text += function_source(SOURCE, name)
         production = SOURCE.read_text()
@@ -161,13 +200,14 @@ class SavestateStreamingTests(unittest.TestCase):
 extern "C" __declspec(dllexport) u32 restore(){
  bool fromSD=true,ints=true,dma=true,durable=true;u32 slot=3,heapStart=0x80500000,heapEnd=heapStart+gameBytes();
  StoredState&saved=sCandidate;SavestateHeader*h=&saved.header;
- StateCodec::ReadSpan compressed[3]={};StateCodec::WriteSpan destinations[3]={{live+32,gameBytes()},{live+32+gameBytes(),236},{live+32+gameBytes()+236,276}};
-''' + dispatch + '\nreturn restored;\n}\n'
+ StateCodec::ReadSpan compressed[STATE_POOL_MEMORY_BANKS+1]={};StateCodec::WriteSpan destinations[3]={{live+32,gameBytes()},{live+32+gameBytes(),236},{live+32+gameBytes()+236,276}};
+''' + dispatch + '\nfinishDiskBorrow();return restored;\n}\n'
         path = Path(cls.temp.name) / 'test.cpp'
         path.write_text(text)
         proc = subprocess.run([str(compiler),'--target=x86_64-pc-windows-msvc','-shared','-O2',
-            '-fno-builtin','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
+            '-fno-builtin','-fno-exceptions','-mno-stack-arg-probe','-nostdlib','-fuse-ld=lld','-Wl,/noentry',
             '-I',str(ROOT/'include'),str(path),str(ROOT/'src/state_codec.cpp'),str(ROOT/'src/state_crc.cpp'),
+            str(ROOT/'src/state_store.cpp'),
             '-o',str(path.with_suffix('.dll'))],capture_output=True,text=True)
         if proc.returncode:raise RuntimeError(proc.stdout + proc.stderr)
         cls.lib = C.CDLL(str(path.with_suffix('.dll')))
@@ -210,6 +250,62 @@ extern "C" __declspec(dllexport) u32 restore(){
                 self.assertEqual(self.lib.value(0),0)
                 self.assertGreater(self.lib.value(2),30)
                 self.preserved()
+
+    def test_shared_recovery_pin_survives_every_read_and_releases_after_success(self):
+        for quick in (False, True):
+            with self.subTest(quick=quick):
+                self.setup_state(quick)
+                self.assertTrue(self.lib.share())
+                self.assertEqual(self.lib.restore(), 0)
+                self.assertEqual(self.output(), self.raw)
+                self.assertEqual(self.lib.value(7), 0)
+                self.assertEqual(self.lib.value(8), 0)
+                self.preserved()
+
+    def test_shared_recovery_rolls_back_all_writing_faults_without_touching_roots(self):
+        for fault in (1, 3, 4, 5):
+            with self.subTest(fault=fault):
+                self.setup_state(True)
+                self.assertTrue(self.lib.share())
+                self.lib.fault(fault, 8192)
+                self.assertEqual(self.lib.restore(), 0)
+                self.assertEqual(self.output(), self.old_raw[1])
+                self.assertEqual(self.lib.value(0), 1)
+                self.assertEqual(self.lib.value(7), 0)
+                self.assertEqual(self.lib.value(8), 0)
+                self.preserved()
+
+    def test_shared_validation_and_owner_refusals_release_pin_without_game_writes(self):
+        for fault in (1, 3, 4, 5):
+            with self.subTest(fault=fault):
+                self.setup_state(True)
+                self.assertTrue(self.lib.share())
+                self.lib.change(fault)
+                before = self.output()
+                self.lib.restore()
+                self.assertEqual(self.output(), before)
+                self.assertEqual(self.lib.value(7), 0)
+                self.assertEqual(self.lib.value(8), 0)
+                self.preserved()
+
+    def test_shared_recovery_preserves_live_video_and_owned_take_bytes(self):
+        for quick in (False, True):
+            for fail in (False, True):
+                with self.subTest(quick=quick, recovery=fail):
+                    self.setup_state(quick)
+                    self.assertTrue(self.lib.share())
+                    self.lib.replay()
+                    self.lib.protectVideo(4090, 9000)
+                    if fail:
+                        self.lib.fault(1, 65536)
+                    self.assertEqual(self.lib.restore(), 0)
+                    expected = bytearray(self.old_raw[1] if fail else self.raw)
+                    expected[4090:13090] = b'\xe3' * 9000
+                    expected[-276:] = b'\xe3' * 276
+                    self.assertEqual(self.output(), expected)
+                    self.assertEqual(self.lib.value(7), 0)
+                    self.assertEqual(self.lib.value(8), 0)
+                    self.preserved()
 
     def test_preflight_cancellation_bad_stream_and_owner_change_leave_live_state_unchanged(self):
         for quick in (False,True):

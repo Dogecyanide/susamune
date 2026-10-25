@@ -19,6 +19,7 @@
 #define SUSAMUNE_GLYPH_RIGHT "\x81\xa8"
 #define SUSAMUNE_GLYPH_DOWN  "\x81\xab"
 #elif defined(SUSAMUNE_VERSION_US) || defined(SUSAMUNE_VERSION_PAL)
+// Retail replaces ASCII *, + and % with the stick, X and C artwork.
 #define SUSAMUNE_GLYPH_A     "\x40"
 #define SUSAMUNE_GLYPH_B     "\x23"
 #define SUSAMUNE_GLYPH_X     "\x2b"
@@ -29,7 +30,8 @@
 #define SUSAMUNE_GLYPH_C     "\x25"
 #define SUSAMUNE_GLYPH_AMP   "\x26"
 #define SUSAMUNE_GLYPH_SLASH "/"
-#define SUSAMUNE_GLYPH_SHINED "*"
+// Western menus use the native Shine image; this is its unloaded-art fallback.
+#define SUSAMUNE_GLYPH_SHINED "S"
 #define SUSAMUNE_GLYPH_LEFT  "\x5b"
 #define SUSAMUNE_GLYPH_UP    "\x5e"
 #define SUSAMUNE_GLYPH_RIGHT "\x5d"

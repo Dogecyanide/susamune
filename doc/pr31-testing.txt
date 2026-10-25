@@ -1,0 +1,30 @@
+Moonshine PR31 - Wii packet service and reconnect visibility
+
+Install the complete PR31 app (boot.dol and regional mod files) on every Wii.
+Dolphin needs the PR31 patch; the PR30 companion remains compatible. The wire
+format is unchanged, but mixed builds retain the older player's bugs.
+
+1. In post-Corona Plaza, start with three players, then four. Stay in the same
+   area for at least five minutes. Everyone should see every other player.
+   Check movement, long disappearances, and whether ping still climbs into
+   seconds. Compare host-to-guest and guest-to-host separately.
+2. Have one guest leave/rejoin without changing areas on the other consoles.
+   Their ghost should return without anyone warping to refresh it. Repeat with
+   different guest slots, including a Wii/Dolphin mix.
+3. Change IL/draft readiness while everyone moves. Reliable room updates should
+   not stop ghost movement while waiting for an acknowledgement.
+4. Check ordinary IL/draft races, continuous Stageloader, and Forfeit race.
+   A forfeit should keep the player in the room. B still cancels confirmation.
+
+Wii receive and send requests now have independent buffers and completions.
+The worker still bounds each queue and waits for BOTH outstanding operations
+before closing the socket. Reconnecting guests get a new relay visual timeline.
+Ping now timestamps each probe independently; lost replies do not add retry
+time to the next measurement. Reliable retries back off under sustained loss.
+
+Native tests cover 90 incoming poses/s plus about 59 outgoing bundles/s with
+simulated 10 ms IOS completion latency, buffer ownership and same-area rejoins.
+Those are simulation results, NOT a claim of measured PR31 Wii smoothness.
+
+The separate PR29 Pineapple search instruction overwrite is still unresolved.
+Keep any new crash reports. Timers and memory reservations are unchanged.

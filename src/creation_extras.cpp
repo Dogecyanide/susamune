@@ -1,4 +1,7 @@
 #include "susamune/creation_extras.hxx"
+#include "susamune/hud_editor_preview.hxx"
+#include "susamune/gradient_motion.hxx"
+#include "susamune/native_hud_precision.hxx"
 #include "susamune/retail_input.hxx"
 
 #include "Dolphin/mem.h"
@@ -10,6 +13,7 @@
 #include "SMS/System/Application.hxx"
 #include "susamune/glyphs.hxx"
 #include "susamune/menu.hxx"
+#include "susamune/menu_theme.hxx"
 #include "susamune/japanese_ui.hxx"
 #include "susamune/packed_text.hxx"
 #include "susamune/rng_control.hxx"
@@ -81,10 +85,6 @@ constexpr char kMenuText[] =
     "Word 3 text\0Word 3 style\0Word 3 visible\0"
     "MOD MENU\0Menu background\0Achievement popup\0"
     "System notifications\0IL PB popup\0Stage session counter\0Streak failure banner";
-
-const u32 kPreviewRootTags[] = {
-    '\0t_0', '\0c_0', '\0r_0', '\0d_0', '\0m_0', '\0s_0',
-};
 
 u8 sHudBeforeWarning[CreationExtras::HUD_PANE_COUNT][2][3];
 u8 sWaterBeforeWarning[2][3];
@@ -260,11 +260,11 @@ void formatPracticeDisplay(char *out, unsigned capacity, unsigned display,
 
 void drawCreationKeyboard(Menu *menu, const char *title, const char *text,
                           u8 pageIndex, bool uppercase, u8 cursor) {
-    menu->fillBox(70, 188, 500, 262, Color(8, 11, 20, 238));
-    menu->drawText(title, 86, 202, 17, 17, Color(255, 255, 255, 255));
+    MenuTheme::panel(menu, 70, 164, 500, 262, title);
+    const Color ink = MenuTheme::textColor(), muted = MenuTheme::textColor(true);
     if (text) {
-        menu->fillBox(86, 220, 468, 24, Color(24, 34, 54, 255));
-        menu->drawText(text, 98, 223, 14, 14, Color(120, 220, 150, 255));
+        menu->fillBox(86, 201, 468, 24, Color(49, 110, 76, 255));
+        menu->drawText(text, 98, 204, 14, 14, Color(255, 248, 209, 255));
     }
     const char *page = pageIndex ? gCreationSymbols
                        : uppercase ? gCreationLettersUpper
@@ -272,19 +272,19 @@ void drawCreationKeyboard(Menu *menu, const char *title, const char *text,
     const int count = pageIndex ? (int)sizeof(gCreationSymbols) - 1 : 32;
     for (int i = 0; i < count; i++) {
         const int x = 112 + (i % 8) * 46;
-        const int y = 250 + (i / 8) * 37;
+        const int y = 232 + (i / 8) * 37;
         if (i == cursor)
-            menu->fillBox(x - 9, y - 5, 32, 29, Color(90, 170, 255, 100));
+            MenuTheme::selection(menu, x - 9, y - 5, 32, 29);
         char one[2] = {page[i], '\0'};
         menu->drawText(one, x, y, 18, 18,
                        i == cursor ? Color(255, 255, 255, 255)
-                                   : Color(200, 206, 220, 255));
+                                   : ink);
     }
     menu->drawText("D-pad Select   A Type   B Delete   X Space   Y Case   L"
                    SUSAMUNE_GLYPH_SLASH "R Page",
-                   86, 401, 10, 10, Color(104, 114, 136, 255));
-    menu->drawText("START: Keep   X+START: Cancel   Z: Clear",
-                   86, 421, 10, 10, Color(104, 114, 136, 255));
+                   86, 383, 10, 10, muted);
+    menu->drawText("START: Keep   " SUSAMUNE_GLYPH_X " " SUSAMUNE_GLYPH_AMP " START: Cancel   " SUSAMUNE_GLYPH_Z ": Clear",
+                   86, 407, 10, 10, ink);
 }
 
 bool updateCreationKeyboardText(TMarioGamePad *pad, char *text, u8 &length,
@@ -400,7 +400,7 @@ const CreationStyle &CreationExtras::defaultPracticeStyle(unsigned display) {
 __attribute__((section(".foxtrot.text"))) void CreationExtras::resetDefaults() {
     Creation::fillWhite(mColors, SUSAMUNE_CREATION_COLOR_COUNT);
     Creation::fillWhite(mDefaultColors, SUSAMUNE_CREATION_COLOR_COUNT);
-    const u8 menuBg[] = {24, 28, 40};
+    const u8 menuBg[] = {230, 230, 190};
     copyRgb(mColors[SUSAMUNE_CREATION_MENU_BG], menuBg);
     copyRgb(mDefaultColors[SUSAMUNE_CREATION_MENU_BG], menuBg);
     for (int word = 0; word < SUSAMUNE_CREATION_WORD_COUNT; word++) {
@@ -410,6 +410,7 @@ __attribute__((section(".foxtrot.text"))) void CreationExtras::resetDefaults() {
                  "Custom Text %d", word + 1);
         mWordLength[word] = (u8)strlen(mWords[word]);
         mWordVisible[word] = 0;
+        mWordGradient[word] = 0x20;
     }
     mRecentIlStyle = defaultRecentIlStyle();
     Creation::fillWhite(mRecentIlRgb, 1);
@@ -432,6 +433,7 @@ __attribute__((section(".foxtrot.text"))) void CreationExtras::resetDefaults() {
     mStageSessionStyle = defaultStageSessionStyle();
     MoonshineFailureStyleInit(&mFailureBanner);
     mNativeTimerStyle = defaultNativeTimerStyle();
+    mNativeGradient = 0;
     mNativeTimerCustomMask = 0;
     memcpy(mHealthRgb, kHealthDefaults, sizeof(mHealthRgb));
     for (u32 i = 0; i < sizeof(mHudPictures) / sizeof(mHudPictures[0]); i++)
@@ -467,6 +469,8 @@ void CreationExtras::clampWord(int index) {
 void CreationExtras::adopt(const volatile SusamuneCreationCfg *src) {
     if (!src || src->magic != SUSAMUNE_CREATION_CFG_MAGIC ||
         src->version != SUSAMUNE_CREATION_CFG_VERSION) return;
+    mNativeGradient = (src->reservedAchievement0 & 0xf8) == 0xd0 &&
+        (src->reservedAchievement0 & 7) <= 5 ? src->reservedAchievement0 & 7 : 0;
     for (int i = 0; i < SUSAMUNE_CREATION_COLOR_COUNT; i++) {
         if (src->colorPresent & SUSAMUNE_CREATION_COLOR(i))
             for (int c = 0; c < 3; c++) mColors[i][c] = src->rgb[i][c];
@@ -536,6 +540,11 @@ void CreationExtras::adopt(const volatile SusamuneCreationCfg *src) {
         mWordLength[word] = in.length;
         memcpy(mWords[word], (const void *)in.text, sizeof(mWords[word]));
         memcpy(mWordRgb[word], (const void *)in.rgb, sizeof(mWordRgb[word]));
+        const u8 gradient = in.reserved;
+        const u8 motion = SusamuneWordMotion(gradient, src->stageSessionReserved, word);
+        mWordGradient[word] = (gradient & 0x80) && (gradient & 7) <= 5 &&
+            motion < GradientMotion::Count && ((gradient >> 5) & 3) <= 2
+            ? GradientMotion::wordOptions(gradient & 7, (gradient >> 5) & 3, motion) : 0x20;
         clampWord(word);
     }
     mDirty = false;
@@ -556,12 +565,19 @@ void CreationExtras::stageInto(volatile SusamuneCreationCfg *dst) const {
     dst->timerLabelVisible = mTimerLabelVisible;
     dst->timerLabelVisiblePresent = 1;
     memcpy((void *)dst->rgb, mColors, sizeof(mColors));
+    // The word byte keeps its PR20 marker; its extra motion bit lives here.
+    dst->stageSessionReserved = 0xa0;
     for (int word = 0; word < SUSAMUNE_CREATION_WORD_COUNT; word++) {
         volatile SusamuneCreationWordCfg &out = dst->words[word];
         storeStyle(&out.x, mWordStyle[word]);
         out.visible = mWordVisible[word]; out.length = mWordLength[word];
         memcpy((void *)out.text, mWords[word], sizeof(mWords[word]));
         memcpy((void *)out.rgb, mWordRgb[word], sizeof(mWordRgb[word]));
+        const u8 options = mWordGradient[word];
+        const u8 motion = GradientMotion::wordMotion(options);
+        out.reserved = 0x80 | GradientMotion::wordStops(options) |
+            (GradientMotion::wordSpeed(options) << 5) | ((motion & 3) << 3);
+        dst->stageSessionReserved = SusamuneWordMotionExtra(dst->stageSessionReserved, word, motion);
     }
     for (int c = 0; c < 3; c++)
         dst->recentIlTextRgb[c] = mRecentIlRgb[0][c];
@@ -578,7 +594,7 @@ void CreationExtras::stageInto(volatile SusamuneCreationCfg *dst) const {
            sizeof(mSavestateFeedbackRgb));
     dst->achievementStyleMagic =
         SUSAMUNE_CREATION_ACHIEVEMENT_STYLE_MAGIC;
-    dst->reservedAchievement0 = 0;
+    dst->reservedAchievement0 = 0xd0 | mNativeGradient;
     dst->achievementX = mAchievementBannerStyle.x;
     dst->achievementY = mAchievementBannerStyle.y;
     dst->achievementScale = mAchievementBannerStyle.scale;
@@ -587,7 +603,6 @@ void CreationExtras::stageInto(volatile SusamuneCreationCfg *dst) const {
     dst->stageSessionX = mStageSessionStyle.x;
     dst->stageSessionY = mStageSessionStyle.y;
     dst->stageSessionScale = mStageSessionStyle.scale;
-    dst->stageSessionReserved = 0;
 }
 
 void CreationExtras::adoptWallkick(
@@ -889,38 +904,6 @@ void CreationExtras::applyHud() {
     }
 }
 
-void CreationExtras::addPreviewPane(J2DPane *pane) {
-    if (!pane || mPreviewPaneCount >= PREVIEW_PANE_COUNT) return;
-    const u32 index = mPreviewPaneCount++;
-    mPreviewPanes[index] = pane;
-    if (pane->mIsVisible) mPreviewVisible |= 1u << index;
-    pane->mIsVisible = true;
-}
-
-void CreationExtras::beginHudPreview(int color) {
-    endHudPreview();
-    if (!mHudScreen) return;
-    int root;
-    if (color == SUSAMUNE_CREATION_TIMER_LABEL) {
-        root = 0;
-    } else {
-        if (color < SUSAMUNE_CREATION_TIMER_BG ||
-            color > SUSAMUNE_CREATION_SHINES_BG) return;
-        root = color - SUSAMUNE_CREATION_TIMER_BG;
-    }
-    addPreviewPane(mHudScreen->search(kPreviewRootTags[root]));
-    for (u32 i = 0; i < HUD_PANE_COUNT; i++)
-        if (kHudPaneColors[i] == color) addPreviewPane(mHudPictures[i]);
-}
-
-void CreationExtras::endHudPreview() {
-    for (u32 i = 0; i < mPreviewPaneCount; i++)
-        if (mPreviewPanes[i])
-            mPreviewPanes[i]->mIsVisible = (mPreviewVisible & (1u << i)) != 0;
-    mPreviewPaneCount = 0;
-    mPreviewVisible = 0;
-}
-
 void CreationExtras::update() {
     // The cached panes live in the stage heap. Do not follow them while that
     // heap is being torn down or rebuilt by the setup thread.
@@ -929,8 +912,6 @@ void CreationExtras::update() {
         !gpMarDirector->mGCConsole ||
         gpMarDirector->mGCConsole->mMainScreen != mHudScreen) return;
     applyHud();
-    for (u32 i = 0; i < mPreviewPaneCount; i++)
-        if (mPreviewPanes[i]) mPreviewPanes[i]->mIsVisible = true;
 }
 
 void CreationExtras::draw(Menu *menu) const {
@@ -938,7 +919,7 @@ void CreationExtras::draw(Menu *menu) const {
     for (int i = 0; i < SUSAMUNE_CREATION_WORD_COUNT; i++) {
         if (!mWordVisible[i] || !mWordLength[i]) continue;
         Creation::drawTextBox(menu, mWordStyle[i], mWordRgb[i],
-                              SUSAMUNE_CREATION_WORD_CHARS, mWords[i]);
+                              SUSAMUNE_CREATION_WORD_CHARS, mWords[i], false, 0xffff, mWordGradient[i]);
     }
 }
 
@@ -974,13 +955,18 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
     mEditFirst = (u8)first;
     mEditCount = (u8)count;
     mEditTitle = title;
+    mColorStyle.y = first >= SUSAMUNE_CREATION_COIN_BG &&
+        first <= SUSAMUNE_CREATION_LIFE_TEXT && first != SUSAMUNE_CREATION_RED_BG
+            ? 50 : 0xffff;
     mEditor.begin(&mColorStyle, mColors + first, mColorBackup + first,
                   (u16)count, (u16)count, names ? names : title,
                   CreationEditor::CAP_TEXT_COLOR);
-    beginHudPreview(first);
+    if (first == SUSAMUNE_CREATION_MENU_BG)
+        mEditor.setOriginalColourSetting(SETTING_MENU_CUSTOM_BACKGROUND);
 }
 
 bool CreationExtras::nativeTimerColorsEnabled() const {
+    if (gSettings.getBool(SETTING_NATIVE_VERTICAL_GRADIENT) || GradientMotion::mode(true)) return true;
     for (unsigned i = 0; i < 15; ++i)
         if ((mNativeTimerCustomMask & (1u << i)) ||
             (mColorPresent & SUSAMUNE_CREATION_COLOR(nativeTimerColorSlot(i))))
@@ -1003,6 +989,58 @@ const u8 *CreationExtras::nativeTimerRgb(const J2DPane *pane, bool *custom) cons
     return nullptr;
 }
 
+bool CreationExtras::nativeTimerGradient(const J2DPane *pane, u8 colors[2][3]) const {
+    const bool vertical = gSettings.getBool(SETTING_NATIVE_VERTICAL_GRADIENT);
+    const u8 motion = GradientMotion::mode(true);
+    const bool expanded = NativeHudPrecision::normalDigits() == 7;
+    if ((!vertical && !motion && !(expanded && mNativeGradient)) || rngControlInvalidatesIl())
+        return false;
+    for (unsigned i = 0; i < 13; ++i) {
+        if (mHudPictures[11 + i] != pane) continue;
+        const bool countdown = (i >= 6 && i < 10) || i == 12;
+        if (expanded && !countdown && !vertical) {
+            // Palette storage stays six digits; only the visible span grows.
+            // Separators lie halfway between their neighbouring digit colours.
+            static const u8 positions[] = {0, 2, 3, 4, 6, 7, 8, 10, 12};
+            u8 palette[9][3];
+            for (unsigned p = 0; p < 9; ++p) {
+                const unsigned position = positions[p] * 5;
+                const unsigned first = position / 12;
+                const unsigned next = first < 5 ? first + 1 : first;
+                const unsigned weight = position % 12;
+                for (unsigned c = 0; c < 3; ++c)
+                    palette[p][c] = (mColors[nativeTimerColorSlot(first)][c] * (12 - weight) +
+                        mColors[nativeTimerColorSlot(next)][c] * weight + 6) / 12;
+            }
+            const unsigned slot = i == 10 ? 2 : i == 11 ? 5 :
+                i < 2 ? i : i < 4 ? i + 1 :
+                (i == 5 && NativeHudPrecision::extraDigit()) ? 8 : i + 2;
+            GradientMotion::sample(palette, 9, slot, motion,
+                motion ? GradientMotion::phase(true) : 0, colors[0]);
+            copyRgb(colors[1], colors[0]);
+        } else if (!motion) {
+            if (!vertical) return false;
+            copyRgb(colors[0], mColors[nativeTimerColorSlot(countdown ? 6 : 0)]);
+            copyRgb(colors[1], mColors[nativeTimerColorSlot(countdown ? 9 : 5)]);
+        } else {
+            // Palette order follows the visible digits, including their separators.
+            static const u8 order[] = {0, 1, 10, 2, 3, 11, 4, 5, 6, 7, 12, 8, 9};
+            u8 palette[8][3];
+            const unsigned first = countdown ? 8 : 0, count = countdown ? 5 : 8;
+            unsigned slot = 0;
+            for (unsigned p = 0; p < count; ++p) {
+                copyRgb(palette[p], mColors[nativeTimerColorSlot(order[first + p])]);
+                if (order[first + p] == i) slot = p;
+            }
+            const u16 phase = GradientMotion::phase(true);
+            GradientMotion::sample(palette, count, vertical ? 0 : slot, motion, phase, colors[0]);
+            GradientMotion::sample(palette, count, vertical ? count - 1 : slot, motion, phase, colors[1]);
+        }
+        return true;
+    }
+    return false;
+}
+
 bool CreationExtras::beginHudDraw(J2DScreen *screen) {
     if (sHealthDraw.active || !screen || screen != mHudScreen ||
         RetailInput::stageDirector() != gpMarDirector ||
@@ -1010,6 +1048,8 @@ bool CreationExtras::beginHudDraw(J2DScreen *screen) {
         return false;
     TGCConsole2 *console = gpMarDirector->mGCConsole;
     if (console->mMainScreen != screen) return false;
+    if (mEditMode == EDIT_COLOR && mEditor.editing() &&
+        HudEditorPreview::beginDraw(console, mEditFirst)) return true;
     // Retail console mode selects the air palette even during its transitions.
     const u32 mode = reinterpret_cast<const u32 *>(console)[0x18 / 4];
     const bool preview = mEditMode == EDIT_HEALTH && mEditor.editing();
@@ -1060,6 +1100,7 @@ bool CreationExtras::beginHudDraw(J2DScreen *screen) {
 }
 
 void CreationExtras::endHudDraw() {
+    HudEditorPreview::endDraw();
     if (!sHealthDraw.active) return;
     for (unsigned i = 0; i < 19; ++i) {
         const HealthPaneState &saved = sHealthDraw.panes[i];
@@ -1107,8 +1148,11 @@ void CreationExtras::beginNativeTimerEditor() {
                   kNativeTimerNames, CreationEditor::CAP_POSITION |
                   CreationEditor::CAP_SCALE | CreationEditor::CAP_TEXT_ALPHA |
                   CreationEditor::CAP_BRIGHTNESS | CreationEditor::CAP_TEXT_COLOR |
-                  CreationEditor::CAP_OFFSET_POSITION | CreationEditor::CAP_COLOR_MODE,
+                  CreationEditor::CAP_OFFSET_POSITION | CreationEditor::CAP_COLOR_MODE |
+                  CreationEditor::CAP_GRADIENT | CreationEditor::CAP_TIMER_GRADIENT,
                   &mNativeTimerCustomMask);
+    mEditor.setGradientDirectionSetting(SETTING_NATIVE_VERTICAL_GRADIENT);
+    mEditor.setGradientOptions(&mNativeGradient);
 }
 
 void CreationExtras::beginTimerCharacterEditor() {
@@ -1309,8 +1353,11 @@ void CreationExtras::beginWordEditor(int index) {
     mEditFirst = 0;
     mEditWord = (u8)index;
     mEditTitle = "Custom text style";
+    const u16 glyphs = Creation::glyphCount(mWords[index]);
     mEditor.begin(&mWordStyle[index], mWordRgb[index], mWordBackup,
-                  SUSAMUNE_CREATION_WORD_CHARS, mWordLength[index]);
+                  SUSAMUNE_CREATION_WORD_CHARS, glyphs, nullptr,
+                  CreationEditor::CAP_ALL | (glyphs > 1 ? CreationEditor::CAP_GRADIENT : 0));
+    mEditor.setGradientOptions(&mWordGradient[index], true);
 }
 
 void CreationExtras::beginKeyboard(int index) {
@@ -1448,7 +1495,6 @@ void CreationExtras::updateEditor(TMarioGamePad *pad) {
         }
     }
     if (!mEditor.editing()) {
-        endHudPreview();
         mEditMode = EDIT_NONE;
     }
 }
@@ -1495,7 +1541,7 @@ void CreationExtras::updateKeyboard(TMarioGamePad *pad) {
 void CreationExtras::drawKeyboard(Menu *menu) const {
     const int word = mEditWord;
     Creation::drawTextBox(menu, mWordStyle[word], mWordRgb[word],
-                          SUSAMUNE_CREATION_WORD_CHARS, mWords[word]);
+                          SUSAMUNE_CREATION_WORD_CHARS, mWords[word], false, 0xffff, mWordGradient[word]);
     char status[64];
     snprintf(status, sizeof(status),
              "Custom text %d   %u" SUSAMUNE_GLYPH_SLASH "%u", word + 1,
@@ -1532,7 +1578,7 @@ __attribute__((section(".foxtrot.text"))) void CreationExtras::drawEditor(Menu *
         const u16 selected = mEditor.target() ? mEditor.target() - 1 : 0xffff;
         Creation::drawTextBox(menu, mWordStyle[word], mWordRgb[word],
                               SUSAMUNE_CREATION_WORD_CHARS, mWords[word],
-                              false, selected);
+                              false, selected, mWordGradient[word]);
         mEditor.draw(menu, mEditTitle, mWords[word]);
         return;
     }

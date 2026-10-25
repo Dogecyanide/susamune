@@ -4,6 +4,7 @@
 #include "SMS/Player/MarioGamePad.hxx"
 #include "susamune/creation.hxx"
 #include "susamune/model_color_editor.hxx"
+#include "susamune/model_editor_preview.hxx"
 #include "susamune/susamune_cfg.h"
 
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
@@ -56,9 +57,17 @@ void stageInto(volatile SusamuneMarioColorsCfg *destination) {
 }
 void beginEditor() {
     sState.begin(sState.colors, sState.backup, PART_COUNT, kPartNames);
+    if (sState.editor.editing()) ModelEditorPreview::begin(false);
 }
-void updateEditor(TMarioGamePad *pad) { sState.update(pad); }
+void updateEditor(TMarioGamePad *pad) {
+    ModelEditorPreview::update();
+    sState.update(pad);
+    if (!sState.editor.editing()) ModelEditorPreview::end();
+}
 
-void drawEditor(Menu *menu) { sState.editor.draw(menu, "Mario colours", ""); }
+void drawEditor(Menu *menu) {
+    ModelEditorPreview::drawHint(menu);
+    sState.editor.draw(menu, "Mario colours", "");
+}
 
 } // namespace MarioColors

@@ -1,0 +1,52 @@
+Moonshine 3.0.0 Timewarp PR24
+
+Main checks
+1. PAL: open the Warp Wheel over a blue-coin/save prompt, choose a world and
+   episode with A, and confirm the warp happens without answering the prompt.
+   With Stage intro skip Off, also try the wheel and IL menu during the opening
+   camera cutscene. The black loading screen is still protected.
+2. Turn Ghost display Off, then Watch one saved ghost. It should appear while
+   watching; ending Watch should leave Ghost display Off.
+3. In single-ghost Watch, open Watch timeline and seek to a grounded point.
+   START takes over as Mario and starts frame-advance pause. Use your usual
+   frame-pause/Step binds or Practice controls to resume/step. Try an airborne
+   point too. Check Mario is visible and controls resume normally.
+   This is assisted practice: zero momentum, current enemies/platforms/world,
+   no reconstruction of the ghost's held fruit, Yoshi, nozzle or exact action.
+   It does not qualify for PBs/splits. It does not modify the saved ghost.
+4. Look at the left spine/page stack, centred tabs and left-facing Runs icon.
+   PAL splits should show an actual plus sign when behind. Records browse
+   entries should no longer have an R button beside their names.
+5. Timer and splits: QFT section history opens its options. Try title, numbers,
+   times, background, raw QFs and row count, then reboot to check persistence.
+   Events / QFT freezes uses the existing freeze-event settings: changing one
+   affects both the QFT freeze and the sections recorded in history.
+6. Runs: PB options are grouped below Theoretical best. Streaking's failure
+   banner options have their own page. Check back navigation and search.
+7. Online: Join room opens the guidebook code editor. X+START returns to Online
+   even with a partly entered code; B deletes, or goes back if the code is empty.
+
+Online Stageloader (both players need PR24)
+Connect using your existing working method. Host opens Race setup, selects
+Stageloader, then Playlist. Choose the current Stageloader queue, a built-in
+playlist, or a saved playlist. Apply the new setup if a match already exists.
+Both choose Ready once the playlist has arrived. Each player advances alone;
+there is no wait between ILs. Final playlist times decide the result.
+This uses Stageloader's existing timing, including active retries, rather than
+network latency or physical loading time. An assisted/invalid result cannot win.
+Check PAL/JP together, a repeated IL in the queue, a retry, the faster player
+waiting for the slower player, final times on both screens, then another race.
+Stopping the playlist or disconnecting should cancel the race cleanly.
+The remote two-Wii test remains necessary; local simulations do not establish
+Internet reliability or real-console performance.
+
+Quick regression, when convenient
+- Boot JP/PAL, change a setting, reboot, and check it persisted.
+- Save/load all three slots, then overwrite one; no speed changes intended.
+- Ordinary IL PBs, Hoverless rejection and split display.
+- Watch 2 split alignment and rewind; normal ghost racing with display On/Off.
+- Normal IL online race / rematch and free roam.
+
+Unchanged scope
+No accounts, ratings or friends service; this remains the two-player prototype.
+Exact ghost-world replay and additional gradient animations are not in PR24.

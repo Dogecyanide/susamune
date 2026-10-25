@@ -18,7 +18,8 @@ MEM2
 0x91891000-0x918DF000=Moonshine codec/CRC scratch (312 KiB; relocation capability required)
 0x918DF000-0x918EA000=split-statistics V9 mailbox (44 KiB allocation)
 0x918EA000-0x91900000=secondary ghost model heap
-0x91900000-0x9193F000=patch.bin / patch.txt immutable loader-to-kernel handoff
+0x91900000-0x91926700=patch.bin / patch.txt immutable loader-to-kernel handoff
+0x91926700-0x9193F000=ja_ui.bin immutable Japanese UI asset (JP, Japanese download)
 0x9193F000-0x91B3F000=Moonshine extra packed-state bank (2 MiB; capability gated)
 0x91B3F000-0x91C11F00=ghost input recording payload (54,000 samples)
 0x91C11F00-0x91C1F000=PPC-only metadata for three states, save candidate and live owner profile

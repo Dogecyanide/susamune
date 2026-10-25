@@ -1,0 +1,16 @@
+PR27 includes the first project-wide maintenance pass:
+- CONTRIBUTING.md: setup, evidence levels, release and bug-report workflow.
+- doc/architecture.md: subsystem owners/contracts across the whole project.
+- scripts/developer_check.py: read-only dependency/toolchain inventory.
+- scripts/release_prerelease.py: one parameterized checked Wii release pipeline.
+- doc/online-start.md: the race-start reservation and draft prompt lifecycle.
+
+Website integration is a proposal, not an implemented uploader:
+See doc/ghost-service-proposal.txt for the Delfino Ghosts host brief.
+Native Wii needs background HTTPS and account/device linking. Dolphin can first
+extend its companion's storage service; companion-free stock Dolphin is a
+separate networking/storage investigation. A custom Dolphin fork trades the
+separate process for emulator-maintenance work.
+
+Still requires hardware evidence: PR26/27 network smoothness and latency,
+3/4-player endurance, safe starts from real transitions, and mixed-region races.

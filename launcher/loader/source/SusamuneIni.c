@@ -263,6 +263,13 @@ static char *Trim(char *s)
 
 	while (*s && IsSpace(*s))
 		s++;
+	/* A UTF-8 byte order mark (some editors add one) can only open the first line. */
+	if ((u8)s[0] == 0xEF && (u8)s[1] == 0xBB && (u8)s[2] == 0xBF)
+	{
+		s += 3;
+		while (*s && IsSpace(*s))
+			s++;
+	}
 
 	end = s + strlen(s);
 	while (end > s && IsSpace(end[-1]))

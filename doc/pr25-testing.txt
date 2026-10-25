@@ -1,0 +1,48 @@
+Moonshine 3.0.0 Timewarp PR25
+
+Use PR25 on every console/PC. Older online versions cannot join this build.
+JP, US and PAL are supported together. Use PAL 60 Hz.
+
+Online setup
+1. Give each player a name. Host chooses Room size (2, 3 or 4), then Create
+   room. Guests choose Join room. Wait for each 14-character code.
+2. Host exchanges codes with EACH guest. Both enter the other's Friend's code.
+   Guests only need the host's code. B leaves the code editor; X deletes.
+3. Host sets up Free roam, an IL race, a drafted set, or Stageloader.
+   For Stageloader, select Playlist and use a built-in, saved or current queue.
+   Apply next setup after changing an existing session. Everyone selects Ready.
+4. For 3 players the draft gives 4 ILs; for 4 players it gives 5. Each player
+   bans one, then everyone races the remaining IL. First ban rotates next IL.
+   ILs are best of three; set length is best of three/five ILs.
+5. A continuous playlist advances independently. Compare final playlist times,
+   not arrival order over the network. Assisted attempts cannot win.
+
+Dolphin
+Use the separate PR25 Dolphin ZIP and its README. Apply its regional patch to
+YOUR clean ISO, set the documented physical MEM1 options and run the companion.
+Use Mario ghost appearance on standalone Dolphin. No game is included.
+This is direct networking; restrictive NAT may still prevent a connection.
+
+Priority checks
+- Connect 3, then 4 players; see each remote player/name in the same stage.
+- Finish a draft/round/set. Check scores agree and another set can start.
+- Continuous Stageloader: one retry, one repeated IL, wait for the last finisher.
+- One guest disconnects/rejoins: remaining players stay connected and the
+  rejoined player becomes visible again. Check ordinary two-player still works.
+- Include a Dolphin/Wii pair and mixed JP/PAL. Local checks cannot prove
+  Internet behaviour or Wii rendering/performance; these are hardware tests.
+
+Offline additions/fixes
+- Ghosts > Watch / Take over > Watch timeline. Seek, then START takes over;
+  alternatively choose Take over here. Mario starts in frame-advance pause.
+  Use Step or Resume gameplay in Practice. Common jump/run actions use the
+  recorded animation and an estimated velocity from nearby ghost positions.
+  Unusual/held-object/Yoshi states fall back safely. The live world is retained;
+  this is assisted practice, not exact world replay or a valid PB attempt.
+- Try Sparkle, Curtain and Alternating gradient animations; save/reboot.
+- QFT section history has separate Show and Edit entries.
+- Check the spine reaches the top and B leaves a partly entered online code.
+
+When convenient
+- All three savestate slots, overwrite, normal IL timing/splits, Watch 2 seek.
+- PAL boot: rare capture-card line problem has no confirmed fix in this build.

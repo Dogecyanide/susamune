@@ -25,6 +25,7 @@ class ExtraSettingValuesTests(unittest.TestCase):
 #include "susamune/settings.hxx"
 #undef private
 #include "susamune/susamune_cfg.h"
+#include "susamune/hoverless.h"
 #include "susamune/packed_text.hxx"
 #define SUSAMUNE_GAME_VERSION 2
 int snprintf(char*,__SIZE_TYPE__,const char*,...){return 0;}
@@ -44,7 +45,7 @@ extern "C" void*memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++=
         stage = function(settings, 'Settings::stageInto')
         code += stage[:stage.index('    gBinds.stageInto')] + '}\n'
         code += card[card.index('constexpr u32 kRecordMagic'):card.index('struct RecordV1')]
-        code += function(card, 'checksum') + function(card, 'valid')
+        code += function(card, 'checksum') + function(card, 'valid') + function(card, 'initHoverless')
         code += r'''
 static Settings settings;
 static union {SusamuneCfg config;u8 bytes[0x1a20];} storage;
@@ -70,6 +71,7 @@ API unsigned category(unsigned index){return Settings::category((SettingId)index
 API unsigned cardRoundtrip(unsigned oldCount){
  memset(&record,0,sizeof(record));record.magic=kRecordMagic;record.version=kRecordVersion;
  record.payloadSize=kRecordPayloadSize;record.gameVersion=SUSAMUNE_GAME_VERSION;
+ initHoverless(&record.hoverless);
  settings.stageInto(&cfg);record.cfg=cfg;memcpy(record.settingsTail,(const void*)SUSAMUNE_CFG_SETTINGS_TAIL(&cfg),32);record.cfg.magic=SUSAMUNE_CFG_MAGIC;record.cfg.version=SUSAMUNE_CFG_VERSION;
  if(oldCount){record.cfg.count=128;memset(record.cfg.extraValues,0x7f,sizeof(record.cfg.extraValues));}
  record.checksum=checksum(&record);if(!valid(&record))return 0;
@@ -142,6 +144,31 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.assertEqual(self.lib.cardRoundtrip(1), 1)
         self.assertEqual([self.lib.get(i) for i in range(142, 149)], [1, 1, 1, 8, 17, 5, 5])
 
+    def test_menu_sound_defaults_on_and_persisted_off_survives_tail_and_card(self):
+        import re
+        ids = re.findall(r"X\((SETTING_\w+),",
+                         (ROOT / "include/susamune/settings_list.h").read_text())
+        index = ids.index("SETTING_MENU_SOUNDS")
+        self.assertLess(index, len(ids))
+        self.assertLess(index, 174)
+        for old_count in (0, 128, 142, index):
+            self.lib.reset(old_count)
+            self.lib.adopt()
+            self.assertEqual(self.lib.get(index), 1)
+        self.lib.reset(len(ids))
+        self.lib.capability(1)
+        self.lib.set(index, 0)
+        self.lib.stage()
+        self.assertEqual(self.lib.read(index), 0)
+        self.assertEqual(self.lib.byteAt(0x1a00 + index - 142), 0)
+        self.assertEqual(self.lib.cardRoundtrip(0), 1)
+        self.assertEqual(self.lib.get(index), 0)
+        self.lib.reset(len(ids))
+        self.lib.capability(1)
+        self.lib.write(index, 255)
+        self.lib.adopt()
+        self.assertEqual(self.lib.get(index), 1)
+
     def test_old_count_and_unset_keep_defaults_while_new_count_clamps_values(self):
         for count in (0, 128):
             self.lib.reset(count)
@@ -166,7 +193,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.lib.set(128, 4)
         self.lib.set(129, 1)
         self.lib.stage()
-        self.assertEqual(self.lib.count(), 151)
+        self.assertEqual(self.lib.count(), 171)
         self.assertEqual([self.lib.read(i) for i in (128,129)], [4,1])
         self.assertEqual(bytes(self.lib.byteAt(i) for i in range(192,320)), b'\xa5'*128)
 
@@ -199,7 +226,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
         self.assertEqual(self.lib.get(138), 1)
         self.lib.set(138, 0)
         self.lib.stage()
-        self.assertEqual(self.lib.count(), 151)
+        self.assertEqual(self.lib.count(), 171)
         self.assertEqual(self.lib.read(138), 0)
         self.assertEqual(self.lib.cardRoundtrip(0), 1)
         self.assertEqual(self.lib.get(138), 0)
@@ -261,10 +288,11 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
 
     def test_jump_and_buttslide_alias_toggle_independently_without_new_wire_bytes(self):
         self.assertEqual(self.lib.name(141), b'Jump display')
-        self.assertEqual(self.lib.name(151), b'Buttslide display')
-        self.assertEqual(self.lib.category(141), self.lib.category(151))
+        # The buttslide row is a UI alias at SETTING_COUNT sharing Jump display's wire byte.
+        self.assertEqual(self.lib.name(171), b'Buttslide display')
+        self.assertEqual(self.lib.category(141), self.lib.category(171))
         for mask in range(4):
-            for setting, bit in ((141, 1), (151, 2)):
+            for setting, bit in ((141, 1), (171, 2)):
                 for direction in (-1, 1):
                     self.lib.reset(142)
                     self.lib.set(141, mask)
@@ -273,7 +301,7 @@ API unsigned corruptExtra(unsigned i){record.cfg.extraValues[i]^=1;return valid(
                     self.assertEqual(self.lib.get(141), mask ^ bit)
                     self.assertEqual(self.lib.label(setting), b'Off' if mask & bit else b'On')
                     self.lib.stage()
-                    self.assertEqual(self.lib.count(), 151)
+                    self.assertEqual(self.lib.count(), 171)
                     self.assertEqual(self.lib.read(141), mask ^ bit)
                     self.assertEqual(self.lib.read(142), 255)
                     self.assertEqual(self.lib.cardRoundtrip(0), 1)

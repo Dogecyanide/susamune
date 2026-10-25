@@ -34,6 +34,7 @@ set(LAUNCHER_TEST_LOG "" CACHE FILEPATH "tester log included in the HBC app")
 set(LAUNCHER_PATTERN_TEST_LOG "" CACHE FILEPATH "optional pattern tester log")
 set(LAUNCHER_CHANGELOG "" CACHE FILEPATH "changelog included in the HBC app")
 option(LAUNCHER_DISABLE_SUSAMUNE_PATCH "Disable the Susamune patch in the launcher kernel" OFF)
+option(TIMEWARP_LIVE_RACING "Prototype nonblocking live racing transport" OFF)
 option(SUSAMUNE_MINIMAL_FREETYPE
     "Register only the FreeType modules used by the embedded TrueType font" ON)
 set(SUSAMUNE_LOADER_OPTIMIZATION "-Os" CACHE STRING
@@ -90,6 +91,7 @@ ExternalProject_Add(arm
     CMAKE_ARGS
         "-DCMAKE_TOOLCHAIN_FILE=${_cmake_dir}/toolchain-devkitARM.cmake"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
+        "-DTIMEWARP_LIVE_RACING=${TIMEWARP_LIVE_RACING}"
         ${_common_args}
     DEPENDS ppc
     BUILD_ALWAYS ON

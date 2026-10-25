@@ -8,19 +8,29 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PREAMBLE = r'''
-typedef unsigned char u8;
-typedef unsigned int u32;
-typedef unsigned long long u64;
-typedef unsigned long long size_t;
-#include "susamune/state_storage.h"
+#include "susamune/state_storage.hxx"
+#include "susamune/state_export_plan.h"
 #include "susamune/state_pool_memory.h"
+#include "susamune/transfer_lease.hxx"
+#include "susamune/transfer_publication.h"
+#include "susamune/transfer_layout.h"
 extern "C" void *memcpy(void *d,const void *s,size_t n) {u8 *a=(u8*)d;const u8*b=(const u8*)s;while(n--)*a++=*b++;return d;}
 extern "C" void *memset(void *d,int c,size_t n) {u8*a=(u8*)d;while(n--)*a++=(u8)c;return d;}
+extern "C" int memcmp(const void*a,const void*b,size_t n){for(size_t i=0;i<n;++i)if(((const u8*)a)[i]!=((const u8*)b)[i])return ((const u8*)a)[i]-((const u8*)b)[i];return 0;}
+static TWLeaseControl testTransfer;
+#define SUSAMUNE_TRANSFER_CLIENT_WIRE (&testTransfer)
+static bool OSDisableInterrupts(){return true;}
+static void OSRestoreInterrupts(bool){}
 static SusamuneStateStorageMailbox testMailbox;
 static u8 testPool[SUSAMUNE_STATE_POOL_SIZE], testStaging[SUSAMUNE_STATE_STAGING_SIZE];
 static u8 testExtra[SUSAMUNE_STATE_POOL_EXTRA_SIZE];static bool expanded,relocated;
 static StatePoolMemory statePoolMemory() {StatePoolMemory m={{testPool,testExtra},{relocated?SUSAMUNE_STATE_POOL_SIZE:SUSAMUNE_STATE_POOL_LEGACY_SIZE,
  expanded?SUSAMUNE_STATE_POOL_EXTRA_SIZE:0}};return m;}
+static u8 thirdBank[SUSAMUNE_TRANSFER_POOL_THIRD_SIZE],fourthBank[SUSAMUNE_TRANSFER_POOL_FOURTH_SIZE];
+static u8 fifthBank[SUSAMUNE_TRANSFER_POOL_FIFTH_SIZE];
+static bool statePoolSharedMemory(StatePoolMemory &m){if(!TransferLease::sharedMap()||!expanded)return false;
+ m.banks[2]=thirdBank;m.sizes[2]=sizeof(thirdBank);m.banks[3]=fourthBank;m.sizes[3]=sizeof(fourthBank);
+ m.banks[4]=fifthBank;m.sizes[4]=sizeof(fifthBank);return true;}
 struct CacheCall {const void *address;u32 size;};
 static CacheCall flushed[32],invalidated[32]; static u32 flushCount,invalidateCount;
 static u8 physical[192],expected[128];static bool watch,requestSawFlushed;
@@ -38,17 +48,17 @@ static void DCFlushRange(void *p,u32 n) {
 }
 static void DCInvalidateRange(void *p,u32 n) {if(invalidateCount<32)invalidated[invalidateCount++]={p,n};}
 static u64 OSGetTime() {return 0x123456789ABCULL;}
-namespace StateStorage {
-struct Result {u32 command,status,id;SusamuneStateArchiveHeader header;const void *metadata;char name[32];SusamuneStateWindowReceipt window;SusamuneTasManifest project;};
-bool busy();
-bool startExport(const SusamuneStateArchiveHeader &,const void *,u32,const SusamuneTasRequest * = nullptr);
-bool startImport(u32,u32,u32,u32,const SusamuneTasRequest * = nullptr);
-bool startWindow(u32,u32,u32,u32,u32,const SusamuneTasRequest * = nullptr);
-}
 '''
 EXPORTS = r'''
 extern "C" {
 __declspec(dllexport) void reset(u32 pending) {
+ TransferLease::sPpc={};TransferLease::sControl={};TransferLease::sPublisher={};
+ TransferLease::sMode=TransferLease::UNINITIALIZED;TransferLease::sOwner=0;TransferLease::sShared=false;
+ testTransfer={};StateStorage::sTransferToken={};StateStorage::sTransferBorrow={};
+ StateStorage::sTransferPhase=StateStorage::TRANSFER_NONE;
+ StateStorage::sSharedBackend=StateStorage::sTransferFailed=StateStorage::sResultTaken=false;
+ StateStorage::sResultReady=StateStorage::sKeepOwner=StateStorage::sAbandoned=false;
+ StateStorage::sResultGeneration=0;StateStorage::sPending={};
  watch=requestSawFlushed=false;
  memset(&testMailbox,0,sizeof(testMailbox));
  testMailbox.response.magic=SUSAMUNE_STATE_STORAGE_MAGIC;
@@ -89,8 +99,8 @@ __declspec(dllexport) void acknowledge(u32 status,u32 change,u32 oldSeq) {
  if(change==4)receipt.seq^=1;
  if(oldSeq)testMailbox.response.ackSeq=oldSeq;
 }
-__declspec(dllexport) u32 result(void) {StateStorage::Result r;return StateStorage::takeResult(r)?r.status:999;}
-__declspec(dllexport) u32 projectResult(void) {StateStorage::Result r;return StateStorage::takeProjectResult(r)?r.status:999;}
+__declspec(dllexport) u32 result(void) {StateStorage::Result r;if(!StateStorage::takeResult(r))return 999;StateStorage::consumeResult(r);return r.status;}
+__declspec(dllexport) u32 projectResult(void) {StateStorage::Result r;if(!StateStorage::takeProjectResult(r))return 999;StateStorage::consumeResult(r);return r.status;}
 __declspec(dllexport) u32 beginProject(const char *name) {return StateStorage::projectBegin(name);}
 __declspec(dllexport) u32 beginProjectRead(u32 id,u32 crc) {return StateStorage::projectRead(id,crc);}
 __declspec(dllexport) u32 beginProjectCatalog(void) {return StateStorage::projectCatalog(0);}
@@ -147,11 +157,12 @@ __declspec(dllexport) void windowReceipt(u32 corrupt) {
  acknowledge(0,0,0);auto &r=testMailbox.receipt;auto &h=testMailbox.header;auto &w=testMailbox.window;
  r.headerCrc=h.headerCrc;r.packedSize=h.packedSize;r.metadataSize=h.metadataSize;
  r.reserved=SusamuneStateCrc(testMailbox.resultName,32);testMailbox.response.resultId=testMailbox.request.id;
- w.offset=testMailbox.request.poolOffset;w.size=testMailbox.request.reserved;w.checksum=42;
+ w.offset=testMailbox.request.poolOffset;w.size=testMailbox.request.reserved&SUSAMUNE_STATE_WINDOW_SIZE_MASK;w.checksum=42;
  testMailbox.response.transferred=w.size;
  if(corrupt==1)w.offset++;if(corrupt==2)w.size--;if(corrupt==3)w.reserved[4]=1;
  if(corrupt==4)testMailbox.response.transferred--;if(corrupt==5)testMailbox.metadata[0]^=1;
  if(corrupt==6)testMailbox.response.resultId++;if(corrupt==7)r.headerCrc++;
+ if(corrupt==8)w.size|=SUSAMUNE_STATE_WINDOW_TAIL;
 }
 __declspec(dllexport) void tick(void) {StateStorage::update();}
 __declspec(dllexport) u32 busy(void) {return StateStorage::busy();}
@@ -215,8 +226,8 @@ __declspec(dllexport) void mutationReceipt(u32 corruption) {
  if(corruption==3)r.headerCrc^=1;if(corruption==4)h.headerCrc^=1;
 }
 __declspec(dllexport) u32 renamedResult(void) {
- StateStorage::Result r;if(!StateStorage::takeResult(r)||r.status||r.metadata||!SusamuneStateHeaderValid(&r.header))return 0;
- return r.name[0]=='R' && r.name[8]=='s' && r.header.name[0]=='O';
+ StateStorage::Result r;if(!StateStorage::takeResult(r))return 0;StateStorage::consumeResult(r);
+ return !r.status&&!r.metadata&&SusamuneStateHeaderValid(&r.header)&&r.name[0]=='R' && r.name[8]=='s' && r.header.name[0]=='O';
 }
 static u8 tapeFrames[65536],tapeTransitions[512];
 __declspec(dllexport) u32 beginTape(u32 frames,u32 transitions,u32 fault) {
@@ -238,7 +249,7 @@ __declspec(dllexport) u32 tapeExportOwnership(void) {
 __declspec(dllexport) u32 completeTapeExport(void) {
  auto &h=testMailbox.header;h.payloadCrc=SusamuneStateCrc(testStaging,h.packedSize);h.headerCrc=SusamuneStateHeaderCrc(&h);
  exportReceipt(3);StateStorage::update();StateStorage::Result result;
- return StateStorage::takeResult(result)&&result.status==0;
+ if(!StateStorage::takeResult(result))return 0;StateStorage::consumeResult(result);return result.status==0;
 }
 __declspec(dllexport) u32 beginTapeRead(void) {
  const auto&h=testMailbox.header;SusamuneTasManifest p={};p.magic=SUSAMUNE_TAS_MAGIC;p.version=SUSAMUNE_TAS_VERSION;
@@ -256,7 +267,9 @@ __declspec(dllexport) void tapeImportReceipt(u32 fault) {
 }
 __declspec(dllexport) u32 readTape(void) {
  StateStorage::Result result;SusamuneTasTakeData take;const void*frames,*transitions;
- if(!StateStorage::takeResult(result)||!StateStorage::tapePayload(result,take,frames,transitions))return 0;
+ if(!StateStorage::takeResult(result))return 0;
+ struct Consume {StateStorage::ResultToken token;~Consume(){StateStorage::consumeResult(token);}} consumed={result.token};
+ if(!StateStorage::tapePayload(result,take,frames,transitions))return 0;
  if(frames!=testStaging+4||transitions!=testStaging+4+take.frames*16)return 0;
  for(u32 i=0;i<take.frames*16;++i)if(((const u8*)frames)[i]!=(u8)(i%251))return 0;
  for(u32 i=0;i<take.transitionCount*16;++i)if(((const u8*)transitions)[i]!=(u8)(i%197))return 0;
@@ -280,9 +293,13 @@ class StateStorageClientTests(unittest.TestCase):
         end = source.index('#endif', start)+len('#endif')
         source = source[:start] + '''const size_t kMailbox=reinterpret_cast<size_t>(&testMailbox);
 const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]
-        (path / 'test.cpp').write_text(PREAMBLE + source + EXPORTS)
+        lease = re.sub(r'^#include[^\n]*\n', '', (ROOT/'src/transfer_lease.cpp').read_text(), flags=re.M)
+        fixture = PREAMBLE + lease + source + EXPORTS
+        if hasattr(cls, 'fixture_transform'): fixture = cls.fixture_transform(fixture)
+        fixture += getattr(cls, 'fixture_source', '')
+        (path / 'test.cpp').write_text(fixture)
         proc = subprocess.run([str(compiler), '--target=x86_64-pc-windows-msvc', '-shared', '-O1', '-DIS_EMULATOR=0',
-            '-fno-builtin', '-nostdlib', '-fuse-ld=lld', '-Xlinker', '/noentry',
+            '-fno-builtin', '-fno-exceptions', '-nostdlib', '-fuse-ld=lld', '-Xlinker', '/noentry',
             '-I', str(ROOT/'include'), str(path/'test.cpp'), '-o', str(path/'test.dll')], capture_output=True, text=True)
         if proc.returncode: raise RuntimeError(proc.stdout+proc.stderr)
         cls.lib = C.CDLL(str(path/'test.dll'))

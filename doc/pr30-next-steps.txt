@@ -1,0 +1,10 @@
+PR30 remaining checks
+
+- Verify smooth sustained 3/4-player movement on the actual Wii networks.
+- Confirm each guest sees all other guests, not only the host.
+- Verify race forfeit and reconnect behavior on mixed Wii/Dolphin clients.
+- Investigate the PR29 Pineapple-search instruction overwrite. PC 8047AFE8
+  in the exact JP mod FBFF8307 contains 00000010 instead of 40820010. Search
+  called SavestatesTab::rowName after several save/load events. No root-cause
+  correction is claimed yet; relocating the victim is not a confirmed fix.
+- Direct UDP still depends on compatible NAT behavior. No relay was added.

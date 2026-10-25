@@ -1,0 +1,22 @@
+Moonshine PR29 - connection recovery and group ghost delivery
+
+Everyone should use PR29 for this test. The Dolphin companion protocol is unchanged.
+
+1. Host a three-player room. Each guest should see the host AND the other guest;
+   the host should see both. Move together for several minutes, then repeat with four.
+2. Briefly interrupt one guest's connection. The room/menu and codes should stay,
+   other guests should stay in their own slots, and the missing guest should reconnect.
+   Repeat with a longer interruption (over two minutes) and with the first guest.
+3. Check the host's code rows with long player names: values must stay inside their
+   rows. Check that a returning player's name does not move to another guest slot.
+4. Run a three-player/four-player draft and an IL after reconnecting. An interrupted
+   ready/start handshake may cancel that round; the room should remain available.
+5. Confirm explicit Leave session still leaves immediately.
+
+This is still direct UDP. PR29 fixes room destruction, slot ownership and outgoing
+pose starvation; it does not add a relay or guarantee every NAT permits a connection.
+If the public endpoint changes, the displayed code changes and may need exchanging.
+
+Automated checks exercise three/four players, mixed regional poses, a bounded
+four-packet queue, slower transport service, packet loss, repeated timeouts and
+rejoins. Real internet and Wii stability still require this test.

@@ -24,6 +24,7 @@ class GhostSavestatePrefixTests(unittest.TestCase):
         source = r'''
 #include "susamune/ghost_format.h"
 #include "susamune/ghost_clock.h"
+#include "susamune/ghost_camera.h"
 #include "susamune/state_codec.hxx"
 #include "susamune/susamune_cfg.h"
 typedef unsigned int u32; typedef unsigned short u16; typedef unsigned char u8;
@@ -43,9 +44,19 @@ struct Timer {
  bool consumeCustom(bool d,s32*out){++custom;death=d;*out=qf;stopped=true;return true;}
  bool consumeTransition(s32*out,u16*target){++transition;*out=qf;*target=2;stopped=true;return true;}
 } gQFTTimer;
-namespace GhostFludd {void capture(SusamuneGhostFluddSample& p) {
+namespace GhostFludd {bool emitted; bool hoverEmitted(){return emitted;} void capture(SusamuneGhostFluddSample& p) {
  memset(&p,0,sizeof(p));p.mode=SUSAMUNE_GHOST_FLUDD_PRESENT;p.offset[1]=40;}}
+namespace GhostCamera {
+void beginFrame(){}
+void *prefix(void*p){return (u8*)p+SUSAMUNE_GHOST_CAMERA_BANK_OFFSET;}
+const void *prefix(const void*p){return prefix((void*)p);}
+void reset(void*p){auto*h=(SusamuneGhostCameraHeader*)prefix(p);memset(h,0,32);h->magic=SUSAMUNE_GHOST_CAMERA_MAGIC;h->version=1;h->headerSize=32;}
+u32 prefixSize(const void*p){auto*h=(const SusamuneGhostCameraHeader*)prefix(p);return h->magic==SUSAMUNE_GHOST_CAMERA_MAGIC?32+h->count*24:0;}
+void capture(void*p,u32 qf,u8 segment){auto*h=(SusamuneGhostCameraHeader*)prefix(p);u8*k=(u8*)(h+1)+h->count++*24;memset(k,0,24);k[3]=(u8)qf;k[23]=segment;}
+void trim(void*,u32,u16){}
+}
 namespace ILing {
+int profile;int pbProfile(){return profile;}
 enum { FINISH_SHINE, FINISH_TRANSITION, FINISH_PLANT, FINISH_DEATH };
 enum { SAVED_GHOST_END_NONE, SAVED_GHOST_END_TRANSITION, SAVED_GHOST_END_PLANT,
        SAVED_GHOST_END_DEATH };
@@ -59,7 +70,7 @@ void invalidateForAssist(){++invalidations;}
         source += r'''
 }
 namespace Ghost {
-enum { kSavestateSpanCount=3 };
+enum { kSavestateSpanCount=4 };
 struct SavestateData { u32 words[128]; };
 const u32 kSavedPrefixMagic=0x53475046u;
 const u32 kMaxSamples=SUSAMUNE_GHOST_MAX_SAMPLE_COUNT;
@@ -70,7 +81,7 @@ const u32 kPlaybackTokenBit=0x80000000u;
 const u32 kSegmentTableOffset=0x80000u-kMaxSegments*32u;
 typedef SusamuneGhostPoseSample Sample;
 alignas(32) u8 banks[2][0x80000];
-alignas(32) SusamuneGhostInputSample inputBanks[2][SUSAMUNE_GHOST_INPUT_MAX_COUNT];
+alignas(32) u8 inputBanks[2][0xE0000];
 #undef SUSAMUNE_GHOST_RECORD_PPC_BASE
 #undef SUSAMUNE_GHOST_PLAY_PPC_BASE
 #undef SUSAMUNE_GHOST_INPUT_RECORD_PPC_BASE
@@ -97,6 +108,8 @@ u8 sLiveArea,sLiveEpisode,sLiveRouteParentArea,sLiveRouteFlags,sRaceSplitCount;
 ClockPhase sClockPhase; ObserverPhase sObserverPhase;
 bool sRecording,sRestoredPrefix,sFrameFrozen,sFrameAssisted,sStageRoutePending;
 u8 sRestoredEndpoint;
+u32 observedSeed=0x12345678u;
+#define SUSAMUNE_ADDR_LIBC_RAND_SEED ((__UINTPTR_TYPE__)&observedSeed)
 bool sPendingHadLiveRoute,sPendingContinueRecording,sBoundaryPending,sLiveRouteValid;
 bool sPlaybackPinned,sPinRouteCheckPending,sChallengerNotified,sGhostVisible,cleanup,fastForward;
 struct Mario { struct {f32 x,y,z;} mTranslation; s16 mModelAngleY; } mario,*gpMarioOriginal=&mario;
@@ -133,20 +146,23 @@ Segment *lastSegment(Track&track){return track.segmentCount?&track.segments[trac
             "SaveSelection latestSaveableTrack()", "bool markCurrentRecordingPB(",
             "bool recorderBanksValid()", "bool decodeSavedPrefix(",
             "bool captureSavestate(", "bool savestateRestoreSpans(",
+            "bool captureSavestate(SavestateData &out,\n                      StateCodec::ReadSpan (&spans)[kSavestateSpanCount])",
+            "bool savestateRestoreSpans(const SavestateData &data,\n                          StateCodec::WriteSpan (&spans)[kSavestateSpanCount])",
             "void restoreSavestate(", "void onSavestateLoaded()",
         ):
             source += function(ghost, signature) + "\n"
         source += r'''
 void endObserver(bool,const char*){stopAll();}
 SavestateData states[3];
-StateCodec::ReadSpan readSpans[3]; StateCodec::WriteSpan writeSpans[3];
+StateCodec::ReadSpan readSpans[4]; StateCodec::WriteSpan writeSpans[4];
 }
 #define API extern "C" __declspec(dllexport)
 API void reset(){using namespace Ghost;
+ observedSeed=0x12345678u;
  sRecord.samples=(Sample*)banks[0];sPlayback.samples=(Sample*)banks[1];
  sRecord.segments=(Segment*)(banks[0]+kSegmentTableOffset);
  sPlayback.segments=(Segment*)(banks[1]+kSegmentTableOffset);
- sRecord.inputs=inputBanks[0];sPlayback.inputs=inputBanks[1];
+ sRecord.inputs=(SusamuneGhostInputSample*)inputBanks[0];sPlayback.inputs=(SusamuneGhostInputSample*)inputBanks[1];
  stopAll();memset(states,0,sizeof(states));memset(&sRecordClock,0,sizeof(sRecordClock));
  gQFTTimer.qf=0;gQFTTimer.serial=sAttemptSerial=7;
  gQFTTimer.available=true;gQFTTimer.stopped=false;gQFTTimer.custom=gQFTTimer.transition=0;
@@ -162,8 +178,27 @@ API void frame(s32 qf,s32 x,u32 button){using namespace Ghost;
  gQFTTimer.qf=qf;mario.mTranslation.x=(f32)x;recordQf(qf);appendSample(qf);
  sClockLastQf=qf;SusamunePracticeInput input={};input.buttons=(u16)button;captureInput(input);
 }
-API void legacy(){Ghost::sRecord.formatVersion=5;}
+API void hoverless(){ILing::profile=4;Ghost::sRecord.sourceProfile=5;}
+API void hover(unsigned emitted){GhostFludd::emitted=emitted!=0;}
+API unsigned sourceProfile(){return Ghost::sRecord.sourceProfile;}
+API void legacy(){Ghost::sRecord.formatVersion=5;Ghost::sRecord.segments[0].reserved0=Ghost::sRecord.segments[0].reserved1=0;}
+API void legacy7(){legacy();Ghost::sRecord.formatVersion=7;}
+API unsigned rng(unsigned field){using namespace Ghost;return field==0?sRecord.segments[0].reserved0:field==1?sRecord.segments[0].reserved1:observedSeed;}
+API void changeRng(unsigned seed){Ghost::observedSeed=seed;}
+API void rebaseRng(){Ghost::startEpochSamples(0);}
+API void fullInput(unsigned version){using namespace Ghost;
+ sRecord.formatVersion=version;
+ sRecord.inputCount=SusamuneGhostInputLimit(version)-1;
+ memset(inputBanks[0]+0xD2F00,0xa5,0xD100);
+ memset(inputBanks[1]+0xD2F00,0x5a,0xD100);
+}
+API unsigned tailsIntact(){using namespace Ghost;
+ for(unsigned i=0xD2F00;i<0xE0000;++i)
+  if(inputBanks[0][i]!=0xa5||inputBanks[1][i]!=0x5a)return 0;
+ return 1;
+}
 API int capture(u32 slot){using namespace Ghost;return captureSavestate(states[slot],readSpans);}
+API int captureCore(u32 slot){using namespace Ghost;return captureSavestate(states[slot],*reinterpret_cast<StateCodec::ReadSpan (*)[3]>(readSpans));}
 API int destinations(u32 slot){using namespace Ghost;return savestateRestoreSpans(states[slot],writeSpans);}
 API const void *source(u32 i){return Ghost::readSpans[i].data;}
 API u32 sourceSize(u32 i){return Ghost::readSpans[i].size;}
@@ -245,12 +280,13 @@ API void continuation(){using namespace Ghost;
 
     def setUp(self):
         self.lib.reset()
+        self.lib.hover(0)
         self.payloads = {}
 
     def capture(self, slot):
         self.assertEqual(self.lib.capture(slot), 1)
         self.payloads[slot] = [C.string_at(self.lib.source(i), self.lib.sourceSize(i))
-                               for i in range(3)]
+                               for i in range(4)]
 
     def restore(self, slot, qf):
         self.assertEqual(self.lib.destinations(slot), 1)
@@ -259,6 +295,33 @@ API void continuation(){using namespace Ghost;
             if payload:
                 C.memmove(self.lib.destination(i), payload, len(payload))
         self.lib.restore(slot, qf)
+
+    def test_hoverless_rule_survives_prefix_restore_and_firing_marks_assisted(self):
+        self.lib.hoverless()
+        self.lib.frame(4, 10, 0)
+        self.assertFalse(self.lib.get(5) & 1)
+        self.capture(0)
+        self.lib.hover(1)
+        self.lib.frame(8, 20, 0)
+        self.assertTrue(self.lib.get(5) & 1)
+        self.restore(0, 4)
+        self.assertEqual(self.lib.sourceProfile(), 5)
+
+    def test_v9_initial_seed_is_observed_once_rebased_and_preserved_in_prefix(self):
+        self.assertEqual([self.lib.rng(i) for i in range(3)], [0x12345678, 1, 0x12345678])
+        self.lib.changeRng(42)
+        self.lib.frame(4, 10, 0)
+        self.capture(0)
+        self.lib.changeRng(99)
+        self.lib.frame(8, 20, 0)
+        self.restore(0, 4)
+        self.assertEqual([self.lib.rng(i) for i in range(3)], [0x12345678, 1, 99])
+        self.lib.rebaseRng()
+        self.assertEqual([self.lib.rng(i) for i in range(3)], [99, 1, 99])
+        self.lib.legacy()
+        self.lib.changeRng(123)
+        self.lib.rebaseRng()
+        self.assertEqual([self.lib.rng(i) for i in range(3)], [0, 0, 123])
 
     def test_restore_replaces_abandoned_future_then_finishes_full_tas(self):
         self.lib.frame(4, 10, 0x100)
@@ -273,6 +336,26 @@ API void continuation(){using namespace Ghost;
         self.assertEqual([self.lib.inputButton(i) for i in range(3)], [0x100, 0x200, 0x800])
         self.assertEqual([self.lib.get(i) for i in (2, 3, 4, 6, 9)], [0, 12, 12, 1, 1])
         self.assertEqual(self.lib.get(5) & 0x21, 0x21)
+
+    def test_v7_snapshot18_has_no_camera_span_and_v8_rewinds_camera_prefix(self):
+        self.lib.legacy7()
+        self.lib.frame(4, 10, 0x100)
+        self.assertEqual(self.lib.captureCore(0), 1)
+        self.assertEqual([self.lib.sourceSize(i) for i in range(3)], [32, 32, 24])
+        self.capture(0)
+        self.assertEqual(len(self.payloads[0][3]), 0)
+        self.assertEqual([len(p) for p in self.payloads[0][:3]], [32, 32, 24])
+        self.restore(0, 4)
+        self.assertEqual(self.lib.destinationSize(3), 0)
+        self.lib.reset()
+        self.lib.frame(4, 10, 0x100)
+        self.capture(0)
+        initial = self.payloads[0][3]
+        self.assertEqual(len(initial), 56)
+        self.lib.frame(8, 20, 0)
+        self.restore(0, 4)
+        self.capture(1)
+        self.assertEqual(self.payloads[1][3], initial)
 
     def test_old_and_new_input_prefixes_keep_their_own_stride(self):
         for legacy, stride in ((False, 24), (True, 16)):
@@ -319,13 +402,31 @@ API void continuation(){using namespace Ghost;
         self.assertEqual([self.lib.x(i) for i in range(2)], [0, 80])
         self.assertEqual([self.lib.get(i) for i in (17, 18)], [123, 1])
 
+    def test_full_input_restore_and_bank_swap_preserve_presentation_tail(self):
+        for version, limit in ((5, 54000), (7, 36000), (8, 36000), (9, 36000)):
+            with self.subTest(version=version):
+                self.lib.reset()
+                self.lib.fullInput(version)
+                self.lib.frame(4, 10, 0x100)
+                self.assertEqual(self.lib.get(1), limit)
+                self.capture(0)
+                self.assertEqual(len(self.payloads[0][2]), 0xD2F00)
+                self.lib.frame(8, 20, 0x200)
+                self.assertEqual(self.lib.get(1), limit)
+                self.assertEqual(self.lib.tailsIntact(), 1)
+                self.lib.switchBanks()
+                self.restore(0, 4)
+                self.assertEqual(self.lib.tailsIntact(), 1)
+                self.lib.clear()
+                self.assertEqual(self.lib.tailsIntact(), 1)
+
     def test_empty_watch_and_nonrecording_states_do_not_start_a_recording(self):
         for mode in (1, 2, 3):
             with self.subTest(mode=mode):
                 self.lib.reset()
                 self.lib.mode(mode)
                 self.capture(0)
-                self.assertEqual([len(p) for p in self.payloads[0]], [0, 0, 0])
+                self.assertEqual([len(p) for p in self.payloads[0]], [0, 0, 0, 0])
                 self.restore(0, 0)
                 self.assertEqual([self.lib.get(i) for i in (0, 7, 8, 9)], [0, 0, 0, 0])
 
@@ -337,7 +438,7 @@ API void continuation(){using namespace Ghost;
                 self.capture(0)
                 self.lib.damage(0, kind)
                 self.assertEqual(self.lib.destinations(0), 0)
-                self.assertEqual([self.lib.destinationSize(i) for i in range(3)], [0, 0, 0])
+                self.assertEqual([self.lib.destinationSize(i) for i in range(4)], [0, 0, 0, 0])
                 self.assertEqual(self.lib.x(1), 80)
         self.lib.reset()
         self.lib.frame(4, 10, 1)
@@ -437,7 +538,7 @@ API void continuation(){using namespace Ghost;
         name = function(source, "void formatTrackName(")
         self.assertIn('(track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : ""', name)
         restored = function((ROOT / "src/iling.cpp").read_text(), "void onSavestateLoaded()")
-        self.assertIn("clearAttempt();", restored)
+        self.assertIn("clearAttemptForRetry();", restored)
         helper = function((ROOT / "src/iling.cpp").read_text(), "void updateSavestateGhostEndpoint(")
         for forbidden in ("recordResult", "armAttempt", "StageLoader", "SplitStats", "sRunning ="):
             self.assertNotIn(forbidden, helper)

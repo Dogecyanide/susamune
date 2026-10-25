@@ -1,0 +1,90 @@
+Delfino Ghosts / Moonshine integration proposal - 24 October 2026
+
+Message for the site host
+
+We'd like Moonshine to browse/download your ghosts and optionally upload saved
+recordings, eventually directly from a Wii as well as Dolphin. Your existing
+Supabase database, Auth and Storage can remain the backend. We aren't asking
+you to host the online-racing relay or build a new rating/account system.
+
+Could we agree a supported, versioned HTTP API and a browser-based device-link
+flow? Please send the public project/API base URL, the publishable key if the
+client should use Supabase REST, and the intended account/quota policy. Do not
+send service-role keys or database credentials. Uploads remain authenticated;
+public downloads can remain anonymous.
+
+Minimum API contract to agree (proposed routes, not existing endpoints):
+
+GET /v1/capabilities
+  API version, supported SGHF versions/features, maximum file bytes, upload
+  quota, page-size limit and authentication/device-link capabilities.
+GET /v1/ghosts?route=...&profile=...&cursor=...&limit=20
+  Bounded listing, including id, title/author, compatible route identity,
+  original region, profile/category, assisted/TAS status, exact result QF,
+  file format version, required-feature bits, byte length and SHA-256.
+GET /v1/ghosts/{id}
+  Metadata plus a direct HTTPS download URL (and expiry if signed).
+POST /v1/uploads
+  Authenticated upload intent with byte length, digest and an idempotency key;
+  returns an upload id and URL. Restrict it to the linked user's own storage.
+POST /v1/uploads/{id}/complete
+  Validate the stored file, derive metadata, then publish the archive row.
+  Retrying the same upload must not create duplicates or consume quota twice.
+
+Existing Supabase RPC/storage operations can implement these capabilities;
+the route names are negotiable. A thin server/Edge Function is useful for
+device grants, validation and finalization. Stable schemas matter more than
+adding a second copy of your browse/upload system.
+
+Device linking: Moonshine displays a short code; the user signs into your site
+on their phone/PC and approves it. The client polls at a bounded interval and
+receives a revocable, limited credential. Specify expiry, refresh/revocation,
+one-use approval and rate limits. No password entry on the Wii. Downloads do
+not require linking. These tokens need protected transport and should not grant
+database administration or unrestricted access to another account.
+
+File compatibility and validation
+
+Current Moonshine writes SGHF V9 and reads supported earlier formats. Use our
+include/susamune/ghost_format.h, doc/ghost_format.md and scripts/validate_ghost.py
+as the specification. Do not infer fields from labels/filenames or treat a
+new format as playable merely because its CRC passes. Preserve uploaded bytes
+exactly, including camera, teaching/split and initial-RNG metadata.
+
+Current canonical transfer limit is 1,297,992 bytes. The site's newer 10 MiB
+migration is above that; advertise the service limit separately from the
+client's supported limit. The repository's older README still mentions 2 MiB;
+please confirm which migration is deployed. Unsupported/larger archive files
+may remain on the site but must not be offered as compatible Wii downloads.
+
+Validate lengths, required-feature masks, region/game id, segment/chunk bounds,
+header/file/payload checksums and legal samples on the server and again on the
+client. The current browser-only parse is useful feedback, not server admission.
+Keep a SHA-256 for transfer identity/deduplication alongside the format's CRCs.
+Use stable route/profile identifiers plus a catalogue/schema version; display
+names and rounded milliseconds alone cannot safely select a racing opponent.
+Retain exact QF and timing convention so display rounding never changes records.
+Unknown assisted/TAS/eligibility metadata must remain unknown, not become clean.
+
+Transport: ordinary HTTPS bytes, explicit length, bounded error JSON and clear
+401/403/409/413/429 responses with retry guidance. Range/resumable downloads
+and immutable object ids are desirable. Define redirects/signed URL expiry so
+a small console client need not emulate the website or browser JavaScript.
+
+Moonshine responsibilities
+
+We implement the client/UI, local validation, user opt-in, retry/deduplication,
+and import into /Moonshine data/ghosts/import. Downloads go to temporary files
+and publish only after validation, never overwrite an existing PB. Wii SD and
+network work belongs in the ARM service and must yield around game I/O and
+savestate operations. Native HTTPS feasibility still needs a prototype; current
+Moonshine online transport is not an HTTPS client. A Dolphin companion pilot
+is easier, but the API should not require that companion.
+
+This proposal does not change your live site or enable transfers in PR27.
+
+Inspected sources:
+https://github.com/Zeldocto/delfino-ghosts
+https://github.com/Zeldocto/delfino-ghosts/blob/main/src/lib/ghosts.ts
+https://github.com/Zeldocto/delfino-ghosts/blob/main/src/lib/ghost/GhostParser.ts
+https://github.com/Zeldocto/delfino-ghosts/blob/main/supabase/migrations/0010_ghost_size_10mb.sql

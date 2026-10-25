@@ -30,11 +30,12 @@ struct TMario{
     const TBGCheckData*mFloorTriangle;f32 mFloorBelow;u32 mState;
 }mario,replacement;
 TMario*gpMarioOriginal=&mario;
-struct TMarDirector{enum{STATE_NORMAL=4};u8 mCurState;}director;
+struct TMarDirector{enum{STATE_NORMAL=4,STATE_STAGE_EXIT_2=12};u8 mCurState;}director;
 TMarDirector*gpMarDirector=&director;
 struct CPolarSubCamera{void addMoveCameraAndMario(Vec) {}}camera;
 CPolarSubCamera*gpCamera=&camera;
 bool two,sGhostVisible,sSecondaryGhostVisible;
+bool sFrameFrozen,sObserverPaused;
 TVec3f sGhostPosition,sSecondaryGhostPosition;s16 sGhostYaw,sSecondaryGhostYaw;
 u16 sGhostAnimationId;
 constexpr u16 kCueMove=1,kCueEntry=0x200;
@@ -83,6 +84,7 @@ bool TRailMapObj::checkMarioRiding(){
         code+=r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(){
+    sFrameFrozen=sObserverPaused=false;
     mario={};mario.mTranslation={10,20,30};mario.mFloorTriangle=&originalFloor;
     mario.mFloorBelow=19;mario.mState=0x02000880;mario.mAttributes.mIsVisible=true;
     mario.mPrevAttributes.mIsVisible=true;replacement=mario;gpMarioOriginal=&mario;
@@ -99,6 +101,7 @@ API void option(int k,int v){switch(k){case 0:two=v;sSecondaryGhostVisible=v;bre
  case 1:sGhostVisible=v;break;case 2:director.mCurState=v;break;case 3:sObserverStageReady=v;break;
  case 4:gpMap=v?&map:nullptr;break;case 5:gpMarioOriginal=v?&replacement:&mario;break;}}
 API void tick(){anchorObserverMario();}
+API void paused(){sFrameFrozen=sObserverPaused=true;director.mCurState=12;}
 API void release(int restore){releaseObserverMario(restore);}
 API int riding(){return platform.checkMarioRiding();}
 API unsigned state(){return mario.mState;}
@@ -128,6 +131,14 @@ API float coordinate(int n){return n==0?mario.mTranslation.x:n==1?mario.mTransla
         self.assertEqual(self.lib.height(),20)
         self.assertEqual(self.lib.riding(),1)
         self.assertEqual(self.lib.visible(),0)
+
+    def test_paused_seek_refreshes_observer_pose_inside_borrowed_frozen_state(self):
+        self.lib.tick()
+        self.lib.paused()
+        self.lib.target(300, 700, -800)
+        self.lib.tick()
+        self.assertEqual(tuple(self.lib.coordinate(i) for i in range(3)), (300, 700, -800))
+        self.assertEqual(self.lib.visible(), 0)
 
     def test_crossing_platform_does_not_count_as_standing_until_settled(self):
         self.lib.target(15,20,30);self.lib.tick()

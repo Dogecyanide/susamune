@@ -50,6 +50,8 @@ class PbSafetyMetadataContracts(unittest.TestCase):
                 ("SETTING_PINNA_HIDDEN_ITEMS", "0", "1"),
                 ("SETTING_ENEMY_HURTBOXES", "0", "1"),
                 ("SETTING_RICCO_RACE_CHECKPOINTS", "0", "1"),
+                ("SETTING_GAMEPLAY_SPEED", "0", "1"),
+                ("SETTING_COLLISION_VIEWER", "0", "1"),
             ],
         )
 

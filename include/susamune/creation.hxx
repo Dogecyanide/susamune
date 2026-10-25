@@ -37,6 +37,8 @@ public:
         CAP_OFFSET_POSITION = 1 << 7,
         CAP_COLOR_MODE = 1 << 8,
         CAP_RGB_ENABLES_CUSTOM = 1 << 9,
+        CAP_GRADIENT = 1 << 10,
+        CAP_TIMER_GRADIENT = 1 << 11,
     };
 
     enum UpdateResult {
@@ -49,6 +51,10 @@ public:
     };
 
     void reset();
+    void setGradientDirectionSetting(u16 setting);
+    void setGradientOptions(u8 *options, bool animation = false);
+    void setOriginalColourSetting(u16 setting);
+    void setScaleLimits(u8 minimum, u8 maximum);
     void begin(CreationStyle *style, u8 (*textRgb)[3], u8 (*backupRgb)[3],
                u16 textSlots, u16 targetSlots = 0,
                const char *targetNames = nullptr,
@@ -65,6 +71,8 @@ public:
 private:
     u32 repeatInput(TMarioGamePad *pad);
     bool optionEnabled(u8 option) const;
+    bool groupEnabled(u8 group) const;
+    bool optionInGroup(u8 option) const;
     void moveOption(int direction);
 
     CreationStyle *mStyle;
@@ -79,6 +87,7 @@ private:
     u16            mTargetSlots;
     u16            mTextTarget;
     u8             mOption;
+    u8             mGroup;
     u16            mCapabilities;
     u8             mRepeatFrames;
     u8             mConfirm;
@@ -94,10 +103,13 @@ int textWidth(const char *text, int size);
 void drawTextBox(Menu *menu, const CreationStyle &style,
                  const u8 (*textRgb)[3], u16 textSlots, const char *text,
                  bool rightAlignSlots = false, u16 selectedSlot = 0xffff);
+void drawTextBox(Menu *menu, const CreationStyle &style,
+                 const u8 (*textRgb)[3], u16 textSlots, const char *text,
+                 bool rightAlignSlots, u16 selectedSlot, u8 gradientOptions);
 void drawTextLine(Menu *menu, const CreationStyle &style,
                   const u8 (*textRgb)[3], u16 textSlots, const char *text,
                   int x, int y, int size, u16 firstSlot, bool shadow,
-                  u16 selectedSlot = 0xffff);
+                  u16 selectedSlot = 0xffff, u8 gradientOptions = 0);
 
 }  // namespace Creation
 

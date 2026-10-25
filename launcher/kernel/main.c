@@ -40,7 +40,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneCrash.h"
 #include "SusamuneGhost.h"
 #include "SusamuneStateStorage.h"
+#include "SusamuneTransfer.h"
 #include "MoonshineLayout.h"
+#if TIMEWARP_LIVE_RACING
+#include "MoonshineNet.h"
+#include "MoonshineNetBridge.h"
+#include "MoonshineNetLog.h"
+#endif
 #include "susamune/susamune_cfg.h"
 
 #include "diskio.h"
@@ -68,6 +74,14 @@ static FATFS *ConfigFatFS = NULL;
 static bool ConfigStorageReady = true;
 //"1:" as u16
 static const WCHAR cfgDevName[3] = { 0x0031, 0x003A, 0x0000 };
+
+#if TIMEWARP_LIVE_RACING
+static void NetworkUsbShutdown(void)
+{
+	// /dev/usb/ven shutdown may affect a network adapter with an IOS request.
+	if (MoonshineNetShutdown()) USBStorage_Shutdown();
+}
+#endif
 
 // Path susamune.ini should be opened by, in this boot's drive numbering.
 const char *SusamuneCfgIniPath(void)
@@ -393,8 +407,12 @@ int _main( int argc, char *argv[] )
 	// drawn. Nothing else touches FatFS at this point -- the DI thread exists
 	// but is parked on its queue until the game starts asking for reads.
 	SusamuneCfgInit();
+#if TIMEWARP_LIVE_RACING
+	MoonshineNetBridgeInit();
+#endif
 	SusamuneGhostInit();
 	SusamuneStateStorageInit();
+	SusamuneTransferInit();
 	MoonshineLayoutInit();
 	SusamuneCrashInit();
 
@@ -488,6 +506,10 @@ int _main( int argc, char *argv[] )
 	while (1)
 	{
 		_ahbMemFlush(0);
+#if TIMEWARP_LIVE_RACING
+		// The bridge owns no FAT state; service it even during a disc read.
+		MoonshineNetBridgeService();
+#endif
 #ifdef PERFMON
 		loopCnt++;
 		if(TimerDiffTicks(loopPrintTimer) > 1898437)
@@ -540,6 +562,10 @@ int _main( int argc, char *argv[] )
 		{
 			SusamuneCfgService();
 		}
+		else if(SusamuneTransferPending())
+		{
+			SusamuneTransferService();
+		}
 		/* FatFS is shared with the DI thread, so process one bounded ghost
 		 * slice only when no async read or existing Susamune journal is ready. */
 		else if(SusamuneGhostPending())
@@ -554,6 +580,12 @@ int _main( int argc, char *argv[] )
 		{
 			MoonshineLayoutService();
 		}
+#if TIMEWARP_LIVE_RACING
+		else if(MoonshineNetLogPending())
+		{
+			MoonshineNetLogService();
+		}
+#endif
 		else if(SaveCard == true) /* DI IRQ indicates we might read async, so dont write at the same time */
 		{
 			if(TimerDiffSeconds(Now) > 59) /* after 60 second earliest */
@@ -907,6 +939,10 @@ int _main( int argc, char *argv[] )
 		#endif
 		cc_ahbMemFlush(1);
 	}
+#if TIMEWARP_LIVE_RACING
+	MoonshineNetBridgeRetire();
+	MoonshineNetShutdown();
+#endif
 	HIDClose();
 	IOS_Close(DI_Handle); //close game
 	thread_cancel(DI_Thread, 0);
@@ -941,7 +977,11 @@ int _main( int argc, char *argv[] )
 	}
 
 	if(UseUSB)
+		#if TIMEWARP_LIVE_RACING
+		NetworkUsbShutdown();
+		#else
 		USBStorage_Shutdown();
+		#endif
 	else
 		SDHCShutdown();
 
@@ -949,7 +989,11 @@ int _main( int argc, char *argv[] )
 	if(ConfigGetConfig(NIN_CFG_CFG_ON_USB) != (UseUSB != 0))
 	{
 		if(ConfigGetConfig(NIN_CFG_CFG_ON_USB))
+			#if TIMEWARP_LIVE_RACING
+			NetworkUsbShutdown();
+			#else
 			USBStorage_Shutdown();
+			#endif
 		else
 			SDHCShutdown();
 	}
@@ -966,6 +1010,10 @@ int _main( int argc, char *argv[] )
 		mask32(0xd8006a8, 0, 2);
 	}
 WaitForExit:
+#if TIMEWARP_LIVE_RACING
+	MoonshineNetBridgeRetire();
+	MoonshineNetShutdown();
+#endif
 	/* Allow all IOS IRQs again */
 	write32(HW_IPC_ARMCTRL, 0x36);
 	/* Wii VC is unable to cleanly use ES */
@@ -980,6 +1028,12 @@ WaitForExit:
 		write32(RESET_STATUS, 0);
 		sync_after_write((void*)RESET_STATUS, 0x20);
 	}
-	while(1) mdelay(100);
+	while(1) {
+#if TIMEWARP_LIVE_RACING
+		// A stuck IOS request retains its buffers until the existing IOS reload.
+		MoonshineNetShutdown();
+#endif
+		mdelay(100);
+	}
 	return 0;
 }

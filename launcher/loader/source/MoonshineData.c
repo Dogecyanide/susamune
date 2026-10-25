@@ -8,6 +8,43 @@
 #define DATA_PATH_SIZE 512
 #define DATA_MARKER MOONSHINE_DATA_ROOT "/.layout-v1"
 
+static const char *sDataOperation;
+static char sDataPath[DATA_PATH_SIZE], sDataFile[DATA_PATH_SIZE];
+const char *MoonshineDataErrorOperation(void) { return sDataOperation ? sDataOperation : "Prepare data"; }
+const char *MoonshineDataErrorPath(void) { return sDataPath; }
+static FRESULT DataChecked(FRESULT result, const char *operation, const char *path)
+{
+    if (!sDataOperation && result != FR_OK && result != FR_NO_FILE &&
+        result != FR_NO_PATH && result != FR_EXIST) {
+        sDataOperation = operation;
+        snprintf(sDataPath, sizeof(sDataPath), "%s", path);
+    }
+    return result;
+}
+static FRESULT DataOpen(FIL *file, const char *path, BYTE mode)
+{
+    snprintf(sDataFile, sizeof(sDataFile), "%s", path);
+    return DataChecked(f_open_char(file, path, mode), "Open file", path);
+}
+/* Preserve the first failing operation across close/cleanup calls. */
+#define f_open_char(f,p,m) DataOpen(f,p,m)
+static FRESULT Data_f_stat_char(const char *p, FILINFO *i) { return DataChecked(f_stat_char(p,i), "Read path", p); }
+#undef f_stat_char
+#define f_stat_char Data_f_stat_char
+static FRESULT Data_f_mkdir_char(const char *p) { return DataChecked(f_mkdir_char(p), "Create folder", p); }
+#undef f_mkdir_char
+#define f_mkdir_char Data_f_mkdir_char
+static FRESULT Data_f_rename_char(const char *a, const char *b) { return DataChecked(f_rename_char(a,b), "Move old data", a); }
+#undef f_rename_char
+#define f_rename_char Data_f_rename_char
+#define f_unlink_char(p) DataChecked(f_unlink_char(p), "Remove empty/staged path", p)
+#define f_read(f,p,n,c) DataChecked(f_read(f,p,n,c), "Read file", sDataFile)
+#define f_write(f,p,n,c) DataChecked(f_write(f,p,n,c), "Write file", sDataFile)
+#define f_sync(f) DataChecked(f_sync(f), "Save file", sDataFile)
+static FRESULT Data_f_close(FIL *f) { return DataChecked(f_close(f), "Close file", sDataFile); }
+#undef f_close
+#define f_close Data_f_close
+
 static FRESULT EnsureDataDirectory(const char *path)
 {
     FILINFO info;
@@ -93,11 +130,11 @@ static FRESULT MoveDataTree(const char *source, const char *destination,
         DIR directory;
         FILINFO child;
         char oldPath[DATA_PATH_SIZE], newPath[DATA_PATH_SIZE];
-        result = f_opendir_char(&directory, source);
+        result = DataChecked(f_opendir_char(&directory, source), "Open folder", source);
         if (result != FR_OK)
             return result;
         do {
-            result = f_readdir(&directory, &child);
+            result = DataChecked(f_readdir(&directory, &child), "Read folder", source);
         } while (result == FR_OK && child.fname[0] == '.' &&
             (child.fname[1] == 0 || (child.fname[1] == '.' && child.fname[2] == 0)));
         if (result == FR_OK && child.fname[0])
@@ -107,7 +144,7 @@ static FRESULT MoveDataTree(const char *source, const char *destination,
             if (result == FR_OK)
                 result = JoinDataPath(newPath, destination, leaf);
         }
-        if (f_closedir(&directory) != FR_OK && result == FR_OK)
+        if (DataChecked(f_closedir(&directory), "Close folder", source) != FR_OK && result == FR_OK)
             result = FR_DISK_ERR;
         if (result != FR_OK)
             return result;
@@ -149,14 +186,14 @@ static FRESULT MoveLegacyLibrary(const char *device, const char *oldLeaf,
         return f_rename_char(source, destination);
     if (result != FR_OK) return result;
     if (!(info.fattrib & AM_DIR)) return PreserveCollision(source, device);
-    result = f_opendir_char(&directory, destination);
+    result = DataChecked(f_opendir_char(&directory, destination), "Open folder", destination);
     if (result != FR_OK) return result;
     do {
-        result = f_readdir(&directory, &info);
+        result = DataChecked(f_readdir(&directory, &info), "Read folder", destination);
     } while (result == FR_OK && info.fname[0] == '.' &&
         (info.fname[1] == 0 || (info.fname[1] == '.' && info.fname[2] == 0)));
     empty = result == FR_OK && !info.fname[0];
-    if (f_closedir(&directory) != FR_OK && result == FR_OK) result = FR_DISK_ERR;
+    if (DataChecked(f_closedir(&directory), "Close folder", destination) != FR_OK && result == FR_OK) result = FR_DISK_ERR;
     if (result != FR_OK) return result;
     /* Independent catalogs can reuse IDs; merging their members would mix owners. */
     if (!empty) return PreserveCollision(source, device);
@@ -358,6 +395,7 @@ FRESULT MoonshineDataPrepare(const char *device)
     FIL file;
     UINT count;
     FRESULT result;
+    sDataOperation = NULL; sDataPath[0] = sDataFile[0] = 0;
     if (device == NULL || (strcmp(device, "sd") != 0 && strcmp(device, "usb") != 0))
         return FR_INVALID_NAME;
     snprintf(path, sizeof(path), "%s:" DATA_MARKER, device);

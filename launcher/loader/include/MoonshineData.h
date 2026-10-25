@@ -3,6 +3,9 @@
 
 #include "ff.h"
 
+const char *MoonshineDataErrorOperation(void);
+const char *MoonshineDataErrorPath(void);
+
 FRESULT MoonshineDataPrepare(const char *device);
 
 #endif

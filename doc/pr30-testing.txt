@@ -1,0 +1,26 @@
+Moonshine PR30 - packet delivery and race forfeit
+
+EVERY player needs PR30. The game protocol changed for forfeit results;
+PR29 and PR30 cannot join each other. Install the complete launcher app,
+including boot.dol and all regional mod files. Dolphin uses the matching patch.
+
+1. Start a fresh 3-player room, then repeat with 4. Everyone should see all
+   other players in the same scene. Move for several minutes. Compare both
+   directions of Wii/Dolphin movement and check for long freezes/disappearances.
+2. Open Connection help during the test. Check whether Drop keeps increasing.
+   The receive worker now waits when its four-packet queue is full instead of
+   consuming and discarding incoming packets. The Dolphin companion now does
+   the same. Use the new companion as well as the PR30 patch. This does not
+   prevent internet loss.
+3. Run an IL race and draft. Online -> Forfeit race -> A confirms; B cancels.
+   Forfeiting keeps you in the room. Others finish normally. Repeat with the
+   host, a guest, all players forfeiting, and a Stageloader playlist.
+4. Briefly disconnect one guest, then reconnect. Menus and remaining guest
+   slots should stay. If their code changed, replace that guest's code and retry.
+5. Search Pineapple after saving/loading in post-Corona Plaza. The PR29 report
+   shows an overwritten instruction; its source is still unresolved. Please
+   keep any new crash report. This build does NOT claim that crash is fixed.
+
+Host simulations cover bounded queues, slower workers, packet loss, reconnects,
+fair group pose delivery and forfeit results. Wii internet stability remains
+unverified until this test. Timing code and memory reservations are unchanged.

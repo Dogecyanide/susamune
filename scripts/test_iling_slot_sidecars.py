@@ -2,6 +2,7 @@
 
 import ctypes as C
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -20,8 +21,9 @@ class ILSlotSidecarTests(unittest.TestCase):
         cls.folder = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.folder.cleanup)
         production = ROOT / "src/iling.cpp"
-        definitions = "\n".join(function_source(production, signature) + ";" for signature in (
-            "struct OverlayFlag {", "struct AttemptState {", "struct SavedAttemptData {"))
+        definitions = "\n".join(re.search(r"struct " + name + r" \{.*?\n\};",
+            production.read_text(), re.S).group(0) for name in (
+            "OverlayFlag", "AttemptState", "SavedAttemptData"))
         helpers = "\n".join(function_source(production, signature) for signature in (
             "bool readOverlayFlag(", "void writeOverlayFlag(", "void restoreOverlayFlags(",
             "void restorePlazaStoryFlags()", "void clearAttempt()"))
@@ -65,6 +67,7 @@ static unsigned ended,invalidated;
 namespace Records {void onILAttemptEnded(){}}
 namespace StageLoader {bool onSavestateLoaded(){return false;}void onILAttemptEnded(){++ended;}void invalidatePlaylistBest(){++invalidated;}}
 namespace SplitStats {void onILAttemptEnded(){}}
+namespace FinishBreakdown {void invalidate(){}}
 struct TFlagManager {
     static TFlagManager *smInstance;
     struct {u8 m1Type[0x80];} Type1Flag;
@@ -83,6 +86,8 @@ void restorePlazaSetupState(){}
 bool isPlazaEntry(int){return false;}
 bool stageObjectsLive(){return true;}
 ''' + helpers + r'''
+// Secret/Reds restart identity has its own catalogue-backed lifecycle fixture.
+void clearAttemptForRetry(){clearAttempt();}
 namespace ILing {
 ''' + functions + r'''
 }

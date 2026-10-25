@@ -1,4 +1,6 @@
 #include "susamune/ghost.hxx"
+#include "susamune/ghost_fludd.hxx"
+#include "susamune/hoverless.h"
 #include "susamune/split_stats.hxx"
 
 #include <Dolphin/mem.h>
@@ -308,7 +310,17 @@ u32 pendingAttemptTime(u8 route) {
     return pending;
 }
 
+void rejectHoverlessEmission() {
+    if ((sState->flags & FLAG_ATTEMPT_ACTIVE) &&
+        sState->activeProfile == SUSAMUNE_HOVERLESS_PROFILE && GhostFludd::hoverEmitted()) {
+        sState->flags &= ~FLAG_ATTEMPT_ELIGIBLE;
+        sState->candidateGoldMask = 0;
+        if (sState->overlayColor == OVERLAY_GOLD) clearOverlay();
+    }
+}
+
 void commitAttemptGolds() {
+    rejectHoverlessEmission();
     if (!(sState->flags & FLAG_ATTEMPT_ACTIVE) ||
         !(sState->flags & FLAG_ATTEMPT_ELIGIBLE) ||
         sState->candidateGoldMask == 0 ||
@@ -390,6 +402,8 @@ void formatAnchorQf(s32 qf, char *out, u32 size) {
 }
 
 bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
+    // Retail split callbacks can run before the IL update sees this emission.
+    rejectHoverlessEmission();
     if (routeId >= SplitStats::ROUTE_COUNT ||
         !(sState->flags & FLAG_ATTEMPT_ACTIVE) ||
         sState->activeRoute != routeId || local != sState->expectedEvent ||
@@ -572,6 +586,7 @@ void beginFrame() {
 
 void update() {
     if (!sState) return;
+    rejectHoverlessEmission();
     sampleAttemptTime();
 #if !IS_EMULATOR
     pollSave();
@@ -818,13 +833,12 @@ StorageState storageState() {
     return sState->lastError ? STORAGE_FAILED : STORAGE_SD;
 }
 
-#if defined(SUSAMUNE_VERSION_JP)
 u8 overlayBrightness(u8 value, u8 brightness) {
     const int result = (int)value * brightness / 100;
     return (u8)(result > 255 ? 255 : result);
 }
 
-void drawJpPositiveDelta(Menu *menu, const CreationStyle &style,
+void drawPositiveDelta(Menu *menu, const CreationStyle &style,
                          const u8 *rgb, const char *text,
                          const char *layoutText) {
     const int size = 20 * (int)style.scale / 100;
@@ -850,7 +864,6 @@ void drawJpPositiveDelta(Menu *menu, const CreationStyle &style,
     menu->fillBox(cx - stroke / 2, cy - arm / 2, stroke, arm, color);
     menu->drawText(text + 1, (int)style.x + cell, style.y, size, size, color);
 }
-#endif
 
 bool draw(Menu *menu) {
     if (!sState || !menu || !gSettings.getBool(SETTING_LEVEL_SPLITS) ||
@@ -863,22 +876,18 @@ bool draw(Menu *menu) {
     formatAnchorQf(sState->overlayAnchorQf, anchor, sizeof(anchor));
     gQftDisplay.draw(menu, anchor);
     CreationStyle style;
-#if defined(SUSAMUNE_VERSION_JP)
     char layoutText[sizeof(sState->overlayText)];
     const bool customPlus = sState->overlayText[0] == '+';
     const char *deltaLayout = sState->overlayText;
     if (customPlus) {
         strncpy(layoutText, sState->overlayText, sizeof(layoutText));
         layoutText[sizeof(layoutText) - 1] = '\0';
-        // JP maps Shift-JIS plus onto the controller X icon. Reserve one
+        // Native fonts use the plus slot for the X button. Reserve one
         // ordinary glyph cell, then draw the sign geometrically below.
         layoutText[0] = 'P';
         deltaLayout = layoutText;
     }
     if (!gQftDisplay.adjacentStyle(anchor, deltaLayout, &style)) {
-#else
-    if (!gQftDisplay.adjacentStyle(anchor, sState->overlayText, &style)) {
-#endif
         return true;
     }
     static const u8 kColors[][3] = {
@@ -888,13 +897,11 @@ bool draw(Menu *menu) {
         {255, 196, 40},
     };
     const u8 color = sState->overlayColor < 4 ? sState->overlayColor : 1;
-#if defined(SUSAMUNE_VERSION_JP)
     if (customPlus) {
-        drawJpPositiveDelta(menu, style, kColors[color], sState->overlayText,
+        drawPositiveDelta(menu, style, kColors[color], sState->overlayText,
                             deltaLayout);
         return true;
     }
-#endif
     Creation::drawTextBox(menu, style, &kColors[color], 1,
                           sState->overlayText, true);
     return true;

@@ -1,0 +1,25 @@
+Moonshine 3.0.0 Timewarp PR33
+
+Install the entire PR33 app, including boot.dol, on each Wii. Replacing only the
+regional mod files does not update the ARM network worker. Protocol 7 is unchanged.
+
+Check two, three and four players in the same Plaza episode. Characters and name
+tags should remain visible while moving and after leaving/re-entering an area.
+Leave the room normally and wait five seconds before powering off to save the log.
+Logs remain in Moonshine data/logs on the launcher's SD/USB device.
+
+The ARM memcpy routine now returns the original destination, as required by C.
+The compiled movement queue reused that return value after a struct copy. PR32
+therefore rejected valid packets and could copy later packets beyond its output.
+Regression coverage executes the actual big-endian ARM release instructions,
+checking return values, copy boundaries and all three movement streams.
+
+Logging no longer creates an endless series of idle writes by logging its own
+flush. Storage timing is included with the next real network statistics sample.
+
+Please retest the native Sunshine error during ordinary play from an ISO on SD.
+The queue overwrite is fixed; that does not by itself prove every disc-error
+cause is resolved. Keep the logs if it recurs. Real Wii smoothness still needs
+hardware testing; host tests and Dolphin do not establish it.
+
+The previously reported Search crash is a separate unresolved investigation.

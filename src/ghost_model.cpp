@@ -1,4 +1,5 @@
 #include "susamune/ghost_model.hxx"
+#include "susamune/live_race.hxx"
 
 #include "Dolphin/GX.h"
 #include "Dolphin/MTX.h"
@@ -49,10 +50,12 @@ extern "C" void ghostFluddTransform(const void *, f32, u16, J3DTransformInfo *)
 // matching environment lights when they are drawn, after model submission.
 extern "C" void *gpLightManager;
 extern "C" u8 j3dSys[];
+extern "C" Mtx ghostCurrentMatrix asm("mCurrentMtx__6J3DSys");
 extern "C" void ghostLightEntry(void *, int)
     asm("changeLightDrawBuffer__15TLightWithDBSetFi");
 extern "C" void ghostLightExit(void *)
     asm("resetLightDrawBuffer__15TLightWithDBSetFv");
+extern "C" u32 ghostMaterialPacketVtable[] asm("__vt__12J3DMatPacket");
 
 J3DMtxCalc *J3DNewMtxCalcAnm(u32, J3DAnmTransform *);
 
@@ -63,7 +66,7 @@ enum Appearance {
     APPEARANCE_SHADOW = 0,
     APPEARANCE_PIANTA = 1,
     APPEARANCE_MARIO = 2,
-    MODEL_SLOT_COUNT = 2,
+    MODEL_SLOT_COUNT = 3,
 };
 
 struct AssetHeader {
@@ -126,6 +129,38 @@ const u32 kShadowLoadFlags = 0x10210000u;
 const u32 kPiantaLoadFlags = 0x10040000u;
 const u32 kShadowWorstCaseUsed = 0x118CDu;
 const u32 kPiantaWorstCaseUsed = 0x11B4Du;
+#if IS_EMULATOR
+const u32 kPrimaryHeapBase = 0x81800000u;
+const u32 kSecondaryHeapBase = kPrimaryHeapBase + SUSAMUNE_GHOST_MODEL_HEAP_SIZE;
+const u32 kShadowResourceBase = kSecondaryHeapBase + SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE;
+const u32 kPiantaResourceBase = kShadowResourceBase + SUSAMUNE_GHOST_SHADOW_BMD_SIZE;
+static_assert(kPiantaResourceBase + SUSAMUNE_GHOST_PIANTA_BMD_SIZE <= 0x81850000u &&
+              SUSAMUNE_GHOST_SHADOW_ASSET_BUFFER_SIZE <= SUSAMUNE_GHOST_MODEL_HEAP_SIZE &&
+              SUSAMUNE_GHOST_PIANTA_ASSET_BUFFER_SIZE <= SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE,
+              "Dolphin ghost assets exceed their existing model windows");
+
+bool prepareDolphinModelMemory() {
+    if (*reinterpret_cast<volatile u32 *>(0x80000028u) != 0x02000000u ||
+        *reinterpret_cast<volatile u32 *>(0x800000F0u) != 0x01800000u ||
+        !JKRHeap::sRootHeap || reinterpret_cast<u32>(JKRHeap::sRootHeap->mEnd) > kPrimaryHeapBase)
+        return false;
+    const auto interrupts = OSDisableInterrupts();
+    u32 upper, lower;
+    __asm__ volatile("mfspr %0,540\n mfspr %1,541" : "=r"(upper), "=r"(lower));
+    const bool valid = lower == 0x01000002u &&
+        (upper == 0x810000FFu || upper == 0x810001FFu);
+    if (valid) {
+        // Retail maps only 24 MiB. Extend the data BAT; leave the game arena alone.
+        const u32 extended = 0x810001FFu;
+        __asm__ volatile("sync\n mtspr 540,%0\n isync" :: "r"(extended) : "memory");
+    }
+    OSRestoreInterrupts(interrupts);
+    return valid;
+}
+#else
+const u32 kPrimaryHeapBase = SUSAMUNE_GHOST_MODEL_HEAP_PPC_BASE;
+const u32 kSecondaryHeapBase = SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE;
+#endif
 const u32 kModelAllocationPreflight = 0x12000u;
 const u32 kFixedExpHeapOverhead = 0x130u;
 const u32 kAttachmentInstanceMax = 0xFF00u;
@@ -150,6 +185,7 @@ const f32 kAngleToRadians = 0.00009587379924285257f;
 // Mario's BCK table is 0..198; retail indexes rider poses 0xB6..0xC6 directly.
 const u16 kMarioBckCount = 199u;
 const u32 kJumpBaseObjectId = 0x40000017u;
+const u32 kRedPepperObjectId = 0x40000395u;
 const char kShadowModelPath[] = "/scene/kagemario/default.bmd";
 const char kPiantaModelPath[] = "/scene/map/map/pad/monteman_model.bmd";
 const char kShadowTextureName[] = "H_kagemario_dummy";
@@ -203,14 +239,17 @@ static_assert(SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE +
 ModelSlot sSlots[MODEL_SLOT_COUNT];
 Appearance sLoadedAlternative = APPEARANCE_PIANTA;
 JKRExpHeap *sAttachmentHeap;
-const int kAttachments = 6; // held/Yoshi, body, nozzle for each runner
+const int kAttachments = 9; // held/Yoshi, body, nozzle for each runner
 AttachmentModel sAttachmentModels[kAttachments];
 bool sRegistered;
-bool sPrepared[2];
+bool sRefreshPlayer;
+bool sPrepared[3];
 AttachmentModel *sPreparedAttachments[kAttachments];
-bool sSubmitted[2];
-Ghost::VisualState sVisualStates[2];
-bool sHaveVisualState[2];
+bool sSubmitted[3];
+Ghost::VisualState sVisualStates[3];
+bool sHaveVisualState[3];
+bool sLoadedGroup;
+int sLoadedOnlineModel = -1;
 GXColor sGhostColor = {255, 255, 255, 160};
 TMarDirector *volatile sPendingDirector;
 volatile u32 sPendingGeneration;
@@ -235,7 +274,6 @@ bool validBmd(const void *resource, u32 size, u32 checksum) {
            Checksum::crc32(resource, size) == checksum;
 }
 
-#if !defined(IS_EMULATOR) || !IS_EMULATOR
 const u8 *validateMaster(void *raw, u32 bufferSize, u32 magic,
                          u32 totalSize, u32 bmdOffset, u32 bmdSize,
                          u32 payloadChecksum) {
@@ -278,7 +316,6 @@ const u8 *piantaMaster() {
                           SUSAMUNE_GHOST_PIANTA_BMD_SIZE,
                           SUSAMUNE_GHOST_PIANTA_PAYLOAD_CRC32);
 }
-#endif
 
 const void *stageLocalBmd(const char *path, u32 size, u32 checksum,
                           bool allowTextureMutation) {
@@ -290,14 +327,17 @@ const void *stageLocalBmd(const char *path, u32 size, u32 checksum,
 }
 
 const void *shadowResource() {
-#if !defined(IS_EMULATOR) || !IS_EMULATOR
     const u8 *master = shadowMaster();
     if (master) {
+#if IS_EMULATOR
+        u8 *working = reinterpret_cast<u8 *>(kShadowResourceBase);
+#else
         SusamuneGhostShadowAsset *workingAsset =
             const_cast<SusamuneGhostShadowAsset *>(
                 SUSAMUNE_GHOST_SHADOW_STAGING_PPC_PTR);
         u8 *working = reinterpret_cast<u8 *>(workingAsset) +
                       SUSAMUNE_GHOST_SHADOW_BMD_OFFSET;
+#endif
         memcpy(working, master, SUSAMUNE_GHOST_SHADOW_BMD_SIZE);
         DCFlushRange(working, SUSAMUNE_GHOST_SHADOW_BMD_SIZE);
         if (!validBmd(working, SUSAMUNE_GHOST_SHADOW_BMD_SIZE,
@@ -306,7 +346,6 @@ const void *shadowResource() {
         }
         return working;
     }
-#endif
     const void *local = stageLocalBmd(
         kShadowModelPath, SUSAMUNE_GHOST_SHADOW_BMD_SIZE,
         SUSAMUNE_GHOST_SHADOW_BMD_CRC32, true);
@@ -314,13 +353,18 @@ const void *shadowResource() {
 }
 
 const void *piantaResource() {
-#if !defined(IS_EMULATOR) || !IS_EMULATOR
     const u8 *master = piantaMaster();
     if (master && validBmd(master, SUSAMUNE_GHOST_PIANTA_BMD_SIZE,
                            SUSAMUNE_GHOST_PIANTA_BMD_CRC32)) {
+#if IS_EMULATOR
+        void *working = reinterpret_cast<void *>(kPiantaResourceBase);
+        memcpy(working, master, SUSAMUNE_GHOST_PIANTA_BMD_SIZE);
+        DCFlushRange(working, SUSAMUNE_GHOST_PIANTA_BMD_SIZE);
+        return working;
+#else
         return master;
-    }
 #endif
+    }
     const void *local = stageLocalBmd(
         kPiantaModelPath, SUSAMUNE_GHOST_PIANTA_BMD_SIZE,
         SUSAMUNE_GHOST_PIANTA_BMD_CRC32, false);
@@ -437,7 +481,7 @@ u64 alignTo(u64 value, u32 alignment) {
            ~static_cast<u64>(alignment - 1u);
 }
 
-bool validAttachmentSource(const J3DModel *source, u32 *estimateOut) {
+bool validAttachmentSource(const J3DModel *source, u32 *estimateOut, bool body = false) {
     if (!source || !source->mModelData || !estimateOut ||
         source->mBumpMtxBuf[0] || source->mBumpMtxBuf[1]) {
         return false;
@@ -449,8 +493,8 @@ bool validAttachmentSource(const J3DModel *source, u32 *estimateOut) {
     if (joints == 0 || joints > kYoshiMaxJointCount ||
         data->_84 > kYoshiMaxEnvelopeCount ||
         data->mDrawMtxData.mEntryNum > kYoshiMaxDrawMtxCount ||
-        shapes == 0 || shapes > kYoshiMaxShapeCount ||
-        materials == 0 || materials > kYoshiMaxMaterialCount ||
+        shapes == 0 || shapes > (body ? 64 : kYoshiMaxShapeCount) ||
+        materials == 0 || materials > (body ? 64 : kYoshiMaxMaterialCount) ||
         !data->mMaterials || !data->mShapes) {
         return false;
     }
@@ -521,12 +565,12 @@ bool isSupportedFruit(u32 objectId) {
     static_assert(TResetFruit::BANANA == 0x40000394u,
                   "retail fruit id changed");
     return objectId >= TResetFruit::COCONUT &&
-           objectId <= TResetFruit::BANANA;
+           objectId <= kRedPepperObjectId;
 }
 
 J3DModel *heldFruitSource(u32 objectId, u16 nameKey) {
     if (!gpStrategy || !isSupportedFruit(objectId)) return nullptr;
-    // Retail TResetFruit rows register in the enemy group.
+    // All six retail fruit rows, including RedPepper, use the enemy group.
     TIdxGroupObj *group = gpStrategy->mEnemyGroup;
     if (!group) return nullptr;
     for (JGadget::TList_pointer_void::iterator it =
@@ -537,7 +581,7 @@ J3DModel *heldFruitSource(u32 objectId, u16 nameKey) {
             actor->mKeyCode != nameKey) {
             continue;
         }
-        TResetFruit *fruit = static_cast<TResetFruit *>(actor);
+        TLiveActor *fruit = static_cast<TLiveActor *>(actor);
         return fruit->mActorData ? fruit->mActorData->mModel : nullptr;
     }
     return nullptr;
@@ -590,6 +634,14 @@ MActor *fluddActor(u8 nozzle, bool body) {
         : *reinterpret_cast<MActor **>(reinterpret_cast<u8 *>(gun->mNozzleList[nozzle]) + 0x380);
 }
 
+u32 nozzleAnimationIndex(u8 nozzle, bool firing) {
+    // Spray's table has two extra house/swap pairs before its firing keys.
+    return nozzle == TWaterGun::Spray ? (firing ? 5u : 6u)
+                                     : (firing ? 2u : 3u);
+}
+
+const char kTurboPropName[] __attribute__((section(".rodata.ghost_turbo_prop_name"))) = "chn_back_nozzle_prop";
+
 void animateFludd(J3DModelData *data, MActor *actor, bool body,
                   const Ghost::VisualState &state) {
     // Read the retail key table, but evaluate into private joints at an explicit
@@ -603,8 +655,10 @@ void animateFludd(J3DModelData *data, MActor *actor, bool body,
     const char *const *names = *reinterpret_cast<const char *const *const *>(table + 8);
     const u8 *const *keys = *reinterpret_cast<const u8 *const *const *>(table + 12);
     if (!names || !keys) return;
-    const bool firing = state.fludd.mode & SUSAMUNE_GHOST_FLUDD_SPRAYING;
-    u32 index = firing ? 2u : 3u;
+    const u8 nozzle = state.fludd.mode & 7u;
+    const bool firing = (state.fludd.mode & SUSAMUNE_GHOST_FLUDD_SPRAYING) &&
+        (!body || nozzle == TWaterGun::Spray);
+    u32 index = nozzleAnimationIndex(nozzle, firing);
     if (body) {
         const char *name = firing ? "wg_pump" : "wg_house";
         for (index = 0; index < count; ++index)
@@ -620,7 +674,138 @@ void animateFludd(J3DModelData *data, MActor *actor, bool body,
     for (u16 i = 0; i < data->getJointNum(); ++i)
         ghostFluddTransform(animation, frame, i,
             reinterpret_cast<J3DTransformInfo *>(reinterpret_cast<u8 *>(data->mJoints[i]) + 0x1c));
+    if (!body && nozzle == TWaterGun::Turbo && firing && data->mJointNames) {
+        const s32 prop = data->mJointNames->getIndex(kTurboPropName);
+        if (prop >= 0 && prop < data->getJointNum()) {
+            J3DTransformInfo &pose = *reinterpret_cast<J3DTransformInfo *>(
+                reinterpret_cast<u8 *>(data->mJoints[prop]) + 0x1c);
+            // Turbo's propeller is a retail callback, absent from private BMDs.
+            pose.rx += static_cast<u16>(state.visualQf * 2048u);
+        }
+    }
 }
+
+#pragma clang section text=".foxtrot.text"
+u8 yoshiAnimationIndex(const Ghost::VisualState &state) {
+    if (state.fludd.mode & SUSAMUNE_GHOST_VISUAL_YOSHI)
+        return reinterpret_cast<const u8 *>(&state.fludd)[1];
+    // Rider IDs collapse some Yoshi actions; V6 can reconstruct locomotion only.
+    static const u8 indices[] = {22, 2, 12, 4, 7, 8, 9, 10, 11,
+                                6, 14, 15, 16, 22, 18, 19, 22};
+    if (state.animationId < 0xb6 || state.animationId > 0xc6) return 22;
+    if (state.animationId == 0xb8 &&
+        (state.fludd.mode & SUSAMUNE_GHOST_FLUDD_SPRAYING)) return 13;
+    return indices[state.animationId - 0xb6];
+}
+
+bool yoshiUpperJoint(const J3DNode *root, const J3DNode *target, u16 &budget) {
+    if (!root || !budget) return false;
+    --budget;
+    if (root == target) return true;
+    const J3DNode *child = reinterpret_cast<const J3DNode *>(root->_10);
+    while (child && budget) {
+        if (yoshiUpperJoint(child, target, budget)) return true;
+        child = child->mChildNode;
+    }
+    return false;
+}
+
+s16 sYoshiHeadPitch;
+int yoshiHeadCallback(J3DNode *, int stage) {
+    if (!stage) {
+        Mtx rotation;
+        MTXRotRad(rotation, 'z', sYoshiHeadPitch * kAngleToRadians);
+        MTXConcat(ghostCurrentMatrix, rotation, ghostCurrentMatrix);
+    }
+    return 1;
+}
+
+void blendYoshiTransform(J3DTransformInfo &a, const J3DTransformInfo &b, f32 t) {
+    a.sx += (b.sx - a.sx) * t; a.sy += (b.sy - a.sy) * t;
+    a.sz += (b.sz - a.sz) * t;
+    a.tx += (b.tx - a.tx) * t; a.ty += (b.ty - a.ty) * t;
+    a.tz += (b.tz - a.tz) * t;
+    a.rx += static_cast<s16>(static_cast<s16>(b.rx - a.rx) * t);
+    a.ry += static_cast<s16>(static_cast<s16>(b.ry - a.ry) * t);
+    a.rz += static_cast<s16>(static_cast<s16>(b.rz - a.rz) * t);
+}
+
+bool animateYoshi(AttachmentModel &attachment, const Ghost::VisualState &state) {
+    MActor *actor = gpMarioOriginal && gpMarioOriginal->mYoshi
+        ? gpMarioOriginal->mYoshi->mActor : nullptr;
+    J3DModelData *data = attachment.data;
+    if (!actor || !actor->mAnmData || !data || !data->mJoints) return false;
+    const u16 joints = data->getJointNum();
+    if (!joints || joints > kYoshiMaxJointCount) return false;
+    for (u16 i = 0; i < joints; ++i)
+        if (!data->mJoints[i]) return false;
+    const u8 *table = *reinterpret_cast<u8 *const *>(
+        reinterpret_cast<const u8 *>(actor->mAnmData) + 0x2c);
+    if (!table) return false;
+    const u32 count = *reinterpret_cast<const u32 *>(table);
+    const u32 index = yoshiAnimationIndex(state);
+    const u8 *const *keys = *reinterpret_cast<const u8 *const *const *>(table + 12);
+    if (count > 32 || index >= count || !keys || !keys[index]) return false;
+    const u8 *animation = keys[index];
+    const s16 end = *reinterpret_cast<const s16 *>(animation + 2);
+    if (end <= 0 || *reinterpret_cast<const u16 *>(animation + 0x22) != joints)
+        return false;
+    struct SavedJoint {
+        J3DTransformInfo transform;
+        int (*callback)(J3DNode *, int);
+        u32 calc, oldCalc;
+    } saved[kYoshiMaxJointCount];
+    const u8 *visual = reinterpret_cast<const u8 *>(&state.fludd);
+    const bool recorded = (visual[0] & SUSAMUNE_GHOST_VISUAL_YOSHI) != 0;
+    const f32 frame = recorded ? ((visual[2] << 8) | visual[3]) * 0.0625f
+        : state.animationPhase * (static_cast<f32>(end) / 4096.0f);
+    const bool blend = recorded && index == 15 && visual[4] && count > 24 && keys[24] &&
+        *reinterpret_cast<const u16 *>(keys[24] + 0x22) == joints;
+    const u8 *upperAnimation = recorded && visual[5] && visual[5] < count
+        ? keys[visual[5]] : nullptr;
+    if (upperAnimation && *reinterpret_cast<const u16 *>(upperAnimation + 0x22) != joints)
+        upperAnimation = nullptr;
+    for (u16 i = 0; i < joints; ++i) {
+        J3DJoint *joint = data->mJoints[i];
+        u8 *raw = reinterpret_cast<u8 *>(joint);
+        saved[i].transform = *reinterpret_cast<J3DTransformInfo *>(raw + 0x1c);
+        saved[i].callback = joint->mCallback;
+        saved[i].calc = *reinterpret_cast<u32 *>(raw + 0x58);
+        saved[i].oldCalc = *reinterpret_cast<u32 *>(raw + 0x5c);
+        joint->mCallback = nullptr;
+        *reinterpret_cast<u32 *>(raw + 0x58) = 0;
+        *reinterpret_cast<u32 *>(raw + 0x5c) = 0;
+        J3DTransformInfo &transform = *reinterpret_cast<J3DTransformInfo *>(raw + 0x1c);
+        ghostFluddTransform(animation, frame, i, &transform);
+        if (blend) {
+            J3DTransformInfo walk;
+            ghostFluddTransform(keys[24], frame, i, &walk);
+            blendYoshiTransform(transform, walk, visual[4] / 255.0f);
+        }
+        u16 budget = joints;
+        if (upperAnimation && joints > 18 && yoshiUpperJoint(data->mJoints[18], joint, budget)) {
+            const f32 upperFrame = visual[6] *
+                (*reinterpret_cast<const s16 *>(upperAnimation + 2) / 255.0f);
+            ghostFluddTransform(upperAnimation, upperFrame, i, &transform);
+        }
+        if (recorded && i == 21) joint->mCallback = yoshiHeadCallback;
+    }
+    // Calc consumes transforms synchronously; shared retail joints are restored
+    // before entry or any live Yoshi work can run.
+    sYoshiHeadPitch = recorded ? static_cast<s8>(visual[7]) * 256 : 0;
+    attachment.model->J3DModel::calc();
+    sYoshiHeadPitch = 0;
+    for (u16 i = 0; i < joints; ++i) {
+        J3DJoint *joint = data->mJoints[i];
+        u8 *raw = reinterpret_cast<u8 *>(joint);
+        *reinterpret_cast<J3DTransformInfo *>(raw + 0x1c) = saved[i].transform;
+        joint->mCallback = saved[i].callback;
+        *reinterpret_cast<u32 *>(raw + 0x58) = saved[i].calc;
+        *reinterpret_cast<u32 *>(raw + 0x5c) = saved[i].oldCalc;
+    }
+    return true;
+}
+#pragma clang section text=""
 
 AttachmentModel *createAttachment(AttachmentModel &attachment, int runner,
                                   AttachmentKind kind, J3DModel *source) {
@@ -840,8 +1025,8 @@ bool loadModel(Appearance appearance) {
     slot.data = J3DModelLoaderDataBase::load(resource, loadFlags);
     if (slot.data && appearance == APPEARANCE_MARIO &&
         !GhostMarioModel::prepare(slot.data,
-            SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE,
-            SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE +
+            kSecondaryHeapBase,
+            kSecondaryHeapBase +
                 SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE)) slot.data = nullptr;
     if (slot.data && slot.data->getJointNum() == kExpectedJointCount) {
         void *storage = slot.heap->alloc(sizeof(J3DModel), 32);
@@ -887,12 +1072,70 @@ bool loadModel(Appearance appearance) {
     return true;
 }
 
+#if TIMEWARP_LIVE_RACING
+// Online: the second slot holds the opponent's Piantissimo or Mario model and
+// the player's own ghost keeps Shadow Mario, so the two never look alike.
+int onlineModel() { return LiveRace::opponentModel(); }
+bool onlineShown() { return LiveRace::opponentShown(); }
+bool groupOnline() { return LiveRace::groupState() != nullptr; }
+#else
+int onlineModel() { return -1; }
+bool onlineShown() { return false; }
+bool groupOnline() { return false; }
+#endif
+
+bool cloneGroupModels(unsigned source) {
+    ModelSlot &original = sSlots[source];
+    const unsigned other = source ^ 1u;
+    JKRExpHeap *heap = sSlots[other].heap;
+    u32 estimate;
+    if (!heap || !validAttachmentSource(original.model, &estimate, true)) return false;
+    u32 shared = 0;
+    for (u16 i = 0; i < original.data->getMaterialNum(); ++i)
+        shared += alignTo(original.data->mMaterials[i]->countDLSize(), 32u) * 2u +
+                  kDisplayListObjectSize + 3u * kAttachmentAllocOverhead;
+    if (shared > estimate || estimate * 2u - shared + 2048u >
+        SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE - kFixedExpHeapOverhead) return false;
+    clearLiveModel(sSlots[other]); clearLiveModel(sSlots[2]); heap->freeAll();
+    sSlots[2].heap = heap;
+    JKRHeap *previous = JKRHeap::sCurrentHeap;
+    heap->becomeCurrentHeap();
+    bool ok = true;
+    // Retail shared-material DLs keep both instances inside the existing heap.
+    // Matrices and packets remain per player; only our private materials share.
+    for (unsigned i = 0; i < 2 && ok; ++i) {
+        ModelSlot &copy = sSlots[i ? 2 : other];
+        copy.data = original.data;
+        void *storage = heap->alloc(sizeof(J3DModel), 32);
+        if (storage) copy.model = new (storage) J3DModel(copy.data, 0x20000, 1);
+        J3DAnmTransform *initial = marioAnimation(0, false);
+        if (initial) {
+            copy.mtxCalc = J3DNewMtxCalcAnm(copy.data->_C & 0xfu, initial);
+            copy.upperCalc = J3DNewMtxCalcAnm(copy.data->_C & 0xfu, initial);
+        }
+        ok = modelStorageReady(copy) && copy.mtxCalc && copy.upperCalc &&
+            configureOpacity(copy, ghostAlpha() == 255) && installColorCallbacks(copy);
+    }
+    restoreHeap(previous);
+    if (!ok) { clearLiveModel(sSlots[other]); clearLiveModel(sSlots[2]); }
+    return ok;
+}
+
 Appearance selectedAlternative() {
+    const int online = onlineModel();
+    if (online > 0) return online == 2 ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
     return gSettings.get(SETTING_GHOST_APPEARANCE) == 2
         ? APPEARANCE_MARIO : APPEARANCE_PIANTA;
 }
 
 __attribute__((noinline)) ModelSlot &runnerSlot(int runner) {
+    if (sLoadedGroup) return sSlots[runner];
+    const int online = onlineModel();
+    if (online >= 0) {
+        // A missing Piantissimo falls back to Shadow Mario; the name tag stays.
+        const int opponent = online && sSlots[1].model ? 1 : 0;
+        return sSlots[runner ? opponent : opponent ^ 1];
+    }
     const int selected = gSettings.get(SETTING_GHOST_APPEARANCE) != 0;
     return sSlots[selected ^ (runner != 0 ? 1 : 0)];
 }
@@ -923,8 +1166,8 @@ void *lightSetFor(const Ghost::VisualState &state) {
 bool prepareRunner(int runner, const Ghost::VisualState &state) {
     ModelSlot &slot = runnerSlot(runner);
     if (!slot.model || !slot.mtxCalc || !state.visible ||
-        !gSettings.getBool(SETTING_GHOST_DISPLAY) ||
-        (gMenu && gMenu->shown())) return false;
+        !((sLoadedGroup || runner) && onlineModel() >= 0 ? onlineShown() : Ghost::displayEnabled()) ||
+        (gMenu && gMenu->shown() && !Ghost::observerPaused())) return false;
 
     J3DAnmTransform *animation =
         marioAnimation(state.animationId, state.yoshi != 0);
@@ -1039,6 +1282,9 @@ AttachmentModel *prepareAttachment(int index,
         yaw[1][3] = state.y;
         yaw[2][3] = state.z;
         MTXCopy(yaw, *attachment->model->getBaseTRMtx());
+        if (!animateYoshi(*attachment, state)) return nullptr;
+        attachment->model->J3DModel::viewCalc();
+        return attachment;
     } else {
         ModelSlot &mario = runnerSlot(runner);
         if (!mario.data || !mario.model || !mario.data->mJointNames)
@@ -1093,14 +1339,27 @@ void entryAttachment(AttachmentModel &attachment) {
     }
 }
 
+void rebuildPlayerDrawBuffers();
+
+void refreshPlayerPose(JDrama::TGraphics *graphics) {
+    if (!sRefreshPlayer || !gpMarioOriginal) return;
+    sRefreshPlayer = false;
+    // Refresh the paused pose at the retail render boundary, with valid
+    // graphics, without running MOVE or advancing gameplay.
+    gpMarioOriginal->calcAnim(2, graphics);
+    gpMarioOriginal->calcView(graphics);
+    rebuildPlayerDrawBuffers();
+}
+
 class GhostView : public JDrama::TViewObj {
 public:
     GhostView() : JDrama::TViewObj("Moonshine Ghost Models") {}
 
-    virtual void perform(u32 cue, JDrama::TGraphics *) override {
+    virtual void perform(u32 cue, JDrama::TGraphics *graphics) override {
         if (!sRegistered) return;
         if ((cue & (kCueCalcView | kCueEntry)) == 0) return;
         if (cue & kCueCalcView) {
+            refreshPlayerPose(graphics);
             Ghost::prepareVisual();
             sGhostColor.a = ghostAlpha();
             AttachmentRequest requests[kAttachments] = {};
@@ -1112,10 +1371,14 @@ public:
                     clearLiveModel(slot);
                 }
             }
-            for (int runner = 0; runner < 2; ++runner) {
+            for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
+#if TIMEWARP_LIVE_RACING
+                sHaveVisualState[runner] = Ghost::renderVisualState(runner, &sVisualStates[runner]);
+#else
                 sHaveVisualState[runner] = runner == 0
                     ? Ghost::visualState(&sVisualStates[runner])
                     : Ghost::secondaryVisualState(&sVisualStates[runner]);
+#endif
                 sPrepared[runner] = sHaveVisualState[runner] &&
                     prepareRunner(runner, sVisualStates[runner]);
                 if (!sPrepared[runner]) continue;
@@ -1145,7 +1408,7 @@ public:
             }
         }
         if (cue & kCueEntry) {
-            for (int runner = 0; runner < 2; ++runner) {
+            for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
                 ModelSlot &slot = runnerSlot(runner);
                 if (!sPrepared[runner] || !modelPacketsReady(slot)) continue;
                 void *lighting = lightSetFor(sVisualStates[runner]);
@@ -1202,9 +1465,77 @@ bool retirePlayerDrawBuffers() {
     return true;
 }
 
+bool privateGhostPacket(const void *packet) {
+    const u32 address = reinterpret_cast<u32>(packet);
+    return (address >= kPrimaryHeapBase &&
+            address - kPrimaryHeapBase < SUSAMUNE_GHOST_MODEL_HEAP_SIZE) ||
+           (address >= kSecondaryHeapBase &&
+            address - kSecondaryHeapBase < SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE) ||
+           (address >= SUSAMUNE_ADDR_MOD_ATTACHMENT_HEAP &&
+            address - SUSAMUNE_ADDR_MOD_ATTACHMENT_HEAP < SUSAMUNE_MOD_ATTACHMENT_HEAP_SIZE);
+}
+
+bool readableGhostQueue(const void *pointer, u32 size) {
+    const u32 address = reinterpret_cast<u32>(pointer);
+    if ((address & 3u) || address + size < address) return false;
+    if (address >= 0x80000000u && address + size <= 0x81800000u) return true;
+    return size && privateGhostPacket(pointer) &&
+        privateGhostPacket(reinterpret_cast<const void *>(address + size - 1));
+}
+
+bool onlyGhostPackets(J3DPacket *packet, u32 &budget, u32 depth) {
+    if (depth > 16) return false;
+    for (; packet; packet = packet->mParentPacket) {
+        if (!budget || !readableGhostQueue(packet, sizeof(J3DPacket)) ||
+            !privateGhostPacket(packet)) return false;
+        --budget;
+        if (!onlyGhostPackets(packet->mChildPacket, budget, depth + 1)) return false;
+        if (packet->vTable == ghostMaterialPacketVtable) {
+            if (!readableGhostQueue(packet, sizeof(J3DMatPacket)) ||
+                !onlyGhostPackets(static_cast<J3DMatPacket *>(packet)->mShapePacket,
+                                  budget, depth + 1)) return false;
+        }
+    }
+    return true;
+}
+
+bool stripGhostPacketList(J3DPacket **link, u32 &budget, u32 depth) {
+    if (depth > 16) return false;
+    while (J3DPacket *packet = *link) {
+        if (!budget || !readableGhostQueue(packet, sizeof(J3DPacket))) return false;
+        --budget;
+        const bool owned = privateGhostPacket(packet);
+        if (owned) {
+            // A private material cannot retain a native shape after its heap is recycled.
+            if (!onlyGhostPackets(packet->mChildPacket, budget, depth + 1)) return false;
+        } else if (!stripGhostPacketList(&packet->mChildPacket, budget, depth + 1)) return false;
+        if (packet->vTable == ghostMaterialPacketVtable) {
+            if (!readableGhostQueue(packet, sizeof(J3DMatPacket))) return false;
+            J3DPacket **shapes = reinterpret_cast<J3DPacket **>(
+                &static_cast<J3DMatPacket *>(packet)->mShapePacket);
+            if (owned ? !onlyGhostPackets(*shapes, budget, depth + 1)
+                      : !stripGhostPacketList(shapes, budget, depth + 1)) return false;
+        }
+        // The field named mParentPacket is retail J3DPacket::mpNext (+4).
+        if (owned) *link = packet->mParentPacket;
+        else link = &packet->mParentPacket;
+    }
+    return true;
+}
+
+bool stripGhostDrawBuffer(J3DDrawBuffer *buffer, u32 &budget) {
+    if (!buffer) return true;
+    if (!readableGhostQueue(buffer, sizeof(J3DDrawBuffer)) || buffer->mSize > 0x10000u ||
+        !readableGhostQueue(buffer->mFrames, buffer->mSize * sizeof(J3DPacket *))) return false;
+    J3DPacket **heads = reinterpret_cast<J3DPacket **>(buffer->mFrames);
+    for (u32 i = 0; i < buffer->mSize; ++i)
+        if (!stripGhostPacketList(heads + i, budget, 0)) return false;
+    return stripGhostPacketList(&buffer->mPacket, budget, 0);
+}
+
 __attribute__((noinline)) void clearPreparedPackets() {
-    sSubmitted[0] = sSubmitted[1] = false;
-    sPrepared[0] = sPrepared[1] = false;
+    memset(sSubmitted, 0, sizeof(sSubmitted));
+    memset(sPrepared, 0, sizeof(sPrepared));
     memset(sPreparedAttachments, 0, sizeof(sPreparedAttachments));
 }
 
@@ -1266,15 +1597,20 @@ void loadPendingStage() {
     if (sAttachmentHeap) sAttachmentHeap->freeAll();
     clearLiveModel(sSlots[APPEARANCE_SHADOW]);
     clearLiveModel(sSlots[APPEARANCE_PIANTA]);
-    const bool shadow = loadModel(APPEARANCE_SHADOW);
+    clearLiveModel(sSlots[2]);
+    loadModel(APPEARANCE_SHADOW);
     sLoadedAlternative = selectedAlternative();
-    const bool alternative = loadModel(sLoadedAlternative);
+    loadModel(sLoadedAlternative);
+    sLoadedGroup = groupOnline(); sLoadedOnlineModel = onlineModel();
+    if (sLoadedGroup) cloneGroupModels(sLoadedOnlineModel > 0 && sSlots[1].model ? 1 : sSlots[0].model ? 0 : 1);
+    // Paused takeover still needs this render callback if ghost assets fail.
     const bool registered =
-        (shadow || alternative) && registerView(director) &&
+        registerView(director) &&
         generation == sPendingGeneration;
     if (!registered) {
         clearLiveModel(sSlots[APPEARANCE_SHADOW]);
         clearLiveModel(sSlots[APPEARANCE_PIANTA]);
+        clearLiveModel(sSlots[2]);
     }
     if (generation == sPendingGeneration) {
         sRegistered = registered;
@@ -1297,12 +1633,15 @@ void init() {
     sLoadedAlternative = APPEARANCE_PIANTA;
     sView = new (sViewStorage) GhostView();
     sViewWord = nullptr;
+#if IS_EMULATOR
+    if (!prepareDolphinModelMemory()) return;
+#endif
     JKRHeap *oldHeap = JKRHeap::sCurrentHeap;
     sSlots[APPEARANCE_SHADOW].heap = JKRExpHeap::create(
-        reinterpret_cast<void *>(SUSAMUNE_GHOST_MODEL_HEAP_PPC_BASE),
+        reinterpret_cast<void *>(kPrimaryHeapBase),
         SUSAMUNE_GHOST_MODEL_HEAP_SIZE, JKRHeap::sRootHeap, false);
     sSlots[APPEARANCE_PIANTA].heap = JKRExpHeap::create(
-        reinterpret_cast<void *>(SUSAMUNE_GHOST_SECONDARY_HEAP_PPC_BASE),
+        reinterpret_cast<void *>(kSecondaryHeapBase),
         SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE, JKRHeap::sRootHeap, false);
     sAttachmentHeap = JKRExpHeap::create(
         reinterpret_cast<void *>(SUSAMUNE_ADDR_MOD_ATTACHMENT_HEAP),
@@ -1316,7 +1655,8 @@ void beginFrame() {
     // including after a settings/state restore in the same stage.
     if (sLoadedGeneration == sPendingGeneration &&
         sPendingDirector == gpMarDirector &&
-        sLoadedAlternative != selectedAlternative()) {
+        (sLoadedAlternative != selectedAlternative() || sLoadedGroup != groupOnline() ||
+         (groupOnline() && sLoadedOnlineModel != onlineModel()))) {
         u32 generation = sPendingGeneration + 1u;
         sPendingGeneration = generation ? generation : 1;
     }
@@ -1324,6 +1664,7 @@ void beginFrame() {
 }
 
 void beforeStageSetup() {
+    sRefreshPlayer = false;
     // Retail never clears this stage-local singleton.
     gpScreenTexture = nullptr;
 }
@@ -1346,7 +1687,7 @@ bool submitted(bool secondary) {
 }
 
 bool emissionPoint(unsigned runner, unsigned nozzle, unsigned emitter, TVec3f &position) {
-    if (runner >= 2 || nozzle >= 6) return false;
+    if (runner >= (sLoadedGroup ? 3u : 2u) || nozzle >= 6) return false;
     const AttachmentModel &head = sAttachmentModels[runner * 3 + 2];
     const u8 *row = nozzleBmdData[nozzle];
     if (!head.model || !head.data || !row[0x14] || row[0x14] > 3) return false;
@@ -1368,10 +1709,42 @@ bool preserveSavestateBindings(bool (*keep)(const void *word)) {
     return keep(sViewWord);
 }
 
+#pragma clang section text=""
+bool prepareSavestate() {
+    // Only the stage heap rewinds; private ghost packets and their links do not.
+    u32 budget = 0x4000u;
+    if (gpMarioOriginal &&
+        (!stripGhostDrawBuffer(gpMarioOriginal->mDrawBufferA, budget) ||
+         !stripGhostDrawBuffer(gpMarioOriginal->mDrawBufferB, budget))) return false;
+    if (!gpLightManager) return true;
+    if (!readableGhostQueue(gpLightManager, 0x18)) return false;
+    void **sets = *reinterpret_cast<void ***>(static_cast<u8 *>(gpLightManager) + 0x14);
+    if (!sets) return true;
+    if (!readableGhostQueue(sets, 2 * sizeof(void *))) return false;
+    u8 *set = static_cast<u8 *>(sets[1]);
+    if (!set) return true;
+    if (!readableGhostQueue(set, 0x24)) return false;
+    if (!set[0x20]) return true;
+    const int count = *reinterpret_cast<int *>(set + 0x1c);
+    u8 **lights = *reinterpret_cast<u8 ***>(set + 0x10);
+    if (count < 0 || count > 64 || !readableGhostQueue(lights, count * sizeof(void *))) return false;
+    for (int light = 0; light < count; ++light) {
+        if (!readableGhostQueue(lights[light], 0x1c)) return false;
+        for (u32 offset = 0x14; offset <= 0x18; offset += 4) {
+            u8 *object = *reinterpret_cast<u8 **>(lights[light] + offset);
+            if (!readableGhostQueue(object, 0x14) ||
+                !stripGhostDrawBuffer(*reinterpret_cast<J3DDrawBuffer **>(object + 0x10), budget)) return false;
+        }
+    }
+    return true;
+}
+
+#pragma clang section text=".foxtrot.text"
 void onSavestateLoaded() {
     rebuildPlayerDrawBuffers();
     clearPreparedPackets();
 }
+void refreshPlayerAfterTakeover() { sRefreshPlayer = true; }
 #pragma clang section text=""
 
 }  // namespace GhostModel

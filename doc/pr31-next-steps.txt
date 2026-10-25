@@ -1,0 +1,9 @@
+PR31 remaining checks
+
+- Actual Wii three/four-player packet cadence, movement, ping and reconnects.
+- Confirm reconnect visibility recovers without changing areas on any player.
+- Compare slow/weak Wi-Fi with a good local connection before changing rates.
+- If stalls remain, measure IOS request completion latency and receiver queue
+  occupancy on hardware; a Dolphin packet capture cannot identify that alone.
+- The PR29 JP search crash (overwritten instruction at 8047AFE8) is unresolved.
+- No relay, automatic ghost service or unrelated feature was added.

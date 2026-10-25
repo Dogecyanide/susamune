@@ -33,7 +33,8 @@ enum SettingId {
 
     SETTING_COUNT,
     // UI-only alias: use cycle/valueLabel, never index the serialized values.
-    SETTING_BUTTSLIDE_DISPLAY = SETTING_COUNT
+    SETTING_BUTTSLIDE_DISPLAY = SETTING_COUNT,
+    SETTING_SIRENA_PINEAPPLE = 255
 };
 #undef SUSAMUNE_SETTING_ENUM
 
@@ -131,6 +132,7 @@ public:
     int ilPbBlockerCount() const;
 
 private:
+    friend class SectionHistoryDisplay;
     void adopt(const volatile SusamuneCfg *cfg);
     void stageInto(volatile SusamuneCfg *cfg);
 

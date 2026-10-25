@@ -15,6 +15,9 @@ public:
 
     void beginOverlayFrame();
     void draw(Menu *menu, const char *text) const;
+    u8 gradientOptions(const u8 (*rgb)[3]) const { return rgb == mTextRgb ? mGradientOptions : 0; }
+    bool verticalGradient(const u8 (*textRgb)[3]) const;
+    bool animatedGradient(const u8 (*textRgb)[3]) const;
     void drawTasFallback(Menu *menu) const;
     bool hasAnchor(const char *text) const;
     bool adjacentStyle(const char *anchorText, const char *text,
@@ -42,6 +45,7 @@ private:
     bool           mDirty;
     bool           mDirtyBeforeEdit;
     bool           mLeadingZero;
+    u8             mGradientOptions;
 };
 
 extern QftDisplay &gQftDisplay;

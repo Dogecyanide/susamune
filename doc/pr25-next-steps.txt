@@ -1,0 +1,30 @@
+After PR25: ghost sync and project handoff
+
+Automatic ghost upload/download is feasible, but needs a separate service.
+Start with a small authenticated upload/download API and object storage, plus
+an index of game region, route, profile, time, ghost format and checksum.
+Choose whether uploads are private, shared by link, or public. Make uploads
+opt-in, queue them after a completed recording, and retain local files while
+offline. Validate length/format/checksum on both sides; downloading must never
+silently replace a different local PB. A PC companion is the shortest pilot;
+native Wii support needs bounded background networking and SD publication in
+the ARM storage owner. It must not stall gameplay or share its working buffers
+with a live save/load operation. This does not require a ranked/account system
+inside the game: a limited device token can authorize the pilot.
+
+For future human/agent maintainers, the highest-value next work is:
+1. One parameterized release command and release manifest in place of repeated
+   package_prNN scripts. Keep build, timer protection, ZIP and SD receipts.
+2. A short current architecture guide with ownership boundaries (PPC gameplay,
+   ARM network/storage, Dolphin companion), fixed memory map, wire/file versions
+   and append-only settings. Move historical investigations out of AGENTS.md.
+3. A setup script that reports toolchain versions and finds local paths without
+   relying on one developer's directories. Document clean regional disc inputs.
+4. Keep portable group/rules/codec tests separate from the small Dolphin/Wii
+   acceptance list. Replace fragile source-extraction fixtures incrementally
+   with compiled interfaces when those modules are next changed.
+5. A dated known-issues list, per-feature owners and a reproducible crash-report
+   procedure. Each release should record what was simulated, rendered in
+   Dolphin and actually confirmed on Wii, especially for mixed-region online.
+
+These are follow-up recommendations, not new services included in PR25.

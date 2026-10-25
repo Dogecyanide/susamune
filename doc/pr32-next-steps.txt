@@ -1,0 +1,11 @@
+PR32 remaining hardware checks
+
+- Measure two-player delay first, then three/four-player visibility and cadence.
+- Collect each participant's connection log after a failed test, keeping host
+  identity and approximate symptom times with it. Compare raw IOS completion,
+  queue consumption and relayed participant sequence/time progression.
+- Verify kick and replacement of an AFK guest, then re-invitation.
+- Get the exact operation/path for the old-Foxtrot launch failure; migration
+  tests pass, but that person's SD/USB failure has not been reproduced.
+- PR29 Pineapple search overwritten instruction remains unexplained.
+- No relay or automatic ghost upload/download service is included.

@@ -51,13 +51,20 @@ StateCodec::Result lastRepack;volatile u32 testStage;
 static bool observedCommit(StateSlotPool*p,const StatePoolMemory*m,u32 slot,u32 n,const u8*t,u32 size){
  testStage=300+slot;bool result=StateSlotPoolCommitBanked(p,m,slot,n,t,size);testStage=400+slot;return result;}
 u8 *staging;void *work;
+static bool sBusy,sDiskActive,sDiskLoadReady;
+namespace TransferLease {static bool sharedMap(){return false;}}
+static bool statePoolSharedMemory(StatePoolMemory&){return false;}
+namespace StateStorage {
+static void *stagingBase(){return staging;}
+static u32 stagingSize(){return testStagingBytes;}
+}
 #define kStagingBase staging
 #define SUSAMUNE_STATE_STAGING_SIZE testStagingBytes
 #define SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE 0x4e000u
 void *codecWorkspace(){return work;}
 StateCodec::Result countedCompress(void*w,u32 ws,const StateCodec::ReadSpan*s,u32 n,
- const StateCodec::WriteSpan*d,u32 dn,bool compact=false,bool quick=false){
- ++candidateModes[quick?0:compact?2:1];return StateCodec::compress(w,ws,s,n,d,dn,compact,quick);}
+ const StateCodec::WriteSpan*d,u32 dn,bool compact=false,bool quick=false,StateCodec::ZeroRange zero={}){
+ ++candidateModes[quick?0:compact?2:1];return StateCodec::compress(w,ws,s,n,d,dn,compact,quick,zero);}
 ''' + functions + r'''
 #define API extern "C" __declspec(dllexport)
 API void setup(StatePoolMemory*m,u8*t,u32 ts,void*w){
@@ -67,8 +74,8 @@ API void setup(StatePoolMemory*m,u8*t,u32 ts,void*w){
 API u32 measure(const void*p,u32 n,u32 mode){StateCodec::ReadSpan source={p,n};
  return StateCodec::compress(work,0x4e000,&source,1,0,0,mode==2,mode==0).compressedBytes;}
 API int install(u32 slot,const void*p,u32 n,u32 mode){
- StateCodec::ReadSpan source={p,n};StateCodec::WriteSpan out[2];poolWriteSpans(sPool.used,poolCapacity()-sPool.used,out);
- StateCodec::Result r=StateCodec::compress(work,0x4e000,&source,1,out,2,mode==2,mode==0);
+ StateCodec::ReadSpan source={p,n};StateCodec::WriteSpan out[STATE_POOL_MEMORY_BANKS];poolWriteSpans(sPool.used,poolCapacity()-sPool.used,out);
+ StateCodec::Result r=StateCodec::compress(work,0x4e000,&source,1,out,STATE_POOL_MEMORY_BANKS,mode==2,mode==0);
  if(r.status!=StateCodec::SUCCESS)return 0;
  sPool.slots[slot]={sPool.used,r.compressedBytes};sPool.used+=r.compressedBytes;
  StoredState&s=sSlots[slot];memset(s.sidecars,41+slot,sizeof(s.sidecars));s.generation=100+slot;

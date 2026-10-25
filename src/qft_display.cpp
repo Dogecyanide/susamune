@@ -1,4 +1,5 @@
 #include "susamune/qft_display.hxx"
+#include "susamune/section_history.hxx"
 
 #include "Dolphin/string.h"
 
@@ -6,6 +7,8 @@
 #include "susamune/mem2_map.h"
 #include "susamune/practice_session.hxx"
 #include "susamune/qft_timer.hxx"
+#include "susamune/settings.hxx"
+#include "susamune/gradient_motion.hxx"
 
 // Keep display/editor code in the existing upper span; neither heap moves.
 #if defined(__powerpc__)
@@ -41,12 +44,14 @@ CreationStyle QftDisplay::defaults() {
 }
 
 void QftDisplay::resetDefaults() {
+    SectionHistoryDisplay::adopt(15);
     mStyle           = defaults();
     Creation::fillWhite(mTextRgb, SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS);
     mEditor.reset();
     mDirty           = false;
     mDirtyBeforeEdit = false;
     mLeadingZero     = false;
+    mGradientOptions = 0;
     sAnchorDrawn     = false;
     sAnchorWidth     = 0;
     sAnchorText[0]   = '\0';
@@ -74,6 +79,18 @@ void QftDisplay::adopt(const volatile SusamuneQftDisplayCfg *src) {
         return;
     }
 
+    mGradientOptions = src->version == 2 && src->reserved[1] == 0x47 && src->reserved[0] <= 5
+        ? src->reserved[0] : 0;
+    // Layout profiles predate these setting IDs; their fixed palette tail carries them.
+    if (src->reservedV1[0] == 0x47) {
+        const SettingId ids[] = {SETTING_QFT_VERTICAL_GRADIENT, SETTING_QFT_GRADIENT_MOTION,
+            SETTING_QFT_GRADIENT_SPEED, SETTING_NATIVE_VERTICAL_GRADIENT,
+            SETTING_NATIVE_GRADIENT_MOTION, SETTING_NATIVE_GRADIENT_SPEED};
+        for (unsigned i = 0; i < 6; ++i)
+            if (src->reservedV1[i + 1] < (i % 3 == 1 ? GradientMotion::Count : i % 3 ? 3 : 2))
+                gSettings.set(ids[i], src->reservedV1[i + 1]);
+    }
+    SectionHistoryDisplay::adopt(src->reservedV1[8] == 0x48 ? src->reservedV1[7] : 15);
     const u16 p = src->present;
     if (p & SUSAMUNE_QFT_DISPLAY_X)          mStyle.x = src->x;
     if (p & SUSAMUNE_QFT_DISPLAY_Y)          mStyle.y = src->y;
@@ -125,12 +142,20 @@ void QftDisplay::stageInto(volatile SusamuneQftDisplayCfg *dst) const {
     dst->padding        = mStyle.padding;
     dst->leadingZero    = mLeadingZero ? 1 : 0;
     for (u32 i = 0; i < sizeof(dst->reservedV1); i++) dst->reservedV1[i] = 0;
+    const SettingId ids[] = {SETTING_QFT_VERTICAL_GRADIENT, SETTING_QFT_GRADIENT_MOTION,
+        SETTING_QFT_GRADIENT_SPEED, SETTING_NATIVE_VERTICAL_GRADIENT,
+        SETTING_NATIVE_GRADIENT_MOTION, SETTING_NATIVE_GRADIENT_SPEED};
+    dst->reservedV1[0] = 0x47;
+    for (unsigned i = 0; i < 6; ++i) dst->reservedV1[i + 1] = gSettings.get(ids[i]);
+    dst->reservedV1[7] = SectionHistoryDisplay::style();
+    dst->reservedV1[8] = 0x48;
     dst->slotPresent = SUSAMUNE_QFT_DISPLAY_ALL_SLOTS;
     for (int i = 0; i < SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS; i++) {
         for (int c = 0; c < 3; c++)
             dst->textRgb[i][c] = mTextRgb[i][c];
     }
-    for (u32 i = 0; i < sizeof(dst->reserved); i++) dst->reserved[i] = 0;
+    dst->reserved[0] = mGradientOptions;
+    dst->reserved[1] = 0x47;
 }
 
 void QftDisplay::draw(Menu *menu, const char *text) const {
@@ -163,6 +188,14 @@ void QftDisplay::draw(Menu *menu, const char *text) const {
 }
 
 #pragma clang section text=".foxtrot.text"
+
+bool QftDisplay::verticalGradient(const u8 (*textRgb)[3]) const {
+    return textRgb == mTextRgb && gSettings.getBool(SETTING_QFT_VERTICAL_GRADIENT);
+}
+
+bool QftDisplay::animatedGradient(const u8 (*textRgb)[3]) const {
+    return textRgb == mTextRgb && gSettings.getBool(SETTING_QFT_GRADIENT_MOTION);
+}
 
 bool QftDisplay::hasAnchor(const char *text) const {
     return sAnchorDrawn && text && strcmp(sAnchorText, text) == 0;
@@ -198,7 +231,10 @@ void QftDisplay::beginEditor() {
     if (editing()) return;
     mDirtyBeforeEdit = mDirty;
     mEditor.begin(&mStyle, mTextRgb, mBackupRgb,
-                  SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS);
+                  SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS, 0, nullptr,
+                  CreationEditor::CAP_ALL | CreationEditor::CAP_GRADIENT);
+    mEditor.setGradientDirectionSetting(SETTING_QFT_VERTICAL_GRADIENT);
+    mEditor.setGradientOptions(&mGradientOptions);
 }
 
 void QftDisplay::updateEditor(TMarioGamePad *pad) {
@@ -217,7 +253,7 @@ void QftDisplay::drawEditor(Menu *menu) const {
     const u16 selected = mEditor.target() ? mEditor.target() - 1 : 0xffff;
     Creation::drawTextBox(menu, mStyle, mTextRgb,
                           SUSAMUNE_QFT_DISPLAY_TEXT_SLOTS, "12:34:567",
-                          true, selected);
+                          true, selected, mGradientOptions);
     mEditor.draw(menu, "QFT timer editor", "12:34:567");
 }
 

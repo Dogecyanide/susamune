@@ -1,8 +1,61 @@
 # Ghost file format
 
-Status: V6 adds FLUDD observations. V3/V4/V5 remain readable with their original
-byte semantics and 15-minute bounds; V1/V2 test ghosts remain unsupported.
-Files without teaching data continue to export as V4.
+Status: new recordings use V9. V3–V8 remain readable with their original byte
+semantics and bounds; V1/V2 test ghosts remain unsupported. Legacy recordings
+keep their original metadata semantics when exported.
+
+## V9 initial RNG observation
+
+V9 retains every V8 extent and chunk: the 256-byte header, 64-entry segment
+table, 16-byte poses, SGTI V3 and SGCA V1. `requiredFeatures` is exactly **63**
+(V8's 31 plus bit `0x20`). The first segment repurposes its two reserved words:
+
+| Segment offset | File offset | Bytes | Value |
+|---|---|---:|---|
+| `0x18` | `0x118` | 4 | Big-endian libc `rand.c` state observed at the first retained pose |
+| `0x1c` | `0x11c` | 4 | Provenance, exactly `1` = first retained pose |
+
+Every seed bit pattern, including zero, is valid. All later segment metadata
+words and all unused descriptors remain zero. V3–V8 require both words to be
+zero in every segment. Unknown provenance is rejected. The segment-table,
+payload and file checksums cover the observation. Older V8-only readers reject
+V9 as unsupported before interpreting these bytes.
+
+The observation is read only, after that pose's position/animation capture. A
+provisional clock restart replaces it along with the abandoned first pose;
+subsequent poses and scene segments retain it. A ghost savestate prefix carries
+it in the existing segment span. `Track`, `SavedPrefix`, snapshot 18, all bank
+and transfer extents, and recording/savestate capacity are unchanged. V9 keeps
+17,983 poses, 36,000 inputs, 5,312 camera keys and the 71,928-QF limit.
+
+The first retained pose may be anchored to QF zero after the game's opening
+materialisation has begun. This observation is therefore **not a stage-init
+seed or a promise of deterministic replay**. Import, Watch, racing and online
+play never apply it to the game's RNG. Boss/enemy replay is outside this format
+addition. The host validator exposes `initial_rng.seed` and
+`initial_rng.provenance`; legacy files return `initial_rng: null`.
+
+V7's visual payload and V8's camera chunk are documented in
+[the V7 notes](timewarp-ghost-v7.md) and
+[the V8 notes](timewarp-ghost-camera-v8.md). V9 does not alter SGTI flags,
+reserved words or checksums, nor SGCA encoding.
+
+## Watch path overlay
+
+Ghost visuals > Path is Off by default and is cosmetic during Watch only.
+It borrows the current validated scene segment's existing poses, projects
+through the final rendered camera, and submits at most 96 line segments per
+runner. Watch 2 uses cyan for the primary and gold for the secondary ghost.
+It allocates no memory, retains no pose pointer, and uses no gameplay effects,
+input, timer or RNG changes. Race ghosts and online ghosts never use it.
+
+The whole current segment is evenly decimated to at most 97 points, so long
+routes are approximate. Edges longer than 1,600 game units are omitted; scene
+boundaries are never connected. Camera/viewport clipping happens before screen
+conversion. It is a screen overlay visible through scenery, not depth-tested
+world geometry. Opening the menu, loading another scene or disabling Path
+suppresses it; scrubbing uses the selected segment. No file data is added for
+the path.
 
 ## V6 FLUDD extension
 

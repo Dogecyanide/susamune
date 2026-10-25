@@ -1,10 +1,12 @@
 /* Heapless archive service. PPC owns pool/staging until the matching receipt. */
 #include "SusamuneStateStorage.h"
+#include "SusamuneTransfer.h"
 #include "Config.h"
 #include "SusamuneCfg.h"
 #include "string.h"
 #include "ff_utf8.h"
 #include "susamune/state_storage.h"
+#include "susamune/state_export_plan.h"
 #include "susamune/data_paths.h"
 #include "susamune/mod_bin.h"
 
@@ -13,18 +15,26 @@ extern u32 GAME_ID;
 #define STATE_MAILBOX ((struct SusamuneStateStorageMailbox *)SUSAMUNE_STATE_STORAGE_PHYS_BASE)
 #define STATE_POOL ((u8 *)SUSAMUNE_MEM2_SNAPSHOT_PHYS_BASE)
 #define STATE_POOL_EXTRA ((u8 *)SUSAMUNE_STATE_POOL_EXTRA_PHYS_BASE)
-#define STATE_STAGING ((u8 *)NIN_MEM2_SEGABOOT_PHYS_BASE)
+#define STATE_STAGING SusamuneTransferStageBase()
 #endif
+#define SusamuneStateHeaderValid(h) SusamuneStateHeaderValidCapacity((h), SusamuneTransferPoolSize())
+#define SusamuneTasManifestValid(p) SusamuneTasManifestValidCapacity((p), SusamuneTransferPoolSize())
 
 enum { IDLE, EXPORT_FIND, OPEN_FILE, HEADER_IO, METADATA_IO, PAYLOAD_IO,
-       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE, PREPARED_REQUEST };
+       COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE, PREPARED_REQUEST,
+       CATALOG_ADOPT_FIND, CATALOG_ADOPT_COMMIT };
 static bool Enabled, FileOpen, DirOpen;
+static bool Retiring, CloseFailed;
 static u32 Ack, Phase, FileId, Offset, PayloadCrc, ConfigId;
+static u32 ExportPlanCrc;
 static struct SusamuneStateRequest Request;
 static struct SusamuneStateArchiveHeader Header;
 static FIL File;
 static DIR Scan;
 static char Directory[64], Path[96], Temporary[96];
+static char ImportedPath[96];
+typedef char StateImportedPathFits[
+    sizeof("1:" MOONSHINE_DATA_ROOT MOONSHINE_STATES_DIR "/") + 63 <= sizeof(ImportedPath) ? 1 : -1];
 typedef char StateNamePathsFit[
     sizeof("1:" MOONSHINE_DATA_ROOT MOONSHINE_TAS_DIR
            "/tas_4294967295/state_4294967295.name1.tmp") <= 72 ? 1 : -1];
@@ -36,10 +46,29 @@ static char RequestName[SUSAMUNE_STATE_NAME_BYTES];
 static struct SusamuneTasRequest TasContext;
 static struct SusamuneTasManifest TasProject;
 
+static FRESULT StateCloseFile(FIL *file)
+{
+    FRESULT result = f_close(file);
+    if (result != FR_OK) CloseFailed = true;
+    return result;
+}
+
+static FRESULT StateCloseDirectory(DIR *directory)
+{
+    FRESULT result = f_closedir(directory);
+    if (result != FR_OK) CloseFailed = true;
+    return result;
+}
+
+/* Include local name/project handles in the retirement proof. */
+#define f_close StateCloseFile
+#define f_closedir StateCloseDirectory
+
 static u8 *PoolPiece(u32 offset, u32 *size)
 {
     u32 available;
     u8 *result;
+    if (SusamuneTransferActive()) return SusamuneTransferPoolPiece(offset, size);
     if (offset < SUSAMUNE_STATE_POOL_SIZE) {
         available = SUSAMUNE_STATE_POOL_SIZE - offset;
         result = STATE_POOL + offset;
@@ -50,6 +79,90 @@ static u8 *PoolPiece(u32 offset, u32 *size)
     }
     if (*size > available) *size = available;
     return result;
+}
+
+static bool PlannedExport(void)
+{
+    return Request.command == SUSAMUNE_STATE_CMD_EXPORT &&
+        Request.reserved == SUSAMUNE_STATE_EXPORT_PLAN;
+}
+
+static bool TailWindow(void)
+{
+    return Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW &&
+        (Request.reserved & SUSAMUNE_STATE_WINDOW_TAIL);
+}
+
+static u32 ReadWindowSize(void)
+{
+    return Request.reserved & SUSAMUNE_STATE_WINDOW_SIZE_MASK;
+}
+
+static bool ReadWindowValid(void)
+{
+    u32 size = ReadWindowSize();
+    return Request.id && Request.id <= SUSAMUNE_STATE_MAX_ARCHIVE_ID &&
+        (!TailWindow() || (SusamuneTransferActive() && size <= SUSAMUNE_TRANSFER_IMPORT_WINDOW_SIZE)) &&
+        SusamuneTransferWindowRange(Request.packedSize, Request.poolOffset, size);
+}
+
+static bool ValidateExportPlan(void)
+{
+    const struct SusamuneStateExportPlan *plan = (const struct SusamuneStateExportPlan *)STATE_STAGING;
+    u32 i, raw = 0, prefixSize = 0;
+    u8 prefix[2];
+    if (!SusamuneTransferActive() || Request.poolOffset ||
+        (TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE)) return false;
+    sync_before_read((void *)plan, sizeof(*plan));
+    if (!SusamuneStateExportPlanValid(plan, &Header, SusamuneTransferPoolSize())) return false;
+    for (i = 0; i < plan->count; ++i) {
+        const struct SusamuneStateExportRange *range = &plan->blocks[i];
+        u32 size = range->size, blockRaw;
+        u8 *bytes = PoolPiece(range->offset, &size);
+        if (!bytes || size != range->size) return false;
+        if (plan->kind == SUSAMUNE_STATE_EXPORT_DEFLATE) {
+            u32 n = 0;
+            sync_before_read(bytes, size < 2 ? size : 2);
+            while (prefixSize < 2 && n < size) prefix[prefixSize++] = bytes[n++];
+            continue;
+        }
+        sync_before_read(bytes, 8);
+        blockRaw = SusamuneStateExportBlockRaw(bytes, size, i + 1 == plan->count);
+        if (!blockRaw || raw > Header.rawSize || blockRaw > Header.rawSize - raw) return false;
+        raw += blockRaw;
+    }
+    if (plan->kind == SUSAMUNE_STATE_EXPORT_QUICK) {
+        if (raw != Header.rawSize) return false;
+    } else if (prefixSize != 2 || (prefix[0] & 15u) != 8 || (prefix[0] >> 4) > 7 ||
+               (prefix[1] & 32u) || (((u32)prefix[0] << 8) | prefix[1]) % 31u) return false;
+    ExportPlanCrc = plan->checksum;
+    return true;
+}
+
+static u8 *ExportPlanPiece(u32 offset, u32 *size)
+{
+    static const u8 frame[8] = {0x4d, 0x53, 0x4c, 0x34, 0, 2, 0, 0};
+    const struct SusamuneStateExportPlan *plan = (const struct SusamuneStateExportPlan *)STATE_STAGING;
+    u32 i;
+    sync_before_read((void *)plan, sizeof(*plan));
+    if (plan->checksum != ExportPlanCrc ||
+        !SusamuneStateExportPlanValid(plan, &Header, SusamuneTransferPoolSize())) return NULL;
+    if (plan->kind == SUSAMUNE_STATE_EXPORT_QUICK) {
+        if (offset < sizeof(frame)) {
+            if (*size > sizeof(frame) - offset) *size = sizeof(frame) - offset;
+            return (u8 *)frame + offset;
+        }
+        offset -= sizeof(frame);
+    }
+    for (i = 0; i < plan->count; ++i) {
+        const struct SusamuneStateExportRange *range = &plan->blocks[i];
+        if (offset < range->size) {
+            if (*size > range->size - offset) *size = range->size - offset;
+            return PoolPiece(range->offset + offset, size);
+        }
+        offset -= range->size;
+    }
+    return NULL;
 }
 
 static u32 BootConfigId(void)
@@ -70,6 +183,37 @@ static void Paths(u32 id)
 {
     _sprintf(Path, "%s/state_%08u.mss", Directory, id);
     _sprintf(Temporary, "%s/state_%08u.tmp", Directory, id);
+}
+
+static FRESULT ArchiveStemStatus(u32 id)
+{
+    static const char *suffixes[] = {"mss", "tmp", "used", "name0", "name1", "name0.tmp", "name1.tmp"};
+    char path[96];
+    FILINFO info;
+    FRESULT result;
+    u32 i;
+    for (i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+        _sprintf(path, "%s/state_%08u.%s", Directory, id, suffixes[i]);
+        result = f_stat_char(path, &info);
+        if (result != FR_NO_FILE) return result;
+    }
+    return FR_NO_FILE;
+}
+
+static FRESULT ReserveImportedId(void)
+{
+    FIL file;
+    char marker[96];
+    FRESULT result, closed;
+    UINT done = 0;
+    _sprintf(marker, "%s/state_%08u.used", Directory, FileId);
+    result = f_open_char(&file, marker, FA_WRITE | FA_CREATE_NEW);
+    if (result != FR_OK) return result;
+    result = f_write(&file, &Header, sizeof(Header), &done);
+    if (result == FR_OK && done == sizeof(Header)) result = f_sync(&file);
+    else result = FR_DISK_ERR;
+    closed = f_close(&file);
+    return result != FR_OK ? result : closed;
 }
 
 static bool ReadNames(u32 id, u32 crc, struct SusamuneStateNameRecord *latest, u32 *copy)
@@ -216,10 +360,36 @@ static void Finish(u32 status)
     Phase = IDLE;
 }
 
+bool SusamuneStateStorageQuiescent(void)
+{
+    return Phase == IDLE && !FileOpen && !DirOpen && !CloseFailed;
+}
+
+bool SusamuneStateStorageRetireFailed(void)
+{
+    return CloseFailed;
+}
+
+bool SusamuneStateStorageRequestReady(u32 seq, u32 session, u32 command)
+{
+    struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
+    sync_before_read(&m->request, sizeof(m->request));
+    return Enabled && Phase == IDLE && !Retiring && seq && seq != Ack &&
+        m->request.seq == seq && m->request.session == session && m->request.command == command;
+}
+bool SusamuneStateStorageReceiptReady(u32 seq, u32 session, u32 command)
+{
+    struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
+    return Phase == IDLE && Ack == seq && Request.seq == seq && Request.session == session &&
+        Request.command == command && m->receipt.seq == seq && m->receipt.session == session && m->receipt.command == command;
+}
+
 void SusamuneStateStorageInit(void)
 {
     struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
     FRESULT result;
+    if (!SusamuneStateStorageQuiescent()) return;
+    Retiring = false;
     Enabled = FileOpen = DirOpen = false;
     Phase = Ack = 0;
     memset(&TasContext, 0, sizeof(TasContext));
@@ -242,8 +412,11 @@ void SusamuneStateStorageInit(void)
 bool SusamuneStateStoragePending(void)
 {
     if (!Enabled) return false;
+    if (Retiring) return Phase != IDLE;
+    if (Phase != IDLE) return SusamuneTransferAllows(TW_OWNER_STATE, Request.seq, Request.session, Request.command);
     sync_before_read(&STATE_MAILBOX->request, sizeof(STATE_MAILBOX->request));
-    return Phase != IDLE || STATE_MAILBOX->request.seq != Ack;
+    return STATE_MAILBOX->request.seq != Ack && SusamuneTransferAllows(TW_OWNER_STATE,
+        STATE_MAILBOX->request.seq, STATE_MAILBOX->request.session, STATE_MAILBOX->request.command);
 }
 
 static bool ValidFileSize(u32 size)
@@ -264,6 +437,26 @@ static u32 CatalogId(const WCHAR *name)
     return id;
 }
 
+static bool ImportedLeaf(const WCHAR *name, char *leaf)
+{
+    u32 n = 0, i;
+    const char extension[] = ".mss";
+    while (name[n]) {
+        const WCHAR c = name[n];
+        if (n >= 63 || c < 32 || c > 126 || c == '/' || c == '\\' || c == ':' ||
+            c == '"' || c == '*' || c == '?' || c == '<' || c == '>' || c == '|') return false;
+        leaf[n++] = (char)c;
+    }
+    if (n <= 4) return false;
+    leaf[n] = 0;
+    for (i = 0; i < 4; ++i) {
+        char c = leaf[n - 4 + i];
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (c != extension[i]) return false;
+    }
+    return true;
+}
+
 static void AddCatalog(void)
 {
     struct SusamuneStateCatalog *c = &STATE_MAILBOX->catalog;
@@ -277,6 +470,7 @@ static void AddCatalog(void)
     entry.headerCrc = Header.headerCrc; entry.sceneKey = Header.sceneKey;
     EffectiveName(ScanId, entry.name);
     for (at = 0; at < c->count && c->entries[at].id < entry.id; ++at) {}
+    if (at < c->count && c->entries[at].id == entry.id) return;
     if (c->count == SUSAMUNE_STATE_CATALOG_COUNT) c->more = 1;
     else ++c->count;
     if (at == SUSAMUNE_STATE_CATALOG_COUNT) return;
@@ -285,6 +479,12 @@ static void AddCatalog(void)
 }
 
 #include "SusamuneTasStorage.inc"
+
+static bool TransferCancelled(void)
+{
+    return !Retiring && SusamuneTransferCancelled(TW_OWNER_STATE) &&
+        (Request.command <= SUSAMUNE_STATE_CMD_CANCEL || Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW);
+}
 
 void SusamuneStateStorageService(void)
 {
@@ -295,22 +495,33 @@ void SusamuneStateStorageService(void)
     UINT done;
     u8 *bytes;
     if (!Enabled) return;
+    if (Phase != IDLE && !Retiring &&
+        !SusamuneTransferAllows(TW_OWNER_STATE, Request.seq, Request.session, Request.command)) return;
     sync_before_read(&m->request, sizeof(m->request));
     sync_before_read(&m->tasRequest, sizeof(m->tasRequest));
-    if (Phase != IDLE && (memcmp(&Request, &m->request, sizeof(Request)) ||
+    if (Retiring && Phase == IDLE) return;
+    if (!Retiring && Phase != IDLE && (memcmp(&Request, &m->request, sizeof(Request)) ||
         memcmp(&TasContext, &m->tasRequest, sizeof(TasContext)))) {
         Finish(SUSAMUNE_STATE_CANCELLED);
         return;
     }
+    if (Phase != IDLE && TransferCancelled()) { Finish(SUSAMUNE_STATE_CANCELLED); return; }
     if (Phase >= TAS_PHASE_BASE) { TasService(); return; }
     if (Phase == IDLE) {
         if (m->request.seq == Ack) return;
+        if (!SusamuneTransferAllows(TW_OWNER_STATE, m->request.seq, m->request.session, m->request.command)) return;
         Request = m->request;
         TasContext = m->tasRequest;
         _sprintf(Directory, "%s" MOONSHINE_STATES_DIR, SusamuneCfgStoragePrefix());
-        FileId = Offset = 0;
+        FileId = Offset = ExportPlanCrc = 0;
         if (!Request.seq || !Request.session || !SusamuneTasRequestValid(&TasContext) ||
-            (Request.reserved && Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+            (Request.reserved && Request.command != SUSAMUNE_STATE_CMD_READ_WINDOW && !PlannedExport())) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
+        if (TransferCancelled()) {
+            Finish(SUSAMUNE_STATE_CANCELLED); return;
+        }
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW && !ReadWindowValid()) {
+            Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
+        }
         if (TasStart()) return;
         Phase = PREPARED_REQUEST;
     }
@@ -327,10 +538,11 @@ void SusamuneStateStorageService(void)
             sync_before_read(&m->header, sizeof(m->header));
             Header = m->header;
             if (!SusamuneStateHeaderValid(&Header) || Header.gameId != GAME_ID || Header.configId != ConfigId ||
-                Header.packedSize != Request.packedSize || !SusamuneStatePoolRange(Request.poolOffset, Request.packedSize) ||
+                Header.packedSize != Request.packedSize || !SusamuneTransferPoolRange(Request.poolOffset, Request.packedSize) ||
                 !TasTransferHeaderValid()) {
                 Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
             }
+            if (PlannedExport() && !ValidateExportPlan()) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
             sync_before_read(m->metadata, Header.metadataSize);
             if (Header.metadataCrc != SusamuneStateCrc(m->metadata, Header.metadataSize)) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
             if (TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE && !TasTapeMetadataValid(false)) {
@@ -340,14 +552,10 @@ void SusamuneStateStorageService(void)
         }
         if (Request.command == SUSAMUNE_STATE_CMD_IMPORT) {
             if (!Request.id || Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
-                !SusamuneStateImportRange(Request.poolOffset, Request.packedSize)) { Finish(SUSAMUNE_STATE_FULL); return; }
+                !SusamuneTransferImportRange(Request.poolOffset, Request.packedSize)) { Finish(SUSAMUNE_STATE_FULL); return; }
             FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
         }
         if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW) {
-            if (!Request.id || Request.id > SUSAMUNE_STATE_MAX_ARCHIVE_ID ||
-                !SusamuneStateWindowRange(Request.packedSize, Request.poolOffset, Request.reserved)) {
-                Finish(SUSAMUNE_STATE_BAD_REQUEST); return;
-            }
             FileId = Request.id; Paths(FileId); Phase = OPEN_FILE; return;
         }
         if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE) {
@@ -365,13 +573,7 @@ void SusamuneStateStorageService(void)
     }
     if (Phase == EXPORT_FIND) {
         Paths(FileId);
-        result = f_stat_char(Path, &info);
-        if (result == FR_NO_FILE) result = f_stat_char(Temporary, &info);
-        if (result == FR_NO_FILE) {
-            char marker[72];
-            _sprintf(marker, "%s/state_%08u.used", Directory, FileId);
-            result = f_stat_char(marker, &info);
-        }
+        result = ArchiveStemStatus(FileId);
         if (result == FR_NO_FILE) { Phase = OPEN_FILE; return; }
         if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         if (++FileId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) Finish(SUSAMUNE_STATE_FULL);
@@ -423,20 +625,24 @@ void SusamuneStateStorageService(void)
         PayloadCrc = 0xFFFFFFFFu; Phase = PAYLOAD_IO; return;
     }
     if (Phase == PAYLOAD_IO) {
-        const u32 payloadSize = Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW ? Request.reserved : Header.packedSize;
+        const u32 payloadSize = Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW ? ReadWindowSize() : Header.packedSize;
         amount = payloadSize - Offset;
         if (amount > SUSAMUNE_STATE_CHUNK_SIZE) amount = SUSAMUNE_STATE_CHUNK_SIZE;
         if (Request.command == SUSAMUNE_STATE_CMD_EXPORT) {
-            bytes = TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE ?
+            bytes = PlannedExport() ? ExportPlanPiece(Offset, &amount) :
+                TasContext.projectId && TasContext.role == SUSAMUNE_TAS_TAPE_ROLE ?
                 STATE_STAGING + Offset : PoolPiece(Request.poolOffset + Offset, &amount);
+            if (!bytes || !amount) { Finish(SUSAMUNE_STATE_BAD_REQUEST); return; }
             sync_before_read(bytes, amount);
             PayloadCrc = SusamuneStateCrcUpdate(PayloadCrc, bytes, amount);
             result = f_write(&File, bytes, amount, &done);
         } else {
-            if (Offset < SUSAMUNE_STATE_STAGING_SIZE) {
-                if (amount > SUSAMUNE_STATE_STAGING_SIZE - Offset) amount = SUSAMUNE_STATE_STAGING_SIZE - Offset;
+            if (TailWindow()) {
+                bytes = STATE_STAGING + SUSAMUNE_TRANSFER_IMPORT_WINDOW_OFFSET + Offset;
+            } else if (Offset < SusamuneTransferStageSize()) {
+                if (amount > SusamuneTransferStageSize() - Offset) amount = SusamuneTransferStageSize() - Offset;
                 bytes = STATE_STAGING + Offset;
-            } else bytes = PoolPiece(Request.poolOffset + Offset - SUSAMUNE_STATE_STAGING_SIZE, &amount);
+            } else bytes = PoolPiece(Request.poolOffset + Offset - SusamuneTransferStageSize(), &amount);
             // The packed tail can share a cache line with an occupied slot.
             sync_before_read(bytes, amount);
             result = f_read(&File, bytes, amount, &done);
@@ -489,8 +695,15 @@ void SusamuneStateStorageService(void)
                 Finish(SUSAMUNE_STATE_OK); return;
             }
             ScanId = CatalogId(info.fname);
-            if (!ScanId || ScanId <= Request.id || (info.fattrib & AM_DIR)) continue;
-            ScanSize = info.fsize; Paths(ScanId);
+            if ((info.fattrib & AM_DIR) || (ScanId && ScanId <= Request.id)) continue;
+            ScanSize = info.fsize;
+            if (ScanId) Paths(ScanId);
+            else {
+                char leaf[64];
+                if (!ImportedLeaf(info.fname, leaf)) continue;
+                _sprintf(Path, "%s/%s", Directory, leaf);
+                memcpy(ImportedPath, Path, sizeof(ImportedPath));
+            }
             if (f_open_char(&File, Path, FA_READ) != FR_OK) continue;
             FileOpen = true; Phase = CATALOG_HEADER; return;
         }
@@ -498,7 +711,41 @@ void SusamuneStateStorageService(void)
     }
     if (Phase == CATALOG_HEADER) {
         result = f_read(&File, &Header, sizeof(Header), &done);
-        if (result == FR_OK && done == sizeof(Header)) AddCatalog();
-        f_close(&File); FileOpen = false; Phase = CATALOG_NEXT;
+        if (f_close(&File) != FR_OK) result = FR_DISK_ERR;
+        FileOpen = false; Phase = CATALOG_NEXT;
+        if (result != FR_OK || done != sizeof(Header) ||
+            !SusamuneStateHeaderValid(&Header) || !ValidFileSize(ScanSize)) return;
+        if (ScanId) AddCatalog();
+        else {
+            FileId = Request.id + 1u;
+            if (FileId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) { Finish(SUSAMUNE_STATE_FULL); return; }
+            Phase = CATALOG_ADOPT_FIND;
+        }
+        return;
     }
+    if (Phase == CATALOG_ADOPT_FIND) {
+        Paths(FileId);
+        result = ArchiveStemStatus(FileId);
+        if (result == FR_NO_FILE) { Phase = CATALOG_ADOPT_COMMIT; return; }
+        if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
+        if (++FileId > SUSAMUNE_STATE_MAX_ARCHIVE_ID) Finish(SUSAMUNE_STATE_FULL);
+        return;
+    }
+    if (Phase == CATALOG_ADOPT_COMMIT) {
+        // Reserve before rename; interrupted adoption never reuses a stale ID.
+        if (ReserveImportedId() != FR_OK || f_rename_char(ImportedPath, Path) != FR_OK) {
+            Finish(SUSAMUNE_STATE_IO_ERROR); return;
+        }
+        ScanId = FileId; AddCatalog(); Phase = CATALOG_NEXT;
+    }
+}
+
+bool SusamuneStateStorageRetire(void)
+{
+    Retiring = true;
+    if (Phase != IDLE) SusamuneStateStorageService();
+    if (!SusamuneStateStorageQuiescent()) return false;
+    sync_before_read(&STATE_MAILBOX->request, sizeof(STATE_MAILBOX->request));
+    Ack = STATE_MAILBOX->request.seq;
+    return true;
 }

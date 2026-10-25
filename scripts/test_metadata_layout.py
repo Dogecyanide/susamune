@@ -1,4 +1,4 @@
-"""Check production metadata packing, colour slots and reserved-byte migration."""
+"""Check metadata label spacing, packing, colour slots and config migration."""
 
 import ctypes as C
 from pathlib import Path
@@ -23,15 +23,22 @@ class MetadataLayoutTests(unittest.TestCase):
         source = path.read_text(encoding="utf-8")
         pools = source[source.index("constexpr u8 kTextOffsets[]"):
                        source.index("template <unsigned N>")]
-        structs = "\n".join(function_source(path, s) + ";" for s in (
-            "struct LayoutOptions", "struct HorizontalMetrics"))
+        structs = "\n".join(source[source.index(s):source.index("};", source.index(s)) + 2] for s in (
+            "struct LayoutOptions {", "struct HorizontalMetrics {"))
         funcs = "\n".join(function_source(path, s) for s in (
             "inline int clampi(", "LayoutOptions layoutOptions(", "int lineHeight(",
             "int fieldPrecision(", "const u8 *fieldLabelOffsets(",
-            "void drawBackground(", "bool horizontalWrap(",
+            "void drawBackground(", "int labelValueOffset(", "void drawStandard(",
+            "bool horizontalWrap(",
             "HorizontalMetrics horizontalMetrics(", "void drawStandardHorizontal("))
         methods = "\n".join(function_source(path, s) for s in (
             "void MetadataDisplay::adoptStyle(", "void MetadataDisplay::stageStyleInto("))
+        kernel = ROOT / "launcher/kernel/SusamuneCfg.c"
+        persistence = "\n".join(function_source(kernel, s) for s in (
+            "static bool ParseQftU8(", "static bool ParseQftRgb(",
+            "static bool ParseMetadataRgbKey(", "static void ApplyMetadataStyleKey(",
+            "static void EmitInputU8(", "static void EmitInputU16(",
+            "static void EmitMetadataStyleU8(", "static void EmitMetadataDisplaySection("))
         shim = r'''
 #include "susamune/susamune_cfg.h"
 typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
@@ -47,6 +54,33 @@ extern "C" void *memset(void *d,int v,unsigned long long n) {
     for(unsigned long long i=0;i<n;i++)((char*)d)[i]=(char)v;return d;
 }
 int length(const char *s) { int n=0;while(s[n])n++;return n; }
+int strcmp(const char *a,const char *b) {
+    while(*a&&*a==*b){a++;b++;}return (u8)*a-(u8)*b;
+}
+int memcmp(const void *a,const void *b,unsigned n) {
+    const u8 *p=(const u8*)a,*q=(const u8*)b;while(n--){if(*p!=*q)return *p-*q;p++;q++;}return 0;
+}
+char *number(char *out,unsigned v) {
+    char digits[10];int n=0;do{digits[n++]=(char)('0'+v%10);v/=10;}while(v);
+    while(n)*out++=digits[--n];return out;
+}
+int _sprintf(char *out,const char *format,...) {
+    char *start=out;__builtin_va_list args;__builtin_va_start(args,format);
+    while(*format) {
+        if(*format!='%'){*out++=*format++;continue;}format++;
+        if(*format=='s'){const char *s=__builtin_va_arg(args,const char*);while(*s)*out++=*s++;}
+        else if(*format=='u')out=number(out,__builtin_va_arg(args,unsigned));
+        format++;
+    }
+    *out=0;__builtin_va_end(args);return out-start;
+}
+struct FIL { char text[16384];unsigned length; };
+void Emit(FIL *f,int *,const char *s,u32 length) {
+    memcpy(f->text+f->length,s,length);f->length+=length;f->text[f->length]=0;
+}
+void EmitStr(FIL *f,int *err,const char *s) { Emit(f,err,s,length(s)); }
+static char MetadataDisplaySection[32];
+static SusamuneCfg iniCfg;
 int snprintf(char *out,unsigned cap,const char *,...) {
     __builtin_va_list a;__builtin_va_start(a,cap);
     const char *s=__builtin_va_arg(a,const char*);unsigned n=0;
@@ -74,7 +108,7 @@ public:
 enum {FIELD_X,FIELD_Y,FIELD_Z,FIELD_ANGLE,FIELD_HSPD,FIELD_VSPD,
       FIELD_QF,FIELD_CANGLE,FIELD_INVINC,FIELD_GOOP,FIELD_SPIN,FIELD_COUNT};
 CreationStyle mStyle;u8 mTextRgb[SUSAMUNE_METADATA_STYLE_TEXT_SLOTS][3];
-u8 mFieldGap,mRowGap,mColumns;bool mCompact,mDirty;
+u8 mFieldGap,mRowGap,mColumns,mValueGap;bool mCompact,mDirty;
 void clampLayout();
 void adoptStyle(const volatile SusamuneMetadataStyleCfg*);
 void stageStyleInto(volatile SusamuneMetadataStyleCfg*)const;
@@ -95,16 +129,19 @@ Values editorValues() {
 void MetadataDisplay::clampLayout() {
     mFieldGap=(u8)clampi(mFieldGap,0,32);mRowGap=(u8)clampi(mRowGap,0,16);
     mColumns=(u8)clampi(mColumns,0,11);
+    mValueGap=(u8)clampi(mValueGap,0,32);
 }
 extern "C" __declspec(dllexport) int render(unsigned mask,int editing,int compact,
-    int columns,int gap,int rowGap,int size,int x,int y,int digits) {
+    int columns,int gap,int rowGap,int size,int x,int y,int digits,
+    int valueGap,int vertical,int labels) {
     Values v=editing?editorValues():Values{};
     if(!editing)for(int i=0;i<11;i++)for(int j=0;j<digits;j++)v.text[i][j]='1';
-    MetadataDisplayLiveCfg cfg={mask,0};CreationStyle style={};
+    MetadataDisplayLiveCfg cfg={mask,(unsigned)labels};CreationStyle style={};
     style.x=(u16)x;style.y=(u16)y;style.padding=0;style.bgA=255;
-    LayoutOptions options=layoutOptions((u8)gap,(u8)rowGap,(u8)columns,compact!=0);
+    LayoutOptions options=layoutOptions((u8)gap,(u8)rowGap,(u8)columns,compact!=0,(u8)valueGap);
     count=bgx=bgy=bgw=bgh=0;Menu menu;
-    drawStandardHorizontal(&menu,cfg,style,0,v,editing!=0,size,size+3,0xffff,options);
+    if(vertical)drawStandard(&menu,cfg,style,0,v,editing!=0,size,size+3,0xffff,options.valueGap);
+    else drawStandardHorizontal(&menu,cfg,style,0,v,editing!=0,size,size+3,0xffff,options);
     return count;
 }
 extern "C" __declspec(dllexport) int get(int index,int field) {
@@ -112,19 +149,32 @@ extern "C" __declspec(dllexport) int get(int index,int field) {
     int v[]={calls[index].x,calls[index].y,calls[index].width,calls[index].slot};return v[field];
 }
 extern "C" __declspec(dllexport) unsigned persist(unsigned flags,unsigned a,unsigned b,
-    unsigned c,unsigned d,unsigned *out) {
-    MetadataDisplay display={};display.mFieldGap=12;
+    unsigned c,unsigned d,unsigned valueGap,unsigned *out) {
+    MetadataDisplay display={};display.mFieldGap=12;display.mValueGap=7;
     SusamuneMetadataStyleCfg src={},dst={};
     src.magic=SUSAMUNE_METADATA_STYLE_MAGIC;src.version=SUSAMUNE_METADATA_STYLE_VERSION;
     src.present=(unsigned short)flags;src.reserved0[0]=(u8)a;src.reserved0[1]=(u8)b;
     src.reserved0[2]=(u8)c;src.reserved0[3]=(u8)d;
+    src.reserved0[4]=(u8)valueGap;
     display.adoptStyle(&src);display.stageStyleInto(&dst);
     for(int i=0;i<14;i++)out[i]=dst.reserved0[i];
     return dst.present;
 }
+extern "C" __declspec(dllexport) void iniReset(const char *region) {
+    memset(&iniCfg,0,sizeof(iniCfg));_sprintf(MetadataDisplaySection,"metadata_display_%s",region);
+    iniCfg.metadataStyle.magic=SUSAMUNE_METADATA_STYLE_MAGIC;
+    iniCfg.metadataStyle.version=SUSAMUNE_METADATA_STYLE_VERSION;
+}
+extern "C" __declspec(dllexport) void iniKey(const char *key,const char *text) {
+    ApplyMetadataStyleKey(&iniCfg.metadataStyle,key,text);
+}
+extern "C" __declspec(dllexport) const char *iniText() {
+    static FIL out;out.length=0;int err=0;
+    EmitMetadataDisplaySection(&out,&err,&iniCfg);return out.text;
+}
 '''
         file = Path(cls.folder.name) / "metadata.cpp"
-        file.write_text(shim + pools + structs + funcs + methods + more, encoding="ascii")
+        file.write_text(shim + pools + structs + funcs + methods + persistence + more, encoding="ascii")
         dll = file.with_suffix(".dll")
         subprocess.run([str(compiler), "--target=x86_64-pc-windows-msvc", "-shared",
                         "-nostdlib", "-fuse-ld=lld", "-Wl,/noentry", "-O1",
@@ -132,13 +182,18 @@ extern "C" __declspec(dllexport) unsigned persist(unsigned flags,unsigned a,unsi
                        check=True, text=True)
         cls.lib = C.CDLL(str(dll))
         cls.addClassCleanup(lambda: C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
-        cls.lib.render.argtypes = [C.c_int] * 10
+        cls.lib.render.argtypes = [C.c_int] * 13
         cls.lib.get.argtypes = [C.c_int, C.c_int]
-        cls.lib.persist.argtypes = [C.c_uint] * 5 + [C.POINTER(C.c_uint)]
+        cls.lib.persist.argtypes = [C.c_uint] * 6 + [C.POINTER(C.c_uint)]
+        cls.lib.iniReset.argtypes = [C.c_char_p]
+        cls.lib.iniKey.argtypes = [C.c_char_p, C.c_char_p]
+        cls.lib.iniText.restype = C.c_char_p
 
     def render(self, mask=2047, editing=0, compact=1, columns=0, gap=12,
-               rowGap=0, size=14, x=16, y=112, digits=1):
-        count = self.lib.render(mask, editing, compact, columns, gap, rowGap, size, x, y, digits)
+               rowGap=0, size=14, x=16, y=112, digits=1, valueGap=7,
+               vertical=0, labels=0):
+        count = self.lib.render(mask, editing, compact, columns, gap, rowGap,
+                                size, x, y, digits, valueGap, vertical, labels)
         return ([tuple(self.lib.get(i, j) for j in range(4)) for i in range(count)],
                 tuple(self.lib.get(-1, j) for j in range(4)))
 
@@ -172,6 +227,30 @@ extern "C" __declspec(dllexport) unsigned persist(unsigned flags,unsigned a,unsi
         self.assertEqual(wider[1][3] + 1, compact[1][3])
         self.assertEqual(wider[3][3] + 1, compact[3][3])
 
+    def test_value_gap_follows_colon_in_both_layouts_without_digit_padding(self):
+        for vertical in (0, 1):
+            for compact in (0, 1):
+                for labels in (0, 1):
+                    for size in (7, 14, 28):
+                        for gap in (0, 7, 32):
+                            with self.subTest(vertical=vertical, compact=compact,
+                                              labels=labels, size=size, gap=gap):
+                                calls, _ = self.render(
+                                    mask=1 << 4, vertical=vertical, compact=compact,
+                                    labels=labels, size=size, valueGap=gap)
+                                colon_end = calls[0][0] + calls[0][2] - size // 2
+                                self.assertEqual(calls[1][0] - colon_end, gap)
+
+    def test_stable_cells_leave_spare_digit_space_after_the_value(self):
+        single, single_bg = self.render(mask=7, compact=0, columns=3, size=7, digits=1)
+        longer, longer_bg = self.render(mask=7, compact=0, columns=3, size=7, digits=2)
+        self.assertEqual(single_bg, longer_bg)
+        self.assertEqual([c[:2] for c in single], [c[:2] for c in longer])
+        compact, compact_bg = self.render(mask=7, compact=1, columns=3, size=7)
+        self.assertEqual(single[1][0], compact[1][0])
+        self.assertGreater(single[2][0], compact[2][0])
+        self.assertGreater(single_bg[2], compact_bg[2])
+
     def test_editor_uses_maximum_values_and_reveals_disabled_fields(self):
         compact = self.render(mask=1, editing=1, compact=1)
         stable = self.render(mask=1, editing=1, compact=0)
@@ -182,7 +261,7 @@ extern "C" __declspec(dllexport) unsigned persist(unsigned flags,unsigned a,unsi
         calls, bg = self.render(compact=0, columns=2, digits=20, size=7)
         for i in range(0, len(calls), 2):
             self.assertGreaterEqual(calls[i+1][0], calls[i][0] + calls[i][2])
-        self.assertEqual(max(v[0] + v[2] for v in calls), bg[0] + bg[2])
+        self.assertLessEqual(max(v[0] + v[2] for v in calls), bg[0] + bg[2])
 
     def test_extreme_row_gap_fits_all_standard_fields_and_empty_mask_is_safe(self):
         calls, bg = self.render(columns=1, rowGap=16, size=28, y=450)
@@ -194,14 +273,46 @@ extern "C" __declspec(dllexport) unsigned persist(unsigned flags,unsigned a,unsi
 
     def test_legacy_presence_defaults_and_new_reserved_bytes_round_trip(self):
         out = (C.c_uint * 14)()
-        flags = self.lib.persist(0, 99, 99, 99, 99, out)
-        self.assertEqual(list(out[:4]), [12, 0, 0, 0])
-        self.assertEqual(flags & 0x3c00, 0x3c00)
-        self.lib.persist(0x3c00, 32, 16, 11, 1, out)
-        self.assertEqual(list(out[:4]), [32, 16, 11, 1])
-        self.assertEqual(list(out[4:]), [0] * 10)
-        self.lib.persist(0x3c00, 255, 255, 255, 255, out)
-        self.assertEqual(list(out[:4]), [32, 16, 11, 1])
+        flags = self.lib.persist(0, 99, 99, 99, 99, 99, out)
+        self.assertEqual(list(out[:5]), [12, 0, 0, 0, 7])
+        self.assertEqual(flags & 0x7c00, 0x7c00)
+        self.lib.persist(0x3c00, 32, 16, 11, 1, 99, out)
+        self.assertEqual(list(out[:5]), [32, 16, 11, 1, 7])
+        for gap in (0, 7, 32):
+            self.lib.persist(0x7c00, 32, 16, 11, 1, gap, out)
+            self.assertEqual(list(out[:5]), [32, 16, 11, 1, gap])
+        self.assertEqual(list(out[5:]), [0] * 9)
+        self.lib.persist(0x7c00, 255, 255, 255, 255, 255, out)
+        self.assertEqual(list(out[:5]), [32, 16, 11, 1, 32])
+
+
+    def test_value_gap_ini_roundtrip_keeps_existing_controls(self):
+        for region in (b'jp', b'us', b'pal'):
+            for gap in (0, 7, 32):
+                with self.subTest(region=region, gap=gap):
+                    self.lib.iniReset(region)
+                    fields = {b'field_gap': b'12', b'row_gap': b'4', b'columns': b'3',
+                              b'compact': b'1', b'value_gap': str(gap).encode(),
+                              b'char_7_rgb': b'17,23,241'}
+                    for key, value in fields.items():
+                        self.lib.iniKey(key, value)
+                    first = self.lib.iniText()
+                    self.assertTrue(first.startswith(b'[metadata_display_' + region + b']\r\n'))
+                    for key, value in fields.items():
+                        self.assertIn(key + b' = ' + value + b'\r\n', first)
+                    self.lib.iniReset(region)
+                    for line in first.splitlines():
+                        if b' = ' in line:
+                            self.lib.iniKey(*line.split(b' = ', 1))
+                    self.assertEqual(self.lib.iniText(), first)
+
+    def test_absent_or_invalid_gap_does_not_publish_a_value_override(self):
+        for gap in (b'', b'-1', b'33', b'256', b'999999999999999999', b'1x'):
+            with self.subTest(gap=gap):
+                self.lib.iniReset(b'pal')
+                self.assertNotIn(b'value_gap =', self.lib.iniText())
+                self.lib.iniKey(b'value_gap', gap)
+                self.assertNotIn(b'value_gap =', self.lib.iniText())
 
 
 def math_ceil(value, divisor):

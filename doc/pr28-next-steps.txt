@@ -1,0 +1,14 @@
+PR28 focuses on group invitations, readable draft waiting, and online race
+completion through secret-stage deaths, and the reported 3DP HUD crash during
+stage loading. See TESTING.txt for hardware checks.
+
+Unverified on hardware until tested: three/four-player Wii rooms, mixed
+Wii/Dolphin groups, restrictive router combinations and long-session stability.
+The change retains the current direct-UDP protocol; it adds no relay fallback.
+
+Ghost-service integration still needs the host's deployed API contract.
+Full deterministic ghost takeover and native Dolphin storage parity remain
+separate work. Ordinary game timers and their verification rules stay protected.
+
+Linux companion launch now waits for Dolphin underneath its wrapper. Native
+wrapper/child access is tested; actual Flatpak permissions need confirmation.

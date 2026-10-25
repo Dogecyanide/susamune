@@ -171,8 +171,9 @@ void FSTCleanup()
 }
 const u8* FSTRead(const char *GamePath, u32* Length, u32 Offset)
 {
-	if (*Length > DI_READ_BUFFER_LENGTH)
-		*Length = DI_READ_BUFFER_LENGTH;
+	const u32 limit = GetDIBufferLimit();
+	if (*Length > limit)
+		*Length = limit;
 	char Path[256];
 	FIL fd;
 	u32 read;

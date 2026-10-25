@@ -78,6 +78,8 @@ set_property(CACHE LAUNCHER_DEFAULT_SOURCE PROPERTY STRINGS di sd usb)
 if(LAUNCHER_VERSION STREQUAL "V1.2.0" OR
    LAUNCHER_VERSION STREQUAL "V2.3.0 Frame By Frame" OR
    LAUNCHER_VERSION STREQUAL "V2.3.1 Frame By Frame" OR
+   LAUNCHER_VERSION STREQUAL "V2.3.2 Frame By Frame" OR
+   LAUNCHER_VERSION STREQUAL "V2.3.3 Frame By Frame" OR
    LAUNCHER_VERSION STREQUAL "V2.1.1" OR
    LAUNCHER_VERSION STREQUAL "V2.2.0 \"The House Always Wins\"" OR
    LAUNCHER_VERSION STREQUAL "V2.0.0 \"Ghosts of Delfino\"" OR
@@ -95,10 +97,26 @@ if(LAUNCHER_VERSION STREQUAL "V1.2.0" OR
    LAUNCHER_VERSION MATCHES "^V2\\.3\\.0 .*Pre-release")
     unset(LAUNCHER_VERSION CACHE)
 endif()
-set(LAUNCHER_VERSION "V2.3.3 Frame By Frame" CACHE STRING
+set(LAUNCHER_VERSION "3.0.0 Timewarp" CACHE STRING
     "Version shown in the packaged launcher meta.xml")
 
 option(IS_EMULATOR "Target Dolphin (ON) instead of Wii/Nintendont (OFF)" OFF)
+option(ENABLE_COMPRESSED_MOD "Pack the launcher image with V4 boot compression" OFF)
+option(TIMEWARP_PINNED_LINK "Link audited cold code while preserving timer addresses" OFF)
+option(TIMEWARP_SHARED_STORE "Enable the shared state store integration" OFF)
+option(TIMEWARP_HEAP_GAP "Prototype canonical unused stage-heap bytes in snapshots" OFF)
+option(TIMEWARP_QUICK_REPLAY "Prototype bounded Quick replacement replay" OFF)
+option(TIMEWARP_LIVE_RACING "Prototype nonblocking live racing transport" OFF)
+if(TIMEWARP_QUICK_REPLAY AND NOT TIMEWARP_SHARED_STORE)
+    message(FATAL_ERROR "TIMEWARP_QUICK_REPLAY requires TIMEWARP_SHARED_STORE")
+endif()
+if(TIMEWARP_SHARED_STORE AND NOT TIMEWARP_PINNED_LINK)
+    message(FATAL_ERROR "TIMEWARP_SHARED_STORE requires TIMEWARP_PINNED_LINK")
+endif()
+if(TIMEWARP_PINNED_LINK AND NOT ENABLE_COMPRESSED_MOD)
+    message(FATAL_ERROR "TIMEWARP_PINNED_LINK requires ENABLE_COMPRESSED_MOD for cold-image transport")
+endif()
+option(VERIFY_TIMEWARP_TIMER "Check linked timer bytes against the protected release" OFF)
 option(ENABLE_SAVESTATE_DBG "Enable savestate debug output" OFF)
 option(ENABLE_MEM_DIAGNOSTICS "Enable the MEM1 safety overlay and canaries" OFF)
 option(ENABLE_DEBUG_WARPS "Enable debug warp menu tabs and stage warping" OFF)
@@ -161,6 +179,15 @@ set(SHARED_FLAGS
     -ffunction-sections
     -fdata-sections)
 
+# LLVM saves r14-r31 one word at a time; CodeWarrior and the game use
+# stmw/lmw for the same frame slots. Compile through assembly and fold those
+# saves (scripts/ppc_multiple_words.py). Timer inputs and their anchors keep
+# the compiler's own output.
+set(CMAKE_CXX_COMPILE_OBJECT
+    "\"${VENV_PYTHON}\" \"${CMAKE_SOURCE_DIR}/scripts/ppc_multiple_words.py\" <CMAKE_CXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
+set_property(SOURCE ${MOD_SOURCES} APPEND PROPERTY OBJECT_DEPENDS
+    "${CMAKE_SOURCE_DIR}/scripts/ppc_multiple_words.py")
+
 function(susamune_add_mod_object vers)
     string(TOUPPER "${vers}" _upper)
     add_executable(susamune_obj_${vers} ${MOD_SOURCES})
@@ -184,6 +211,10 @@ function(susamune_add_mod_object vers)
 
     target_compile_definitions(susamune_obj_${vers} PRIVATE
         IS_EMULATOR=$<BOOL:${IS_EMULATOR}>
+        TIMEWARP_SHARED_STORE=$<BOOL:${TIMEWARP_SHARED_STORE}>
+        TIMEWARP_HEAP_GAP=$<BOOL:${TIMEWARP_HEAP_GAP}>
+        TIMEWARP_QUICK_REPLAY=$<BOOL:${TIMEWARP_QUICK_REPLAY}>
+        TIMEWARP_LIVE_RACING=$<BOOL:${TIMEWARP_LIVE_RACING}>
         ENABLE_SAVESTATE_DBG=$<BOOL:${ENABLE_SAVESTATE_DBG}>
         ENABLE_MEM_DIAGNOSTICS=$<BOOL:${ENABLE_MEM_DIAGNOSTICS}>
         ENABLE_DEBUG_WARPS=$<BOOL:${ENABLE_DEBUG_WARPS}>
@@ -237,31 +268,86 @@ add_custom_command(
 # what the launcher ships and loads at runtime -- nothing about the mod is
 # compiled into the launcher any more.
 set(MOD_BINS "")
+set(_mod_format v3)
+if(ENABLE_COMPRESSED_MOD)
+    set(_mod_format v4)
+endif()
+if(IS_EMULATOR)
+    set(_timer_target emu)
+else()
+    set(_timer_target console)
+endif()
 foreach(_v IN LISTS VERS)
     set(_manifest "${CMAKE_BINARY_DIR}/susamune_manifest_${_v}.json")
     set(_bin "${CMAKE_BINARY_DIR}/mod_${_v}.bin")
+    set(_manifest_script "${CMAKE_SOURCE_DIR}/scripts/link_mod.py")
+    set(_manifest_args
+        --obj "$<TARGET_FILE:susamune_obj_${_v}>"
+        --linker-script "${CMAKE_SOURCE_DIR}/maps/${_v}.ld"
+        --kuribo-home "${KURIBO_COMPILER_HOME}"
+        --vers "${_v}" --out "${_manifest}" launcher)
+    set(_pinned_dependencies "")
+    set(_pinned_byproducts "")
+    if(TIMEWARP_PINNED_LINK)
+        set(_pinned_work "${CMAKE_BINARY_DIR}/pinned-link/${_v}")
+        set(_manifest_script "${CMAKE_SOURCE_DIR}/scripts/link_pinned_mod.py")
+        set(_manifest_args link
+            --obj "$<TARGET_FILE:susamune_obj_${_v}>"
+            --objects "${CMAKE_BINARY_DIR}"
+            --kuribo-home "${KURIBO_COMPILER_HOME}"
+            --vers "${_v}" --target "${_timer_target}"
+            --work "${_pinned_work}"
+            --elf "${CMAKE_BINARY_DIR}/susamune_${_v}.o"
+            --out "${_manifest}")
+        set(_pinned_dependencies
+            "${CMAKE_SOURCE_DIR}/scripts/link_pinned_mod.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_source_sections.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_header_constants.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_menu_constants.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_string_atoms.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_numeric_protection.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_menu_tables.py"
+            "${CMAKE_SOURCE_DIR}/scripts/pinned_cold_extensions.py"
+            "${CMAKE_SOURCE_DIR}/scripts/timewarp_cold_cluster.py"
+            "${CMAKE_SOURCE_DIR}/scripts/timewarp_linked_budget.py"
+            "${CMAKE_SOURCE_DIR}/scripts/timewarp_timer_guard.py"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-layout.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-source-owners.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-merge-sources.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-numeric-pools.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-menu-constants.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-pinned-string-atoms.json"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-timer-baseline.json")
+        set(_pinned_byproducts "${CMAKE_BINARY_DIR}/susamune_${_v}.o"
+            "${_pinned_work}/cold-${_v}.bin" "${_pinned_work}/menu-code-${_v}.bin" "${_pinned_work}/receipt.json")
+    endif()
     add_custom_command(
         OUTPUT "${_manifest}"
-        COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/link_mod.py"
-            --obj "$<TARGET_FILE:susamune_obj_${_v}>"
-            --linker-script "${CMAKE_SOURCE_DIR}/maps/${_v}.ld"
-            --kuribo-home "${KURIBO_COMPILER_HOME}"
-            --vers "${_v}"
-            --out "${_manifest}"
-            launcher
+        BYPRODUCTS ${_pinned_byproducts}
+        COMMAND "${VENV_PYTHON}" "${_manifest_script}" ${_manifest_args}
         DEPENDS susamune_obj_${_v} "${CMAKE_SOURCE_DIR}/maps/${_v}.ld"
                 "${CMAKE_SOURCE_DIR}/scripts/patches.py"
                 "${CMAKE_SOURCE_DIR}/scripts/link_mod.py"
                 "${CMAKE_SOURCE_DIR}/scripts/dol_c_kit/devkit_tools.py"
                 "${CMAKE_SOURCE_DIR}/include/susamune/mod_bin.h"
-                "${CMAKE_SOURCE_DIR}/include/susamune/mem2_map.h"
+                "${CMAKE_SOURCE_DIR}/include/susamune/mem2_map.h" ${_pinned_dependencies}
         COMMENT "Generating ${_v} mod manifest"
         VERBATIM)
+    set(_timer_check "")
+    set(_timer_dependencies "")
+    if(VERIFY_TIMEWARP_TIMER OR ENABLE_COMPRESSED_MOD OR TIMEWARP_PINNED_LINK)
+        set(_timer_check COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/timewarp_timer_guard.py"
+            verify --build "${CMAKE_BINARY_DIR}" --target "${_timer_target}" --regions "${_v}")
+        set(_timer_dependencies "${CMAKE_SOURCE_DIR}/scripts/timewarp_timer_guard.py"
+            "${CMAKE_SOURCE_DIR}/doc/timewarp-timer-baseline.json")
+    endif()
     add_custom_command(
         OUTPUT "${_bin}"
+        ${_timer_check}
         COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/gen_mod_bin.py"
-            "${_manifest}" -o "${_bin}"
+            "${_manifest}" -o "${_bin}" --format "${_mod_format}"
         DEPENDS "${_manifest}" "${CMAKE_SOURCE_DIR}/scripts/gen_mod_bin.py"
+                "${CMAKE_SOURCE_DIR}/scripts/mod_transport.py" ${_timer_dependencies} ${_pinned_byproducts}
                 "${CMAKE_SOURCE_DIR}/include/susamune/mod_bin.h"
                 "${CMAKE_SOURCE_DIR}/include/susamune/mem2_map.h"
         COMMENT "Packing mod_${_v}.bin"
@@ -338,8 +424,15 @@ endif()
 
 # Patches main.dol and installs it into out_iso so Dolphin folder-boot (and the
 # .vscode tasks) always run the current build without needing the `iso` target.
+set(_pinned_export_guard "")
+if(TIMEWARP_PINNED_LINK)
+    set(_pinned_export_guard
+        COMMAND "${CMAKE_COMMAND}" -E echo "Pinned DOL/Gecko export requires the cold-image early-copy path; use mod_bins for transport validation."
+        COMMAND "${CMAKE_COMMAND}" -E false)
+endif()
 add_custom_command(
     OUTPUT "${PATCHED_DOL}"
+    ${_pinned_export_guard}
     COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/link_mod.py"
         --obj "${MOD_OBJ}"
         --linker-script "${LD_SCRIPT}"
@@ -362,6 +455,7 @@ add_custom_target(dol DEPENDS "${PATCHED_DOL}")
 # NOTE: gecko code target is currently broken, it doesn't seem to work in-game. But it is left here anyway.
 add_custom_command(
     OUTPUT "${GECKO_TXT}"
+    ${_pinned_export_guard}
     COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/link_mod.py"
         --obj "${MOD_OBJ}"
         --linker-script "${LD_SCRIPT}"
@@ -433,8 +527,9 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_VERSION=${LAUNCHER_VERSION}"
         "-DLAUNCHER_TEST_LOG="
         "-DLAUNCHER_PATTERN_TEST_LOG="
-        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/release-notes-v2.3.3.md"
+        "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/timewarp-test-build.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
+        "-DTIMEWARP_LIVE_RACING=${TIMEWARP_LIVE_RACING}"
         "-DSUSAMUNE_LOADER_OPTIMIZATION:STRING=${SUSAMUNE_LOADER_OPTIMIZATION}"
     DEPENDS mod_bins launcher_build_id japanese_ui
     BUILD_ALWAYS ON

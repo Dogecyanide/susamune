@@ -1,0 +1,35 @@
+Moonshine 3.0.0 Timewarp PR26
+
+Use PR26 on every Wii and Dolphin. Dolphin also needs the PR26 companion.
+PR25 remains the fallback; preserve your settings and Moonshine data folders.
+
+Changes
+- Wii socket work runs ahead of the busy main loop, below disc streaming.
+  Each wake can drain a bounded receive burst instead of accumulating old poses.
+- Late movement corrections ease out over 100 ms rather than snapping.
+  Healthy links keep the existing interpolation delay. Real warps still snap.
+- Online shows a Same-network code. When using the same router, exchange those
+  codes in Friend's code at both ends. Different homes use Your code as before.
+  Address discovery still needs internet; this is not a new relay service.
+- Dolphin packages include checked Shadow Mario and Piantissimo models from
+  your own ISO, using existing model memory. All three appearances can render
+  in stages that do not contain those characters in the original game.
+
+Retest in this order
+1. Wii to Wii: run circles, stop sharply and change direction. Compare ghost
+   smoothness with PR25; confirm ordinary gameplay stays at its usual frame rate.
+2. Dolphin to Wii, then Wii to Dolphin: repeat those movements. Check whether
+   the large delay in the first direction has gone away.
+3. Dolphin: switch between Mario, Shadow Mario and Piantissimo in Plaza,
+   then change stages and try again. Repeated switching must remain visible.
+4. Same router: exchange Same-network codes without a manually generated code.
+5. Three/four players: free roam, then a draft race and a Stageloader race.
+6. Disconnect/rejoin, stage changes and Moonshine savestate loads while online.
+
+For Dolphin FPS drops, start at 3x internal resolution and no anti-aliasing.
+The previous local test profile had 11x resolution with 2x anti-aliasing.
+Graphics settings are separate from network ghost motion.
+
+Automated checks cover worker ownership, receive bursts, correction convergence,
+clock/rate differences, room-code transport and immutable timing code. Wii
+latency/smoothness and extended multiplayer stability remain hardware tests.

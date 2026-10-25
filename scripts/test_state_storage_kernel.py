@@ -28,6 +28,7 @@ class NameRecord(C.Structure):
 
 ADAPTER = r'''
 #include "susamune/state_storage.h"
+#include "susamune/state_export_plan.h"
 typedef int FRESULT;
 static struct SusamuneStateStorageMailbox stateMailbox;
 static u8 statePool[SUSAMUNE_STATE_POOL_SIZE + 64], stateStaging[SUSAMUNE_STATE_STAGING_SIZE + 64];
@@ -117,6 +118,7 @@ __declspec(dllexport) const void *file(const char *p,u32 *size) {
  int i=lookup(p); if(i<0) {*size=0; return 0;} *size=testFiles[i].size; return testFiles[i].bytes;
 }
 __declspec(dllexport) const void *mailbox(void) {return &stateMailbox;}
+__declspec(dllexport) u32 adoptionReady(void) {return Phase == CATALOG_ADOPT_COMMIT;}
 __declspec(dllexport) const void *pool(void) {return STATE_POOL;}
 __declspec(dllexport) const void *staging(void) {return STATE_STAGING;}
 __declspec(dllexport) const void *extra(void) {return STATE_POOL_EXTRA;}
@@ -162,6 +164,7 @@ class StateStorageKernelTests(unittest.TestCase):
                                   'info->fsize=testFiles[i].size; info->fattrib=testFiles[i].directory?AM_DIR:0; return FR_OK;')
         fixture = fixture.replace('info->fsize=v->size; return FR_OK;',
                                   'info->fsize=v->size; info->fattrib=v->directory?AM_DIR:0; return FR_OK;')
+        fixture = getattr(cls, 'fixture_transform', lambda text: text)(fixture)
         source = (ROOT / 'launcher/kernel/SusamuneStateStorage.c').read_text()
         source = source.replace('#include "SusamuneTasStorage.inc"',
                                 (ROOT / 'launcher/kernel/SusamuneTasStorage.inc').read_text())
@@ -169,7 +172,8 @@ class StateStorageKernelTests(unittest.TestCase):
         start = source.index('static u32 BootConfigId(void)')
         end = source.index('\nstatic void Paths(', start)
         source = source[:start] + 'static u32 BootConfigId(void) {return 6789u;}\n' + source[end:]
-        (path / 'test.c').write_text(fixture + ADAPTER + source + EXPORTS)
+        (path / 'test.c').write_text(fixture + ADAPTER + source + EXPORTS +
+                                   getattr(cls, 'bridge_source', ''))
         proc = subprocess.run([str(compiler), '--target=x86_64-pc-windows-msvc', '-shared', '-O1',
             '-fno-builtin', '-nostdlib', '-fuse-ld=lld', '-Xlinker', '/noentry',
             '-I', str(ROOT / 'include'), str(path / 'test.c'), '-o', str(path / 'test.dll')],
@@ -240,6 +244,62 @@ class StateStorageKernelTests(unittest.TestCase):
         count=C.c_uint.from_address(m+192).value
         return [(C.c_uint.from_address(m+224+64*i).value,
                  C.string_at(m+256+64*i,32).split(b'\0')[0]) for i in range(count)]
+
+    def named_file(self, leaf, data=None):
+        path = b'/Moonshine data/states/' + leaf
+        if data is not None:
+            self.lib.add(path, self.buffer(data), len(data))
+        size = C.c_uint()
+        pointer = self.lib.file(path, C.byref(size))
+        return C.string_at(pointer, size.value) if pointer else None
+
+    def test_native_drop_adopts_exact_bytes_and_skips_all_occupied_identity_stems(self):
+        archive, data, _ = self.export()
+        for id, suffix in enumerate(('tmp', 'used', 'name0', 'name1', 'name0.tmp', 'name1.tmp'), 2):
+            self.add(id, b'occupied', suffix)
+        self.named_file(b'Pinna from friend.MSS', archive)
+        before = C.string_at(self.lib.pool(), POOL)
+        self.assertEqual([row[0] for row in self.catalog()], [1, 8])
+        self.assertEqual(self.file(8), archive)
+        self.assertEqual(self.file(8, 'used'), archive[:96])
+        self.assertIsNone(self.named_file(b'Pinna from friend.MSS'))
+        self.assertEqual(C.string_at(self.lib.pool(), POOL), before)
+        h = Header.from_buffer_copy(archive)
+        self.command(IMPORT, 8, 0, h.packedSize, h.headerCrc)
+        self.assertEqual(self.finish(), OK)
+        self.assertEqual(C.string_at(self.lib.staging(), len(data)), data)
+        self.lib.reboot()
+        self.assertEqual([row[0] for row in self.catalog()], [1, 8])
+
+    def test_native_drop_failure_or_cancel_keeps_original_and_reserves_failed_identity(self):
+        archive, _, _ = self.export()
+        self.named_file(b'Friend.mss', archive)
+        self.lib.failures(0xffffffff, 0, 1)
+        self.command(CATALOG)
+        self.assertEqual(self.finish(), IO)
+        self.assertEqual(self.named_file(b'Friend.mss'), archive)
+        self.assertIsNone(self.file(2))
+        self.assertEqual(self.file(2, 'used'), archive[:96])
+        self.lib.failures(0xffffffff, 0, 0)
+        self.command(CATALOG)
+        for _ in range(30):
+            if self.lib.adoptionReady(): break
+            self.lib.run(1)
+        self.assertEqual(self.lib.adoptionReady(), 1)
+        self.command(CANCEL, session=22)
+        self.assertEqual(self.finish(), CANCELLED)
+        self.assertEqual(self.named_file(b'Friend.mss'), archive)
+        self.assertIsNone(self.file(3, 'used'))
+        self.assertEqual([row[0] for row in self.catalog()], [1, 3])
+        self.assertEqual(self.file(3), archive)
+
+    def test_native_drop_invalid_names_headers_and_short_files_remain_untouched(self):
+        archive, _, _ = self.export()
+        cases = ((b'Broken.mss', b'bad'), (b'Short.mss', archive[:-1]),
+                 (b'Wrong.zip', archive), (b'a' * 64 + b'.mss', archive))
+        for name, data in cases: self.named_file(name, data)
+        self.assertEqual([row[0] for row in self.catalog()], [1])
+        for name, data in cases: self.assertEqual(self.named_file(name), data)
 
     def window(self, header, offset, size):
         self.command(WINDOW,1,offset,header.packedSize,header.headerCrc)

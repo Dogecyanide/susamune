@@ -32,6 +32,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "common.h"
 #include "patches.c"
 #include "DI.h"
+#include "SusamuneTransfer.h"
+#if TIMEWARP_LIVE_RACING
+#include "MoonshineNetBridge.h"
+#endif
 #include "ISO.h"
 #include "SI.h"
 #include "EXI.h"
@@ -40,6 +44,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "ff_utf8.h"
 #include "susamune/mem2_map.h"
 #include "susamune/mod_bin.h"
+#include "susamune/mod_boot.h"
 #include "susamune/ghost_model_asset.h"
 
 //#define DEBUG_DSP  // Very slow!! Replace with raw dumps?
@@ -91,6 +96,8 @@ u32 NeedRelPatches = 0;
 u32 NeedConstantRelPatches = 0;
 
 static char cheatPath[255];
+static u32 SusamuneModFlushEnd;
+extern bool DI_IRQ;
 static void PatchSusamuneGeckoCodes(u8 *codes, u32 size);
 extern u32 prs_decompress(void* source,void* dest);
 extern u32 prs_decompress_size(void* source);
@@ -4316,19 +4323,33 @@ void PatchSusamune(void)
 	if (hdr == NULL)
 		return;
 
-	code   = (const u8*)hdr + SUSAMUNE_MOD_HEADER_SIZE;
+	code   = (const u8*)hdr + SusamuneModHeaderBytes(hdr);
 	writes = (const u32*)(code + hdr->codeSize);
 	fileSize = SusamuneModFileSize(hdr);
 	sync_before_read((void*)hdr, fileSize);
 
 	base = hdr->baseAddr & 0x7FFFFFFF;
+    if ((SusamuneModFileVersion(hdr) == SUSAMUNE_MOD_VERSION_V4 ?
+        SusamuneModV4InstallMapped(hdr, fileSize, GAME_ID, 0,
+            SUSAMUNE_MEM2_MODBIN_PPC_BASE, (void*)base, SUSAMUNE_MOD_REGION_SIZE, hdr->baseAddr,
+            (void*)(SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE & 0x7FFFFFFFu),
+            SUSAMUNE_MENU_CODE_SIZE, SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE) :
+        SusamuneModInstall(hdr, GAME_ID, fileSize, (void*)base,
+            SUSAMUNE_MOD_REGION_SIZE, hdr->baseAddr)) != SUSAMUNE_MOD_V4_OK)
+    {
+        dbgprintf("Patch:Refused susamune image installation\r\n");
+        return;
+    }
     for (i = 0; i < SUSAMUNE_MOD_SEGMENT_COUNT; ++i)
     {
-        const struct SusamuneModSegment *seg = ((const struct SusamuneModSegment*)code) + i;
-        u32 dst = base + seg->offset;
-        memcpy((void*)dst, code + seg->payloadOffset, seg->initSize);
-        memset((void*)(dst + seg->initSize), 0, seg->memSize - seg->initSize);
-        sync_after_write((void*)dst, seg->memSize);
+        u32 dst = base + (i ? SUSAMUNE_MOD_UPPER_OFFSET : 0);
+        u32 size = SusamuneModSegmentMemory(hdr, i);
+        if (size)
+        {
+            sync_after_write((void*)dst, size);
+            if (dst + size > SusamuneModFlushEnd)
+                SusamuneModFlushEnd = dst + size;
+        }
     }
 
 	for (i = 0; i < hdr->writeCount; ++i)
@@ -4337,6 +4358,13 @@ void PatchSusamune(void)
 		write32(addr, writes[i * 2 + 1]);
 		sync_after_write((void*)addr, 4);
 	}
+
+    write32(SUSAMUNE_MOD_BOOT_COLD_START, SusamuneModColdAddress(hdr));
+    if (SusamuneModMenuCodeSize(hdr))
+        sync_after_write((void*)(SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE & 0x7FFFFFFFu),
+            SusamuneModMenuCodeSize(hdr));
+    write32(SUSAMUNE_MOD_BOOT_COLD_LINES, (SusamuneModColdSize(hdr) >> 5) |
+        (SusamuneModMenuCodeSize(hdr) ? SUSAMUNE_MOD_BOOT_MENU_CODE : 0));
 
 	// The complete mod file is consumed; its tail can now own pristine models.
 	SusamunePreserveGhostModelAssets(hdr);
@@ -4369,6 +4397,22 @@ void SetIPL_TRI()
 #define FLUSH_ADDR (RESET_STATUS+8)
 void PatchGame()
 {
+#if TIMEWARP_LIVE_RACING
+    // Reset may resume offline while the old socket finishes retiring.
+    MoonshineNetBridgeRetire();
+#endif
+    // The PPC entry stub is parked, but a delayed DI completion can still own FAT.
+    DIFinishAsync();
+    if (DI_IRQ)
+    {
+        DIInterrupt();
+        if (DI_IRQ) return;
+    }
+    SusamuneTransferBeginRetire();
+    if (!SusamuneTransferRetireStep()) return;
+    SusamuneModFlushEnd = 0;
+    write32(SUSAMUNE_MOD_BOOT_COLD_LINES, 0);
+    write32(SUSAMUNE_MOD_BOOT_COLD_START, 0);
 	if (Datel && (AppLoaderSize != 0))
 	{
 		DOLMinOff = 0x01300000;
@@ -4397,6 +4441,9 @@ void PatchGame()
 #ifndef LAUNCHER_DISABLE_SUSAMUNE_PATCH
 	PatchSusamune();
 #endif
+    // Injected spans can extend beyond the retail DOL's cache range on reset.
+    if (SusamuneModFlushEnd > DOLMinOff + FullLength)
+        FullLength = (SusamuneModFlushEnd - DOLMinOff + 31) & ~31u;
 	// Some games need special timings
 	EXISetTimings(TITLE_ID, GAME_ID & 0xFF);
 #if 1
@@ -4432,6 +4479,8 @@ void PatchGame()
 	write32( FLUSH_ADDR, Command2 );
 	dbgprintf("Jumping to 0x%08X\n", GameEntry);
 	sync_after_write((void*)0x1000, 0x2000); //low patches
+    // A new PPC image must negotiate again before either reclaimed bank is used.
+    if (!SusamuneTransferResumeLegacy()) return;
 	write32( RESET_STATUS, GameEntry );
 	sync_after_write((void*)RESET_STATUS, 0x20);
 	// single rel patch required for some games

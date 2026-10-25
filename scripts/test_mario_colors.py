@@ -56,6 +56,7 @@ class TMarioGamePad:public JUTGamePad {public:struct{u32 mInput,mFrameInput,mRap
 class Menu {public:u32 navigationInput(TMarioGamePad*p){return p->mButtons.mRapidInput;}
  void toast(const char*){}void factoryReset(){} };
 void CreationEditor::draw(Menu*,const char*,const char*)const{}
+namespace ModelEditorPreview {void begin(bool){}void end(){}void update(){}void drawHint(Menu*){}}
 '''
         shared = (ROOT / "include/susamune/model_color_editor.hxx").read_text()
         shared = re.sub(r"^#(?:include|ifndef|define|endif)[^\n]*", "", shared, flags=re.M)

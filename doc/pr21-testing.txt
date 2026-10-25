@@ -1,0 +1,23 @@
+MOONSHINE 3.0.0 TIMEWARP - PROTOTYPE 21
+
+Install the included apps folder on the SD. Keep your personal settings/data.
+All game regions are included. Japanese-menu ZIP differs only in UI language.
+
+Focused hardware checks
+- Search: open, enter a broad and a narrow query, page results and open one.
+- Displays and styles: choose an item, toggle it, open Edit appearance.
+  Choose Position, Size, Colours or Animation with A. B returns to the item.
+  Save changes keeps the look; Discard changes restores it. Reopen/reboot.
+- Menu background: select Original guidebook or Custom inside its editor.
+- Try Flow, Pulse, Ping-pong and Wave for QFT, Sunshine timer and custom text.
+- Sunshine timer: 3 decimal places for Moonshine timing, 2 for native races.
+  Check Piantissimo and blooper races while running AND on their final result.
+  Restart/leave the race, then check normal IL timing returns to 3 decimals.
+  Check pause, Step, slowdown, savestate restore, scale and colour/outline.
+
+Known remaining issue
+- The reported Ricco free-camera wobble on signs, the cage and boats is still
+  under investigation. PR21 does not claim to fix it.
+
+Online roadmap: four-player rooms and stageloader races remain planned.
+Friends, accounts and ratings are no longer planned for this release.

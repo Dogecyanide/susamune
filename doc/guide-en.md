@@ -1,4 +1,4 @@
-# Moonshine V2.3.3 Frame By Frame
+# Moonshine 3.0.0 Timewarp
 
 User guide · English
 
@@ -49,7 +49,7 @@ keep your existing theme otherwise. The English download supplies no theme.
 
 Open the mod menu with your configured menu combo (default Y + Start). Use L/R for top-level tabs, the C-stick to move between rows, A to select, and B to go back.
 
-- **Quick:** your Shined favourites. Newer named settings can now be Shined too, including free-camera Movement speed, Reverse sideways, Look sensitivity and Hide all HUD. Your existing stars stay.
+- **Shined:** your favourites. Newer named settings can now be Shined too, including free-camera Movement speed, Reverse sideways, Look sensitivity and Hide all HUD. Your existing stars stay.
 - **Practice:** TAS projects with frame controls, Free camera, savestates, practice rules, RNG and gameplay options.
 - **Runs:** ILs, playlists/streaks, records, PB Safety, and timer/split controls.
 - **Records:** achievements and practice statistics, also reachable from Runs.
@@ -227,7 +227,7 @@ Mario's skin stays unchanged. Magenta on the cap and shirt no longer produces re
 
 Open **Display > HUD and displays > Movement displays** to enable **Jump display** or **GB skip timing**. Use the Edit rows on that page, or **Layout editor > Practice feedback**, to change GB timing, Jump timing and Buttslide separately. Each has its own position, size, opacity, background and colours.
 
-**Jump display** measures game frames from your most recent landing to your next jump. It shows **1f–6f**, then **Late**, alongside the takeoff's quarter-frame phase. `1f qf2` means you jumped one rendered game frame after landing, on quarter-frame phase 2. Paused frames do not count, and changing areas or loading a state clears the result.
+**Jump display** measures time from your most recent landing to your next accepted jump. It shows **1f–6f**, then **Late**, alongside the exact number of elapsed movement quarterframes. `1f qf2` means the jump happened in the next rendered game frame, two quarterframes after landing. Two frame-perfect jumps can therefore show different QF counts when they landed on different quarters. Paused frames do not count, and changing areas or loading a state clears the result.
 
 **Jump display** and **Buttslide display** have separate On/Off toggles and can be shown together. Buttslide shows a compact **Ready / Waiting** cue during your slide, using the current surface and slide state. It also works while frame advancing. It does not press or queue A for you.
 
@@ -248,3 +248,26 @@ The SD states menu requires Moonshine Launcher's storage service; standalone Dol
 Include the game region, scene, settings, reproduction steps and displayed build checksum when reporting problems. Crash history is stored in `/Moonshine data/crashes`, with up to 16 recent reports. Keep the matching text, `.bin` and `.core` files from the same report together; older reports are preserved during migration. The optional `tools/decode_crash.py` script reads the binary reports with Python 3. Crash reporting attempts to preserve a minimal record even if a larger report cannot be completed; storage is still required for a file to survive shutdown.
 
 The mod reserves 768 KiB of MEM1, 256 KiB more than V2.2. Fixed timer scratch, attachment heap and savestate ownership remain separate. This reduces the game heap's capacity by 256 KiB; the remaining free space depends on the scene and needs console measurement.
+
+
+## Timewarp Prototype 12 additions
+
+**Display > HUD and displays > Practice visuals > Collision viewer** offers Off, Floor, World and Wireframe. World draws filled active map collision: floors blue, walls green, ceilings red, out-of-bounds/death surfaces grey, and Mario's current floor yellow. The legend separately identifies slippery, very slippery, slider, no-slip, wet, water, sand and warp/exit surfaces. **Collision legend** toggles the colour key. This is a practice aid and marks the attempt assisted. The active surfaces are deduplicated and drawn in batches without the previous triangle cutoff; an invalid-pool warning means malformed data was skipped.
+
+**TAS projects > Scrub** shows seven recorded controller frames around your selection, including triggers, both sticks and D-pad directions. The highlighted frame is the last input consumed at that seek position; frame 0 is before any input. A seeks to the paused gameplay preview, and Continue edits from there.
+
+Free camera now advances with preparation of the next scene so flags and effects share the view used by prepared models. The held-pepper ghost fix also applies to existing recordings.
+
+## Timewarp Prototype 13 additions
+
+**Binds** now groups shortcuts by purpose. Open a group with A and return with B; C-stick left/right changes groups. **Save State 2/3** and **Load State 2/3** act directly on those RAM slots without changing the ordinary Save to/Load from selections. These new shortcuts start unbound.
+
+**Display > Displays and styles** puts visibility controls beside their editors. X adds supported controls to Shined, including Input display and metadata options. In the QFT, Sunshine timer and custom-text editors, **Gradient** offers presets and a first-to-last colour blend. Keep saves the colours; Cancel discards the preview.
+
+**Displays and styles > Timers > Finish breakdown** shows an optional panel after a completed multi-part IL. It is also available in **Runs > Timer and splits**. The adjacent editor controls its position, size, colours, duration and visible rows. Choose **Until leaving level** to keep the result until departure or restart. Entry, later stages and QFT transition allowances add to the final QFT; **Load (real)** separately measures the actual transition and is not added to that total. Timer rules remain unchanged. Loading a state or entering Watch discards incomplete segment history.
+
+While watching a ghost, open **Ghosts > Watch timeline**. Left/right seeks one QF, up/down seeks 120 QF, and L/R selects a recorded split. X jumps to the split; Y pauses both ghosts at their own matching checkpoint; Z clears alignment. A resumes playback and closes the menu. B returns while keeping Watch paused. Use Stop Watch to return to play. Older recordings without checkpoints still support seeking; matching checkpoints and scenes are required for alignment. This moves the ghost presentation, not enemies or the world simulation.
+
+**Collision viewer > Wireframe** shows edges from supported rendered game meshes, with the same coloured World collision overlay on top. Materials keep their normal colours; particles, later rendering passes and unsupported mesh packets keep their normal rendering. Free camera's Hide all HUD option hides the legend while world collision remains visible after Resume gameplay. **Collision legend** remains independent. New Yoshi recordings also capture the R+A spray burst.
+
+Dolphin online requires the matching Dolphin patch and the PC companion in its separate package. Follow that package's memory settings and startup instructions. Both players use the same prototype and relay address; JP, US and PAL at 60 Hz can share a room.

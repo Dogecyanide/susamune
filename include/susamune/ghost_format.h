@@ -11,7 +11,10 @@
 #define SUSAMUNE_GHOST_FILE_VERSION_V4   4u
 #define SUSAMUNE_GHOST_FILE_VERSION_V5   5u
 #define SUSAMUNE_GHOST_FILE_VERSION_V6   6u
-#define SUSAMUNE_GHOST_FILE_VERSION      SUSAMUNE_GHOST_FILE_VERSION_V6
+#define SUSAMUNE_GHOST_FILE_VERSION_V7   7u
+#define SUSAMUNE_GHOST_FILE_VERSION_V8   8u
+#define SUSAMUNE_GHOST_FILE_VERSION_V9   9u
+#define SUSAMUNE_GHOST_FILE_VERSION      SUSAMUNE_GHOST_FILE_VERSION_V9
 #define SUSAMUNE_GHOST_FILE_HEADER_SIZE  0x100u
 #define SUSAMUNE_GHOST_FILE_CHECKSUM_OFFSET    0x0Cu
 #define SUSAMUNE_GHOST_HEADER_CHECKSUM_OFFSET  0x10u
@@ -44,6 +47,10 @@
 #define SUSAMUNE_GHOST_DISC_REVISION 0u
 
 #define SUSAMUNE_GHOST_PROFILE_COUNT             4u
+#define SUSAMUNE_GHOST_HOVERLESS_PROFILE         5u
+static inline int SusamuneGhostPersonalProfile(unsigned int profile) {
+    return profile < SUSAMUNE_GHOST_PROFILE_COUNT || profile == SUSAMUNE_GHOST_HOVERLESS_PROFILE;
+}
 // Historical SGIX host-index bound; console libraries use paged catalogs.
 #define SUSAMUNE_GHOST_PROFILE_MAX_ENTRIES       48u
 #define SUSAMUNE_GHOST_IMPORTED_PROFILE          4u
@@ -111,19 +118,19 @@
 // Transfer/storage bounds cover every currently supported canonical version.
 #include "susamune/ghost_teaching.h"
 static inline unsigned int SusamuneGhostInputStride(unsigned int version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V6
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V6
         ? SUSAMUNE_GHOST_V6_INPUT_SAMPLE_SIZE : SUSAMUNE_GHOST_INPUT_SAMPLE_SIZE;
 }
 static inline unsigned int SusamuneGhostInputLimit(unsigned int version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V6
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V6
         ? SUSAMUNE_GHOST_V6_INPUT_MAX_COUNT : SUSAMUNE_GHOST_INPUT_MAX_COUNT;
 }
 static inline unsigned int SusamuneGhostDurationLimit(unsigned int version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V6
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V6
         ? SUSAMUNE_GHOST_V6_MAX_DURATION_QF : SUSAMUNE_GHOST_MAX_DURATION_QF;
 }
 static inline unsigned int SusamuneGhostPoseLimit(unsigned int version) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V6
+    return version >= SUSAMUNE_GHOST_FILE_VERSION_V6
         ? SUSAMUNE_GHOST_V6_MAX_SAMPLE_COUNT : SUSAMUNE_GHOST_MAX_SAMPLE_COUNT;
 }
 #define SUSAMUNE_GHOST_V5_MAX_FILE_SIZE \
@@ -181,8 +188,26 @@ static inline unsigned int SusamuneGhostPoseLimit(unsigned int version) {
 #define SUSAMUNE_GHOST_REQUIRED_FLUDD 0x00000004u
 #define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6 \
     (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5 | SUSAMUNE_GHOST_REQUIRED_FLUDD)
+#define SUSAMUNE_GHOST_REQUIRED_VISUAL_V7 0x00000008u
+#define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7 \
+    (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6 | SUSAMUNE_GHOST_REQUIRED_VISUAL_V7)
+#define SUSAMUNE_GHOST_REQUIRED_CAMERA 16u
+#define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8 \
+    (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7 | SUSAMUNE_GHOST_REQUIRED_CAMERA)
+#define SUSAMUNE_GHOST_REQUIRED_INITIAL_RNG 32u
+#define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9 \
+    (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8 | SUSAMUNE_GHOST_REQUIRED_INITIAL_RNG)
 #define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES \
-    SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6
+    SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9
+
+// V9 first-segment words 24/28 hold the seed and its first-pose provenance.
+#define SUSAMUNE_GHOST_RNG_FIRST_POSE 1u
+static inline int SusamuneGhostSegmentMetadataValid(unsigned int version,
+        unsigned int segment, unsigned int seed, unsigned int provenance) {
+    return version == SUSAMUNE_GHOST_FILE_VERSION_V9 && segment == 0
+        ? provenance == SUSAMUNE_GHOST_RNG_FIRST_POSE
+        : seed == 0 && provenance == 0;
+}
 
 // Run flags are advisory metadata. Unknown bits are preserved and ignored.
 #define SUSAMUNE_GHOST_RUN_ASSISTED          0x00000001u

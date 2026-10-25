@@ -38,6 +38,13 @@ void beforeStageSetup();
 void afterStageSetup();
 // Call before borrowing a director state; modal includes menu/wheel/editors.
 void beforeDirect(bool modalOwnsInput);
+// Extensions surround beforeDirect without moving its timer-facing owner.
+void prepareGameplaySpeed();
+void applyGameplaySpeed();
+void resetGameplaySpeed();
+// Surround only the main loop's borrowed-state pause, after freeze is decided.
+void beginFrozenDirector(bool frozen);
+void endFrozenDirector();
 bool freezeRequested();
 bool ownsGameplayInput();
 // Call after restoring the real director state, before gameplay observers.
@@ -94,9 +101,25 @@ u32 stepCount();
 u32 recordedFrames();
 u32 replayFrame();
 u32 capacityFrames();
+// Zero-based input index; frame N's displayed state has consumed N inputs.
+bool recordedInput(u32 index, SusamunePracticeInput *out);
 const char *status();
 // False for frozen/UI frames. Physical input remains separate from replay.
 bool consumedInput(SusamunePracticeInput *out);
+
+enum SeekOutcome { SEEK_IDLE, SEEK_LOADING, SEEK_PLAYING, SEEK_ARRIVED, SEEK_CANCELED, SEEK_FAILED };
+bool seekAnchorValid(u32 slot, u32 generation, u32 target);
+bool requestSeek(u32 slot, u32 generation, u32 target);
+bool seekBusy();
+SeekOutcome seekOutcome();
+u32 seekTarget();
+u32 seekPosition();
+void cancelSeek();
+// Surround ordinary replay without changing the timer-facing practice owner.
+void seekBeforeDirect();
+void seekAfterDirect();
+void seekAfterDraw();
+bool attemptLabelVisible();
 
 } // namespace PracticeSession
 
