@@ -176,6 +176,9 @@ def package(release, output):
     files[release.app + "/NEXT-STEPS.txt"] = (ROOT / f"doc/{release.tag}-next-steps.txt").read_bytes()
     files[release.app + "/GHOST-SERVICE-PROPOSAL.txt"] = (ROOT / "doc/ghost-service-proposal.txt").read_bytes()
     files[release.app + "/GHOST-FORMAT.md"] = (ROOT / "doc/ghost_format.md").read_bytes()
+    bearssl_license = ROOT / "launcher/third_party/bearssl/LICENSE.txt"
+    if bearssl_license.is_file():
+        files[release.app + "/licenses/BearSSL.txt"] = bearssl_license.read_bytes()
     for name in STATE_SHARE_FILES:
         files[release.app + "/State sharing/" + name] = (ROOT / "tools/state_share" / name).read_bytes()
     output.mkdir(parents=True)

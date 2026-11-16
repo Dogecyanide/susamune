@@ -1,3 +1,6 @@
+#include "MoonshineNetLog.h"
+#include "GhostTraceBranchStorage.h"
+#include "susamune/ghost_trace_stream_storage.h"
 /*
 
 Susamune ghost storage (Nintendont kernel side).
@@ -11,6 +14,11 @@ file-header operation or 16 KiB of payload I/O per DI-idle service pass.
 #include "SusamuneGhost.h"
 #include "SusamuneTransfer.h"
 #include "SusamuneCfg.h"
+#include "GhostServiceNative.h"
+#include "GhostServiceAccount.h"
+#if TIMEWARP_LIVE_RACING
+#include "MoonshineNetLog.h"
+#endif
 #include "string.h"
 #include "debug.h"
 #include "ff_utf8.h"
@@ -94,7 +102,8 @@ enum OperationPhase
 	OP_DELETE_OPEN,
 	OP_DELETE_FINISH,
 	OP_DELETE_RECLAIM,
-	OP_IMPORTED_DELETE
+	OP_IMPORTED_DELETE,
+    OP_WEB_WAIT, OP_WEB_READ, OP_WEB_VALIDATE
 };
 
 enum ValidateResult
@@ -152,10 +161,15 @@ static union GhostCatalogStorage CatalogStorage;
 #define ImportDir        CatalogStorage.imported.dir
 #define ImportEntry      CatalogStorage.imported.entry
 static struct GhostRequest Request;
+#if MOONSHINE_LOADING_DIAGNOSTICS
+static unsigned RequestStartedTick;
+#endif
 static struct SusamuneGhostStorageEnvelope IoEnvelope;
 static FIL IoFile;
 static bool IoFileOpen;
 static bool Retiring, CloseFailed;
+static char WebFinalPath[GHOST_PATH_SIZE], WebTempPath[GHOST_PATH_SIZE];
+static u32 WebBytes;
 static bool GhostSupported;
 static bool CatalogReady;
 static bool CatalogUnsafe;
@@ -196,10 +210,39 @@ struct GhostListCache
 	u32 total;
 	u32 nextSlot;
 	u16 profile;
-	bool valid;
+	// ARM bool is a word; keep this marker byte-sized to retain the cache stride.
+	u8 valid;
+	u32 directoryFingerprint;
 };
-static struct GhostListCache ListCache[2];
+typedef char GhostListCacheStrideUnchanged[
+    sizeof(struct GhostListCache) == GHOST_LIST_CACHE_ENTRIES *
+        sizeof(struct SusamuneGhostCatalogEntry) + 32u ? 1 : -1];
+/* Online TLS survives page leases; local scans reclaim these metadata caches. */
+static union {
+    struct GhostListCache list[2];
+    unsigned char session[GHOST_SERVICE_SESSION_SIZE];
+} BrowseMemory ALIGNED(32);
+#define ListCache BrowseMemory.list
+typedef char WebFitsListCache[sizeof(BrowseMemory.session)<=sizeof(ListCache)?1:-1];
+static bool WebCacheOwned;
+static struct GhostAccount WebAccount;
+static struct GhostServiceUpload WebUpload;
+static bool WebAccountLoaded;
+static u32 WebAccountGeneration;
+static u8 WebAccountBank;
+static void WebAccountStart(unsigned action, unsigned bytes);
 static bool ScanCaching;
+static bool CachedSaveScan;
+static u32 ScanFingerprint;
+
+static void FingerprintPersonalName(u32 id, u8 bank)
+{
+	unsigned i;
+	if (!ScanFingerprint) return;
+	for (i = 0; i < 4; ++i, id >>= 8)
+		ScanFingerprint = (ScanFingerprint ^ (id & 255u)) * 16777619u;
+	ScanFingerprint = (ScanFingerprint ^ bank) * 16777619u;
+}
 
 static struct GhostListCache *RequestListCache(void)
 {
@@ -242,6 +285,7 @@ static u32 ValidationOffset;
 static u32 ValidationPoseEnd;
 static u32 ValidationInputEnd;
 static u32 ValidationTeachingEnd;
+static u32 ValidationCameraEnd, ValidationContextCrc, ValidationContextCount;
 static u32 ValidationCameraCrc, ValidationCameraCount;
 static u32 ValidationPreviousCameraQf, ValidationPreviousCameraSegment;
 static u32 ValidationInputStride;
@@ -287,16 +331,12 @@ static volatile struct SusamuneGhostStorageMailbox *GhostBlock(void)
 	return SUSAMUNE_GHOST_STORAGE_PHYS_PTR;
 }
 
-static u16 ReadBe16(const u8 *p)
-{
-	return ((u16)p[0] << 8) | p[1];
-}
 
-static u32 ReadBe32(const u8 *p)
-{
-	return ((u32)p[0] << 24) | ((u32)p[1] << 16) |
-	       ((u32)p[2] << 8) | p[3];
-}
+
+
+
+#define MS_RECORDING_CATALOG_ADMISSION 1
+#include "GhostCanonical.inc"
 
 static u32 ReadBe24(const u8 *p)
 {
@@ -309,39 +349,11 @@ static s32 ReadBeS24(const u8 *p)
 	return (s32)(value | ((value & 0x800000u) ? 0xFF000000u : 0u));
 }
 
-static s32 ReadBeS32(const u8 *p)
-{
-	return (s32)ReadBe32(p);
-}
 
-static u32 CrcUpdate(u32 crc, const u8 *data, u32 size)
-{
-	u32 i;
-	u32 bit;
 
-	for (i = 0; i < size; i++)
-	{
-		crc ^= data[i];
-		for (bit = 0; bit < 8; bit++)
-			crc = (crc >> 1) ^
-			      (SUSAMUNE_GHOST_CRC32_POLY & (0u - (crc & 1u)));
-	}
-	return crc;
-}
 
-static u32 CrcUpdateHeader(u32 crc, const u8 *header,
-	                       u32 zeroStart, u32 zeroEnd)
-{
-	u32 i;
-	u8 value;
 
-	for (i = 0; i < SUSAMUNE_GHOST_FILE_HEADER_SIZE; i++)
-	{
-		value = (i >= zeroStart && i < zeroEnd) ? 0 : header[i];
-		crc = CrcUpdate(crc, &value, 1);
-	}
-	return crc;
-}
+
 
 static void WriteBe16(u8 *p, u16 value)
 {
@@ -412,283 +424,19 @@ static u32 EnvelopeChecksum(const struct SusamuneGhostStorageEnvelope *envelope)
 	       SUSAMUNE_GHOST_CRC32_XOR_OUT;
 }
 
-static bool BytesAreZero(const u8 *bytes, u32 size)
-{
-	u32 i;
-	for (i = 0; i < size; i++)
-		if (bytes[i] != 0)
-			return false;
-	return true;
-}
 
-static bool RouteIsValid(u8 area, u8 episode, u8 parentArea,
-	                     u8 routeFlags, s32 routeVariant)
-{
-	return area <= SUSAMUNE_GHOST_ROUTE_AREA_MAX &&
-	       episode <= SUSAMUNE_GHOST_ROUTE_EPISODE_MAX &&
-	       (parentArea == SUSAMUNE_GHOST_ROUTE_PARENT_NONE ||
-	        parentArea <= SUSAMUNE_GHOST_ROUTE_AREA_MAX) &&
-	       (routeFlags & ~SUSAMUNE_GHOST_ROUTE_FLAGS_V1) == 0 &&
-	       (((routeFlags & SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE) != 0) ==
-	        (parentArea != SUSAMUNE_GHOST_ROUTE_PARENT_NONE)) &&
-	       ((routeFlags & SUSAMUNE_GHOST_ROUTE_PARENT_START) == 0 ||
-	        parentArea != SUSAMUNE_GHOST_ROUTE_PARENT_NONE) &&
-	       routeVariant >= SUSAMUNE_GHOST_ROUTE_VARIANT_NONE &&
-	       routeVariant <= SUSAMUNE_GHOST_ROUTE_VARIANT_MAX;
-}
 
-static bool GameRegionPairIsValid(u32 gameId, u8 region)
-{
-	return (gameId == SUSAMUNE_GHOST_GAME_ID_JP &&
-	        region == SUSAMUNE_GHOST_REGION_JP) ||
-	       (gameId == SUSAMUNE_GHOST_GAME_ID_US &&
-	        region == SUSAMUNE_GHOST_REGION_US) ||
-	       (gameId == SUSAMUNE_GHOST_GAME_ID_PAL &&
-	        region == SUSAMUNE_GHOST_REGION_PAL);
-}
 
-static bool PortableRouteIsValid(u8 area, u8 episode, u8 parentArea,
-	                             u8 routeFlags, s32 routeVariant)
-{
-	u8 expectedParent;
 
-	switch (area)
-	{
-#define PORTABLE_ROUTE_CASE(routeArea, parent) \
-		case routeArea: expectedParent = parent; break;
-		SUSAMUNE_GHOST_PORTABLE_ROUTE_LIST(PORTABLE_ROUTE_CASE)
-#undef PORTABLE_ROUTE_CASE
-		default: return false;
-	}
-	if (!RouteIsValid(area, episode, parentArea, routeFlags, routeVariant) ||
-	    parentArea != expectedParent)
-		return false;
-	if (expectedParent == SUSAMUNE_GHOST_ROUTE_PARENT_NONE)
-		return routeFlags == 0;
-	return (routeFlags & SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE) != 0 &&
-	       (routeFlags & ~(SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE |
-	                       SUSAMUNE_GHOST_ROUTE_PARENT_START)) == 0;
-}
 
-static bool HeaderTextIsValid(const u8 *field, u32 capacity, u32 length,
-	                          bool required)
-{
-	u32 i;
 
-	if (length > capacity || (required && length == 0))
-		return false;
-	for (i = 0; i < length; i++)
-		if (field[i] < SUSAMUNE_GHOST_TEXT_MIN ||
-		    field[i] > SUSAMUNE_GHOST_TEXT_MAX ||
-		    field[i] == '/' || field[i] == '\\')
-			return false;
-	for (; i < capacity; i++)
-		if (field[i] != 0)
-			return false;
-	return true;
-}
 
-static bool V4AttachmentsAreValid(const u8 *header)
-{
-	u8 count = header[SUSAMUNE_GHOST_V4_ATTACHMENT_COUNT_OFFSET];
-	u16 flags = ReadBe16(header + SUSAMUNE_GHOST_V4_ATTACHMENT_FLAGS_OFFSET);
-	u32 i;
-	u32 prior;
-	const u8 *descriptor;
 
-	if (count > SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT ||
-	    header[SUSAMUNE_GHOST_V4_ATTACHMENT_SIZE_OFFSET] !=
-	        SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE ||
-	    (flags & ~SUSAMUNE_GHOST_V4_ATTACHMENT_FLAGS) != 0 ||
-	    ReadBe16(header + SUSAMUNE_GHOST_V4_ATTACHMENT_RESERVED_OFFSET) != 0)
-		return false;
-	for (i = 0; i < SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_COUNT; i++)
-	{
-		descriptor = header + SUSAMUNE_GHOST_V4_ATTACHMENT_TABLE_OFFSET +
-		             i * SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE;
-		if (i < count)
-		{
-			if (BytesAreZero(descriptor,
-			                 SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE))
-				return false;
-			for (prior = 0; prior < i; prior++)
-				if (memcmp(descriptor,
-				           header + SUSAMUNE_GHOST_V4_ATTACHMENT_TABLE_OFFSET +
-				               prior * SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE,
-				           SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE) == 0)
-					return false;
-		}
-		else if (!BytesAreZero(
-		             descriptor,
-		             SUSAMUNE_GHOST_V4_ATTACHMENT_DESCRIPTOR_SIZE))
-			return false;
-	}
-	return true;
-}
 
-static enum ValidateResult ValidateCanonicalHeader(const u8 *header,
-	                                                u32 available,
-	                                                u16 profile,
-	                                                bool imported)
-{
-	u32 fileSize;
-	u32 payloadSize;
-	u32 sampleCount;
-	u32 headerCrc;
-	u32 required;
-	u32 startQf;
-	u32 endQf;
-	u32 resultQf;
-	s32 routeVariant;
-	u16 version;
-	u16 segmentCount;
-	u32 sourceGameId;
-	u8 sourceRegion;
-	bool portable;
 
-	if (available < SUSAMUNE_GHOST_FILE_HEADER_SIZE)
-		return VALIDATE_INVALID;
-	if (ReadBe32(header) != SUSAMUNE_GHOST_FILE_MAGIC)
-		return VALIDATE_INVALID;
-	version = ReadBe16(header + 4);
-	if (version != SUSAMUNE_GHOST_FILE_VERSION_V3 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V4 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V5 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V6 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V7 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V8 &&
-	    version != SUSAMUNE_GHOST_FILE_VERSION_V9)
-		return VALIDATE_FORWARD;
-	if (ReadBe16(header + 6) != SUSAMUNE_GHOST_FILE_HEADER_SIZE)
-		return VALIDATE_INVALID;
-	headerCrc = CrcUpdateHeader(SUSAMUNE_GHOST_CRC32_INIT, header, 12, 20) ^
-	            SUSAMUNE_GHOST_CRC32_XOR_OUT;
-	if (headerCrc != ReadBe32(header + 16))
-		return VALIDATE_INVALID;
 
-	fileSize = ReadBe32(header + 8);
-	payloadSize = ReadBe32(header + 72);
-	sampleCount = ReadBe32(header + 68);
-	required = ReadBe32(header + 24);
-	if (!SusamuneGhostRunFlagsValid(ReadBe32(header + 28)))
-		return VALIDATE_INVALID;
-	if ((required & ~(version == SUSAMUNE_GHOST_FILE_VERSION_V9
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V8
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V7
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V6
-	                    ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6
-	                    : version == SUSAMUNE_GHOST_FILE_VERSION_V5
-	                    ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5
-	                    : version == SUSAMUNE_GHOST_FILE_VERSION_V4
-	                    ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4
-	                    : SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V3)) != 0)
-		return VALIDATE_FORWARD;
-	if (version >= SUSAMUNE_GHOST_FILE_VERSION_V4 &&
-	    required != (version == SUSAMUNE_GHOST_FILE_VERSION_V9
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V8
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V7
-                        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7
-                        : version == SUSAMUNE_GHOST_FILE_VERSION_V6
-	        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6
-	        : version == SUSAMUNE_GHOST_FILE_VERSION_V5
-	        ? SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5
-	        : SUSAMUNE_GHOST_REQUIRED_EXTENDED_CODEC))
-		return VALIDATE_INVALID;
 
-	if (sampleCount < SUSAMUNE_GHOST_MIN_SAMPLE_COUNT ||
-	    sampleCount > SusamuneGhostPoseLimit(version))
-		return VALIDATE_INVALID;
-	segmentCount = ReadBe16(
-		header + SUSAMUNE_GHOST_V4_SEGMENT_COUNT_OFFSET);
-	if (segmentCount == 0 ||
-	    segmentCount > SUSAMUNE_GHOST_V4_MAX_SEGMENTS ||
-	    ReadBe16(header + SUSAMUNE_GHOST_V4_SEGMENT_SIZE_OFFSET) !=
-	        SUSAMUNE_GHOST_V4_SEGMENT_SIZE ||
-	    ReadBe32(header +
-	             SUSAMUNE_GHOST_V4_SEGMENT_TABLE_OFFSET_FIELD) !=
-	        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_OFFSET ||
-	    ReadBe32(header +
-	             SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE_OFFSET) !=
-	        SUSAMUNE_GHOST_V4_SEGMENT_TABLE_SIZE ||
-	    ReadBe32(header +
-	             SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET_FIELD) !=
-	        SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET ||
-	    ReadBe32(header +
-	             SUSAMUNE_GHOST_V4_SAMPLE_DATA_SIZE_OFFSET) !=
-	        sampleCount * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE ||
-	    payloadSize != fileSize - SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
-	    (version >= SUSAMUNE_GHOST_FILE_VERSION_V5
-	        ? fileSize < SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET +
-	            sampleCount * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE +
-	            SUSAMUNE_GHOST_TEACHING_HEADER_SIZE ||
-	          fileSize > SUSAMUNE_GHOST_V5_MAX_FILE_SIZE
-	        : fileSize != SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET +
-	            sampleCount * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE ||
-	          fileSize > SUSAMUNE_GHOST_V4_MAX_FILE_SIZE))
-		return VALIDATE_INVALID;
-	if ((version == SUSAMUNE_GHOST_FILE_VERSION_V3 &&
-	     !BytesAreZero(header +
-	                         SUSAMUNE_GHOST_V3_SEGMENT_CHECKSUM_OFFSET + 4,
-	                   SUSAMUNE_GHOST_FILE_HEADER_SIZE -
-	                       SUSAMUNE_GHOST_V3_SEGMENT_CHECKSUM_OFFSET - 4)) ||
-	    (version >= SUSAMUNE_GHOST_FILE_VERSION_V4 &&
-	     !V4AttachmentsAreValid(header)))
-		return VALIDATE_INVALID;
 
-	sourceGameId = ReadBe32(header + 32);
-	sourceRegion = header[37];
-	portable = imported && sourceGameId != GAME_ID;
-	if (header[36] != SUSAMUNE_GHOST_DISC_REVISION ||
-	    (!imported &&
-	     (sourceGameId != GAME_ID || sourceRegion != GhostRegionId ||
-	      header[38] != profile || !SusamuneGhostPersonalProfile(profile))) ||
-	    (imported &&
-	     (!GameRegionPairIsValid(sourceGameId, sourceRegion) ||
-	      !SusamuneGhostPersonalProfile(header[38]))))
-		return VALIDATE_INVALID;
-	if (header[39] != SUSAMUNE_GHOST_RECORDING_POSE_QF ||
-	    header[40] != (version >= SUSAMUNE_GHOST_FILE_VERSION_V4
-	                      ? SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS
-	                      : SUSAMUNE_GHOST_CODEC_RAW) ||
-	    header[41] != SUSAMUNE_GHOST_POSE_SAMPLE_SIZE ||
-	    ReadBe16(header + 42) != SUSAMUNE_GHOST_TRANSFORM_INTERVAL_QF)
-		return VALIDATE_INVALID;
-	routeVariant = ReadBeS32(header + 48);
-	if (!(portable
-	          ? PortableRouteIsValid(header[44], header[45], header[46],
-	                                 header[47], routeVariant)
-	          : RouteIsValid(header[44], header[45], header[46], header[47],
-	                         routeVariant)))
-		return VALIDATE_INVALID;
-	startQf = ReadBe32(header + 56);
-	endQf = ReadBe32(header + 60);
-	resultQf = ReadBe32(header + 52);
-	if (startQf > SUSAMUNE_GHOST_QF_MAX || endQf > SUSAMUNE_GHOST_QF_MAX ||
-	    endQf < startQf || ReadBe32(header + 64) == 0 ||
-	    ReadBe32(header + 64) != endQf - startQf ||
-	    ReadBe32(header + 64) > SusamuneGhostDurationLimit(version))
-		return VALIDATE_INVALID;
-	if (resultQf != SUSAMUNE_GHOST_RESULT_QF_NONE &&
-	    (resultQf < startQf || resultQf > endQf))
-		return VALIDATE_INVALID;
-	if (header[95] != SUSAMUNE_GHOST_CHECKSUM_CRC32)
-		return VALIDATE_FORWARD;
-	if (!HeaderTextIsValid(header + 96, SUSAMUNE_GHOST_AUTHOR_SIZE,
-	                       header[92], false) ||
-	    !HeaderTextIsValid(header + 120, SUSAMUNE_GHOST_NAME_SIZE,
-	                       header[93], true) ||
-	    !HeaderTextIsValid(header + 168, SUSAMUNE_GHOST_PROFILE_NAME_SIZE,
-	                       header[94], false) ||
-	    (ReadBe32(header + 84) == 0 && ReadBe32(header + 88) == 0))
-		return VALIDATE_INVALID;
-
-	return VALIDATE_OK;
-}
 
 static bool ValidateV3SegmentTable(const u8 *bytes, bool portable)
 {
@@ -765,17 +513,89 @@ static bool ValidateV3SegmentTable(const u8 *bytes, bool portable)
 	return true;
 }
 
+static enum ReadResult ReadEnvelope(u16 profile,u32 slot,u8 bank,struct SusamuneGhostStorageEnvelope *envelope,u8 *header,int *ioError);
+static bool RecordingSourceValid(const u8 *manifest)
+{
+#if MOONSHINE_GHOST_TRACE
+    struct MsTraceFileIdentity source;
+    return GhostTraceFileIdentity(ReadBe32(manifest+16),ReadBe32(manifest+20),GAME_ID,&source) &&
+        source.capabilities==ReadBe32(manifest+24) && source.bytes==ReadBe32(manifest+224) &&
+        source.chunks==ReadBe32(manifest+228) && source.headerHash==ReadBe32(manifest+232) &&
+        source.footerHash==ReadBe32(manifest+236);
+#else
+    (void)manifest;return false;
+#endif
+}
+#if MOONSHINE_GHOST_TRACE
+struct RecordingPinTransaction { u32 sequence,operation;struct MsTraceBranch pin;u8 manifest[256]; };
+#define RECORDING_PIN ((struct RecordingPinTransaction*)(MS_TRACE_CONTROL_PHYS+MS_TRACE_LIBRARY_PIN_OFFSET))
+typedef char RecordingPinFits[MS_TRACE_LIBRARY_PIN_OFFSET+sizeof(struct RecordingPinTransaction)<=MS_TRACE_READ_ARM_OFFSET?1:-1];
+#endif
+static bool PrepareRecordingPin(const u8 *manifest,u32 generation,u32 checksum,bool saving)
+{
+#if MOONSHINE_GHOST_TRACE
+    struct RecordingPinTransaction*t=RECORDING_PIN;struct MsTraceBranch*b=&t->pin;unsigned region;
+    if(!GhostTraceStorageAdmitted()||!generation||Request.slot==0xffffffffu)return false;
+    t->sequence=0;memcpy(t->manifest,manifest,256);
+    if((CrcUpdate(SUSAMUNE_GHOST_CRC32_INIT,t->manifest,256)^SUSAMUNE_GHOST_CRC32_XOR_OUT)!=checksum ||
+       !MsRecordingManifestValid(t->manifest,256,GAME_ID,Request.profile))return false;
+    manifest=t->manifest;memset(b,0,sizeof(*b));region=GAME_ID==0x474d534au?1:GAME_ID==0x474d5345u?2:3;
+    b->nonce=b->parent.nonce=ReadBe32(manifest+16);b->run=b->parent.run=ReadBe32(manifest+20);
+    b->game=GAME_ID;b->capabilities=ReadBe32(manifest+24);b->parent.generation=ReadBe32(manifest+240);
+    b->parent.frame=ReadBe32(manifest+68);b->parent.chunk=ReadBe32(manifest+228);
+    b->fence.fileBytes=ReadBe32(manifest+224)-32;b->fence.headerHash=ReadBe32(manifest+232);
+    b->ownerKind=MS_TRACE_OWNER_LIBRARY|(region<<8)|Request.profile;b->ownerId=Request.slot+1;b->ownerGeneration=generation;
+    if(!MsTraceBranchValid(b,MS_TRACE_BRANCH_PIN)||(saving&&(!RecordingSourceValid(manifest)||!GhostTraceBranchStore(b,MS_TRACE_BRANCH_PIN))))return false;
+    t->operation=saving?SUSAMUNE_GHOST_CMD_SAVE:SUSAMUNE_GHOST_CMD_DELETE;t->sequence=Request.seq;return true;
+#else
+    (void)manifest;(void)generation;(void)checksum;(void)saving;return false;
+#endif
+}
+static const u8 *RecordingSaveBytes(void)
+{
+#if MOONSHINE_GHOST_TRACE
+    if(IoEnvelope.version==SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED){
+        const struct RecordingPinTransaction*t=RECORDING_PIN;
+        return GhostTraceStorageAdmitted()&&t->sequence==Request.seq&&t->operation==SUSAMUNE_GHOST_CMD_SAVE?t->manifest:NULL;
+    }
+#endif
+    return (const u8*)GHOST_PAYLOAD;
+}
+static bool PrepareRecordingDelete(u8 bank)
+{
+    struct SusamuneGhostStorageEnvelope envelope;u8 header[256];int error=0;
+    if(ReadEnvelope(Request.profile,Request.slot,bank,&envelope,header,&error)!=READ_VALID ||
+       envelope.generation!=Request.expectedGeneration || envelope.version!=SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED)return false;
+    return PrepareRecordingPin(header,envelope.generation,envelope.payloadChecksum,false);
+}
+static void ReleaseRecordingPin(void)
+{
+#if MOONSHINE_GHOST_TRACE
+    struct RecordingPinTransaction*t=RECORDING_PIN;
+    if(GhostTraceStorageAdmitted()&&t->sequence==Request.seq&&t->operation==SUSAMUNE_GHOST_CMD_DELETE){
+        GhostTraceBranchRelease(&t->pin,MS_TRACE_BRANCH_PIN);t->sequence=0;
+    }
+#endif
+}
+
 static enum ValidateResult BeginCanonicalValidation(const u8 *bytes,
 	                                                  u32 size,
 	                                                  u16 profile,
 	                                                  bool imported)
 {
 	enum ValidateResult result =
-		ValidateCanonicalHeader(bytes, size, profile, imported);
+		ValidateCanonicalHeader(bytes, size, profile, imported, GAME_ID, GhostRegionId);
 	bool portable;
 
 	if (result != VALIDATE_OK)
 		return result;
+    if (ReadBe32(bytes)==MS_RECORDING_MANIFEST_MAGIC) {
+        if (!RecordingSourceValid(bytes)) return VALIDATE_INVALID;
+        ValidationBytes=bytes;ValidationSize=size;ValidationOffset=size;
+        ValidationVersion=MS_RECORDING_CATALOG_VERSION;
+        ValidationRawCrc=CrcUpdate(SUSAMUNE_GHOST_CRC32_INIT,bytes,size)^SUSAMUNE_GHOST_CRC32_XOR_OUT;
+        return VALIDATE_OK;
+    }
 	portable = imported && ReadBe32(bytes + 32) != GAME_ID;
 	if (ReadBe32(bytes + 8) != size)
 		return VALIDATE_INVALID;
@@ -786,6 +606,9 @@ static enum ValidateResult BeginCanonicalValidation(const u8 *bytes,
 	    ReadBe32(bytes + 68) * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE;
 	ValidationInputEnd = ValidationPoseEnd;
 	ValidationTeachingEnd = size;
+	ValidationCameraEnd = size;
+	ValidationContextCrc = SUSAMUNE_GHOST_CRC32_INIT;
+	ValidationContextCount = 0;
 	ValidationCameraCrc = SUSAMUNE_GHOST_CRC32_INIT;
 	ValidationCameraCount = ValidationPreviousCameraQf = ValidationPreviousCameraSegment = 0;
 	ValidationInputCount = 0;
@@ -806,11 +629,23 @@ static enum ValidateResult BeginCanonicalValidation(const u8 *bytes,
 			    ReadBe32(teaching + 12) * SUSAMUNE_GHOST_SPLIT_SAMPLE_SIZE;
 			if (teachingSize > size - ValidationPoseEnd) return VALIDATE_INVALID;
 			ValidationTeachingEnd = ValidationPoseEnd + teachingSize;
-			if (!SusamuneGhostCameraHeaderValid(bytes + ValidationTeachingEnd,
-			        size - ValidationTeachingEnd)) return VALIDATE_INVALID;
+			if (size - ValidationTeachingEnd < SUSAMUNE_GHOST_CAMERA_HEADER_SIZE ||
+                ReadBe32(bytes + ValidationTeachingEnd + 8) > SUSAMUNE_GHOST_CAMERA_MAX_COUNT)
+                return VALIDATE_INVALID;
+            ValidationCameraEnd = ValidationTeachingEnd + SUSAMUNE_GHOST_CAMERA_HEADER_SIZE +
+                ReadBe32(bytes + ValidationTeachingEnd + 8) * SUSAMUNE_GHOST_CAMERA_SAMPLE_SIZE;
+            if (ValidationCameraEnd > size ||
+                !SusamuneGhostCameraHeaderValid(bytes + ValidationTeachingEnd,
+                    ValidationCameraEnd - ValidationTeachingEnd)) return VALIDATE_INVALID;
+            if (ReadBe16(bytes + 4) >= SUSAMUNE_GHOST_FILE_VERSION_V10) {
+                if (!SusamuneGhostContextHeaderValid(bytes + ValidationCameraEnd,
+                        size - ValidationCameraEnd)) return VALIDATE_INVALID;
+            } else if (ValidationCameraEnd != size) return VALIDATE_INVALID;
 		}
 		if (!SusamuneGhostTeachingHeaderValid(teaching, teachingSize) ||
-		    teaching[5] != (ReadBe16(bytes + 4) >= SUSAMUNE_GHOST_FILE_VERSION_V7
+		    teaching[5] != (ReadBe16(bytes + 4) >= SUSAMUNE_GHOST_FILE_VERSION_V10
+                ? SUSAMUNE_GHOST_TEACHING_STEERING_VERSION
+                : ReadBe16(bytes + 4) >= SUSAMUNE_GHOST_FILE_VERSION_V7
                 ? SUSAMUNE_GHOST_TEACHING_VISUAL_VERSION
                 : ReadBe16(bytes + 4) == SUSAMUNE_GHOST_FILE_VERSION_V6
 		        ? SUSAMUNE_GHOST_TEACHING_FLUDD_VERSION : SUSAMUNE_GHOST_TEACHING_VERSION))
@@ -858,6 +693,10 @@ static enum ValidateResult BeginCanonicalValidation(const u8 *bytes,
 // Returns -1 while another bounded chunk remains, otherwise ValidateResult.
 static int ContinueCanonicalValidation(void)
 {
+    if (ValidationVersion==MS_RECORDING_CATALOG_VERSION)
+        return ValidationSize==MS_RECORDING_MANIFEST_BYTES &&
+            MsRecordingManifestValid(ValidationBytes,ValidationSize,GAME_ID,Request.profile)
+            ? VALIDATE_OK : VALIDATE_INVALID;
 	u32 phaseEnd = ValidationPoseEnd;
 	u32 stride = SUSAMUNE_GHOST_POSE_SAMPLE_SIZE;
 	u32 remaining, chunk, end;
@@ -875,10 +714,16 @@ static int ContinueCanonicalValidation(void)
 		} else if (ValidationOffset == ValidationTeachingEnd) {
 			phaseEnd = ValidationTeachingEnd + SUSAMUNE_GHOST_CAMERA_HEADER_SIZE;
 			stride = SUSAMUNE_GHOST_CAMERA_HEADER_SIZE;
-		} else {
-			phaseEnd = ValidationSize;
+		} else if (ValidationOffset < ValidationCameraEnd) {
+			phaseEnd = ValidationCameraEnd;
 			stride = SUSAMUNE_GHOST_CAMERA_SAMPLE_SIZE;
-		}
+        } else if (ValidationOffset == ValidationCameraEnd) {
+            phaseEnd = ValidationCameraEnd + SUSAMUNE_GHOST_CONTEXT_HEADER_SIZE;
+            stride = SUSAMUNE_GHOST_CONTEXT_HEADER_SIZE;
+        } else {
+            phaseEnd = ValidationSize;
+            stride = SUSAMUNE_GHOST_CONTEXT_RECORD_SIZE;
+        }
 	}
 	remaining = phaseEnd - ValidationOffset;
 	chunk = remaining > SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE
@@ -907,12 +752,35 @@ static int ContinueCanonicalValidation(void)
 	if (ValidationOffset > ValidationPoseEnd && ValidationOffset < ValidationTeachingEnd)
 		ValidationTeachingCrc = CrcUpdate(ValidationTeachingCrc,
 		    ValidationBytes + ValidationOffset, chunk);
-	if (ValidationOffset > ValidationTeachingEnd)
+	if (ValidationOffset > ValidationTeachingEnd && ValidationOffset < ValidationCameraEnd)
 		ValidationCameraCrc = CrcUpdate(ValidationCameraCrc,
 		    ValidationBytes + ValidationOffset, chunk);
+    if (ValidationOffset > ValidationCameraEnd)
+        ValidationContextCrc = CrcUpdate(ValidationContextCrc,
+            ValidationBytes + ValidationOffset, chunk);
 	while (ValidationOffset < end)
 	{
 		sample = ValidationBytes + ValidationOffset;
+        if (ValidationVersion >= SUSAMUNE_GHOST_FILE_VERSION_V10 &&
+            ValidationOffset >= ValidationCameraEnd) {
+            u32 contextSegment;
+            const u8 *previous;
+            if (ValidationOffset == ValidationCameraEnd) {
+                ValidationOffset += SUSAMUNE_GHOST_CONTEXT_HEADER_SIZE;
+                continue;
+            }
+            contextSegment = ReadBe16(sample + 24);
+            if (contextSegment >= ValidationSegmentCount) return VALIDATE_INVALID;
+            segment = ValidationBytes + SUSAMUNE_GHOST_V4_SEGMENT_TABLE_OFFSET +
+                contextSegment * SUSAMUNE_GHOST_V4_SEGMENT_SIZE;
+            previous = ValidationContextCount ? sample - SUSAMUNE_GHOST_CONTEXT_RECORD_SIZE : 0;
+            if (!SusamuneGhostContextRecordValid(sample, ValidationSegmentCount,
+                    ValidationInputCount, ReadBe32(segment + 8), ReadBe32(segment + 12), previous))
+                return VALIDATE_INVALID;
+            ++ValidationContextCount;
+            ValidationOffset += SUSAMUNE_GHOST_CONTEXT_RECORD_SIZE;
+            continue;
+        }
 		if (ValidationOffset >= ValidationTeachingEnd) {
 			u32 cameraSegment;
 			if (ValidationOffset == ValidationTeachingEnd) {
@@ -939,14 +807,15 @@ static int ContinueCanonicalValidation(void)
 				continue;
 			}
 			if (ValidationOffset < ValidationInputEnd) {
-				if (!SusamuneGhostTeachingInputValid(sample,
+				if (!SusamuneGhostTeachingInputValidVersion(sample,
 				        ReadBe32(ValidationBytes + 56), ReadBe32(ValidationBytes + 60),
-				        ValidationPreviousInputQf, ValidationInputCount == 0) ||
+				        ValidationPreviousInputQf, ValidationInputCount == 0, ValidationVersion) ||
 				    (ValidationVersion >= SUSAMUNE_GHOST_FILE_VERSION_V6 &&
                      !SusamuneGhostVisualValid(sample + 16,
                          ValidationVersion >= SUSAMUNE_GHOST_FILE_VERSION_V7)))
 					return VALIDATE_INVALID;
-				ValidationPreviousInputQf = ReadBe32(sample);
+				ValidationPreviousInputQf = SusamuneGhostTeachingInputQf(sample,
+                    ReadBe32(ValidationBytes + 56), ValidationVersion);
 				ValidationInputCount++;
 				ValidationOffset += ValidationInputStride;
 			} else {
@@ -1048,6 +917,11 @@ static int ContinueCanonicalValidation(void)
 	    (ValidationCameraCount != ReadBe32(ValidationBytes + ValidationTeachingEnd + 8) ||
 	     (ValidationCameraCrc ^ SUSAMUNE_GHOST_CRC32_XOR_OUT) !=
 	         ReadBe32(ValidationBytes + ValidationTeachingEnd + 16))) return VALIDATE_INVALID;
+
+    if (ValidationVersion >= SUSAMUNE_GHOST_FILE_VERSION_V10 &&
+        (ValidationContextCount != ReadBe32(ValidationBytes + ValidationCameraEnd + 8) ||
+         (ValidationContextCrc ^ SUSAMUNE_GHOST_CRC32_XOR_OUT) !=
+             ReadBe32(ValidationBytes + ValidationCameraEnd + 16))) return VALIDATE_INVALID;
 
 	ValidationPayloadCrc ^= SUSAMUNE_GHOST_CRC32_XOR_OUT;
 	ValidationFileCrc ^= SUSAMUNE_GHOST_CRC32_XOR_OUT;
@@ -1232,21 +1106,21 @@ static enum ReadResult ReadEnvelope(u16 profile, u32 slot, u8 bank,
 	}
 
 	if (read >= 6 && ReadBe32(raw) == SUSAMUNE_GHOST_ENVELOPE_MAGIC &&
-	    ReadBe16(raw + 4) > SUSAMUNE_GHOST_ENVELOPE_VERSION)
+	    ReadBe16(raw + 4) > SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED)
 		return READ_UNSAFE;
 	if (size < SUSAMUNE_GHOST_ENVELOPE_SIZE ||
 	    ReadBe32(raw) != SUSAMUNE_GHOST_ENVELOPE_MAGIC)
 		return READ_INVALID;
 
 	DecodeEnvelope(raw, envelope);
-	if ((envelope->version != 1 && envelope->version != SUSAMUNE_GHOST_ENVELOPE_VERSION) ||
+	if ((envelope->version != 1 && envelope->version != SUSAMUNE_GHOST_ENVELOPE_VERSION && envelope->version != SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED) ||
 	    envelope->headerSize != SUSAMUNE_GHOST_ENVELOPE_SIZE ||
 	    envelope->gameId != GAME_ID || envelope->profile != profile ||
 	    envelope->slot != (u16)slot ||
 	    (envelope->version == 1 ? slot > 0xFFFFu : envelope->reserved[0] != slot) ||
 	    (envelope->flags & ~SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE) != 0 ||
 	    envelope->payloadSize > SUSAMUNE_GHOST_MAX_FILE_SIZE ||
-	    envelope->durationQf > SUSAMUNE_GHOST_MAX_DURATION_QF ||
+	    envelope->durationQf > (envelope->version==SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED?0x7fffffffu:SUSAMUNE_GHOST_QF_MAX) ||
 	    envelope->headerChecksum != EnvelopeChecksum(envelope))
 		return READ_INVALID;
 	for (i = envelope->version == 1 ? 0 : 1; i < sizeof(envelope->reserved) / sizeof(envelope->reserved[0]); i++)
@@ -1272,10 +1146,11 @@ static enum ReadResult ReadEnvelope(u16 profile, u32 slot, u8 bank,
 	       SUSAMUNE_GHOST_FILE_HEADER_SIZE);
 	validate = ValidateCanonicalHeader(header,
 	                                   SUSAMUNE_GHOST_FILE_HEADER_SIZE,
-	                                   profile, false);
+	                                   profile, false, GAME_ID, GhostRegionId);
 	if (validate == VALIDATE_FORWARD)
 		return READ_UNSAFE;
 	if (validate != VALIDATE_OK ||
+        ((envelope->version==SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED) != (ReadBe32(header)==MS_RECORDING_MANIFEST_MAGIC)) ||
 	    ReadBe32(header + 8) != envelope->payloadSize ||
 	    ReadBe32(header + 64) != envelope->durationQf)
 		return READ_INVALID;
@@ -1365,47 +1240,9 @@ static void RecomputeCatalogTotals(void)
 	CatalogDurationQf = CatalogCount ? Catalog[0].info.durationQf : 0;
 }
 
-static u8 SanitizeText(char *out, u32 capacity, const u8 *in, u32 length)
-{
-	u32 i;
-	u32 count = length < capacity - 1 ? length : capacity - 1;
 
-	for (i = 0; i < count; i++)
-		out[i] = in[i] >= 0x20 && in[i] <= 0x7e ? (char)in[i] : '?';
-	out[count] = '\0';
-	return (u8)count;
-}
 
-static void FillInfo(struct SusamuneGhostSlotInfo *info, const u8 *header,
-	                 u32 generation, u16 flags)
-{
-	memset(info, 0, sizeof(*info));
-	info->generation = generation;
-	info->payloadSize = ReadBe32(header + 8);
-	info->gameId = ReadBe32(header + 32);
-	info->sampleCount = ReadBe32(header + 68);
-	info->durationQf = ReadBe32(header + 64);
-	info->resultQf = ReadBe32(header + 52);
-	info->requiredFeatures = ReadBe32(header + 24);
-	info->runFlags = ReadBe32(header + 28);
-	info->routeVariant = ReadBeS32(header + 48);
-	info->status = SUSAMUNE_GHOST_STATUS_OK;
-	info->flags = SUSAMUNE_GHOST_SLOT_PRESENT | flags;
-	info->sampleIntervalQf = ReadBe16(header + 42);
-	info->routeArea = header[44];
-	info->routeEpisode = header[45];
-	info->routeParentArea = header[46];
-	info->routeFlags = header[47];
-	info->recordingMode = header[39];
-	info->sampleCodec = header[40];
-	info->discRevision = header[36];
-	info->region = header[37];
-	info->authorLength = SanitizeText(info->author, sizeof(info->author),
-	                                header + 96, header[92]);
-	info->nameLength = SanitizeText(info->name, sizeof(info->name),
-	                              header + 120, header[93]);
-	info->canonicalVersion = (u8)ReadBe16(header + 4);
-}
+
 
 static void FillSlotInfo(const u8 *header)
 {
@@ -1448,8 +1285,17 @@ static void PublishBusy(void)
 
 static void FinishRequest(int status, u32 payloadSize, u32 generation)
 {
+#if TIMEWARP_LIVE_RACING && MOONSHINE_LOADING_DIAGNOSTICS
+    MoonshineNetLogIo("ghost",Request.seq,Request.command,payloadSize,read32(HW_TIMER)-RequestStartedTick,status);
+#endif
 	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
-	if (status != SUSAMUNE_GHOST_STATUS_OK)
+	if (Request.command == SUSAMUNE_GHOST_CMD_SAVE && ImportDirOpen)
+	{
+		const int closed = f_closedir(&ImportDir);
+		ImportDirOpen = false;
+		if (closed != FR_OK) status = StorageStatusForResult(closed);
+	}
+	if (status != SUSAMUNE_GHOST_STATUS_OK && !WebCacheOwned)
 		RequestListCache()->valid = false;
 	mailbox->response.responseMagic = SUSAMUNE_GHOST_STORAGE_MAGIC;
 	mailbox->response.protocolVersion = SUSAMUNE_GHOST_STORAGE_VERSION;
@@ -1505,12 +1351,15 @@ static void InitPage(void)
 	memset(&Page, 0, sizeof(Page));
 	Page.magic = SUSAMUNE_GHOST_CATALOG_PAGE_MAGIC;
 	Page.version = SUSAMUNE_GHOST_CATALOG_PAGE_VERSION;
-	Page.first = Request.command == SUSAMUNE_GHOST_CMD_SAVE ? 0 : Request.slot;
+	Page.first = Request.command == SUSAMUNE_GHOST_CMD_SAVE
+		? (cache->profile == Request.profile ? cache->first : 0) : Request.slot;
 	PageOrdinal = 0;
-	PageDuration = 0;
+	PageDuration = CachedSaveScan ? cache->duration : 0;
+	ScanFingerprint = Request.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE ? 0 : 2166136261u;
 	AutoReuseSlot = SUSAMUNE_GHOST_SLOT_AUTO;
 	ScanCaching = Request.command == SUSAMUNE_GHOST_CMD_LIST ||
-	              Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN;
+	              Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN ||
+	              Request.command == SUSAMUNE_GHOST_CMD_SAVE;
 	if (ScanCaching)
 	{
 		cache->valid = false;
@@ -1520,7 +1369,7 @@ static void InitPage(void)
 	}
 }
 
-static void PublishPage(void)
+static void CommitListCache(void)
 {
 	if (ScanCaching)
 	{
@@ -1528,9 +1377,15 @@ static void PublishPage(void)
 		cache->total = PageOrdinal;
 		cache->duration = PageDuration;
 		cache->nextSlot = Page.nextSlot;
+		cache->directoryFingerprint = ScanFingerprint;
 		cache->valid = true;
 		ScanCaching = false;
 	}
+}
+
+static void PublishPage(void)
+{
+	CommitListCache();
 	Page.totalCount = PageOrdinal;
 	Page.totalDurationQfLo = (u32)PageDuration;
 	Page.totalDurationQfHi = (u32)(PageDuration >> 32);
@@ -1587,11 +1442,18 @@ static void BeginCatalogScan(void)
 	                Request.slot == SUSAMUNE_GHOST_SLOT_AUTO;
 	if (DirectoryScan)
 	{
+		const struct GhostListCache *cache = RequestListCache();
+		CachedSaveScan = Request.command == SUSAMUNE_GHOST_CMD_SAVE &&
+			cache->valid && cache->directoryFingerprint && cache->profile == Request.profile &&
+			PersonalSlotValid(cache->nextSlot);
 		InitPage();
 		Phase = OP_PERSONAL_SCAN_OPEN;
 	}
 	else
+	{
+		if (Request.command == SUSAMUNE_GHOST_CMD_SAVE) RequestListCache()->valid = false;
 		BeginSingleSlot(Request.slot);
+	}
 }
 
 static void PersonalScanOpenPass(void)
@@ -1632,6 +1494,16 @@ static bool ParsePersonalLeaf(const char *leaf, u32 *id, u8 *bank)
 	return true;
 }
 
+static void RetryPersonalScan(void)
+{
+	const int ret = f_closedir(&ImportDir);
+	ImportDirOpen = false;
+	CachedSaveScan = false;
+	if (ret != FR_OK) { FinishIoError(ret); return; }
+	Request.slot = SUSAMUNE_GHOST_SLOT_AUTO;
+	BeginCatalogScan();
+}
+
 static void PersonalScanNextPass(void)
 {
 	char leaf[32];
@@ -1639,21 +1511,36 @@ static void PersonalScanNextPass(void)
 	u32 id;
 	u8 bank;
 	int ret;
+	const DIR beforeRead = ImportDir;
 	memset(&ImportEntry, 0, sizeof(ImportEntry));
 	ret = f_readdir(&ImportDir, &ImportEntry);
 	if (ret != FR_OK)
 	{
-		FinishIoError(ret);
+		if (CachedSaveScan) RetryPersonalScan();
+		else FinishIoError(ret);
 		return;
 	}
 	if (!ImportEntry.fname[0])
 	{
-		ret = f_closedir(&ImportDir);
-		ImportDirOpen = false;
-		if (ret != FR_OK)
+		const struct GhostListCache *cache = RequestListCache();
+		if (CachedSaveScan && (PageOrdinal != cache->total || Page.nextSlot != cache->nextSlot ||
+		    !ScanFingerprint || ScanFingerprint != cache->directoryFingerprint))
+		{ RetryPersonalScan(); return; }
+		if (Request.command == SUSAMUNE_GHOST_CMD_SAVE)
 		{
-			FinishIoError(ret);
-			return;
+			// FatFS clears its end iterator. Retain the pre-read position so a
+			// committed append can prove that the cached ordering stayed valid.
+			ImportDir = beforeRead;
+		}
+		else
+		{
+			ret = f_closedir(&ImportDir);
+			ImportDirOpen = false;
+			if (ret != FR_OK)
+			{
+				FinishIoError(ret);
+				return;
+			}
 		}
 		DirectoryScan = false;
 		if (Request.command == SUSAMUNE_GHOST_CMD_LIST) PublishPage();
@@ -1667,16 +1554,36 @@ static void PersonalScanNextPass(void)
 		}
 		return;
 	}
-	if (ImportEntry.fattrib & AM_DIR) return;
+	if (ImportEntry.fattrib & AM_DIR) { ScanFingerprint = 0; return; }
 	for (n = 0; n < sizeof(leaf); ++n)
 	{
-		if (ImportEntry.fname[n] > 0x7Fu) return;
+		if (ImportEntry.fname[n] > 0x7Fu) { ScanFingerprint = 0; return; }
 		leaf[n] = (char)ImportEntry.fname[n];
 		if (!leaf[n]) break;
 	}
-	if (n == sizeof(leaf) || !ParsePersonalLeaf(leaf, &id, &bank)) return;
+	if (n == sizeof(leaf) || !ParsePersonalLeaf(leaf, &id, &bank))
+	{ ScanFingerprint = 0; return; }
+	FingerprintPersonalName(id, bank);
 	if (id >= Page.nextSlot) Page.nextSlot = id + 1u;
 	if (Page.nextSlot == 45u) Page.nextSlot = 48u;
+	if (CachedSaveScan)
+	{
+		struct GhostListCache *cache = RequestListCache();
+		if (bank) return;
+		if (PageOrdinal >= cache->total) { RetryPersonalScan(); return; }
+		if (PageOrdinal >= cache->first && PageOrdinal - cache->first < GHOST_LIST_CACHE_ENTRIES)
+		{
+			const struct SusamuneGhostCatalogEntry *entry = &cache->entries[PageOrdinal - cache->first];
+			// The complete names witness is only a metadata hint. Targets still
+			// receive both bank checks; source and publication checks are unchanged.
+			if (entry->id != id || !(entry->info.flags & SUSAMUNE_GHOST_SLOT_PRESENT) ||
+			    (entry->info.flags & SUSAMUNE_GHOST_SLOT_UNSAFE))
+			{ RetryPersonalScan(); return; }
+			AppendPageEntry(id, &entry->info, NULL);
+		}
+		else ++PageOrdinal;
+		return;
+	}
 	if (bank)
 	{
 		char path[GHOST_PATH_SIZE];
@@ -1684,6 +1591,7 @@ static void PersonalScanNextPass(void)
 		BuildGhostPath(path, Request.profile, id, 0);
 		ret = f_stat_char(path, &other);
 		if (ret == FR_OK) return;
+		ScanFingerprint = 0;
 		if (ret != FR_NO_FILE)
 		{
 			FinishIoError(ret);
@@ -1699,6 +1607,7 @@ static void FinishSingleSlot(void)
 	RecomputeCatalogTotals();
 	if (DirectoryScan)
 	{
+		if (!CatalogCount || CatalogUnsafe) ScanFingerprint = 0;
 		if (Request.command == SUSAMUNE_GHOST_CMD_SAVE && !CatalogUnsafe &&
 			Catalog[0].activeBank >= 0 &&
 		    (Catalog[0].bank[(u8)Catalog[0].activeBank].flags &
@@ -1715,6 +1624,7 @@ static void FinishSingleSlot(void)
 	}
 	if (AutoProbe && (CatalogCount || CatalogUnsafe))
 	{
+		if (CachedSaveScan) { RetryPersonalScan(); return; }
 		++Request.slot;
 		if (Request.slot == 45u) Request.slot = 48u;
 		if (Request.slot == SUSAMUNE_GHOST_SLOT_AUTO)
@@ -1952,8 +1862,12 @@ static void DispatchRequest(void)
 		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
 		return;
 	}
+    if ((slot->info.flags&SUSAMUNE_GHOST_SLOT_STREAMED) &&
+        (Request.command==SUSAMUNE_GHOST_CMD_EXPORT || Request.command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD)) {
+        FinishRequest(SUSAMUNE_GHOST_STATUS_FORWARD_VERSION,0,0);return;
+    }
 	if (Request.command == SUSAMUNE_GHOST_CMD_LOAD ||
-	    Request.command == SUSAMUNE_GHOST_CMD_EXPORT)
+	    Request.command == SUSAMUNE_GHOST_CMD_EXPORT || Request.command == SUSAMUNE_GHOST_CMD_WEB_UPLOAD)
 	{
 		if (slot->activeBank < 0)
 		{
@@ -1987,6 +1901,9 @@ static void DispatchRequest(void)
 			FinishRequest(SUSAMUNE_GHOST_STATUS_NOT_FOUND, 0, 0);
 			return;
 		}
+        if((slot->info.flags&SUSAMUNE_GHOST_SLOT_STREAMED) && !PrepareRecordingDelete((u8)slot->activeBank)) {
+            FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE,0,0);return;
+        }
 		generation = slot->bank[(u8)slot->activeBank].generation + 1u;
 		IoBank = (u8)(1 - slot->activeBank);
 		PrepareEnvelope(&IoEnvelope, SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE,
@@ -2021,6 +1938,13 @@ static void DispatchRequest(void)
 	}
 	PrepareEnvelope(&IoEnvelope, 0, generation, Request.payloadSize,
 	                duration, ValidationRawCrc);
+    if (ReadBe32((const u8*)GHOST_PAYLOAD)==MS_RECORDING_MANIFEST_MAGIC) {
+        if(!PrepareRecordingPin((const u8*)GHOST_PAYLOAD,generation,ValidationRawCrc,true)) {
+            FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_FILE,0,0);return;
+        }
+        IoEnvelope.version=SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED;
+        IoEnvelope.headerChecksum=EnvelopeChecksum(&IoEnvelope);
+    }
 	Phase = OP_SAVE_OPEN;
 }
 
@@ -2063,7 +1987,9 @@ static void SaveDataPass(void)
 		Phase = OP_SAVE_SYNC_DATA;
 		return;
 	}
-	ret = f_write(&IoFile, (const void*)(GHOST_PAYLOAD + IoOffset),
+    const u8 *payload=RecordingSaveBytes();
+    if(!payload){FinishIoError(FR_INVALID_OBJECT);return;}
+	ret = f_write(&IoFile, payload + IoOffset,
 	              chunk, &wrote);
 	if (ret != FR_OK || wrote != chunk)
 	{
@@ -2124,8 +2050,32 @@ static void SaveFinishPass(void)
 		FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE, 0, 0);
 		return;
 	}
-	FillSlotInfo((const u8*)GHOST_PAYLOAD);
+	FillSlotInfo(RecordingSaveBytes());
 	RecomputeCatalogTotals();
+	if (ScanCaching && ImportDirOpen && AutoReuseSlot == SUSAMUNE_GHOST_SLOT_AUTO &&
+	    Request.slot == Page.nextSlot)
+	{
+		FILINFO appended;
+		char expected[32];
+		unsigned i;
+		_sprintf(expected, "g%02u%c.sgh", Request.slot, IoBank ? 'b' : 'a');
+		memset(&appended, 0, sizeof(appended));
+		if (f_readdir(&ImportDir, &appended) == FR_OK && !(appended.fattrib & AM_DIR))
+		{
+			for (i = 0; expected[i] && appended.fname[i] == (unsigned char)expected[i]; ++i) {}
+			if (!expected[i] && !appended.fname[i])
+			{
+				// Reuse only the completed scan plus the committed new row.
+				// Reused directory holes and uncertain ordering require a fresh scan.
+				FingerprintPersonalName(Request.slot, IoBank);
+				AppendPageEntry(Request.slot, &slot->info, NULL);
+				PageDuration += CatalogDurationQf;
+				Page.nextSlot = Request.slot + 1;
+				if (Page.nextSlot == 45u) Page.nextSlot = 48u;
+				CommitListCache();
+			}
+		}
+	}
 	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, IoEnvelope.generation);
 }
 
@@ -2307,6 +2257,9 @@ static void ValidateLoadPass(void)
 	{
 		Phase = OP_EXPORT_OPEN;
 		return;
+	}
+	if (Request.command == SUSAMUNE_GHOST_CMD_WEB_UPLOAD) {
+		WebAccountStart(GHOST_ACCOUNT_UPLOAD, payloadSize); return;
 	}
 	sync_after_write((void*)GHOST_PAYLOAD, payloadSize);
 	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, payloadSize,
@@ -2538,7 +2491,7 @@ static void ImportScanFileClosePass(void)
 	}
 	validate = ValidateCanonicalHeader(bytes, ImportCandidateSize,
 	                                   SUSAMUNE_GHOST_IMPORTED_PROFILE,
-	                                   true);
+	                                   true, GAME_ID, GhostRegionId);
 	if (validate != VALIDATE_OK ||
 	    ReadBe32(bytes + 8) != ImportCandidateSize ||
 	    ImportPrefixSize < SUSAMUNE_GHOST_V3_SAMPLE_DATA_OFFSET)
@@ -2629,6 +2582,7 @@ static void DeleteReclaimPass(void)
 		FinishIoError(ret);
 		return;
 	}
+	ReleaseRecordingPin();
 	InvalidateRequestCatalog();
 	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, IoEnvelope.generation);
 }
@@ -2655,6 +2609,222 @@ static void ImportedDeletePass(void)
 	FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, 0);
 }
 
+static void WebFail(int status)
+{
+    if (IoFileOpen) {
+        if (f_close(&IoFile) != FR_OK) CloseFailed = true;
+        IoFileOpen = false;
+    }
+    if (Request.command == SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD && !CloseFailed)
+        f_unlink_char(WebTempPath);
+    FinishRequest(status, 0, 0);
+}
+
+static void WebStart(void)
+{
+    struct GhostServiceEntry entry;
+    unsigned i, offset;
+    int ret;
+    static const char digits[] = "0123456789abcdef";
+    if (!SusamuneTransferActive() || Request.profile != SUSAMUNE_GHOST_IMPORTED_PROFILE ||
+        Request.slot || Request.flags || Request.expectedGeneration ||
+        Request.payloadSize != (Request.command == SUSAMUNE_GHOST_CMD_WEB_LIST
+            ? sizeof(struct GhostServiceQuery) : sizeof(struct GhostServiceEntry))) {
+        FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0); return;
+    }
+    sync_before_read((void*)GHOST_PAYLOAD, Request.payloadSize);
+    WebBytes = 0;
+    if (Request.command == SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD) {
+        memcpy(&entry, (const void*)GHOST_PAYLOAD, sizeof(entry));
+        if (!entry.bytes || entry.bytes > SUSAMUNE_GHOST_MAX_FILE_SIZE) {
+            FinishRequest(SUSAMUNE_GHOST_STATUS_PAYLOAD_TOO_LARGE, 0, 0); return;
+        }
+        BuildImportDirectory(WebTempPath);
+        ret = f_mkdir_char(WebTempPath);
+        if (ret != FR_OK && ret != FR_EXIST) { FinishIoError(ret); return; }
+        strcpy(WebFinalPath, WebTempPath); strcat(WebFinalPath, "/g_");
+        offset = strlen(WebFinalPath);
+        for (i = 0; i < 32; ++i) {
+            WebFinalPath[offset++] = digits[entry.sha256[i] >> 4];
+            WebFinalPath[offset++] = digits[entry.sha256[i] & 15];
+        }
+        strcpy(WebFinalPath + offset, SUSAMUNE_GHOST_SHARE_EXTENSION);
+        strcat(WebTempPath, "/download.tmp");
+        ret = f_stat_char(WebFinalPath, &ImportEntry);
+        if (ret == FR_OK) { FinishRequest(SUSAMUNE_GHOST_STATUS_SLOT_OCCUPIED, 0, 0); return; }
+        if (ret != FR_NO_FILE) { FinishIoError(ret); return; }
+        ret = f_open_char(&IoFile, WebTempPath, FA_WRITE | FA_CREATE_ALWAYS);
+        if (ret != FR_OK) { FinishIoError(ret); return; }
+        IoFileOpen = true; WebBytes = entry.bytes;
+    }
+    if (!WebCacheOwned) { memset(&BrowseMemory,0,sizeof(BrowseMemory)); WebCacheOwned=true; }
+    if (!GhostServiceStart((void*)GHOST_PAYLOAD, SusamuneTransferStageSize(), GhostRegion,
+            GetCurrentTime(), WebBytes ? &entry : NULL, BrowseMemory.session)) {
+        WebFail(GHOST_SERVICE_NETWORK); return;
+    }
+    Phase = OP_WEB_WAIT;
+}
+
+struct WebAccountRecord { u32 magic, generation, linked; struct GhostAccountSecret secret; u32 crc; };
+static void WebAccountPath(char *path,unsigned bank,bool temp) {
+    _sprintf(path,"%s/delfino-link-%c.bin%s",SusamuneCfgStoragePrefix(),bank?'b':'a',temp?".tmp":"");
+}
+static int WebAccountRead(const char *path,struct WebAccountRecord *record) {
+    UINT got=0;int ret=f_open_char(&IoFile,path,FA_READ),closed;
+    if(ret!=FR_OK)return ret;
+    ret=f_read(&IoFile,record,sizeof(*record),&got);closed=f_close(&IoFile);
+    if(ret!=FR_OK || closed!=FR_OK)return FR_DISK_ERR;
+    if(got!=sizeof(*record) || record->magic!=GHOST_SERVICE_ACCOUNT_MAGIC || record->linked>1 ||
+        record->crc!=CrcUpdate(0,(const u8*)record,sizeof(*record)-4) ||
+        (record->linked && !GhostAccountSecretValid(&record->secret)))return FR_INVALID_OBJECT;
+    return FR_OK;
+}
+/* A durable unlinked generation precedes rotation. Never fall back to an older token after a lost reply. */
+static int WebAccountStore(bool linked) {
+    struct WebAccountRecord record,check;
+    char path[GHOST_PATH_SIZE],temp[GHOST_PATH_SIZE];UINT wrote=0;
+    unsigned bank=1-WebAccountBank;int ret,closed;
+    memset(&record,0,sizeof(record));record.magic=GHOST_SERVICE_ACCOUNT_MAGIC;
+    record.generation=WebAccountGeneration+1;record.linked=linked;
+    if(linked)record.secret=WebAccount.secret;
+    record.crc=CrcUpdate(0,(const u8*)&record,sizeof(record)-4);
+    WebAccountPath(path,bank,false);WebAccountPath(temp,bank,true);
+    ret=f_open_char(&IoFile,temp,FA_WRITE|FA_CREATE_ALWAYS);if(ret!=FR_OK)return ret;
+    ret=f_write(&IoFile,&record,sizeof(record),&wrote);
+    if(ret==FR_OK && wrote==sizeof(record))ret=f_sync(&IoFile);else ret=FR_DISK_ERR;
+    closed=f_close(&IoFile);if(ret!=FR_OK || closed!=FR_OK)return FR_DISK_ERR;
+    ret=WebAccountRead(temp,&check);
+    if(ret!=FR_OK || memcmp(&record,&check,sizeof(record)))return FR_DISK_ERR;
+    ret=f_unlink_char(path);if(ret!=FR_OK && ret!=FR_NO_FILE)return ret;
+    ret=f_rename_char(temp,path);if(ret!=FR_OK)return ret;
+    ret=WebAccountRead(path,&check);
+    if(ret!=FR_OK || memcmp(&record,&check,sizeof(record)))return FR_DISK_ERR;
+    WebAccountGeneration=record.generation;WebAccountBank=bank;
+    memset(&record,0,sizeof(record));memset(&check,0,sizeof(check));return FR_OK;
+}
+static int WebAccountLoad(void) {
+    struct WebAccountRecord record;char path[GHOST_PATH_SIZE];unsigned bank;int ret;
+    if(WebAccountLoaded)return FR_OK;
+    for(bank=0;bank<2;++bank){
+        WebAccountPath(path,bank,false);ret=WebAccountRead(path,&record);
+        if(ret==FR_NO_FILE)continue;
+        if(ret!=FR_OK)return ret;
+        if(!WebAccountGeneration || GenerationIsNewer(record.generation,WebAccountGeneration)) {
+            WebAccountGeneration=record.generation;WebAccountBank=bank;
+            memset(&WebAccount.secret,0,sizeof(WebAccount.secret));
+            if(record.linked)WebAccount.secret=record.secret;
+        }
+    }
+    memset(&record,0,sizeof(record));WebAccountLoaded=true;return FR_OK;
+}
+static void WebAccountStart(unsigned action,unsigned bytes)
+{
+    int ret=WebAccountLoad();
+    if(ret!=FR_OK){FinishIoError(ret);return;}
+    if(action==GHOST_ACCOUNT_UPLOAD && !GhostAccountSecretValid(&WebAccount.secret)){
+        FinishRequest(GHOST_SERVICE_LINK_REQUIRED,0,0);return;
+    }
+    if(action==GHOST_ACCOUNT_UPLOAD || action==GHOST_ACCOUNT_UNLINK) {
+        ret=WebAccountStore(false);if(ret!=FR_OK){FinishIoError(ret);return;}
+    }
+    WebAccount.changed=0;
+    WebBytes=0;
+    if(!WebCacheOwned){memset(&BrowseMemory,0,sizeof(BrowseMemory));WebCacheOwned=true;}
+    if(!SusamuneTransferActive() || !GhostServiceAction((void*)GHOST_PAYLOAD,
+        SusamuneTransferStageSize(),GetCurrentTime(),action,bytes,&WebAccount,BrowseMemory.session,
+        action==GHOST_ACCOUNT_UPLOAD?&WebUpload:NULL)) {
+        WebFail(GHOST_SERVICE_NETWORK);return;
+    }
+    Phase=OP_WEB_WAIT;
+}
+
+static void WebWaitPass(void)
+{
+    unsigned bytes = 0, count;
+    void *data;
+    int result;
+    if (Retiring || SusamuneTransferCancelled(TW_OWNER_GHOST)) GhostServiceCancel();
+    if (WebBytes) {
+        count = GhostServiceRead(&data);
+        if (count) {
+            UINT wrote = 0;
+            int ret = f_write(&IoFile, data, count, &wrote);
+            GhostServiceReadAck(count);
+            if (ret != FR_OK || wrote != count) {
+                /* Keep the lease until the worker retires every IOS request. */
+                GhostServiceCancel();
+                WebBytes = 0;
+            }
+            return;
+        }
+    }
+    GhostBlock()->response.generation=GhostServiceProgress();
+    sync_after_write((void*)&GhostBlock()->response,32);
+    result = GhostServicePoll(&bytes);
+    if (!result) return;
+#if TIMEWARP_LIVE_RACING
+    {
+        unsigned i; const struct GhostServiceTrace *trace;
+        for(i=0;(trace=GhostServiceTrace(i))!=NULL;++i)MoonshineNetLogWeb(trace);
+    }
+#endif
+    GhostServiceRelease();
+    if(Request.command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD || Request.command==SUSAMUNE_GHOST_CMD_WEB_ACCOUNT) {
+        if(WebAccount.changed) {
+            int saved=WebAccountStore(GhostAccountSecretValid(&WebAccount.secret));WebAccount.changed=0;
+            if(saved!=FR_OK){memset(&WebAccount.secret,0,sizeof(WebAccount.secret));WebFail(SUSAMUNE_GHOST_STATUS_IO(saved));return;}
+        } else if(Request.command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD)memset(&WebAccount.secret,0,sizeof(WebAccount.secret));
+    }
+    if (result < 0 || Retiring || SusamuneTransferCancelled(TW_OWNER_GHOST)) {
+        WebFail(result < 0 ? result : GHOST_SERVICE_CANCELLED); return;
+    }
+    if (Request.command == SUSAMUNE_GHOST_CMD_WEB_LIST || Request.command == SUSAMUNE_GHOST_CMD_WEB_ACCOUNT ||
+        Request.command == SUSAMUNE_GHOST_CMD_WEB_UPLOAD) {
+        sync_after_write((void*)GHOST_PAYLOAD, bytes);
+        FinishRequest(SUSAMUNE_GHOST_STATUS_OK, bytes, 0); return;
+    }
+    if (!WebBytes || bytes != WebBytes) { WebFail(SUSAMUNE_GHOST_STATUS_INVALID_FILE); return; }
+    {
+        int ret = f_sync(&IoFile), closeRet = f_close(&IoFile);
+        IoFileOpen = false;
+        if (closeRet != FR_OK) CloseFailed = true;
+        if (ret != FR_OK || closeRet != FR_OK) { WebFail(SUSAMUNE_GHOST_STATUS_IO(FR_DISK_ERR)); return; }
+        ret = f_open_char(&IoFile, WebTempPath, FA_READ);
+        if (ret != FR_OK) { WebFail(SUSAMUNE_GHOST_STATUS_IO(ret)); return; }
+        IoFileOpen = true;
+        if (f_size(&IoFile) != WebBytes) { WebFail(SUSAMUNE_GHOST_STATUS_INVALID_FILE); return; }
+    }
+    IoOffset = 0; Phase = OP_WEB_READ;
+}
+
+static void WebReadPass(void)
+{
+    UINT got = 0;
+    unsigned chunk = WebBytes - IoOffset;
+    int ret;
+    if (chunk > SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE) chunk = SUSAMUNE_GHOST_STORAGE_CHUNK_SIZE;
+    ret = f_read(&IoFile, (void*)(GHOST_PAYLOAD + IoOffset), chunk, &got);
+    if (ret != FR_OK || got != chunk) { WebFail(SUSAMUNE_GHOST_STATUS_INVALID_FILE); return; }
+    IoOffset += got;
+    if (IoOffset != WebBytes) return;
+    ret = f_close(&IoFile); IoFileOpen = false;
+    if (ret != FR_OK) { CloseFailed = true; WebFail(SUSAMUNE_GHOST_STATUS_IO(ret)); return; }
+    ret = BeginCanonicalValidation((const u8*)GHOST_PAYLOAD, WebBytes, SUSAMUNE_GHOST_IMPORTED_PROFILE, true);
+    if (ret != VALIDATE_OK) { WebFail(SUSAMUNE_GHOST_STATUS_INVALID_FILE); return; }
+    Phase = OP_WEB_VALIDATE;
+}
+
+static void WebValidatePass(void)
+{
+    int ret = ContinueCanonicalValidation();
+    if (ret < 0) return;
+    if (ret != VALIDATE_OK) { WebFail(SUSAMUNE_GHOST_STATUS_INVALID_FILE); return; }
+    ret = f_rename_char(WebTempPath, WebFinalPath);
+    if (ret != FR_OK) { WebFail(SUSAMUNE_GHOST_STATUS_IO(ret)); return; }
+    ImportedCatalogReady = false;
+    FinishRequest(SUSAMUNE_GHOST_STATUS_OK, 0, 0);
+}
+
 static void StartRequest(void)
 {
 	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
@@ -2666,6 +2836,9 @@ static void StartRequest(void)
 	if (request->requestSeq == GhostAckSeq)
 		return;
 	if (!SusamuneTransferAllows(TW_OWNER_GHOST, request->requestSeq, 0, request->command)) return;
+#if MOONSHINE_LOADING_DIAGNOSTICS
+    RequestStartedTick=read32(HW_TIMER);
+#endif
 	Request.seq = request->requestSeq;
 	Request.command = request->command;
 	Request.profile = request->profile;
@@ -2673,8 +2846,10 @@ static void StartRequest(void)
 	Request.payloadSize = request->payloadSize;
 	Request.flags = request->flags;
 	Request.expectedGeneration = request->expectedGeneration;
+
 	AutoProbe = false;
 	ScanCaching = false;
+	CachedSaveScan = false;
 	PublishBusy();
 
 	if (request->requestMagic != SUSAMUNE_GHOST_STORAGE_MAGIC ||
@@ -2696,18 +2871,30 @@ static void StartRequest(void)
 		return;
 	}
 	if (Request.command < SUSAMUNE_GHOST_CMD_SAVE ||
-	    Request.command > SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
+	    Request.command > SUSAMUNE_GHOST_CMD_WEB_ACCOUNT)
 	{
 		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
 		return;
 	}
+    if (Request.command == SUSAMUNE_GHOST_CMD_WEB_LIST || Request.command == SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD) {
+        WebStart(); return;
+    }
+    if(Request.command==SUSAMUNE_GHOST_CMD_WEB_ACCOUNT) {
+        if(Request.profile!=SUSAMUNE_GHOST_IMPORTED_PROFILE || Request.slot>GHOST_ACCOUNT_UNLINK ||
+            Request.flags || Request.payloadSize || Request.expectedGeneration) {
+            FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST,0,0);return;
+        }
+        WebAccountStart(Request.slot,0);return;
+    }
+    if(WebCacheOwned) {
+        GhostServiceForget();memset(&BrowseMemory,0,sizeof(BrowseMemory));WebCacheOwned=false;
+    }
 	if (Request.profile != SUSAMUNE_GHOST_IMPORTED_PROFILE && !SusamuneGhostPersonalProfile(Request.profile))
 	{
 		FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_SLOT, 0, 0);
 		return;
 	}
-	if (Request.command == SUSAMUNE_GHOST_CMD_SAVE ||
-	    Request.command == SUSAMUNE_GHOST_CMD_DELETE)
+	if (Request.command == SUSAMUNE_GHOST_CMD_DELETE)
 		RequestListCache()->valid = false;
 	if (Request.command == SUSAMUNE_GHOST_CMD_LIST || Request.command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
 	{
@@ -2751,6 +2938,15 @@ static void StartRequest(void)
 	}
 	if (Request.command != SUSAMUNE_GHOST_CMD_SAVE)
 	{
+		memset(&WebUpload,0,sizeof(WebUpload));
+		if(Request.command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD && Request.payloadSize==sizeof(WebUpload)) {
+			sync_before_read((void*)GHOST_PAYLOAD,sizeof(WebUpload));
+			memcpy(&WebUpload,(void*)GHOST_PAYLOAD,sizeof(WebUpload));
+			if(!GhostServiceDescriptionValid(WebUpload.description)) {
+				FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST,0,0);return;
+			}
+			Request.payloadSize=0;
+		}
 		if (Request.payloadSize)
 		{
 			FinishRequest(SUSAMUNE_GHOST_STATUS_INVALID_REQUEST, 0, 0);
@@ -2817,6 +3013,7 @@ void SusamuneGhostInit(void)
 	volatile struct SusamuneGhostStorageMailbox *mailbox = GhostBlock();
 
 	if (!SusamuneGhostQuiescent()) return;
+	memset(&WebAccount,0,sizeof(WebAccount));WebAccountLoaded=false;WebAccountGeneration=WebAccountBank=0;
 	Retiring = false;
 	/* Reserved lines belong to the transfer coordinator, even across Init. */
 	memset((void*)mailbox, 0, sizeof(mailbox->request) + sizeof(mailbox->response));
@@ -2827,6 +3024,7 @@ void SusamuneGhostInit(void)
 		? SUSAMUNE_GHOST_REGION_US : SUSAMUNE_GHOST_REGION_PAL;
 	GhostSupported = SusamuneCfgStorageAvailable() && GhostRegion != NULL;
 	GhostAckSeq = 0;
+    GhostServiceForget();WebCacheOwned=false;
 	memset(ListCache, 0, sizeof(ListCache));
 	ScanCaching = false;
 	CatalogReady = false;
@@ -2868,9 +3066,15 @@ void SusamuneGhostService(void)
 	if (Phase != OP_IDLE && !Retiring &&
 		!SusamuneTransferAllows(TW_OWNER_GHOST, Request.seq, 0, Request.command)) return;
 
+    if ((Phase == OP_WEB_READ || Phase == OP_WEB_VALIDATE) &&
+        (Retiring || SusamuneTransferCancelled(TW_OWNER_GHOST))) { WebFail(GHOST_SERVICE_CANCELLED); return; }
 	switch (Phase)
 	{
+        case OP_WEB_WAIT: WebWaitPass(); break;
+        case OP_WEB_READ: WebReadPass(); break;
+        case OP_WEB_VALIDATE: WebValidatePass(); break;
 		case OP_IDLE:
+
 			if (!Retiring) StartRequest();
 			break;
 		case OP_VALIDATE_SAVE:

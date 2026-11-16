@@ -17,7 +17,7 @@ class PracticeCheckpointTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         production = ROOT / "src/practice_session.cpp"
         functions = "\n".join(function_source(production, name) for name in (
-            "bool atRecordedScene()", "bool captureSavestate(", "bool savestateRestoreSpans(",
+            "SusamunePracticeInput frameInput(", "bool atRecordedScene()", "bool captureSavestate(", "bool savestateRestoreSpans(",
             "bool copySavestateBytes(", "bool restoreSavestate(", "bool requestContinue()",
             "bool captureTake(", "bool restoreTake(", "bool takeBelongsTo("))
         functions = functions.replace("reinterpret_cast<u32>(gpApplication.mCurrentHeap)",
@@ -28,7 +28,7 @@ class PracticeCheckpointTests(unittest.TestCase):
 #include "susamune/mem2_map.h"
 extern "C" void *memcpy(void*d,const void*s,size_t n){for(size_t i=0;i<n;++i)((volatile u8*)d)[i]=((const u8*)s)[i];return d;}
 extern "C" void *memset(void*d,int v,size_t n){for(size_t i=0;i<n;++i)((volatile u8*)d)[i]=(u8)v;return d;}
-const u32 kMaxFrames=4096,kSavedTakeVersion=2,kFrameFingerprintMask=0x7fffffff;
+const u32 kMaxFrames=4096,kSavedTakeVersion=2,kFrameFingerprintMask=0x7fffffff,kDigitalButtons=0x1f7f;
 enum SavedTakeFlags {SAVED_PAD=1,SAVED_RNG=2,SAVED_TAKE=4,SAVED_RECORDING=8,SAVED_PAUSED=16};
 struct Frame {SusamunePracticeInput input;u32 fingerprint;};
 struct PadHistory {u8 shared[80],controls[80],meaning[0x4c];};
@@ -181,6 +181,7 @@ extern "C" __declspec(dllexport) const char*status(){return lastMessage;}
 '''
         seek = production.read_text(encoding='utf-8').split('// TAS seek extension:', 1)[1]
         seek = seek[seek.index('namespace {'):]
+        seek = seek.split('\nnamespace PracticeSession {\n__attribute__((section(".text.practice_recorded_input")))', 1)[0]
         text += r'''
 static bool sStepping,sFreeze,sTransitionSetup,sModal;
 static unsigned sMenuAction,sTransitionMode;
@@ -191,9 +192,10 @@ enum {CARD_ERROR_BUSY=-1};
 static struct {int state;int getLastStatus(){return state;}} card,*gpCardManager=&card;
 namespace WarpWheel {bool shown(){return false;}bool promptPending(){return false;}}
 namespace StageLoader {bool resultOwnsInput(){return false;}}
+namespace ModelEditorPreview {void restoreAll(){}}
 void restoreCamera(){}
 static bool sFreeCamera;
-struct TMarDirector {enum {STATE_GAME_STARTING=2,STATE_STAGE_EXIT=9,STATE_STAGE_EXIT_2=12};u32 mCurState;};
+struct TMarDirector {enum {STATE_GAME_STARTING=2,STATE_STAGE_EXIT=9,STATE_STAGE_EXIT_2=12};u32 mCurState;u8 padding[0x50];s32 mTickBudget;};
 static TMarDirector director,*gpMarDirector=&director;
 bool stageReady(){return gameplay;}
 namespace PracticeSession {
@@ -204,6 +206,8 @@ void cancelLoadHold(){}
 bool SavestateManager::diskBusy(){return busy;}
 bool SavestateManager::loadPending()const{return ::loadPending;}
 u32 SavestateManager::slotSceneKey(u32 slot)const{return archives[slot].scene;}
+int SavestateManager::prepareSlotLoad(u32,u32){return 1;}
+void SavestateManager::cancelPreparedLoad(){}
 bool SavestateManager::loadSlot(u32 slot,u32 generation){
     if(loadFails||infos[slot].generation!=generation)return false;
     const bool result=load(slot,sOwnLoad);

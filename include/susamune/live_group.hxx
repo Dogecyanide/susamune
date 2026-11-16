@@ -2,6 +2,7 @@
 #include "susamune/live_group_rules.hxx"
 #include "susamune/live_race_session.hxx"
 #include "susamune/live_playlist.hxx"
+#include "susamune/live_colours.hxx"
 
 #if TIMEWARP_LIVE_RACING
 namespace LiveGroup {
@@ -34,6 +35,9 @@ struct Room {
     LiveGroupRules::State rules;
     LivePlaylist::Transfer playlist;
     Member members[4];
+    LiveColours::Palette colours[4];
+    unsigned char colourPending[3];
+    bool ownColourSent;
     MSRPose poses[4];
     unsigned poseSequence[4], poseReceived[4], remoteSceneEpoch[4];
     unsigned serial, receivedSerial, sentSerial[3], sentAt[3], now, settledAt, ownPoseSequence;
@@ -56,9 +60,11 @@ void pose(Room &, unsigned link, const MSRHeader &, const MSRPose &, unsigned no
 void localPose(Room &, const MSRPose &, unsigned now);
 void tick(Room &, unsigned now);
 bool ready(Room &, bool);
+void setColours(Room &, const LiveColours::Palette &);
 bool ban(Room &, unsigned candidate);
 bool result(Room &, int qf, bool eligible);
 bool cancel(Room &);
+bool endMatch(Room &);
 unsigned connectedCount(const Room &);
 unsigned remoteSlot(const Room &, unsigned player);
 }

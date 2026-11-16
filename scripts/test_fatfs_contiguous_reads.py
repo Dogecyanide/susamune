@@ -148,8 +148,8 @@ class FatFsContiguousReadsTests(unittest.TestCase):
     def test_contiguous_large_read_uses_bounded_combined_requests(self):
         self.configure()
         self.assertEqual(self.take(256*1024), (0,256*1024))
-        self.assertEqual(self.lib.stat(0), 4)
-        self.assertEqual(self.lib.stat(2), 65536)
+        self.assertEqual(self.lib.stat(0), 2)
+        self.assertEqual(self.lib.stat(2), 131072)
         self.assertEqual(self.lib.stat(5), 9)
 
     def test_fragment_boundaries_and_following_reads_keep_correct_cluster(self):
@@ -159,6 +159,15 @@ class FatFsContiguousReadsTests(unittest.TestCase):
         self.take(33, 3*4096-17)
         self.take(4096, 8*4096)
         self.take(31, 9*4096)
+
+    def test_adjacent_linkmap_extents_still_keep_their_own_boundaries(self):
+        for following in (7,700):
+            with self.subTest(following=following):
+                self.configure(extents=[(5,2),(3,following)],size=8*32768)
+                self.take(8*32768)
+                self.assertEqual(self.lib.stat(0),3)
+                self.assertEqual([self.lib.log_value(i,1) for i in range(3)], [256,64,192])
+                self.assertEqual(self.lib.stat(3),0)
 
     def test_no_linkmap_retains_cluster_reads(self):
         self.configure(mode=0, extents=[(3,2),(5,400),(8,900)])
@@ -183,7 +192,7 @@ class FatFsContiguousReadsTests(unittest.TestCase):
                     self.configure(ssize=ssize, cluster=cluster, extents=[(2,2),(7,90),(99,800)])
                     self.take(93001, ssize-29)
                     self.take(71)
-                    self.assertLessEqual(self.lib.stat(2), 65536)
+                    self.assertLessEqual(self.lib.stat(2), 131072)
 
     def test_eof_zero_reads_and_small_tail(self):
         self.configure(size=131111)
@@ -196,8 +205,8 @@ class FatFsContiguousReadsTests(unittest.TestCase):
     def test_error_keeps_completed_prefix_and_latches_disk_error(self):
         self.configure()
         self.lib.fail(2)
-        self.assertEqual(self.take(3*65536), (1,65536))
-        self.assertEqual(self.lib.stat(4), 65536)
+        self.assertEqual(self.take(3*65536), (1,131072))
+        self.assertEqual(self.lib.stat(4), 131072)
         self.assertEqual(self.lib.stat(6), 1)
         self.assertEqual(self.take(512), (1,0))
 
@@ -210,8 +219,8 @@ class FatFsContiguousReadsTests(unittest.TestCase):
 
     def test_large_extent_is_bounded_before_multiplication(self):
         self.configure(extents=[(0xfffffff,2)],size=(1<<40)-1)
-        self.take(65536, 4096)
-        self.assertLessEqual(self.lib.stat(2),65536)
+        self.take(256*1024, 4096)
+        self.assertLessEqual(self.lib.stat(2),131072)
 
 
 if __name__ == '__main__':

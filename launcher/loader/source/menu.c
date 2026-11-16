@@ -156,11 +156,14 @@ void ShowMessageScreenAndExit(const char *msg, int ret)
 void ShowMessageScreenAndWaitForPower(const char *msg)
 {
 	static const char PowerLine[] = "Press POWER to exit to Homebrew Channel.";
-	const int msgX = (640 - (int)strlen(msg)*10) / 2;
-	const int powerX = (640 - (int)sizeof(PowerLine)*10) / 2;
+	const char *line;
+	int lines = 1;
+	const int powerX = (640 - (int)strlen(PowerLine)*10) / 2;
+	for (line = msg; *line; ++line) if (*line == '\n') ++lines;
 
 	while (1)
 	{
+		int y = 232 - (lines - 1) * 10;
 		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
@@ -168,8 +171,15 @@ void ShowMessageScreenAndWaitForPower(const char *msg)
 
 		ClearScreen();
 		PrintInfo();
-		PrintFormat(DEFAULT_SIZE, MAROON, msgX, 232, "%s", msg);
-		PrintFormat(DEFAULT_SIZE, MAROON, powerX, 252, "%s", PowerLine);
+		line = msg;
+		while (line) {
+			const char *end = strchr(line, '\n');
+			int length = end ? (int)(end - line) : (int)strlen(line);
+			PrintFormat(DEFAULT_SIZE, MAROON, (640 - length * 10) / 2, y, "%.*s", length, line);
+			y += 20;
+			line = end ? end + 1 : NULL;
+		}
+		PrintFormat(DEFAULT_SIZE, MAROON, powerX, y, "%s", PowerLine);
 		GRRLIB_Render();
 		ClearScreen();
 	}

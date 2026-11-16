@@ -1,4 +1,5 @@
 #include "susamune/ghost_fludd.hxx"
+#include "susamune/ghost_trace.hxx"
 #include "Dolphin/math.h"
 #include "Dolphin/mem.h"
 #include "SMS/Player/Mario.hxx"
@@ -133,6 +134,9 @@ void capture(SusamuneGhostFluddSample &sample) {
 }
 
 void observe(const TWaterEmitInfo &info, u8 emitted) {
+#if MOONSHINE_GHOST_TRACE
+    GhostTrace::water(info, emitted);
+#endif
     TMario *mario = gpMarioOriginal;
     if (!emitted || !RetailInput::stageDirector() || !mario || !mario->mFludd ||
         mario->mFludd->mEmitInfo != &info) return;

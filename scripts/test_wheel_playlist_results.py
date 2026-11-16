@@ -108,10 +108,10 @@ API const char *row(int mode,const char *label){textCount=0;sRuntime={};
                 self.assertEqual(self.lib.destination(root, 0, episode),
                                  (area << 16) | (episode << 8) | episode)
         for slot, area, episode, parent in ((0, 0x3a, 1, 0), (1, 0x32, 0, 1),
-                                             (5, 0x29, 0, 5), (7, 0x3a, 0, 7)):
+                                             (2, 5, 2, 2), (5, 0x29, 0, 5), (7, 0x3a, 0, 7)):
             self.assertEqual(self.lib.destination(3, 1, slot),
                              (area << 16) | (episode << 8) | parent)
-        self.assertEqual(self.lib.destination(3, 1, 2), -1)
+        self.assertEqual(self.lib.destination(3, 1, 4), -1)
 
     def test_completed_total_is_distinct_from_active_playlist_time(self):
         self.assertEqual(self.lib.row(0, b"Total time"), b"0:00:10.010")

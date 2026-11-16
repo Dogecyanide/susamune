@@ -251,6 +251,13 @@ class Runtime(Capture):
         self.calls = []
         self.flows = []
 
+    def __exit__(self, *args):
+        super().__exit__(*args)
+        from runtime_artifact_cleanup import cleanup
+        cleanup(self.folder, self.evidence,
+                stopped=bool(self.evidence.get("owned_process_stopped")),
+                keep_iso=bool(self.info.get("keep_test_iso")))
+
     def matches_mem1(self, base):
         return self.host_read(base + self.info["pad_site"] - 0x80000000, 4, False) == struct.pack(">I", self.info["pad_word"])
 

@@ -1,6 +1,7 @@
 /* Heapless archive service. PPC owns pool/staging until the matching receipt. */
 #include "SusamuneStateStorage.h"
 #include "SusamuneTransfer.h"
+#include "GhostTraceBranchStorage.h"
 #include "Config.h"
 #include "SusamuneCfg.h"
 #include "string.h"
@@ -22,7 +23,7 @@ extern u32 GAME_ID;
 
 enum { IDLE, EXPORT_FIND, OPEN_FILE, HEADER_IO, METADATA_IO, PAYLOAD_IO,
        COMMIT_HEADER, SYNC_FILE, CLOSE_FILE, RENAME_FILE, CATALOG_NEXT, CATALOG_HEADER, MUTATE_FILE, PREPARED_REQUEST,
-       CATALOG_ADOPT_FIND, CATALOG_ADOPT_COMMIT };
+       CATALOG_ADOPT_FIND, CATALOG_ADOPT_COMMIT, GHOST_RECOVER };
 static bool Enabled, FileOpen, DirOpen;
 static bool Retiring, CloseFailed;
 static u32 Ack, Phase, FileId, Offset, PayloadCrc, ConfigId;
@@ -287,6 +288,8 @@ static u32 WriteName(void)
     return f_rename_char(temporary, path) == FR_OK ? SUSAMUNE_STATE_OK : SUSAMUNE_STATE_IO_ERROR;
 }
 
+#include "GhostStateArchive.inc"
+
 static u32 DeleteArchive(void)
 {
     FIL file;
@@ -303,6 +306,7 @@ static u32 DeleteArchive(void)
     if (result != FR_OK || done != sizeof(Header) || closed != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
     // Reserve the numeric identity before removing its payload.
     if (f_unlink_char(Path) != FR_OK) return SUSAMUNE_STATE_IO_ERROR;
+    if (!StateGhostRelease()) return SUSAMUNE_STATE_IO_ERROR;
     for (i = 0; i < 2; ++i) {
         _sprintf(name, "%s/state_%08u.name%u", Directory, FileId, i);
         f_unlink_char(name);
@@ -315,6 +319,7 @@ static u32 DeleteArchive(void)
 static void Finish(u32 status)
 {
     struct SusamuneStateStorageMailbox *m = STATE_MAILBOX;
+    StateGhostCancel();
     if (FileOpen) { if (f_close(&File) != FR_OK && status == SUSAMUNE_STATE_OK) status = SUSAMUNE_STATE_IO_ERROR; FileOpen = false; }
     if (DirOpen) { f_closedir(&Scan); DirOpen = false; }
     memset(&m->receipt, 0, sizeof(m->receipt));
@@ -362,7 +367,7 @@ static void Finish(u32 status)
 
 bool SusamuneStateStorageQuiescent(void)
 {
-    return Phase == IDLE && !FileOpen && !DirOpen && !CloseFailed;
+    return Phase == IDLE && !FileOpen && !DirOpen && !CloseFailed && StateGhostIdle();
 }
 
 bool SusamuneStateStorageRetireFailed(void)
@@ -511,6 +516,7 @@ void SusamuneStateStorageService(void)
         if (m->request.seq == Ack) return;
         if (!SusamuneTransferAllows(TW_OWNER_STATE, m->request.seq, m->request.session, m->request.command)) return;
         Request = m->request;
+        StateGhostReset();
         TasContext = m->tasRequest;
         _sprintf(Directory, "%s" MOONSHINE_STATES_DIR, SusamuneCfgStoragePrefix());
         FileId = Offset = ExportPlanCrc = 0;
@@ -598,6 +604,8 @@ void SusamuneStateStorageService(void)
         if (Request.command == SUSAMUNE_STATE_CMD_RENAME || Request.command == SUSAMUNE_STATE_CMD_DELETE) {
             if (!SusamuneStateHeaderValid(&Header) || !ValidFileSize(f_size(&File))) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
             if (Header.headerCrc != Request.expectedHeaderCrc) { Finish(SUSAMUNE_STATE_STALE); return; }
+            if (Request.command == SUSAMUNE_STATE_CMD_DELETE && Header.reserved[0]) { Phase = METADATA_IO; return; }
+            if (Request.command != SUSAMUNE_STATE_CMD_RENAME && !StateGhostPrepare(&Header, TasContext.projectId, FileId)) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
             result = f_close(&File); FileOpen = false;
             if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
             Phase = MUTATE_FILE; return;
@@ -618,6 +626,30 @@ void SusamuneStateStorageService(void)
             !TasTapeMetadataValid(Request.command != SUSAMUNE_STATE_CMD_EXPORT)) {
             Finish(SUSAMUNE_STATE_BAD_FILE); return;
         }
+        if (!StateGhostPrepare(&Header, TasContext.projectId, FileId)) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (Request.command == SUSAMUNE_STATE_CMD_DELETE) {
+            sync_after_write(m->metadata, Header.metadataSize);
+            result = f_close(&File); FileOpen = false;
+            if (result != FR_OK) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
+            Phase = MUTATE_FILE; return;
+        }
+        if (Header.reserved[0] && (Request.command == SUSAMUNE_STATE_CMD_IMPORT ||
+            (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW && !Request.poolOffset))) {
+            if (!StateGhostStore()) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+            result = StateGhostRecover(1);
+            if (result < 0) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+            if (!result) { Phase = GHOST_RECOVER; return; }
+        }
+        if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW &&
+            f_lseek(&File, sizeof(Header) + Header.metadataSize + Request.poolOffset) != FR_OK) {
+            Finish(SUSAMUNE_STATE_IO_ERROR); return;
+        }
+        PayloadCrc = 0xFFFFFFFFu; Phase = PAYLOAD_IO; return;
+    }
+    if (Phase == GHOST_RECOVER) {
+        const int recovered = StateGhostRecover(0);
+        if (recovered < 0) { Finish(SUSAMUNE_STATE_BAD_FILE); return; }
+        if (!recovered) return;
         if (Request.command == SUSAMUNE_STATE_CMD_READ_WINDOW &&
             f_lseek(&File, sizeof(Header) + Header.metadataSize + Request.poolOffset) != FR_OK) {
             Finish(SUSAMUNE_STATE_IO_ERROR); return;
@@ -682,6 +714,7 @@ void SusamuneStateStorageService(void)
         return;
     }
     if (Phase == RENAME_FILE) {
+        if (!StateGhostStore()) { Finish(SUSAMUNE_STATE_IO_ERROR); return; }
         Finish(f_rename_char(Temporary, Path) == FR_OK ? SUSAMUNE_STATE_OK : SUSAMUNE_STATE_IO_ERROR);
         return;
     }
@@ -733,6 +766,9 @@ void SusamuneStateStorageService(void)
     }
     if (Phase == CATALOG_ADOPT_COMMIT) {
         // Reserve before rename; interrupted adoption never reuses a stale ID.
+        if (StateGhostRead(ImportedPath, 0, FileId, &Header) != FR_OK || !StateGhostStore()) {
+            Phase = CATALOG_NEXT; return;
+        }
         if (ReserveImportedId() != FR_OK || f_rename_char(ImportedPath, Path) != FR_OK) {
             Finish(SUSAMUNE_STATE_IO_ERROR); return;
         }

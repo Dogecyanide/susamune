@@ -159,6 +159,7 @@ class StateStorageKernelTests(unittest.TestCase):
         fixture = fixture.replace('#define FIXTURE_FILE_BYTES 1400000', '#define FIXTURE_FILE_BYTES 6000000')
         fixture = fixture.replace('f_open_char(', 'fixture_open(').replace('f_unlink_char(', 'fixture_unlink(')
         fixture = fixture.replace('f_read(', 'fixture_read(')
+        fixture = fixture.replace('f_mkdir_char(', 'fixture_mkdir(').replace('f_rename_char(', 'fixture_rename(')
         fixture = fixture.replace('int live; int writable;', 'int live; int writable; int directory;')
         fixture = fixture.replace('info->fsize=testFiles[i].size; return FR_OK;',
                                   'info->fsize=testFiles[i].size; info->fattrib=testFiles[i].directory?AM_DIR:0; return FR_OK;')
@@ -168,6 +169,8 @@ class StateStorageKernelTests(unittest.TestCase):
         source = (ROOT / 'launcher/kernel/SusamuneStateStorage.c').read_text()
         source = source.replace('#include "SusamuneTasStorage.inc"',
                                 (ROOT / 'launcher/kernel/SusamuneTasStorage.inc').read_text())
+        source = source.replace('#include "GhostStateArchive.inc"',
+                                (ROOT / 'launcher/kernel/GhostStateArchive.inc').read_text())
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         start = source.index('static u32 BootConfigId(void)')
         end = source.index('\nstatic void Paths(', start)

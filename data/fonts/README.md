@@ -11,8 +11,8 @@ The glyph order in `droid-japanese-codepoints.json` follows the Shift-JIS table 
 Build the bounded catalogue and subset with `scripts/gen_japanese_ui.py`.
 No retail Sunshine font or IPL image is included in the output.
 
-`noto-japanese-supplement.json` adds only U+7DBA (綺), which Droid lacks, for
-the runner-provided achievement title 綺麗な射線. It contains one precomputed
+`noto-japanese-supplement.json` adds U+7DBA (綺) and U+6A59 (橙), which Droid lacks, for
+the runner-provided achievement and orange Yoshi labels. It contains precomputed
 16×16 four-shade glyph from the existing
 [Noto Sans Mono CJK JP variable font](https://github.com/notofonts/noto-cjk/blob/main/Sans/Variable/TTF/Mono/NotoSansMonoCJKjp-VF.ttf),
 under the SIL Open Font License 1.1. The full license is preserved in

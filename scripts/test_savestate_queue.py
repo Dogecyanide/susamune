@@ -20,6 +20,7 @@ class SavestateQueueTests(unittest.TestCase):
         cls.folder = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.folder.cleanup)
         source = r'''
+#define STORAGE_TEXT(wii,other) wii
 typedef unsigned int u32;
 typedef long long OSTime;
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){unsigned char*p=(unsigned char*)d;while(n--)*p++=(unsigned char)c;return d;}
@@ -57,6 +58,28 @@ static u32 poolCapacity(){return 100000;}
 struct Menu{void toast(const char*){}}menu;static Menu*gMenu=&menu;
 static u32 generations[3], saveCalls, loadCalls, cycleCalls, feedbackCalls;
 static u32 loadedSlot, loadedGeneration, pendingAtLoad;
+enum {kSnapshotMagic=0x53555341,kSnapshotVersion=99,SUSAMUNE_GAME_VERSION=3};
+struct SavestateHeader {u32 magic,version,game_version,heap_addr,area_id,episode_id;};
+struct Trace {u32 magic;};
+struct GhostData {u32 unused;};
+struct StoredState {SavestateHeader header;Trace trace;u32 generation,metadataTag,parentEpisode;GhostData ghost;};
+namespace Ghost {static int rngStatus=1;static int savestateRngStatus(const GhostData&){return rngStatus;}}
+static StoredState sSlots[3],sCandidate;
+static bool validStateStore,transition;
+static struct App {void*mCurrentHeap;struct {u32 mAreaID,mEpisodeID;}mCurrentScene;}gpApplication;
+static bool validStore(){return validStateStore;}
+static bool inLoadTransition(){return transition;}
+static u32 parentEpisode(){return 0;}
+static u32 metadataTag(const StoredState&s){return s.generation^s.trace.magic^0x519ab12u;}
+namespace GhostRecording {
+static int fastStatus,slowStatus;static bool skipOK;
+static u32 fastCalls,slowCalls,skipCalls,cancelCalls,lastSlot,lastGeneration;
+static int prepareFastCheckpointLoad(const Trace&,u32 slot,u32 gen){++fastCalls;lastSlot=slot;lastGeneration=gen;return fastStatus;}
+static int prepareCheckpointLoad(const Trace&,u32 slot,u32 gen){++slowCalls;lastSlot=slot;lastGeneration=gen;return slowStatus;}
+static bool authorizeFastCheckpointLoad(const Trace&,u32 slot,u32 gen){++skipCalls;lastSlot=slot;lastGeneration=gen;return skipOK;}
+static void cancelCheckpointLoad(){++cancelCalls;}
+static void abandonCheckpoint(){}
+}
 struct Settings {
     bool values[2];
     bool getBool(int id) { return values[id]; }
@@ -90,7 +113,7 @@ public:
     struct SlotInfo { u32 generation; bool valid; };
     SlotInfo slotInfo(u32 slot) { return { generations[slot],true }; }
     bool saveState() { ++saveCalls; savedSlot=sActiveSlot; return true; }
-    bool saveSlotExplicit(u32 slot){++saveCalls;savedSlot=slot;return true;}
+    bool saveSlotManual(u32 slot){++saveCalls;savedSlot=slot;return true;}
     bool loadOrdinarySlot(u32 slot,u32 generation){return loadSlot(slot,generation);}
     bool loadSlot(u32 slot, u32 generation) {
         if(slot==kSlotCount&&!StateStorage::borrowed)++StateStorage::ownershipErrors;
@@ -111,9 +134,12 @@ public:
 } manager;
 '''
         path = ROOT / "src/savestate.cpp"
+        host_pointer = lambda text:text.replace('reinterpret_cast<u32>(gpApplication.mCurrentHeap)',
+            'static_cast<u32>(reinterpret_cast<__UINTPTR_TYPE__>(gpApplication.mCurrentHeap))')
+        source += host_pointer(function_source(path, "int prepareRamCheckpointLoad("))
         source += function_source(path, "void SavestateManager::updateHook()")
         source += function_source(path, "void finishDiskBorrow()")
-        source += function_source(path, "void SavestateManager::processPendingLoad()")
+        source += host_pointer(function_source(path, "void SavestateManager::processPendingLoad()"))
         for method in ("selectSlot", "selectSaveSlot", "selectLoadSlot", "cycleSaveSlot",
                        "cycleLoadSlot", "selectSDForLoad"):
             source += function_source(path, f"bool SavestateManager::{method}(")
@@ -132,11 +158,32 @@ API void reset() {
     loadedSlot = loadedGeneration = pendingAtLoad = 0;
     gBinds.pressed = 0;
     for (u32 i = 0; i < BIND_COUNT; ++i) gBinds.values[i] = 1u << i;
-    for (u32 i = 0; i < 3; ++i) generations[i] = 101 + i;
+    Ghost::rngStatus=1;
+    validStateStore=true;transition=false;gpApplication={(void*)0x1000,{6,1}};
+    GhostRecording::fastStatus=GhostRecording::slowStatus=1;GhostRecording::skipOK=true;
+    GhostRecording::fastCalls=GhostRecording::slowCalls=GhostRecording::skipCalls=GhostRecording::cancelCalls=0;
+    GhostRecording::lastSlot=GhostRecording::lastGeneration=0;
+    for (u32 i = 0; i < 3; ++i) {
+        generations[i]=101+i;sSlots[i]={{kSnapshotMagic,kSnapshotVersion,SUSAMUNE_GAME_VERSION,0x1000,6,1},{0},101+i,0,0};
+        sSlots[i].metadataTag=metadataTag(sSlots[i]);
+    }
+    sCandidate=sSlots[0];
     gSettings.values[0] = gSettings.values[1] = false;
     WarpWheel::prompt = WarpWheel::approved = WarpWheel::requestNeedsPrompt = false;
     card.busy = false; gpCardManager = &card;
 }
+API void rngStatus(int value){Ghost::rngStatus=value;}
+API void traceMode(u32 slot,int fast,int slow,u32 skip) {
+    sSlots[slot].trace.magic=1;sSlots[slot].metadataTag=metadataTag(sSlots[slot]);sCandidate=sSlots[slot];
+    GhostRecording::fastStatus=fast;GhostRecording::slowStatus=slow;GhostRecording::skipOK=skip!=0;
+}
+API u32 traceValue(u32 id){switch(id){case 0:return GhostRecording::fastCalls;case 1:return GhostRecording::slowCalls;
+case 2:return GhostRecording::skipCalls;case 3:return GhostRecording::cancelCalls;
+case 4:return GhostRecording::lastSlot;case 5:return GhostRecording::lastGeneration;}return 0;}
+API void damage(u32 slot,u32 kind){switch(kind){case 0:sSlots[slot].metadataTag^=1;break;
+case 1:++sSlots[slot].generation;break;case 2:sSlots[slot].header.heap_addr+=32;break;
+case 3:++sSlots[slot].header.episode_id;break;case 4:++sSlots[slot].header.game_version;break;
+case 5:transition=true;break;case 6:validStateStore=false;break;}}
 API void press(u32 value) { gBinds.pressed = value; }
 API void select(u32 value) { sActiveSlot = sLoadSlot = value; }
 API bool selectSave(u32 value) { return manager.selectSaveSlot(value); }
@@ -210,6 +257,10 @@ API u32 get(u32 key) {
         for name in ("generation", "binding"):
             getattr(cls.lib, name).argtypes = [C.c_uint, C.c_uint]
             getattr(cls.lib, name).restype = None
+        cls.lib.rngStatus.argtypes=[C.c_int]
+        cls.lib.traceMode.argtypes=[C.c_uint,C.c_int,C.c_int,C.c_uint]
+        cls.lib.traceValue.argtypes=[C.c_uint];cls.lib.traceValue.restype=C.c_uint
+        cls.lib.damage.argtypes=[C.c_uint,C.c_uint]
         cls.lib.get.argtypes = [C.c_uint]
         cls.lib.get.restype = C.c_uint
 
@@ -460,6 +511,97 @@ API u32 get(u32 key) {
         self.assertTrue(self.lib.selectSave(1))
         self.assertEqual(self.lib.get(5), 0)
 
+
+
+    def test_ram_trace_busy_restores_in_the_first_render_barrier(self):
+        self.lib.traceMode(0, 0, 0, 1)
+        self.lib.press(1 << 1); self.lib.update()
+        self.assertEqual(self.lib.traceValue(0), 1)
+        self.assertEqual(self.lib.get(5), 0)
+        self.lib.process()
+        self.assertEqual(self.lib.traceValue(2), 1)
+        self.assertEqual(self.lib.get(3), 0)
+        self.assert_loaded(0, 101)
+
+    def test_ready_ram_trace_keeps_recording_without_a_wait(self):
+        self.lib.traceMode(0, 1, 0, 1)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.traceValue(2), 0)
+        self.assertEqual(self.lib.get(3), 0)
+        self.assert_loaded(0, 101)
+
+    def test_invalid_ram_metadata_never_becomes_unrecorded_permission(self):
+        for damage in range(7):
+            with self.subTest(damage=damage):
+                self.lib.reset(); self.lib.traceMode(0, 0, 0, 1)
+                self.lib.press(1 << 1); self.lib.update()
+                self.lib.damage(0, damage); self.lib.process()
+                self.assertEqual(self.lib.get(5), 0)
+                self.assertEqual(self.lib.get(1), 0)
+                self.assertEqual(self.lib.traceValue(2), 0)
+                self.assertGreater(self.lib.traceValue(3), 0)
+
+    def test_invalid_ghost_sidecar_does_not_take_busy_fallback(self):
+        self.lib.traceMode(0, -1, 0, 1)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.get(5), 0)
+        self.assertEqual(self.lib.traceValue(2), 0)
+        self.assertEqual(self.lib.get(1), 0)
+
+    def test_sd_trace_still_waits_for_its_durable_continuation(self):
+        self.lib.traceMode(0, 0, 0, 1); self.lib.transferReady(101)
+        self.lib.process(); self.lib.process()
+        self.assertEqual(self.lib.get(5), 0)
+        self.assertEqual(self.lib.get(3), 2)
+        self.assertEqual(self.lib.traceValue(0), 0)
+        self.assertEqual(self.lib.traceValue(2), 0)
+        self.assertEqual(self.lib.traceValue(1), 2)
+        self.lib.traceMode(0, 1, 1, 1); self.lib.process()
+        self.assert_loaded(3, 101)
+
+    def test_card_busy_does_not_prime_a_recorder_handoff(self):
+        self.lib.traceMode(0, 1, 0, 1); self.lib.busy(1)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.traceValue(0), 0)
+        self.assertEqual(self.lib.get(5), 0)
+        self.lib.busy(0); self.lib.process()
+        self.assert_loaded(0, 101)
+
+    def test_ghost_prompt_must_be_approved_before_ram_handoff(self):
+        self.lib.traceMode(0, 0, 0, 1); self.lib.promptMode(1)
+        self.lib.press(1 << 1); self.lib.update()
+        self.assertEqual(self.lib.traceValue(0), 0)
+        self.lib.approve(); self.lib.update()
+        self.assertEqual(self.lib.traceValue(0), 1)
+        self.lib.process(); self.assert_loaded(0, 101)
+
+    def test_fixed_slot_primes_the_exact_bound_snapshot(self):
+        self.lib.traceMode(1, 0, 0, 1); self.lib.selectLoad(2)
+        self.lib.press(1 << 8); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.traceValue(4), 1)
+        self.assertEqual(self.lib.traceValue(5), 102)
+        self.assert_loaded(1, 102)
+
+    def test_legacy_rng_state_restores_ram_without_attaching_a_recorder(self):
+        self.lib.traceMode(0, 1, 1, 1); self.lib.rngStatus(0)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.traceValue(0), 0)
+        self.assertEqual(self.lib.traceValue(2), 1)
+        self.assert_loaded(0, 101)
+
+    def test_malformed_rng_state_is_not_a_busy_recorder(self):
+        self.lib.traceMode(0, 1, 1, 1); self.lib.rngStatus(-1)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.traceValue(0), 0)
+        self.assertEqual(self.lib.traceValue(2), 0)
+        self.assertEqual(self.lib.get(5), 0)
+
+    def test_failed_skip_authorization_keeps_the_ram_snapshot_untouched(self):
+        self.lib.traceMode(0, 0, 0, 0)
+        self.lib.press(1 << 1); self.lib.update(); self.lib.process()
+        self.assertEqual(self.lib.get(5), 0)
+        self.assertEqual(self.lib.get(1), 0)
+        self.assertEqual(self.lib.traceValue(2), 1)
 
 if __name__ == "__main__":
     unittest.main()

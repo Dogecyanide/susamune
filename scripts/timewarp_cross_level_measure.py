@@ -64,6 +64,7 @@ class Capture(PpcQuick):
         self.folder.mkdir(parents=True, exist_ok=True)
         profile = Path(tempfile.mkdtemp(prefix="profile-", dir=self.folder))
         (profile / "Config").mkdir()
+        (profile / "Config/Logger.ini").write_text("[Options]\nWriteToFile = False\nWriteToConsole = False\nWriteToWindow = False\nVerbosity = 1\n", encoding="ascii")
         (profile / "Config/Dolphin.ini").write_text(
             "[Core]\nHLE_BS2 = True\nCPUThread = False\nCPUCore = 1\nFastmem = False\n"
             "MMU = False\nEmulationSpeed = 1.0\nDefaultISO = \nEnableCheats = False\n"

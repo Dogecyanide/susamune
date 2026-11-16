@@ -25,6 +25,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "debug.h"
 #include "wdvd.h"
 #include "susamune/mem2_map.h"
+#include "ISOCacheBanks.h"
+#include "susamune/disc_cache_memory.h"
 
 #include "ff_utf8.h"
 
@@ -54,7 +56,8 @@ typedef struct
 static u32 CacheInited = 0;
 static u32 TempCacheCount = 0;
 static u32 CacheEntryCount = 0;
-static u32 DataCacheOffset = 0;
+static ISOCacheBanks CacheBanks;
+static u32 ExtraCacheAdmitted = 0;
 static u8 *DCCache = CACHE_START;
 static u32 DCacheLimit = CACHE_SIZE;
 static DataCache DC[CACHE_MAX];
@@ -89,7 +92,7 @@ static bool ISO_IsCISO = false;	// Set to 1 for CISO mode.
  * @param Length Data length.
  * @param Offset ISO file offset. (Must have ISOShift64 added!)
  */
-static inline void ISOReadDirect(void *Buffer, u32 Length, u64 Offset64)
+static inline void ISOReadDirectRaw(void *Buffer, u32 Length, u64 Offset64)
 {
 	if(ISOFileOpen == 0)
 		return;
@@ -271,6 +274,19 @@ static inline void ISOReadDirect(void *Buffer, u32 Length, u64 Offset64)
 	//refresh read timeout
 	USBReadTimer = read32(HW_TIMER);
 }
+#if MOONSHINE_LOADING_DIAGNOSTICS
+static volatile u32 ReadTiming[3];
+void ISOReadTiming(u32 *out){unsigned i;for(i=0;i<3;++i)out[i]=ReadTiming[i];}
+static inline void ISOReadDirect(void *buffer,u32 bytes,u64 offset){
+    const u32 began=read32(HW_TIMER);u32 elapsed;
+    ISOReadDirectRaw(buffer,bytes,offset);
+    elapsed=read32(HW_TIMER)-began;
+    ++ReadTiming[0];ReadTiming[1]+=bytes;ReadTiming[2]+=elapsed;
+}
+#else
+#define ISOReadDirect ISOReadDirectRaw
+#endif
+
 
 // ISO shift offset.
 extern u64 ISOShift64;
@@ -278,6 +294,7 @@ static u8 isoTmpBuf[0x20] ALIGNED(32);
 
 bool ISOInit()
 {
+	ExtraCacheAdmitted = 0;
 	if(wiiVCInternal)
 	{
 		if(WDVD_FST_OpenDisc(DiscRequested) != 0)
@@ -393,6 +410,8 @@ bool ISOInit()
 
 void ISOClose()
 {
+	CacheInited = 0;
+	ExtraCacheAdmitted = 0;
 	if(ISOFileOpen)
 	{
 		if(wiiVCInternal)
@@ -412,6 +431,59 @@ void ISOClose()
 	}
 	ISOFileOpen = 0;
 	ISO_IsCISO = false;
+}
+
+static int ISOExtraCacheProofValid(u32 layout,u32 game)
+{
+    const struct MoonshineCacheMemoryProof *proof=(const void*)NIN_MEM2_DISC_CACHE_PROOF_PHYS_BASE;
+    const struct MoonshineGhostMemoryProof *boot=(const void*)MOONSHINE_GHOST_PROOF_PHYS_BASE;
+    sync_before_read((void*)proof,sizeof(*proof));sync_before_read((void*)boot,sizeof(*boot));
+    return MoonshineCacheMemoryProofValid(proof,boot,game,layout);
+}
+static void ISOExtraCacheReport(u32 bytes,u32 banks)
+{
+    u32 *out=(void*)NIN_MEM2_DISC_CACHE_STATUS_PHYS_BASE;
+    memset32(out,0,32);out[0]=MS_CACHE_PROOF_MAGIC;out[1]=NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID;
+    out[2]=bytes;out[3]=banks;sync_after_write(out,32);
+}
+int ISOAdmitExtraCache(u32 layout)
+{
+    const u32 game = ConfigGetGameID();
+    if (!ISOFileOpen || CacheInited || TRIGame || wiiVCInternal || !layout ||
+        layout != NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID || !ISOExtraCacheProofValid(layout,game) ||
+        (game != 0x474D534Au && game != 0x474D5345u && game != 0x474D5350u)) return 0;
+    ExtraCacheAdmitted = 1;
+    return 1;
+}
+
+static void ISOSetupCacheBanks(void)
+{
+    static const ISOCacheBank extra[] = {
+#define ISO_CACHE_BANK_ROW(base, size) { (u8 *)(base), (size) },
+        NIN_MEM2_DISC_CACHE_EXTRA_BANKS(ISO_CACHE_BANK_ROW)
+#undef ISO_CACHE_BANK_ROW
+        { 0, 0 }
+    };
+    u32 i, total = 0;
+    memset32(&CacheBanks, 0, sizeof(CacheBanks));
+    if (DCacheLimit && !ISOCacheAddBank(&CacheBanks, DCCache, DCacheLimit)) DCacheLimit = 0;
+    const u32 baseCount = CacheBanks.count;
+    if (ExtraCacheAdmitted && !TRIGame && !wiiVCInternal) {
+        for (i = 0; i + 1 < sizeof(extra) / sizeof(extra[0]); ++i) {
+            if (extra[i].size > ISO_CACHE_EXTRA_MAX - total ||
+                ISOCacheOverlap(extra[i].data, extra[i].size, CACHE_START, CACHE_SIZE) ||
+                ISOCacheOverlap(extra[i].data, extra[i].size, DI_READ_BUFFER, NIN_MEM2_DI_SCRATCH_SIZE) ||
+                !ISOCacheAddBank(&CacheBanks, extra[i].data, extra[i].size)) {
+                CacheBanks.count = baseCount;
+                CacheBanks.largest = DCacheLimit;
+                ExtraCacheAdmitted = 0;
+                break;
+            }
+            total += extra[i].size;
+        }
+    }
+    DCacheLimit = CacheBanks.largest;
+    ISOExtraCacheReport(ExtraCacheAdmitted ? total : 0, CacheBanks.count);
 }
 
 void ISOSetupCache()
@@ -453,7 +525,7 @@ void ISOSetupCache()
 	}
 	memset32(DC, 0, sizeof(DataCache)* CACHE_MAX);
 
-	DataCacheOffset = 0;
+	ISOSetupCacheBanks();
 	TempCacheCount = 0;
 	CacheEntryCount = 0;
 
@@ -557,19 +629,11 @@ const u8 *ISORead(u32* Length, u32 Offset)
 	if( TempCacheCount >= CACHE_MAX )
 		TempCacheCount = 0;
 
-	/* Keep device DMA direct after short, non-aligned file reads. Padding is
-	 * unused ring space, never extra disc data or part of the cached entry. */
-	DataCacheOffset = (DataCacheOffset + 31u) & ~31u;
-	// case we filled up the cache
-	if( DataCacheOffset > DCacheLimit - cacheLength )
-	{
-		DataCacheOffset = 0;
-	}
+	/* A fill never crosses a physical bank or includes its alignment padding. */
+	u8 *destination = ISOCacheTake(&CacheBanks, cacheLength);
 	/* Retain entries outside the bytes being overwritten on this lap. */
-	u8 *destination = DCCache + DataCacheOffset;
 	for (i = 0; i < CacheEntryCount; ++i)
-		if (DC[i].Size && DC[i].Data < destination + cacheLength &&
-			DC[i].Data + DC[i].Size > destination)
+		if (ISOCacheOverlap(DC[i].Data, DC[i].Size, destination, cacheLength))
 			DC[i].Size = 0;
 
 	u32 pos = TempCacheCount;
@@ -582,6 +646,5 @@ const u8 *ISORead(u32* Length, u32 Offset)
 
 	ISOReadDirect(DC[pos].Data, cacheLength, Offset64 - cachePrefix);
 
-	DataCacheOffset += cacheLength;
 	return DC[pos].Data + cachePrefix;
 }

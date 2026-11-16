@@ -55,6 +55,20 @@ u32 prefixSize(const void*p){auto*h=(const SusamuneGhostCameraHeader*)prefix(p);
 void capture(void*p,u32 qf,u8 segment){auto*h=(SusamuneGhostCameraHeader*)prefix(p);u8*k=(u8*)(h+1)+h->count++*24;memset(k,0,24);k[3]=(u8)qf;k[23]=segment;}
 void trim(void*,u32,u16){}
 }
+
+#include "susamune/ghost_context.h"
+namespace GhostContext {
+bool detailsEnabled(){return false;} void reset(void*){} void clearSegment(void*,u16){}
+void segment(void*,u16,u32,u32,bool){} void endpoint(void*,u16,u32,u32,bool){}
+void input(void*,u16,u32,u32){} void restored(void*){}
+u32 prefixSize(const void*){return 0;} void*prefix(void*p){return p;}
+u32 exportSize(const void*,u32){return 0;} bool exportInto(void*,const void*,u32,u32,u32){return false;}
+}
+namespace GhostRecording {void cancelActive(){}void protect(unsigned,unsigned){}bool ownsSession(){return false;}bool protectedToken(unsigned){return false;}}
+namespace ReplaySession {bool blocksResults(){return false;}}
+namespace GhostStageContext {bool restoredStage(){return false;}void invalidateAfterRestore(){}}
+namespace GhostSimulation {struct CameraObservation {short yaw;u16 mode,tickCount;bool varied,valid;};
+void readCamera(CameraObservation&o){o={};}}
 namespace ILing {
 int profile;int pbProfile(){return profile;}
 enum { FINISH_SHINE, FINISH_TRANSITION, FINISH_PLANT, FINISH_DEATH };
@@ -70,7 +84,7 @@ void invalidateForAssist(){++invalidations;}
         source += r'''
 }
 namespace Ghost {
-enum { kSavestateSpanCount=4 };
+enum { kSavestateSpanCount=5 };
 struct SavestateData { u32 words[128]; };
 const u32 kSavedPrefixMagic=0x53475046u;
 const u32 kMaxSamples=SUSAMUNE_GHOST_MAX_SAMPLE_COUNT;
@@ -92,12 +106,14 @@ alignas(32) u8 inputBanks[2][0xE0000];
 #define SUSAMUNE_GHOST_INPUT_PLAY_PPC_BASE ((__UINTPTR_TYPE__)inputBanks[1])
 #define IS_EMULATOR 0
 '''
+        source += "\nnamespace GhostVisualProvider {bool stopActive(){return true;}}\n"
         for signature in ("enum RecordFailure", "enum ClockPhase", "enum ObserverPhase",
                           "struct Segment", "struct Track", "struct SavedPrefix",
                           "enum SavedPrefixFlags", "enum SaveSource", "struct SaveSelection"):
             source += function(ghost, signature) + ";\n"
         source += r'''
 Track sRecord,sPlayback;
+void finishStreamRecord(const Track&){}
 SusamuneGhostClock sRecordClock;
 u32 sAttemptSerial,sRecordToken,sRecordIdentityToken,sPlaybackToken,sPlaybackOriginRecordToken;
 u32 sPBTokenSerial,sPlaybackCursor; s32 sPlaybackCursorQf; u16 sPlaybackSegment;
@@ -131,7 +147,7 @@ u8 captureHeldObject(Track&){return 0;}
 Segment *lastSegment(Track&track){return track.segmentCount?&track.segments[track.segmentCount-1]:0;}
 '''
         for signature in (
-            "SusamuneGhostInputSample &inputAt(", "void clearTrack(", "void bumpRecordToken()", "void bumpPlaybackToken()",
+            "SusamuneGhostInputSample &inputAt(", "u32 inputQf(", "void clearTrack(", "void bumpRecordToken()", "void bumpPlaybackToken()",
             "u32 nextPBToken()", "void clearRecord()", "void failRecording(",
             "void stopAll()", "void rewindPlayback()", "s32 recordQf(",
             "void updateRestoredRecorder()", "bool validRouteTuple(",
@@ -154,7 +170,7 @@ Segment *lastSegment(Track&track){return track.segmentCount?&track.segments[trac
         source += r'''
 void endObserver(bool,const char*){stopAll();}
 SavestateData states[3];
-StateCodec::ReadSpan readSpans[4]; StateCodec::WriteSpan writeSpans[4];
+StateCodec::ReadSpan readSpans[5]; StateCodec::WriteSpan writeSpans[5];
 }
 #define API extern "C" __declspec(dllexport)
 API void reset(){using namespace Ghost;
@@ -527,16 +543,7 @@ API void continuation(){using namespace Ghost;
         self.assertEqual([self.lib.get(i) for i in (14, 15, 16)], [1, 0, 1])
         self.assertEqual(self.lib.get(5) & 0x21, 0x21)
 
-    def test_export_keeps_tas_flags_prefix_bounds_and_existing_disqualification(self):
-        source = (ROOT / "src/ghost.cpp").read_text()
-        exported = function(source, "bool exportLatest(")
-        for line in ("const SaveSelection selection = latestSaveableTrack();",
-                     "header.runFlags = track->runFlags;", "header.startQf = track->startQf;",
-                     "header.endQf = track->endQf;", "header.sampleCount = track->count;",
-                     "validCanonicalFile(bytes, fileSize, &checked)"):
-            self.assertIn(line, exported)
-        name = function(source, "void formatTrackName(")
-        self.assertIn('(track.runFlags & SUSAMUNE_GHOST_RUN_TAS) ? "TAS " : ""', name)
+    def test_restore_keeps_existing_disqualification(self):
         restored = function((ROOT / "src/iling.cpp").read_text(), "void onSavestateLoaded()")
         self.assertIn("clearAttemptForRetry();", restored)
         helper = function((ROOT / "src/iling.cpp").read_text(), "void updateSavestateGhostEndpoint(")

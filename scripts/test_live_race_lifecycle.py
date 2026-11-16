@@ -57,7 +57,9 @@ static SusamuneOnlineNameCfg savedBlock;static bool savedAvailable;static unsign
 static void DCStoreRange(void*,unsigned){}static void DCInvalidateRange(void*,unsigned){}
 enum{SETTING_DISABLE_WARPS};struct Settings{bool getBool(int){return false;}void markDirty(){++dirtyMarks;}}gSettings;
 struct QFTStub{unsigned serial;unsigned attemptSerial()const{return serial;}};static QFTStub gQFTTimer;
-class Menu{public:bool shown(){return true;}bool openOnline(){return true;}};static Menu*gMenu;
+static unsigned menuOpens;
+class Menu{public:bool shown(){return true;}bool openOnline(){++menuOpens;return true;}};static Menu*gMenu;
+namespace PracticeSession{static bool wasAssisted;bool assisted(){return wasAssisted;}}
 namespace StageLoader{bool active(){return false;}bool onlinePlaylistActive(){return false;}void cancel(){}}
 namespace LevelWarp{bool readyForOnlineRace(){return true;}}
 static unsigned OSGetTick(){return 0x1234567u;}
@@ -95,7 +97,8 @@ void tick(Session&,unsigned){++sessionTicks;}
 Status status(const Session&s){return s.info;}
 void stop(Session&s){++sessionStops;s.info.connected=false;s.info.state=STOPPED;}
 }
-namespace LiveGhost {void resetAll(){++ghostResets;}}
+namespace LiveContacts {void remember(const char*,const LiveP2P::Code&) {}}
+namespace LiveGhost {void resetAll(){++ghostResets;}bool setName(const char*,unsigned){return true;}}
 namespace LiveGroup {
 bool host(Room&,LiveRaceSession::Session&,const Config&,const LivePlaylist::Plan*,const Hooks&,unsigned){return true;}
 void replacePeer(Room&,const TWLiveEndpoint&,const TWLiveEndpoint&,unsigned){}
@@ -103,7 +106,7 @@ void stop(Room&){}unsigned connectedCount(const Room&){return 0;}
 bool receive(Room&,const TWLiveEndpoint&,const void*,unsigned,unsigned){return false;}
 }
 namespace LiveGroupRules{unsigned actor(const State&){return Nobody;}}
-namespace LiveDraft{u8 currentActor(const State&){return 255;}}
+namespace LiveDraft{u8 currentActor(const State&s){return s.previousWinner;}}
 
 '''
         code += session[session.index("// P2P codec begin"):session.index("// P2P codec end")]
@@ -115,18 +118,19 @@ u32 nowMs(){return clockMs;}
 SusamuneOnlineNameCfg*savedName(){return savedAvailable?&savedBlock:nullptr;}
 bool validOptions(const Options&){return true;}
 const Session::Callbacks kCallbacks={};
-void acceptConnection(){if(s.session.info.connected)s.connected=true;}
+void acceptConnection();
 void updatePose(u32){++poses;}
 void serviceRace(){++raceServices;}
+void serviceColours(){}
 void serviceGroup(u32){}
 const LiveGroup::Hooks kGroupHooks={};
 LiveGroup::Config groupConfig(){return {};}
 '''
-        for name in ("sendControl", "sendPose", "canConfigureRace", "begin", "startSession", "usePeer", "sampleAttempt",
+        for name in ("resetRound", "acceptConnection", "sendControl", "sendPose", "canReplaceSetup", "canConfigureRace", "canEndRace", "begin", "startSession", "usePeer", "sampleAttempt",
                      "freshSecret", "today", "roomSecret"):
             code += function(source, name) + "\n"
         code += "}\n"
-        for name in ("guestName", "enterGuestCode", "enterCode", "disconnect", "serviceAutoOpen", "update", "status"):
+        for name in ("guestName", "enterGuestCode", "enterCode", "disconnect", "serviceAutoOpen", "update", "status", "onILResult", "onPlaylistResult"):
             code += function(source, name) + "\n"
         code += "}\n"
         code += r'''
@@ -164,7 +168,7 @@ static void codeOf(const TWLiveEndpoint&e,unsigned secret,unsigned,char*out){
 #define API extern "C" __declspec(dllexport)
 API unsigned scenario(unsigned test){
  rtcTicks=0;savedAvailable=false;savedBlock={};dirtyMarks=0;
- reset();
+ reset();PracticeSession::wasAssisted=false;
  if(test==0){
   s.networkError=-77;frame(1001,TW_LIVE_UNAVAILABLE);
   CHECK(s.active&&s.connected&&s.networkError==-77&&polled==1&&localFrames==1);
@@ -379,6 +383,49 @@ API unsigned scenario(unsigned test){
   CHECK(s.own.secret==rotated&&x.codeChanged&&savedBlock.last[3]==8&&LiveRace::status().codeChanged);
   char code[20];codeOf(kJoiner,77,0,code);CHECK(enterCode(code)==nullptr);
   CHECK(sInvites.slots[0].code.endpoint.ip[0]==198&&sInvites.slots[0].code.secret==77);
+ }else if(test==24){
+  Menu menu;gMenu=&menu;menuOpens=0;s.hosting=true;s.phase=DRAFTING;s.draft.previousWinner=0;
+  serviceAutoOpen();CHECK(menuOpens==1);
+  serviceAutoOpen();CHECK(menuOpens==1);
+  s.connected=false;serviceAutoOpen();s.connected=true;serviceAutoOpen();CHECK(menuOpens==1);
+  s.draft.previousWinner=1;serviceAutoOpen();s.draft.previousWinner=0;serviceAutoOpen();CHECK(menuOpens==2);
+  s.connected=false;s.draft.previousWinner=1;serviceAutoOpen();s.draft.previousWinner=0;serviceAutoOpen();
+  s.connected=true;serviceAutoOpen();CHECK(menuOpens==2);gMenu=nullptr;
+ }else if(test==25){
+  // A reliable result queued on the old connection is resent for the same round.
+  for(unsigned players=2;players<=4;++players){
+   reset();sGroup={};sGroup.active=players>2;sOptions.players=players;
+   s.connected=false;x.reconnecting=true;s.localResult=s.resultSent=true;
+   s.localQf=12000;s.localEligible=true;s.round=9;s.phase=RUNNING;s.localWins=2;
+   acceptConnection();CHECK(s.connected&&!x.reconnecting&&!s.resultSent);
+   CHECK(s.localResult&&s.localQf==12000&&s.localEligible&&s.round==9&&s.localWins==2&&s.phase==RUNNING);
+   s.resultSent=true;acceptConnection();CHECK(s.resultSent);
+  }
+ }else if(test==26){
+  for(unsigned players=2;players<=4;++players)for(unsigned playlist=0;playlist<2;++playlist){
+   reset();sGroup={};sOptions.players=players;sOptions.playlist=playlist;sOptions.entry=7;
+   s.phase=RUNNING;x.attemptSeen=true;PracticeSession::wasAssisted=true;
+   frame(1001,TW_LIVE_UNAVAILABLE);CHECK(x.roundAssisted);
+   // Retail clears its per-attempt marker on retry; race eligibility stays tainted.
+   PracticeSession::wasAssisted=false;
+   if(playlist)onPlaylistResult(1000,true);else onILResult(7,1000,true);
+   CHECK(s.localResult&&!s.localEligible);
+   s.localResult=false;x.roundAssisted=false;
+   if(playlist)onPlaylistResult(1000,true);else onILResult(7,1000,true);
+   CHECK(s.localResult&&s.localEligible);
+  }
+ }else if(test==27){
+  CHECK(open(true,kHost));char code[20];codeOf(kJoiner,9,0,code);CHECK(enterCode(code)==nullptr);
+  nextPacket.endpoint=kJoiner;nextPacket.bytes=MSR_HEADER_BYTES;endlessPackets=true;
+  for(unsigned kind=MSR_HELLO;kind<=MSR_READY;++kind){
+   nextPacket.data[6]=kind;const unsigned before=s.diagnostics.accepted;
+   frame(clockMs+1,TW_LIVE_READY);CHECK(s.diagnostics.accepted==before+4);
+  }
+  LiveInvites::clear(sInvites,0);
+  const unsigned before=s.diagnostics.accepted;
+  for(unsigned kind=MSR_HELLO;kind<=MSR_READY;++kind){
+   nextPacket.data[6]=kind;frame(clockMs+1,TW_LIVE_READY);CHECK(s.diagnostics.accepted==before);
+  }
  }else if(test==22){
   // Read-only round clock: a retry 1001 ms after the first attempt adds 120 qf.
   s.phase=RUNNING;gQFTTimer.serial=5;sampleAttempt(100);CHECK(x.attemptSeen&&x.firstAttemptMs==100);
@@ -409,7 +456,9 @@ API unsigned scenario(unsigned test){
                  "host code and listener", "joiner punching", "code checks", "joiner failure hints",
                  "host restart and timeout", "one-code adoption", "network wait and send diagnostics",
                  "waiting never gives up", "STUN keepalive", "reconnect and leave", "per-console secret rotation",
-                 "round clock sampling", "transport recovery preserves room")
+                 "round clock sampling", "transport recovery preserves room", "reconnect never reopens the same draft turn",
+                 "reconnect resends an unacknowledged finish without changing the round",
+                 "TAS stays ineligible across retries and network outages", "revoked invitation rejects all race traffic")
         for number, name in enumerate(names):
             with self.subTest(name=name):
                 line = self.lib.scenario(number)

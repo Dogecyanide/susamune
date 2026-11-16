@@ -1,6 +1,7 @@
 #include "susamune/menu_theme_assets.hxx"
 #include "susamune/menu_native_icon.hxx"
 #include "susamune/menu_icon_frames.hxx"
+#include "susamune/menu_subtitle_title.hxx"
 #include "susamune/packed_text.hxx"
 #include "susamune/ghost_storage.h"
 #include "susamune/mem2_map.h"
@@ -26,6 +27,7 @@ const u32 kBufferSize = 0x64000;
 const u32 kGuideOffset = 0x5ae00;
 const u32 kOptionOffset = 0x48000;
 const u32 kPoseOffset = kOptionOffset + SUSAMUNE_MENU_ASSET_BACKUP_SIZE;
+const u32 kTitleOffset = kPoseOffset + MenuIconFrames::PoseBytes + 32;
 const u32 kGuideMagic = 0x4d544732;
 const u32 kOptionMagic = 0x4d544f34;
 const unsigned kGuideCount = 12;
@@ -49,6 +51,8 @@ static_assert(kOptionOffset + SUSAMUNE_MENU_ASSET_BACKUP_SIZE <= kGuideOffset,
               "option GPU upload overlaps the persistent guide cache");
 static_assert(kPoseOffset + MenuIconFrames::PoseBytes + 32 <= kGuideOffset,
               "alternate artwork exceeds the checked archive gap");
+static_assert(kTitleOffset + MenuSubtitleTitle::Bytes + 32 <= kGuideOffset,
+              "subtitle heading exceeds the existing artwork gap");
 
 bool sOptionReady;
 bool sBooAttempted;
@@ -332,6 +336,16 @@ const ResTIMG *get(Asset asset, unsigned pose) {
     u8 *buffer = gameBuffer(director);
     Archive archive;
     if (!buffer || !openArchive(buffer, kGuideOffset, archive)) return nullptr;
+    if(asset==MoonshineTitle) {
+        if(!sBooAttempted || archive.size>kOptionOffset)return nullptr;
+        u32 *tag=reinterpret_cast<u32 *>(buffer+kTitleOffset);
+        u8 *gpu=reinterpret_cast<u8 *>(tag)+32;
+        if(*tag!=0x4d544831){
+            GXDrawDone();MenuSubtitleTitle::copy(gpu);*tag=0x4d544831;
+            DCFlushRange(tag,MenuSubtitleTitle::Bytes+32);GXInvalidateTexAll();
+        }
+        return texture(gpu,MenuSubtitleTitle::Bytes);
+    }
     const unsigned frame = asset == TabPad ? 0 : 1;
     const u8 *alternate = (pose & 1) ? MenuIconFrames::get(frame) : nullptr;
     if (alternate && sBooAttempted && archive.size <= kOptionOffset) {

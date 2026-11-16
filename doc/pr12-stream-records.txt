@@ -1,0 +1,108 @@
+Experimental MSGT/MSTR playback preparation, 2026-10-30
+
+The storage envelope remains MSTR v3; v1 and v2 raw chunks remain readable.
+Moonshine release numbers are not format compatibility keys. Full-world replay
+requires the same Sunshine region; visual ghost racing remains cross-region.
+Keep legacy SGHF/.smsghost visual playback through the common renderer/arena.
+
+GhostTraceReader requests bounded file reads asynchronously. The caller supplies
+512 KiB decoded output, 16 KiB compressed scratch and its control object. No heap
+allocation or second LZ4 implementation is added. It checks the completion footer
+before exposing any chunks, then verifies every logical chunk checksum and record
+boundary/order before the chunk becomes usable. A consumer must finish with the
+borrowed chunk before releaseChunk(). File record payloads never supply pointers
+for the reader's I/O destinations. Native observation records must not be restored
+as arbitrary memory writes by a future world player.
+
+Record 22: stage_start, schema 1, 960 bytes, all words big endian.
+  00 schema=1
+  04 flags: bit 0 FlagManager present, bit 1 solid-heap bounds valid,
+     bit 2 recording was already active before the setup worker started
+  08 area << 8 | episode
+  0C previous scene (area byte, episode byte, native u16 flags)
+  10 current scene, same layout
+  14 next scene, same layout
+  18 libc RNG seed before the resource worker
+  1C stage generation (session-local identity only)
+  20 flag bytes=0x380
+  24 allocated bytes at the heap's head
+  28 allocated bytes at its tail
+  2C heap payload capacity
+  30 first four disc-ID bytes
+  34 remaining disc header identity bytes (maker, disc number, revision)
+  38 VI TV format
+  3C application cutscene ID
+  40 FlagManager byte image, 0x380 bytes, including options/backup flags
+The pre-worker sample is retained even when recording is off. Starting later emits
+it with bit 2 clear: this is NOT evidence that the intervening simulation/input was
+captured. Heap figures are accounting, not a heap snapshot. Restoring user options
+or game-save state needs separate explicit replay ownership and validation.
+
+Record 23: visual, schema 1, 64 bytes, all scalar words big endian.
+  00 schema=1
+  04 flags: bit 0 pose available, bit 1 QFT clock available
+  08 signed QFT quarter-frame value (only meaningful with flag bit 1)
+  0C area << 8 | episode
+  10 Mario XYZ, three IEEE-754 binary32 values
+  1C signed yaw u16, animation ID u16
+  20 animation phase u16, held-object name key u16
+  24 held-object ID u32
+  28 Yoshi state byte, visible byte, two zero bytes
+  2C existing eight-byte FLUDD/Yoshi observation from ghost_fludd.h
+  34 native director movement counter
+  38 QFT attempt serial (session-local identity only)
+  3C stage generation
+Sampled before direct(), alongside the existing frame boundary. Missing poses use
+zero payload fields and clear bit 0; they must not draw Mario at the origin.
+This is recorded motion, not physics re-simulation, for cross-region visual racing.
+
+Frame record (kind 2), previously unused final words:
+  18 native director state, or 0xffffffff without a stage director
+  1C bit 0 Moonshine menu shown, bit 1 stage setup complete,
+     bit 2 setup worker terminated
+These help distinguish Sunshine's normal 0.4-second departure wipe from extra I/O
+latency. They do not by themselves measure the menu confirmation function's cost.
+
+Capabilities: bit 16 stage_start records; bit 17 visual records. They describe
+available record types, not a promise of complete or deterministic world replay.
+Full-world playback and ordinary automatic MSGT Save/Discard integration remain
+unfinished. The legacy banks are still allocated; no cache RAM has been reclaimed.
+
+Frame-boundary input uses the existing 300-byte controller record/delta chain
+(kinds 14/20). Cue at +0 is zero; word +4 has bit 31 set, bit 0 for borrowed
+freeze, and bit 1 for suppressed gameplay buttons. Captured immediately before
+retail direct(), after Moonshine suppresses processed buttons. The raw pad sample
+still records physical input; the processed pad and flags distinguish consumption.
+There is no Mario controller-work block in these records; validity is 0 or 1.
+Quarter-movement observations retain nonzero MOVE cue, zero word +4, and their
+existing validity flags. Both kinds share the same chronological delta baseline.
+Capability bit 18 advertises frame-boundary input. The native movement counter
+in each record header advances only for movement observations, not these frames.
+
+armStage(scene, run) opens a capture while retaining an inactive producer. The
+caller waits for stageArmed() before requesting that stage. The checked pre-setup
+hook activates capture before the resource worker starts and marks stage_start
+bit 2. This preparation API is not yet wired into the ordinary Save/Discard UI.
+Private monitor START can request it with word 3 = 0x80000000 | scene; the ordinary
+zero-word START retains its existing immediate-capture behaviour.
+
+Private code partition: trace code now permits128KiB at upper+0x98000,
+ending+0xB8000. The existing64KiB ARM codec workspace follows it through its
+formula, ending+0xC8000. Buffer1 still begins+0xF4000. This repartitions64KiB
+of the already admitted upper gap; the1.875MiB grant and savestate pool do not
+grow or shrink. Charge672KiB fixed(core32/control64/code128/codec64/actor384)
+against the planned shared-system budget before queues and new controls.
+Matched launcher/mod builds are required; no new package installed yet.
+
+Shared input mirrors (capability bit19) precede the input observation they describe.
+Kind24 PAD_MIRRORS: BE schema1, BE bytes80, then native JUT button48/main-stick16/
+C-stick16 bytes. Kind25 PAD_MIRRORS_DELTA: same two words, then the20-word changed
+mask and values (MsTraceWordDelta). A literal baseline is mandatory; unchanged
+mirrors are omitted. Reset this independent baseline on FRAME scene changes.
+These capture the separate static mirrors accurately even when the per-pad
+buttons have been suppressed. Never infer shared state from suppressed pad fields.
+Armed pre-resource starts now emit the64-byte SESSION settings before STAGE_START.
+Pre-Mario ControllerWork remains an observation: retail initValues leaves its
+trigger floats uninitialized until checkController. Memory readability is not
+initialization evidence; input-driven replay should preserve native work unless
+its restoration point and validity have been separately proved.

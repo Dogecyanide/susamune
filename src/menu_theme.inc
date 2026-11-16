@@ -10,6 +10,16 @@ void Menu::drawGuidebook(J2DOrthoGraph *ortho) {
         if (mShown && gCreationExtras.editingMenuBackground()) {
             mOrtho = ortho;
             MenuTheme::frame(this, ortho, true);
+            MenuTheme::category(this,"Ghosts",4,67,164,false);
+            MenuTheme::category(this,"Display",5,236,164,true);
+            MenuTheme::category(this,"System",6,405,164,false);
+            MenuTheme::shoulder(this,false);
+            MenuTheme::shoulder(this,true);
+            MenuTheme::page(true);
+            drawValueRow(this,171,148,415,"Menu colours","Edit",true,false,true);
+            drawValueRow(this,171,174,415,"Menu sounds","On",false,false,false);
+            drawMenuText("Choose what to change",180,203,12,12,cRowDim());
+            MenuTheme::page(false);
         }
         MenuTheme::page(mShown);
         draw(ortho);
@@ -43,8 +53,8 @@ void Menu::drawGuidebook(J2DOrthoGraph *ortho) {
     MenuTheme::shoulder(this, true);
 
     MenuTheme::page(true);
-    current->draw(this, sidebar ? 171 : 58, 142,
-                  sidebar ? 415 : 524, 248);
+    current->draw(this, sidebar ? 192 : 58, 142,
+                  sidebar ? 394 : 524, 248);
     MenuTheme::page(false);
 
     const Color footer = MenuTheme::footerColor();

@@ -8,7 +8,7 @@ namespace MenuThemeAssets {
 enum Asset {
     Paper, Shine, Palm, Fish, Hand, Boat, Postcard,
     TabShine, TabPad, TabMario, TabCoin, TabGhost, TabGlasses, TabPianta,
-    WorldTitle, Count
+    WorldTitle, MoonshineTitle, Count
 };
 
 // Call before the first stage setup; later calls keep the capture hook installed.

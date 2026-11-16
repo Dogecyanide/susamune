@@ -1,5 +1,6 @@
 """Boot encoder compatibility against the production C installer."""
 import json
+import ctypes as C
 import copy
 import hashlib
 from pathlib import Path
@@ -9,7 +10,7 @@ import tempfile
 import unittest
 
 from gen_mod_bin import build_mod_bin
-from mod_transport import ROOT, BLOCK, encode_quick, decode_quick, build_mod_v4, GAMES, BASES, ARENA, stage, _lz4, compress_lz4
+from mod_transport import ROOT, BLOCK, BOOT_BLOCK, encode_quick, decode_quick, build_mod_v4, GAMES, BASES, ARENA, stage, _lz4, compress_lz4, _encode_quick, branch_filter
 from test_timewarp_mod_v4 import Harness, SENTINEL, REGION_BYTES
 
 
@@ -31,6 +32,25 @@ class BootTransportTests(unittest.TestCase):
             expected[start + len(s['raw']):start + s['memory_size']] = bytes(s['memory_size'] - len(s['raw']))
         self.assertEqual(memory.raw[:-1], expected)
 
+    def test_cache_layout_extension_is_checked_and_older_zero_is_accepted(self):
+        import zlib
+        from mod_transport import shared_define
+        segments=[dict(offset=0,memory_size=32,raw=b'ABCD'),dict(offset=0x80000,memory_size=32,raw=b'')]
+        raw=build_mod_v4(GAMES['jp'],segments,[])
+        layout=shared_define('NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID','mem2_map.h')
+        self.assertEqual(struct.unpack_from('>I',raw,48)[0],layout)
+        for value,accepted in ((0,True),(layout,True),(layout+1,False),(0xffffffff,False)):
+            changed=bytearray(raw);struct.pack_into('>I',changed,48,value);struct.pack_into('>I',changed,40,0)
+            struct.pack_into('>I',changed,40,zlib.crc32(changed[:64]))
+            status,_=self.harness.run(changed,game=GAMES['jp'])
+            self.assertEqual(status==0,accepted)
+        for offset in (52,56,60):
+            changed=bytearray(raw);struct.pack_into('>I',changed,offset,1);struct.pack_into('>I',changed,40,0)
+            struct.pack_into('>I',changed,40,zlib.crc32(changed[:64]))
+            status,_=self.harness.run(changed,game=GAMES['jp']);self.assertNotEqual(status,0)
+        dolphin=build_mod_v4(GAMES['jp'],segments,[],flags=1)
+        self.assertEqual(struct.unpack_from('>I',dolphin,48)[0],0)
+
     def test_encoder_boundaries_and_incompressible_fallback(self):
         rng = random.Random(7731)
         for size in (4, 12, 16, 256, 65536, BLOCK - 4, BLOCK, BLOCK + 4):
@@ -42,6 +62,51 @@ class BootTransportTests(unittest.TestCase):
                                 dict(offset=0x80000, memory_size=32, raw=b"")]
                     container = build_mod_v4(GAMES['jp'], segments, [])
                     self.check_install(container, GAMES['jp'], segments)
+
+    def test_branch_filter_round_trip_and_both_production_writers(self):
+        raw = bytearray()
+        for offset in range(0, BLOCK + 64, 4):
+            word = (0x48000001 | ((0x4000 - offset) & 0x03fffffc)) if offset % 12 else 0x48000002
+            raw.extend(struct.pack(">I", word))
+        raw[-24:] = struct.pack(">6I", 0x48000001, 0x4bfffffd, 0x48000003, 0x48000000, 0, 0xffffffff)
+        self.assertEqual(branch_filter(branch_filter(raw), True), raw)
+        packed = b"MSL5" + _encode_quick(branch_filter(raw))[4:]
+        self.assertEqual(decode_quick(packed, len(raw)), raw)
+        self.assertLessEqual(len(encode_quick(raw)), len(_encode_quick(raw)))
+        segments = [dict(offset=0, memory_size=len(raw)+32, raw=raw, quick=packed),
+                    dict(offset=0x80000, memory_size=32, raw=b"")]
+        self.check_install(build_mod_v4(GAMES['jp'], segments, []), GAMES['jp'], segments)
+        source=C.create_string_buffer(packed);out=C.create_string_buffer(b"!"*(len(raw)+32))
+        decoder=self.harness.lib.quick_decode
+        decoder.argtypes=[C.c_void_p,C.c_uint,C.c_void_p,C.c_uint,C.c_uint]
+        self.assertEqual(decoder(source,len(packed),out,len(raw),len(raw)+32),0)
+        self.assertEqual(out.raw[:-1],bytes(raw)+b"!"*32)
+        out.raw=b"!"*(len(raw)+33)
+        self.assertNotEqual(decoder(source,len(packed),out,len(raw)-1,len(raw)+32),0)
+        self.assertEqual(out.raw,b"!"*(len(raw)+33))
+
+    def test_large_boot_blocks_restore_exact_words_without_extra_output_space(self):
+        rng = random.Random(6404)
+        prefix = rng.randbytes(BLOCK)
+        raw = prefix + prefix[-50000:] + bytes(64)
+        packed = _encode_quick(raw, BOOT_BLOCK)
+        self.assertEqual(decode_quick(packed, len(raw)), raw)
+        self.assertLess(len(packed), len(_encode_quick(raw)))
+        segments = [dict(offset=0, memory_size=len(raw), raw=raw, quick=packed),
+                    dict(offset=0x80000, memory_size=32, raw=b"")]
+        self.check_install(build_mod_v4(GAMES['jp'], segments, []), GAMES['jp'], segments)
+        decoder = self.harness.lib.quick_decode
+        decoder.argtypes = [C.c_void_p, C.c_uint, C.c_void_p, C.c_uint, C.c_uint]
+        for block in (0, BLOCK * 2, BOOT_BLOCK + 4, 0x80000000):
+            damaged = packed[:4] + struct.pack('>I', block) + packed[8:]
+            source = C.create_string_buffer(damaged)
+            out = C.create_string_buffer(b"!" * (len(raw) + 32))
+            self.assertNotEqual(decoder(source, len(damaged), out, len(raw), len(raw)), 0)
+            self.assertEqual(out.raw, b"!" * (len(raw) + 32) + b"\0")
+        source = C.create_string_buffer(packed)
+        out = C.create_string_buffer(b"!" * (len(raw) + 32))
+        self.assertEqual(decoder(source, len(packed), out, len(raw), len(raw)), 0)
+        self.assertEqual(out.raw, raw + b"!" * 32 + b"\0")
 
     def test_manifest_default_stays_v3_and_opt_in_is_repeatable(self):
         for game in GAMES.values():

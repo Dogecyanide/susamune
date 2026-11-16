@@ -169,7 +169,7 @@ API bool nativeGradient(unsigned pane,unsigned motion,unsigned vertical,unsigned
 
     def test_three_decimal_gradient_reaches_endpoint_only_on_extra_digit(self):
         out = (C.c_ubyte * 6)()
-        for stops in range(1, 6):
+        for stops in (*range(1, 6), 0x40):
             self.lib.precision(7, 0, stops)
             self.assertTrue(self.lib.nativeGradient(11, 0, 0, 0, out))
             self.assertEqual(tuple(out), (63, 64, 65) * 2)

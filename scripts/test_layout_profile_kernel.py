@@ -98,15 +98,15 @@ class LayoutProfileKernelTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix='moonshine-layout-kernel-')
         cls.addClassCleanup(cls.temp.cleanup)
         path = Path(cls.temp.name)
-        fixture = (ROOT / 'scripts/ghost_kernel_fixture.h').read_text()
+        fixture = (ROOT / 'scripts/ghost_kernel_fixture.h').read_text(encoding='utf-8')
         fixture = fixture.replace('#define FIXTURE_FILES 60000', '#define FIXTURE_FILES 40')
         fixture = fixture.replace('#define FIXTURE_WRITES 80', '#define FIXTURE_WRITES 40')
         fixture = fixture.replace('#define FIXTURE_FILE_BYTES 1400000', '#define FIXTURE_FILE_BYTES 4096')
-        for name in ('open_char', 'read', 'close', 'unlink_char'):
+        for name in ('open_char', 'read', 'close', 'unlink_char', 'mkdir_char'):
             fixture = fixture.replace('f_' + name + '(', 'fixture_' + name.replace('_char', '') + '(')
-        source = (ROOT / 'launcher/kernel/MoonshineLayout.c').read_text()
+        source = (ROOT / 'launcher/kernel/MoonshineLayout.c').read_text(encoding='utf-8')
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
-        (path / 'test.c').write_text(fixture + ADAPTER + source + EXPORTS)
+        (path / 'test.c').write_text(fixture + ADAPTER + source + EXPORTS, encoding='utf-8')
         proc = subprocess.run([str(compiler), '--target=x86_64-pc-windows-msvc', '-shared', '-O1',
             '-fno-builtin', '-nostdlib', '-fuse-ld=lld', '-Xlinker', '/noentry',
             '-I', str(ROOT / 'include'), str(path / 'test.c'), '-o', str(path / 'test.dll')],

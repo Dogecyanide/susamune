@@ -1,0 +1,57 @@
+On-Wii playback investigation, 2026-10-30
+
+Status: existing .smsghost playback works. No .msgt playback has been added.
+The current traces are validated diagnostic recordings; storage success does
+not imply video-equivalent reconstruction.
+
+Reusable pieces: Ghost::VisualState and GhostModel already render Mario,
+FLUDD/Yoshi, held objects and recorded animation. Ghost::captureLiveVisual reads
+portable visual values without allocating descriptors. Ghost::beginObserver...
+and LevelWarp provide Watch lifecycle, camera control and staged transitions.
+The existing storage protocol imports complete bounded SGHF files; it is not
+yet a general .msgt streaming reader. ARM owns FAT access; PPC must not do it.
+
+Concrete missing playback data: Mario animation ID is captured (+0xFA), but
+captureAnimation obtains normalized animation phase through getMotionFrameCtrl,
+which belongs to the separately allocated model (decomp MarioDraw.cpp:875).
+That frame-controller object is not explicitly captured. MSTR frame records
+have scene, context, VI/timebase, RNG seed and movement counter; they do not
+provide a normalized QFT/route timeline equivalent to ordinary ghost segments.
+Do not infer fixed QFT transitions from real loading duration.
+
+Recommended first increment: add a compact, explicitly versioned render sample
+using the existing visual capture path after direct/update: exact QFT, stopped/
+assisted status, scene and parent-route identity, XYZ/yaw, animation ID+phase,
+Yoshi/FLUDD visual state, held-object identity. Keep all detailed streams, one
+user-facing recording, and compatibility with legacy .smsghost. A compact
+embedded render track could reuse the existing playback path; direct streaming
+can feed the same renderer. Both require deliberate file/index integration.
+
+Watch-only, one ghost first. A bounded async SD reader can prefetch and validate
+compressed chunks; capture and Watch would be mutually exclusive initially so
+the existing capture buffers can be reused. Native reconstructed baselines are
+small compared with the two512KiB chunk buffers. Read pauses/underruns should
+pause the viewer clock visibly; never display unchecked or stale poses.
+Playback with live recording/racing is additional concurrent read/write/ISO I/O
+and has not been validated by the write-only recording tests.
+
+Seeking needs an index plus complete reconstruction checkpoints, or a standalone
+render channel. Native and input deltas currently depend on earlier records:
+reading an arbitrary chunk is not enough to reconstruct the correct state.
+Decode portable values into Ghost::VisualState; recorded pointers stay diagnostic.
+Full-world replay needs much more state/simulation work: animation blends,
+initial pre-construction flags/RNG, terrain pollution, particles/audio, triggers
+and pointer-free world checksums. Current actor deltas include positions/rotations
+every director frame; they are not creation/removal-only. FlagManager baseline
+is captured when the stage becomes readable, not guaranteed before construction.
+
+Release constraint: November5. Preserve stable normal ghost playback while
+working toward streamed Watch. Do not advertise full-world replay or reclaim
+all legacy ghost memory until required playback/racing buffers are measured.
+
+Hardware findings: all10 saved r9 files verified, including ~594s Bianco8.
+The long recording stored198.65MB logical data in84.25MB and felt normal. ARM
+compression averaged~13.97ms per16KiB (maximum15.36ms) and accumulated169.4s
+elapsed compression time. This is storage-core elapsed time, not game-thread
+stall time. Queue peak1,028,373 of1,048,576bytes leaves only~20KiB. More headroom
+is advisable before release; do not shrink capture buffers for ISO caching yet.

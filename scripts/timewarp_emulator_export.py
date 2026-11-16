@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import struct
+import zlib
 
 from dolreader.dol import DolFile
 from elftools.elf.elffile import ELFFile
@@ -40,7 +41,7 @@ def branch(site, target, link=False):
     return 0x48000000 | (distance & 0x03FFFFFC) | int(link)
 
 
-def build_bootstrap(stub, stage, cold_base, cold_size, hardware, hot_ranges=(), menu_code=None, model_assets=False):
+def build_bootstrap(stub, stage, cold_base, cold_size, hardware, hot_ranges=(), menu_code=None, model_assets=False, native_https=None):
     """Return the production shim; no imports, controller hooks or test mailbox."""
     if (any(v & 31 for v in (stub, stage, cold_base, cold_size)) or
             not 32 <= cold_size <= STAGING_CAPACITY or
@@ -50,9 +51,8 @@ def build_bootstrap(stub, stage, cold_base, cold_size, hardware, hot_ranges=(), 
     staging_size = cold_size
     if menu_code:
         destination, size = menu_code
-        from mod_transport import shared_define
-        if (destination != shared_define("SUSAMUNE_MENU_CODE_DOLPHIN_PPC_BASE", "mem2_map.h") or
-                not 0 < size <= shared_define("SUSAMUNE_MENU_CODE_SIZE", "mem2_map.h") or size & 31):
+        from mod_transport import menu_capacity
+        if (not 0 < size <= menu_capacity(1,destination) or size & 31):
             raise ValueError("Invalid menu code copy span")
         copies.append((stage + cold_size, destination, size))
         staging_size += size
@@ -60,6 +60,14 @@ def build_bootstrap(stub, stage, cold_base, cold_size, hardware, hot_ranges=(), 
         for destination, size in dolphin_ghost_assets.copy_spans():
             copies.append((stage + staging_size, destination, size))
             staging_size += size
+    if native_https:
+        destination, size = native_https
+        from mod_transport import shared_define
+        if (destination != shared_define("DOLPHIN_HTTPS_IMAGE_BASE", "dolphin_https.h") or
+                not 32 <= size <= shared_define("DOLPHIN_HTTPS_IMAGE_CAPACITY", "dolphin_https.h") or size & 31):
+            raise ValueError("Invalid HTTPS copy span")
+        copies.append((stage + staging_size, destination, size))
+        staging_size += size
     if staging_size > STAGING_CAPACITY or stage + staging_size > 0x81800000:
         raise ValueError("Combined staging exceeds its fixed span")
     words, labels, fixups = [], {}, []
@@ -108,17 +116,24 @@ def build_bootstrap(stub, stage, cold_base, cold_size, hardware, hot_ranges=(), 
         labels[label] = len(words)
         emit(0x80C30000, 0x90C40000, 0x90E30000, 0x38630004, 0x38840004)
         jump(0x42000000, label)
-        for prefix, address, opcode in (("flush_code", destination, 0x7C0018AC),
-                                       ("flush_stage", source, 0x7C0018AC),
-                                       ("invalidate", destination, 0x7C001FAC)):
-            load(3, address)
-            load(5, size // 32)
-            emit(0x7CA903A6)
-            label = f"{prefix}{index}"
-            labels[label] = len(words)
-            emit(opcode, 0x38630020)
-            jump(0x42000000, label)
-            emit(0x7C0004AC)
+        # Publish both copied bytes and cleared staging before invalidating code.
+        load(3, destination)
+        load(4, source)
+        load(5, size // 32)
+        emit(0x7CA903A6)
+        label = f"flush{index}"
+        labels[label] = len(words)
+        emit(0x7C0018AC, 0x7C0020AC, 0x38630020, 0x38840020)
+        jump(0x42000000, label)
+        emit(0x7C0004AC)
+        load(3, destination)
+        load(5, size // 32)
+        emit(0x7CA903A6)
+        label = f"invalidate{index}"
+        labels[label] = len(words)
+        emit(0x7C001FAC, 0x38630020)
+        jump(0x42000000, label)
+        emit(0x7C0004AC)
     emit(0x4C00012C, 0x8001008C, 0x7C0103A6, 0x80010088, 0x7C0903A6,
          0x80010084, 0x7C0FF120, 0x800100A4, 0x7C0803A6,
          0xB8410008, 0x80010004, 0x382100A0)
@@ -227,7 +242,7 @@ def read_disc(path, region):
     }
 
 
-def plan_dol(retail, manifest, cold, symbols, protected, model_assets=b""):
+def plan_dol(retail, manifest, cold, symbols, protected, model_assets=b"", native_https=b""):
     dol = DolFile(BytesIO(retail))
     sections = list(dol.sections)
     ranges = [(s.address, s.size) for s in sections]
@@ -265,7 +280,16 @@ def plan_dol(retail, manifest, cold, symbols, protected, model_assets=b""):
     menu = verified_artifact(manifest["menu_code"], ROOT, "menu code") if manifest.get("menu_code") else b""
     if model_assets and len(model_assets) != sum(n for _, n in dolphin_ghost_assets.copy_spans()):
         raise ValueError("Invalid ghost master staging size")
-    staged = cold + menu + model_assets
+    https_copy = None
+    if native_https:
+        from mod_transport import shared_define
+        base = shared_define("DOLPHIN_HTTPS_IMAGE_BASE", "dolphin_https.h")
+        cap = shared_define("DOLPHIN_HTTPS_IMAGE_CAPACITY", "dolphin_https.h")
+        if (len(native_https) < 40 or len(native_https) > cap or len(native_https) & 31 or
+                struct.unpack_from(">3I", native_https) != (0x4D485431, 2, 40)):
+            raise ValueError("Invalid HTTPS image")
+        https_copy = (base, len(native_https))
+    staged = cold + menu + model_assets + native_https
     if len(staged) > STAGING_CAPACITY:
         raise ValueError("Combined staging exceeds its fixed span")
     menu_copy = (manifest["menu_code"]["vma"], len(menu)) if menu else None
@@ -283,7 +307,7 @@ def plan_dol(retail, manifest, cold, symbols, protected, model_assets=b""):
     if any(overlaps(a, n, b, m) for i, (a, n) in enumerate(loaded) for b, m in loaded[i + 1:]):
         raise ValueError("Expanded DOL sections overlap")
     shim = build_bootstrap(stub, STAGING, manifest["cold_image"]["vma"], len(cold),
-                           symbols["__init_hardware"], loaded[:2], menu_copy, bool(model_assets))
+                           symbols["__init_hardware"], loaded[:2], menu_copy, bool(model_assets), https_copy)
     at = stub - images[1][0]
     upper[at:at + len(shim)] = shim
     images.append((STAGING, staged))
@@ -320,6 +344,7 @@ def plan_dol(retail, manifest, cold, symbols, protected, model_assets=b""):
         "cold_bytes": len(cold), "cold_sha256": digest(cold), "staging_address": STAGING,
         "menu_code_bytes": len(menu), "menu_code_sha256": digest(menu),
         "ghost_asset_bytes": len(model_assets), "ghost_asset_sha256": digest(model_assets),
+        "native_https_bytes": len(native_https), "native_https_sha256": digest(native_https),
         "loaded_mem1_spans": [{"address": a, "size": n} for a, n in loaded],
     }
 
@@ -391,16 +416,46 @@ def encode_patch(source, operations, source_crc, iso_size=GC_ISO_SIZE):
     return builder.encode(iso_size, source_crc), builder.target_crc
 
 
-def export(iso, build, region, output):
+def language_operations(operations, extents, region, language, asset=None):
+    if language not in ("en", "ja"):
+        raise ValueError("Unknown Moonshine UI language")
+    if language == "en":
+        return operations, {}
+    if region != "jp":
+        raise ValueError("Japanese Moonshine menus require a Japanese game")
+    from gen_japanese_ui import build, MAX_SIZE
+    payload = bytes(build(dolphin=True)[0] if asset is None else asset)
+    address = 0x00C00000
+    if (len(payload) < 64 or len(payload) > MAX_SIZE or len(payload) % 32 or
+            struct.unpack_from(">3I", payload) != (0x4D4A5549, 2, len(payload))):
+        raise ValueError("Invalid Japanese UI asset")
+    checked = bytearray(payload)
+    expected = struct.unpack_from(">I", checked, 12)[0]
+    struct.pack_into(">I", checked, 12, 0)
+    if zlib.crc32(checked) & 0xFFFFFFFF != expected:
+        raise ValueError("Japanese UI asset checksum differs")
+    occupied = list(extents) + [(op["target_offset"], op["size"]) for op in operations]
+    if any(overlaps(address, len(payload), start, size) for start, size in occupied):
+        raise ValueError("Japanese UI asset overlaps disc content")
+    result = list(operations)
+    add_operation(result, address, "literal", payload)
+    return sorted(result, key=lambda op: op["target_offset"]), {
+        "offset": address, "bytes": len(payload), "sha256": digest(payload)}
+
+
+def export(iso, build, region, output, ui_language="en"):
     receipt_path = output.with_suffix(output.suffix + ".json")
     if output.exists() or receipt_path.exists():
         raise FileExistsError("Refusing to replace an existing patch or receipt")
     manifest, cold, symbols, protected, evidence = verify_build(build, region)
+    from build_dolphin_https import checked_image
+    native, native_receipt = checked_image(build / "dolphin-native")
     source_stat = iso.stat()
     retail, source_offset, extents, source_crc, disc_evidence = read_disc(iso, region)
     changed, payloads, size, boot_evidence = plan_dol(
-        retail, manifest, cold, symbols, protected, dolphin_ghost_assets.extract(iso))
+        retail, manifest, cold, symbols, protected, dolphin_ghost_assets.extract(iso), native)
     operations, target = build_operations(source_offset, len(retail), extents, changed, payloads, size)
+    operations, language_evidence = language_operations(operations, extents, region, ui_language)
     _, gap_end = unused_disc_span(extents, size, GC_ISO_SIZE)
     with iso.open("rb") as source:
         patch, target_crc = encode_patch(source, operations, source_crc)
@@ -409,6 +464,7 @@ def export(iso, build, region, output):
         raise ValueError("Source ISO changed during export")
     receipt = {"version": 1, "region": region, "passed": True,
                "scope": "Source-free Dolphin ISO export; no runtime or console claim.",
+               "ui_language": ui_language, "japanese_ui": language_evidence,
                "iso_size": GC_ISO_SIZE, "target_crc32": f"{target_crc:08X}",
                "relocated_dol_offset": target, "expanded_dol_bytes": size,
                "verified_unused_disc_end": gap_end,
@@ -429,8 +485,9 @@ def main():
     parser.add_argument("--build", type=Path, required=True, help="Current verified IS_EMULATOR build directory")
     parser.add_argument("--region", choices=("jp", "us", "pal"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--ui-language", choices=("en", "ja"), default="en")
     args = parser.parse_args()
-    result = export(args.iso.resolve(), args.build.resolve(), args.region, args.output.resolve())
+    result = export(args.iso.resolve(), args.build.resolve(), args.region, args.output.resolve(), args.ui_language)
     print(f"Wrote {args.output}: {result['patch_bytes']} bytes; FST/assets unchanged")
 
 

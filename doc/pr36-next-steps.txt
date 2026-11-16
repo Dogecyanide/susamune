@@ -1,0 +1,29 @@
+PR36 architecture and follow-up
+
+Zel's REPLY-PR35.md (25 October 2026) confirms HTTP/1.1 persistence through the
+public origin and adds sort=route with filter-bound opaque cursors. Catalogue
+and file reads have no application rate limit; platform protections may still
+return 429/5xx. Capture sb-request-id and Date to correlate the next Wii test.
+
+GhostServiceNative keeps a half-duplex BearSSL context in a union with the two
+existing ARM local-ghost metadata caches. The union's size is statically checked
+against the original caches. Online requests invalidate those caches; the next
+local ghost operation forgets the idle connection before reclaiming the union.
+Only session/TLS state persists. Parser, download ring, request and trace buffers
+remain under the GHOST transfer lease and are not retained after Release.
+
+The native worker performs no FAT I/O. Trace strings are copied to the existing
+main-thread connection logger before releasing the workspace. The logger still
+writes only under the idle-disc guard. Socket closing uses separate persistent
+IPC scratch and never reads reclaimed session or transfer bytes. Cancellation
+still waits for IOS completion before releasing borrowed buffers.
+
+Keep the two memory lifetimes separate when changing this code. Do not retain
+body/sink pointers from a completed HTTP request; the next GET resets framing
+and callbacks. Never retry a partially received file into its existing sink.
+Local caches retain their original capacity outside online browsing.
+
+First verify native browsing, downloads/playback and racing coexistence on Wii.
+Then add device linking and opt-in upload. Respect server polling/backoff and
+keep credentials out of connection logs, settings exports and packages.
+The server's 24-byte maximum-size discrepancy remains non-blocking.

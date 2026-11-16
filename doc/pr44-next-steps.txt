@@ -1,0 +1,21 @@
+PR44 next steps
+
+1. Continue standard Dolphin parity without a companion: TCP, verified TLS,
+   Delfino Ghosts browsing/download/upload, and persistent ghost/state/TAS files.
+   DNS groundwork is present; full website or file parity is not complete.
+2. Confirm PR44 online water and empty-room setup fixes on Wii/Dolphin, then
+   finish four-player hardware acceptance.
+3. Implement vetted authenticated key establishment and packet protection;
+   preserve direct play if the optional friend-hosted relay is unavailable.
+4. Deferred: Look into action state recording for ghosts and possibly more.
+
+PR45 native Dolphin progress (26 October)
+- Host End race and ordinary-pause online warps are implemented and host-tested; not packaged yet. Online protocol is now 8, so the next Wii/Dolphin packages must match.
+- Native TCP/HTTPS image lives in the pre-existing Dolphin gap. All regional links preserve the 96 timer symbols and heap reservation. Production bootstrap includes and verifies this image.
+- Real standard Dolphin BBA HLE proof: build/pr45-runtime/native-https1/https-verification.json (GET, reuse, disconnect/reopen).
+- Retail CARD worker proof: build/pr45-runtime/native-files2/file-verification.json (partial multi-sector read/write, bounds rejection, list, delete).
+- Production browser flow proof: build/pr45-runtime/native-browser1/browser-verification.json (first page, next page, close/reopen, level filter). Uses the persistent seed GCI; no host-injected TLS entropy for this proof.
+- One-time setup uses custom-folder JPN/USA/EUR. Dolphin's older default folder can be JAP; migration accepts both. Initial JAP-only setup failed the real card check and has been corrected.
+- Shared GhostCanonical.inc now owns header validation/catalogue fields for Wii and native Dolphin. ARM storage/teaching regressions pass (29 and 14 tests); shared policy checks pass (25).
+- Work in progress: native download commits canonical GCI data with the header last and validates SHA-256 plus the complete ghost. Its new flow still needs runtime/failure checks and imported-list integration. Local saved ghost, state and TAS services and account/upload remain incomplete. Do not call this full parity or ship the partial browser build.
+- Private fixture processes are owned per run. PR44 user profile, ISO, SD install and shared ZIPs have not been changed.

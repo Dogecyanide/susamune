@@ -7,6 +7,8 @@
 #include "vsprintf.h"
 
 char *strcpy(char *, const char *);
+char *strcat(char *, const char *);
+void *memchr(const void *, int, size_t);
 char *strncpy(char *, const char *, size_t);
 size_t strlcpy(char *dest, const char *src, size_t maxlen);
 char * strstr ( const char *str1, const char *str2);

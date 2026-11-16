@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "font_zip.h"
 #include "dip.h"
 #include "SusamuneMusic.h"
+#include "FPad.h"
 #include "SusamuneTheme.h"
 #include "SusamuneText.h"
 #include "unzip/unzip.h"

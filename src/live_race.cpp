@@ -1,3 +1,8 @@
+#include "susamune/ghost_trace.hxx"
+#include "susamune/mem2_map.h"
+#include "susamune/live_contacts.hxx"
+#include "susamune/memory_telemetry.hxx"
+#include "susamune/memory_capture.hxx"
 #include "susamune/live_race.hxx"
 
 #if TIMEWARP_LIVE_RACING
@@ -19,6 +24,7 @@
 #include "susamune/live_group.hxx"
 #include "susamune/live_invites.hxx"
 #include "susamune/live_transport.hxx"
+#include "susamune/mario_colors.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/qft_timer.hxx"
@@ -36,7 +42,8 @@ namespace {
 namespace Session = LiveRaceSession;
 enum Phase { NO_MATCH, WAIT_OFFER, WAIT_READY, RUNNING, ROUND_DONE, MATCH_DONE, ROAMING, DRAFTING };
 enum { OFFER = 1, READY = 2, CANCEL = 3, START = 4, NEW_MATCH = 5, CATALOGUE = 1 };
-enum { DRAFT_BEGIN = 6, DRAFT_NEXT = 7, DRAFT_APPLY = 8, DRAFT_REQUEST = 9 };
+enum { DRAFT_BEGIN = 6, DRAFT_NEXT = 7, DRAFT_APPLY = 8, DRAFT_REQUEST = 9, END_MATCH = 11 };
+static_assert(END_MATCH != LivePlaylist::Message && END_MATCH != LiveColours::Message, "unique control command");
 struct Scene { u8 area, episode, parentArea, parentEpisode; };
 struct Runtime {
     Session::Session session;
@@ -50,9 +57,11 @@ struct Runtime {
     bool started, connected, localReady, peerReady;
     // localReady is intent; startPrepared is the scene reservation sent to peers.
     bool startPrepared, groupReadySent;
-    bool offerNeeded, readyNeeded, startNeeded, cancelNeeded, newMatchNeeded;
+    bool offerNeeded, readyNeeded, startNeeded, cancelNeeded, newMatchNeeded, endNeeded, hostEnded;
     bool localResult, peerResult, resultSent, localEligible, peerEligible;
     bool peerSceneKnown;
+    LiveColours::Palette colours, remoteColours;
+    bool coloursSent;
     s32 localQf, peerQf, networkError;
     const char *message;
     Diagnostics diagnostics;
@@ -65,6 +74,7 @@ struct Runtime {
 Options sOptions;
 Runtime s;
 volatile u32 sStageMarker;
+bool sSavedContacts[3];
 static_assert(sizeof(Runtime) < 2048, "online session scalar budget");
 static_assert(MSR_ANIMATION_COUNT == SUSAMUNE_GHOST_ANIMATION_ID_MAX + 1,
               "online animation catalogue");
@@ -90,8 +100,8 @@ static const char couldNotStart[] = "Could not start";
 static const char raceLive[] = "Race live - first IL finish wins";
 static const char requires60Hz[] = "Online requires 60 Hz";
 #if IS_EMULATOR
-static const char networkBusy[] = "Run the Dolphin companion, then retry";
-static const char networkStarting[] = "Starting Dolphin companion network";
+static const char networkBusy[] = "Enable Broadband Adapter (HLE) in Dolphin";
+static const char networkStarting[] = "Starting Dolphin broadband adapter";
 #else
 static const char networkBusy[] = "Network busy or closing";
 static const char networkStarting[] = "Starting Wii network";
@@ -103,7 +113,7 @@ static const char disconnected[] = "Disconnected";
 static const char waitingReady[] = "Ready - waiting for opponent";
 static const char waitingResult[] = "Finished - waiting for opponent";
 #if IS_EMULATOR
-static const char networkLost[] = "Dolphin companion unavailable - reconnect";
+static const char networkLost[] = "Dolphin broadband adapter unavailable";
 #else
 static const char networkLost[] = "Wii network lost - reconnect";
 #endif
@@ -153,16 +163,20 @@ struct Extra {
     u8 draftBody[24];
     u8 draftBytes, lastOffer;
     bool reconnecting, attemptSeen, stunKeepalive, codeChanged, autoOpen, startResend, draftResend;
-    bool draftWasTurn, draftOpen, networkRetry;
+    bool draftWasTurn, draftOpen, networkRetry, matchStarted, roundAssisted;
     u32 retryMs;
 };
 Extra x;
-LiveGroup::Room sGroup;
+// Physical tail ownership survives logical ghost-bank swaps and state restores.
+LiveGroup::Room &sGroup = *reinterpret_cast<LiveGroup::Room *>(SUSAMUNE_LIVE_ROOM_PPC_BASE);
+static_assert(sizeof(LiveGroup::Room) <= SUSAMUNE_LIVE_ROOM_SIZE, "live room scalar storage");
 LiveInvites::State sInvites;
 Scene sGroupScenes[3];
 bool sGroupSceneKnown[3];
-char sGroupMessage[80];
-LivePlaylist::Transfer sPlaylist;
+char (&sGroupMessage)[80] = *reinterpret_cast<char (*)[80]>(SUSAMUNE_LIVE_AUX_PPC_BASE + 0x100u);
+LivePlaylist::Transfer &sPlaylist = *reinterpret_cast<LivePlaylist::Transfer *>(SUSAMUNE_LIVE_AUX_PPC_BASE);
+static_assert(sizeof(sPlaylist) <= 0x100u && 0x100u + sizeof(sGroupMessage) <= SUSAMUNE_LIVE_AUX_SIZE,
+              "live auxiliary scalar storage");
 u8 sPlaylistSent;
 const char kSharingPlaylist[] = "Receiving the host's playlist";
 const char kPlaylistLive[] = "Playlist race - advance independently";
@@ -388,9 +402,18 @@ void serviceDraft() {
         }
     }
 }
+bool canReplaceSetup() {
+    return s.phase == MATCH_DONE || s.phase == ROAMING ||
+        (!x.matchStarted && (s.phase == WAIT_READY || s.phase == DRAFTING));
+}
 bool canConfigureRace() {
-    return s.connected && s.hosting && (s.phase == MATCH_DONE || s.phase == ROAMING) &&
-        !s.newMatchNeeded && !s.offerNeeded && !Session::status(s.session).pending;
+    if (!s.active || !s.hosting) return false;
+    // The first handshake publishes current options; no match exists to replace yet.
+    if (!sGroup.active && !s.round && s.phase == NO_MATCH) return true;
+    if (x.networkRetry) return false;
+    if (sGroup.active) return LiveGroupRules::canConfigure(sGroup.rules);
+    return s.connected && canReplaceSetup() && !s.startNeeded &&
+        !s.newMatchNeeded && !s.offerNeeded && !s.endNeeded && !Session::status(s.session).pending;
 }
 void abortRound(const char *message, bool notify) {
     s.startPrepared = s.groupReadySent = false;
@@ -400,6 +423,22 @@ void abortRound(const char *message, bool notify) {
     s.phase = ROUND_DONE;
     s.cancelNeeded = notify;
     s.startNeeded = s.readyNeeded = false;
+}
+void finishByHost() {
+    abortRound("Race ended by host", false);
+    s.phase = MATCH_DONE; s.hostEnded = true;
+    s.localResult = s.peerResult = s.resultSent = false;
+    s.offerNeeded = s.newMatchNeeded = s.choiceNeeded = s.choiceSent = false;
+    x.startResend = x.draftResend = x.draftOpen = x.draftWasTurn = false;
+    x.autoOpen = false;
+}
+bool canEndRace() {
+    if (!s.active || !s.hosting) return false;
+    if (sGroup.active) {
+        const unsigned p = sGroup.rules.phase;
+        return p != LiveGroupRules::Lobby && p != LiveGroupRules::Finished && p != LiveGroupRules::Roaming;
+    }
+    return s.round && (s.phase == WAIT_READY || s.phase == RUNNING || s.phase == ROUND_DONE || s.phase == DRAFTING);
 }
 void settleRound() {
     if (s.phase == RUNNING && s.localResult && s.peerResult) {
@@ -435,12 +474,12 @@ void settleRound() {
 }
 void startRound();
 void prepareStart();
-LiveGroup::Config groupConfig() {
+LiveGroup::Config groupConfig(const Options &options = sOptions) {
     LiveGroup::Config c = {};
-    c.rules = LiveGroupRules::Config{sOptions.players, sOptions.bestOf,
-        static_cast<u8>(sOptions.setBo5 ? 5 : 3), sOptions.draft, sOptions.freeRoam};
-    c.entry = sOptions.entry; c.episode = sOptions.episode; c.pool = sOptions.pool;
-    c.playlist = sOptions.playlist; c.playlistHash = sOptions.playlistHash; c.catalogue = CATALOGUE;
+    c.rules = LiveGroupRules::Config{options.players, options.bestOf,
+        static_cast<u8>(options.setBo5 ? 5 : 3), options.draft, options.freeRoam};
+    c.entry = options.entry; c.episode = options.episode; c.pool = options.pool;
+    c.playlist = options.playlist; c.playlistHash = options.playlistHash; c.catalogue = CATALOGUE;
     return c;
 }
 bool groupValid(void *, unsigned entry, unsigned pool, bool draft) {
@@ -528,6 +567,10 @@ void serviceGroup(u32 now) {
 }
 __attribute__((noinline)) void receivedControlBody(const MSRHeader &header, const void *data, unsigned bytes) {
     const u8 *body = static_cast<const u8 *>(data);
+#if MOONSHINE_MEMORY_TELEMETRY
+    if (header.kind == MSR_READY && GhostTrace::receive(s.session, data, bytes)) return;
+    if (header.kind == MSR_READY && MemoryCapture::receive(s.session, data, bytes)) return;
+#endif
     if (!s.hosting && header.kind == MSR_READY && bytes == 28 && body[0] == LiveGroup::Welcome) {
         if (header.round == MSRRead32(body + 16) && LiveGroup::adopt(sGroup, s.session, groupConfig(), kGroupHooks, body, bytes)) {
             adoptGroupOptions(); LiveGhost::resetAll(); memset(sGroupSceneKnown, 0, sizeof(sGroupSceneKnown));
@@ -535,6 +578,10 @@ __attribute__((noinline)) void receivedControlBody(const MSRHeader &header, cons
         return;
     }
     if (sGroup.active) { LiveGroup::control(sGroup, 0, header, data, bytes); return; }
+    if (header.kind == MSR_READY && bytes == LiveColours::PacketBytes && body[0] == LiveColours::Message) {
+        LiveColours::decode(data, bytes, s.remoteColours);
+        return;
+    }
     if (header.kind == MSR_READY && bytes && body[0] == LivePlaylist::Message) {
         if (!s.hosting && sOptions.playlist && s.phase == WAIT_READY && header.round == s.round) {
             if (LivePlaylist::receive(sPlaylist, body, bytes, sOptions.playlistHash, ILing::count()) && sPlaylist.complete)
@@ -542,7 +589,15 @@ __attribute__((noinline)) void receivedControlBody(const MSRHeader &header, cons
         }
         return;
     }
-    if (header.kind == MSR_READY && bytes && body[0] >= DRAFT_BEGIN) {
+    if (header.kind == MSR_READY && bytes == 4 && body[0] == END_MATCH) {
+        if (!s.hosting && !body[1] && !body[2] && !body[3] && header.round && header.round >= s.round) {
+            s.round = header.round;
+            finishByHost();
+        }
+        return;
+    }
+    if (header.kind == MSR_READY && bytes && body[0] >= DRAFT_BEGIN && body[0] <= DRAFT_REQUEST) {
+        if (s.newMatchNeeded) return;
         receivedDraft(header, body, bytes);
         return;
     }
@@ -562,7 +617,7 @@ __attribute__((noinline)) void receivedControlBody(const MSRHeader &header, cons
     if (header.kind == MSR_READY && (body[0] == OFFER || body[0] == NEW_MATCH) && !s.hosting) {
         const bool newMatch = body[0] == NEW_MATCH;
         if (!header.round || (newMatch ?
-            !((s.phase == MATCH_DONE || s.phase == ROAMING) && header.round == s.round + 1u) :
+            !(canReplaceSetup() && header.round == s.round + 1u) :
             !((s.phase == WAIT_OFFER && header.round == 1) ||
               (s.phase == ROUND_DONE && header.round == s.round + 1u)))) return;
         if (!newMatch && s.phase != WAIT_OFFER && !sameConfig(proposed)) return;
@@ -572,6 +627,7 @@ __attribute__((noinline)) void receivedControlBody(const MSRHeader &header, cons
         sOptions.draft = proposed.draft; sOptions.setBo5 = proposed.setBo5; sOptions.pool = proposed.pool;
         s.round = header.round;
         if (newMatch) {
+            x.matchStarted = x.draftResend = s.hostEnded = false;
             s.localWins = s.peerWins = 0; s.draft = {};
             s.choiceNeeded = s.choiceSent = false;
         }
@@ -642,6 +698,8 @@ void startRound() {
         return;
     }
     s.phase = RUNNING;
+    x.roundAssisted = false;
+    x.matchStarted = true;
     s.startPrepared = false;
     s.localResult = s.resultSent = false;
     s.message = sOptions.playlist ? kPlaylistLive : Text::raceLive;
@@ -657,7 +715,10 @@ void serviceRace() {
         abortRound(Text::cancelled, true);
     settleRound();
     if (Session::status(s.session).pending) return;
-    if (x.startResend) {
+    if (s.endNeeded) {
+        const u8 body[4] = {END_MATCH, 0, 0, 0};
+        if (Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round)) s.endNeeded = false;
+    } else if (x.startResend) {
         if (s.phase != RUNNING || queueConfig(MSR_START, START)) x.startResend = false;
     } else if (x.draftResend) {
         if (s.phase != DRAFTING ||
@@ -674,6 +735,7 @@ void serviceRace() {
         // Keep the round generation monotonic across matches to reject stale results.
         if (Session::sendReliable(s.session, MSR_READY, body, bytes, s.round + 1u)) {
             ++s.round; x.lastOffer = NEW_MATCH; s.localWins = s.peerWins = 0; s.newMatchNeeded = false;
+            x.matchStarted = x.draftResend = s.hostEnded = false;
             s.draft = {}; s.choiceNeeded = s.choiceSent = false;
             resetRound();
             s.message = s.phase == ROAMING ? Text::freeRoam : s.phase == DRAFTING ? Text::draftBegin : Text::ready;
@@ -721,6 +783,21 @@ bool begin(bool hosting) {
     s.message = Text::networkStarting;
     LiveGhost::resetAll();
     return true;
+}
+void serviceColours() {
+    SusamuneMarioColorsCfg saved;
+    MarioColors::stageInto(&saved);
+    LiveColours::Palette palette = {};
+    palette.mask = saved.enabled;
+    for (unsigned part = 0; part < 7; ++part)
+        if (palette.mask & (1u << part)) memcpy(palette.rgb[part], saved.rgb[part], 3);
+    if (sGroup.active) { LiveGroup::setColours(sGroup, palette); return; }
+    if (!LiveColours::same(s.colours, palette)) { s.colours = palette; s.coloursSent = false; }
+    if (!s.coloursSent && s.connected) {
+        u8 body[LiveColours::PacketBytes];
+        LiveColours::encode(body, 0, palette);
+        s.coloursSent = Session::sendReliable(s.session, MSR_READY, body, sizeof(body), s.round);
+    }
 }
 void updatePose(u32 now) {
     Ghost::VisualState visual;
@@ -770,8 +847,15 @@ void acceptConnection() {
     const auto connection = Session::status(s.session);
     if (s.connected || !connection.connected) return;
     s.connected = true;
+    s.coloursSent = false;
+    if (!x.reconnecting) s.remoteColours = {};
     if (s.hosting) LiveInvites::connected(sInvites, connection.peer);
-    if (sGroup.active) { x.reconnecting = false; return; }
+    if (sGroup.active) {
+        sGroup.ownColourSent = false;
+        if (x.reconnecting && s.localResult) s.resultSent = false;
+        x.reconnecting = false;
+        return;
+    }
     if (x.reconnecting) {
         // Same room, same round: resend what may have been lost with the old link.
         x.reconnecting = false;
@@ -781,7 +865,8 @@ void acceptConnection() {
         if (s.choiceSent) { s.choiceSent = false; s.choiceNeeded = true; }
         if (s.hosting) {
             if (sOptions.playlist) sPlaylistSent = 0;
-            s.offerNeeded = x.lastOffer && s.phase != ROUND_DONE;
+            s.endNeeded = s.hostEnded;
+            s.offerNeeded = !s.hostEnded && x.lastOffer && s.phase != ROUND_DONE;
             x.draftResend = s.phase == DRAFTING && x.draftBytes;
             x.startResend = s.phase == RUNNING;
         }
@@ -897,6 +982,7 @@ SusamuneOnlineNameCfg *savedName() {
 
 void init() {
     s = {}; sOptions = {}; sStageMarker = 0; x = {}; sGroup = {};
+    sPlaylist = {}; sGroupMessage[0] = 0;
     memcpy(sOptions.name, Text::defaultName, 7);
     sOptions.bestOf = 3;
     sOptions.players = 2;
@@ -916,25 +1002,33 @@ void init() {
     }
 #endif
     s.message = Text::offline;
-    LiveGhost::reset();
+    LiveGhost::init();
 }
 const Options &options() { return sOptions; }
 bool configure(const Options &options) {
     if (!validOptions(options)) return false;
+    const bool applyNow = s.active && (sGroup.active ? sGroup.rules.round == 0 :
+        !x.matchStarted && (s.phase == WAIT_READY || s.phase == DRAFTING));
     if (s.active) {
         if (!canConfigureRace()) return false;
         if (options.players != sOptions.players) return false;
         for (unsigned i = 0; i < 17; ++i) if (options.name[i] != sOptions.name[i]) return false;
     }
+    Options next = options;
+    LivePlaylist::Plan plan = {};
     if (options.playlist) {
-        LivePlaylist::Plan plan;
         if (!StageLoader::copyOnlinePlaylist(&plan)) return false;
-        sPlaylist.plan = plan; sPlaylist.hash = LivePlaylist::hash(plan);
+        next.playlistHash = LivePlaylist::hash(plan);
+        next.entry = plan.items[0].entry;
+        next.episode = plan.items[0].episode & 7u;
+    } else next.playlistHash = 0;
+    if (applyNow && sGroup.active && !LiveGroup::configure(sGroup, groupConfig(next),
+            next.playlist ? &plan : nullptr)) return false;
+    if (next.playlist) {
+        sPlaylist.plan = plan; sPlaylist.hash = next.playlistHash;
         sPlaylist.complete = true; sPlaylist.received = plan.count; sPlaylistSent = 0;
     }
-    sOptions = options;
-    sOptions.playlistHash = sOptions.playlist ? sPlaylist.hash : 0;
-    if (sOptions.playlist) { sOptions.entry = sPlaylist.plan.items[0].entry; sOptions.episode = sPlaylist.plan.items[0].episode & 7u; }
+    sOptions = next;
     bool ended = false;
     for (unsigned i = 0; i < sizeof(sOptions.name); ++i) {
         if (!sOptions.name[i]) ended = true;
@@ -950,6 +1044,14 @@ bool configure(const Options &options) {
         gSettings.markDirty();
     }
 #endif
+    if (applyNow) {
+        // A new generation retires old Ready/draft messages without dropping peers.
+        s.startPrepared = s.groupReadySent = s.localReady = s.peerReady = false;
+        s.readyNeeded = s.choiceNeeded = s.choiceSent = false;
+        x.draftResend = false;
+        if (!sGroup.active) s.newMatchNeeded = true;
+        s.message = Text::applyingSetup;
+    }
     return true;
 }
 bool host() { return begin(true); }
@@ -1023,9 +1125,13 @@ const char *enterCode(const char *text) {
     return nullptr;
 }
 void disconnect() {
+#if MOONSHINE_MEMORY_TELEMETRY
+    MemoryCapture::cancel();
+#endif
     s.startPrepared = s.groupReadySent = false;
     x.reconnecting = x.networkRetry = false;
     if (StageLoader::onlinePlaylistActive()) StageLoader::cancel();
+    memset(sSavedContacts, 0, sizeof(sSavedContacts));
     LiveGroup::stop(sGroup);
     Session::stop(s.session); LiveStun::cancel(); LiveTransport::stop(); LiveGhost::resetAll();
     s.active = s.connected = false; s.phase = NO_MATCH;
@@ -1056,6 +1162,13 @@ bool forfeit() {
     if (StageLoader::onlinePlaylistActive()) StageLoader::cancel();
     return true;
 }
+bool endRace() {
+    if (!canEndRace()) return false;
+    if (sGroup.active) return LiveGroup::endMatch(sGroup);
+    finishByHost();
+    s.endNeeded = true;
+    return true;
+}
 bool holdingStart() { return s.active && s.startPrepared; }
 bool racingEntry(int entry) {
     return s.active && (s.connected || x.reconnecting) && s.phase == RUNNING &&
@@ -1063,7 +1176,7 @@ bool racingEntry(int entry) {
 }
 bool newMatch() {
     if (sGroup.active) return LiveGroup::configure(sGroup, groupConfig(), sOptions.playlist ? &sPlaylist.plan : nullptr);
-    if (!canConfigureRace() || s.round == ~0u) return false;
+    if (!s.connected || !canConfigureRace() || s.round == ~0u) return false;
     s.newMatchNeeded = true;
     s.message = Text::applyingSetup;
     return true;
@@ -1087,7 +1200,7 @@ const char *playerName(unsigned player) { return sGroup.active && player < sGrou
 unsigned playersConnected() { return sGroup.active ? LiveGroup::connectedCount(sGroup) : s.connected ? 2 : s.active ? 1 : 0; }
 void onPlaylistResult(s32 qf, bool eligible) {
     if (!sOptions.playlist || s.phase != RUNNING || s.localResult) return;
-    s.localQf = qf; s.localEligible = eligible && qf >= 0;
+    s.localQf = qf; s.localEligible = eligible && qf >= 0 && !x.roundAssisted && !PracticeSession::assisted();
     s.localResult = true; s.message = Text::waitingResult;
 }
 void onILResult(int entry, s32 qf, bool eligible) {
@@ -1099,16 +1212,17 @@ void onILResult(int entry, s32 qf, bool eligible) {
         // A QF is 1001/120 ms (4 per 29.97 fps game frame); u32 holds about 9.9 hours.
         qf += static_cast<s32>((x.lastAttemptMs - x.firstAttemptMs) * 120u / 1001u);
     }
-    s.localQf = qf; s.localEligible = eligible && qf >= 0;
+    s.localQf = qf; s.localEligible = eligible && qf >= 0 && !x.roundAssisted && !PracticeSession::assisted();
     s.localResult = true;
     s.message = Text::waitingResult;
 }
 static void serviceAutoOpen() {
-    const bool turn = s.connected && s.phase == DRAFTING && (sGroup.active ?
+    const bool turn = s.phase == DRAFTING && (sGroup.active ?
         LiveGroupRules::actor(sGroup.rules) == sGroup.self :
         LiveDraft::currentActor(s.draft) == (s.hosting ? LiveDraft::PLAYER_ONE : LiveDraft::PLAYER_TWO));
-    if (turn && !x.draftWasTurn) x.draftOpen = true;
-    if (!turn) x.draftOpen = false;
+    // Connectivity changes must not manufacture another turn notification.
+    if (turn && !x.draftWasTurn && s.connected) x.draftOpen = true;
+    if (!turn || !s.connected) x.draftOpen = false;
     x.draftWasTurn = turn;
     const bool result = x.autoOpen && nowMs() - x.settledMs >= 2000u;
     // Retry after a load/editor closes; B must not reopen the same turn forever.
@@ -1117,8 +1231,13 @@ static void serviceAutoOpen() {
     if (gMenu->openOnline()) x.autoOpen = x.draftOpen = false;
 }
 void update() {
+#if MOONSHINE_MEMORY_TELEMETRY
+    MemoryCapture::poll(nowMs());
+#endif
     LiveStun::update();
     if (!s.active) return;
+    // A retry or reconnect cannot turn an assisted race back into a clean one.
+    if (s.phase == RUNNING && x.attemptSeen && PracticeSession::assisted()) x.roundAssisted = true;
     const u32 now = nowMs();
     const auto transport = LiveTransport::poll();
     if (x.networkRetry) {
@@ -1183,8 +1302,7 @@ void update() {
         if (LiveStun::accept(packet) ||
             (s.hosting ? LiveInvites::receive(sInvites, packet.endpoint, packet.data, packet.bytes, now) :
                 LiveP2P::receive(s.punch, packet.endpoint, packet.data, packet.bytes, now, s.hosting && !s.connected)) ||
-            ((!s.hosting || packet.bytes < MSR_HEADER_BYTES || packet.data[6] != MSR_HELLO ||
-              LiveInvites::permits(sInvites, packet.endpoint)) &&
+            ((!s.hosting || LiveInvites::permits(sInvites, packet.endpoint)) &&
              (sGroup.active && sGroup.host ? LiveGroup::receive(sGroup, packet.endpoint, packet.data, packet.bytes, now) :
                 (s.started && Session::receivePacket(s.session, packet.endpoint, packet.data, packet.bytes, now)))))
             ++s.diagnostics.accepted;
@@ -1244,6 +1362,15 @@ void update() {
     if (!s.started) return;
     Session::tick(s.session, now);
     acceptConnection();
+    for (unsigned i = 0; i < (s.hosting ? sInvites.count : 1u); ++i) {
+        const char *name = s.hosting ? guestName(i) :
+            s.session.info.connected ? s.session.info.remoteName : nullptr;
+        if (!name) sSavedContacts[i] = false;
+        else if (!sSavedContacts[i]) {
+            LiveContacts::remember(name, s.hosting ? sInvites.slots[i].code : s.friendCode);
+            sSavedContacts[i] = true;
+        }
+    }
     const auto connection = Session::status(s.session);
     if (!s.hosting && connection.error == Session::PEER_KICKED) {
         disconnect(); s.message = "Removed by host - ask for a new invitation"; return;
@@ -1256,6 +1383,7 @@ void update() {
         }
         sampleAttempt(now);
         updatePose(now);
+        serviceColours();
         serviceGroup(now);
         serviceAutoOpen();
         return;
@@ -1275,9 +1403,19 @@ void update() {
     }
     sampleAttempt(now);
     if (!connection.connected) return;
+#if MOONSHINE_MEMORY_TELEMETRY
+    MemoryTelemetry::update(s.session, now);
+#endif
     updatePose(now);
     serviceRace();
+    serviceColours();
     serviceAutoOpen();
+}
+const LiveColours::Palette *opponentColours(unsigned channel) {
+    if (!s.active || channel >= LiveGhost::Channels) return nullptr;
+    if (!sGroup.active) return channel == 0 ? &s.remoteColours : nullptr;
+    const unsigned player = channel < sGroup.self ? channel : channel + 1;
+    return player < sGroup.config.rules.players ? &sGroup.colours[player] : nullptr;
 }
 Status status() {
     Status out = {};
@@ -1287,6 +1425,7 @@ Status status() {
     out.matchDone = s.phase == MATCH_DONE;
     out.freeRoam = s.phase == ROAMING;
     out.canForfeit = s.active && s.phase == RUNNING && !s.localResult;
+    out.canEndRace = canEndRace();
     out.setupEditable = !s.active || canConfigureRace();
     out.drafting = sGroup.active ? sGroup.rules.phase == LiveGroupRules::Draft : s.phase == DRAFTING;
     out.draftPending = sGroup.active ? sGroup.requestAction != 0 : s.choiceNeeded || s.choiceSent || Session::status(s.session).pending;

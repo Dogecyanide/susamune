@@ -1,0 +1,15 @@
+PR38 next checks
+
+1. Native Wii: browse, download, race/watch and reopen repeatedly. Preserve
+   Moonshine data/logs/connection_*.log if securing the connection fails.
+2. Link through the website, restart Moonshine, verify the account remains
+   linked, then explicitly publish a saved personal ghost. Confirm its time,
+   author and downloadable replay on Delfino Ghosts. Retry that same ghost:
+   it should report success without creating a duplicate.
+3. Check world/level selection and paging, including Full/Secret starting
+   scenes that can share catalogue results.
+4. Check the subtitle-font Moonshine heading and account code readability.
+5. Continue the separately outstanding 3/4-player hardware testing.
+
+No live upload or account link is performed automatically during development.
+Share the app ZIP only, never the private account journals from Moonshine data.

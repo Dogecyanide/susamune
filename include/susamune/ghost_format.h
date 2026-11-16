@@ -14,7 +14,8 @@
 #define SUSAMUNE_GHOST_FILE_VERSION_V7   7u
 #define SUSAMUNE_GHOST_FILE_VERSION_V8   8u
 #define SUSAMUNE_GHOST_FILE_VERSION_V9   9u
-#define SUSAMUNE_GHOST_FILE_VERSION      SUSAMUNE_GHOST_FILE_VERSION_V9
+#define SUSAMUNE_GHOST_FILE_VERSION_V10  10u
+#define SUSAMUNE_GHOST_FILE_VERSION      SUSAMUNE_GHOST_FILE_VERSION_V10
 #define SUSAMUNE_GHOST_FILE_HEADER_SIZE  0x100u
 #define SUSAMUNE_GHOST_FILE_CHECKSUM_OFFSET    0x0Cu
 #define SUSAMUNE_GHOST_HEADER_CHECKSUM_OFFSET  0x10u
@@ -117,6 +118,7 @@ static inline int SusamuneGhostPersonalProfile(unsigned int profile) {
 
 // Transfer/storage bounds cover every currently supported canonical version.
 #include "susamune/ghost_teaching.h"
+#include "susamune/ghost_context.h"
 static inline unsigned int SusamuneGhostInputStride(unsigned int version) {
     return version >= SUSAMUNE_GHOST_FILE_VERSION_V6
         ? SUSAMUNE_GHOST_V6_INPUT_SAMPLE_SIZE : SUSAMUNE_GHOST_INPUT_SAMPLE_SIZE;
@@ -197,30 +199,22 @@ static inline unsigned int SusamuneGhostPoseLimit(unsigned int version) {
 #define SUSAMUNE_GHOST_REQUIRED_INITIAL_RNG 32u
 #define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9 \
     (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8 | SUSAMUNE_GHOST_REQUIRED_INITIAL_RNG)
+#define SUSAMUNE_GHOST_REQUIRED_CONTEXT 64u
+#define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V10 \
+    (SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9 | SUSAMUNE_GHOST_REQUIRED_CONTEXT)
 #define SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES \
-    SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9
+    SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V10
 
 // V9 first-segment words 24/28 hold the seed and its first-pose provenance.
 #define SUSAMUNE_GHOST_RNG_FIRST_POSE 1u
 static inline int SusamuneGhostSegmentMetadataValid(unsigned int version,
         unsigned int segment, unsigned int seed, unsigned int provenance) {
-    return version == SUSAMUNE_GHOST_FILE_VERSION_V9 && segment == 0
+    return (version == SUSAMUNE_GHOST_FILE_VERSION_V9 || version == SUSAMUNE_GHOST_FILE_VERSION_V10) && segment == 0
         ? provenance == SUSAMUNE_GHOST_RNG_FIRST_POSE
         : seed == 0 && provenance == 0;
 }
 
-// Run flags are advisory metadata. Unknown bits are preserved and ignored.
-#define SUSAMUNE_GHOST_RUN_ASSISTED          0x00000001u
-#define SUSAMUNE_GHOST_RUN_SAVESTATE_USED    0x00000002u
-#define SUSAMUNE_GHOST_RUN_FAST_FORWARD_USED 0x00000004u
-#define SUSAMUNE_GHOST_RUN_INCOMPLETE        0x00000008u
-#define SUSAMUNE_GHOST_RUN_CUSTOM_ROUTE      0x00000010u
-#define SUSAMUNE_GHOST_RUN_TAS               0x00000020u
-
-static inline int SusamuneGhostRunFlagsValid(unsigned int flags) {
-    return !(flags & SUSAMUNE_GHOST_RUN_TAS) ||
-           (flags & SUSAMUNE_GHOST_RUN_ASSISTED);
-}
+#include "ghost_run_flags.h"
 
 #define SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE 0x01u
 #define SUSAMUNE_GHOST_ROUTE_PARENT_START   0x02u

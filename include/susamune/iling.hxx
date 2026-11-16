@@ -18,6 +18,13 @@ void init();
 // state. Console persistence is already loaded by init().
 void onPersistenceReady();
 int count();
+int activeEntry();
+// Observation only: profile, entry+1 (0 unspecified), flags, start, assists, rejection.
+// Flags: running1, ready2, awaiting4, eligible8, secret16, child32, otherStart64, PB-on128.
+// Start is area<<24 | episode<<16 | gameInt3; inactive attempt fields are zero.
+void captureTraceContext(unsigned words[6]);
+// Starting scene only: the public catalogue cannot distinguish IL objectives.
+u32 ghostBrowseFilter(int entry);
 const char *label(int entry);
 const char *shortLabel(int entry);
 bool canChooseEpisode(int entry);
@@ -88,6 +95,8 @@ void commitWarpStart();
 void cancelPendingWarp();
 void clearPB(int entry);
 void update();
+// A Shine contact can precede the timer/result publication by a few frames.
+bool resultPendingForDeparture();
 // A restored TAS recorder may finish without rearming IL records or splits.
 enum SavestateGhostEndpoint : u8 {
     SAVED_GHOST_END_NONE,
@@ -102,6 +111,7 @@ void updateSavestateGhostEndpoint(u8 endpoint);
 void onWarpTail();
 // Drop Watch's assisted attempt before the cleanup stage arms normal play.
 void resetAfterObserver();
+void onDeparture();
 void beforeStageSetup();
 void onStageSetup();
 // Live Plaza progression, rather than a second persistent mod setting.

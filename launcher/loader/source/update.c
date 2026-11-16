@@ -352,12 +352,12 @@ void UpdateNintendont(void) {
 			}
 		} else if (FPAD_Start(0)) {
 			break;
-		} else if (FPAD_Down(1)) {
+		} else if ((FPAD_Down(1))) {
 			delay = ticks_to_millisecs(gettime()) + 150;
 			selected++;
 			if (selected > 3) selected = 0;
 			redraw = true;
-		} else if (FPAD_Up(1)) {
+		} else if ((FPAD_Up(1))) {
 			delay = ticks_to_millisecs(gettime()) + 150;
 			selected--;
 			if (selected < 0) selected = 3;

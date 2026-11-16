@@ -37,6 +37,20 @@ extern "C" void *memset(void *out, int value, __SIZE_TYPE__ size) {
  while (size--) *bytes++ = static_cast<unsigned char>(value);
  return out;
 }
+
+#include "susamune/ghost_context.h"
+namespace GhostContext {
+bool detailsEnabled(){return false;} void reset(void*){} void clearSegment(void*,u16){}
+void segment(void*,u16,u32,u32,bool){} void endpoint(void*,u16,u32,u32,bool){}
+void input(void*,u16,u32,u32){} void restored(void*){}
+u32 prefixSize(const void*){return 0;} void*prefix(void*p){return p;}
+u32 exportSize(const void*,u32){return 0;} bool exportInto(void*,const void*,u32,u32,u32){return false;}
+}
+namespace GhostStageContext {bool restoredStage(){return false;}void invalidateAfterRestore(){}}
+namespace GhostSimulation {struct CameraObservation {short yaw;u16 mode,tickCount;bool varied,valid;};
+void readCamera(CameraObservation&o){o={};}}
+
+namespace GhostCamera {void capture(void*,u32,u8){}}
 namespace GhostFludd {
 void capture(SusamuneGhostFluddSample&) {}
 bool hoverEmitted() { return false; }
@@ -47,7 +61,7 @@ struct Timer {
  u32 attemptSerial() { return serial; }
 } gQFTTimer;
 struct Track {
- SusamuneGhostInputSample *inputs; u32 inputCount;
+ SusamuneGhostInputSample *inputs; u32 inputCount,startQf;void*samples;
  SusamuneGhostSplitSample splits[6]; u8 splitCount;
  u16 formatVersion; bool completed; u16 segmentCount; u8 teachingFlags, sourceProfile; u32 runFlags; u32 endQf;
 } sRecord;
@@ -59,12 +73,13 @@ enum { OBSERVER_OFF, OBSERVER_PREPARING_ONE, OBSERVER_PREPARING_TWO,
  OBSERVER_WARPING_ONE, OBSERVER_WARPING_TWO, OBSERVER_ACTIVE_ONE, OBSERVER_ACTIVE_TWO };
 int sObserverPhase;
 s32 sObserverBaseQf, sObserverLastQf, sObserverLastLiveQf, sObserverQfOffset, sObserverEndQf;
-bool sObserverClockReady;
+bool sObserverClockReady,sObserverScrubClock,sObserverPaused;
+s32 sObserverRawQf;struct Director {int unk5C;};Director*gpMarDirector;
 bool observerRunning() { return sObserverPhase==5 || sObserverPhase==6; }
 bool observerStatsSuppressed() { return observerRunning(); }
 '''
         body = "\n".join(function(source, signature) for signature in (
-            "SusamuneGhostInputSample &inputAt(", "s32 recordQf(", "void frameControl(", "void captureInput(",
+            "SusamuneGhostInputSample &inputAt(", "u32 inputQf(", "s32 recordQf(", "void frameControl(", "void captureInput(",
             "void captureSplit(", "s32 observerQf("))
         wrapper = r'''
 extern "C" {

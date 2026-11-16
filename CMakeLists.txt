@@ -106,7 +106,27 @@ option(TIMEWARP_PINNED_LINK "Link audited cold code while preserving timer addre
 option(TIMEWARP_SHARED_STORE "Enable the shared state store integration" OFF)
 option(TIMEWARP_HEAP_GAP "Prototype canonical unused stage-heap bytes in snapshots" OFF)
 option(TIMEWARP_QUICK_REPLAY "Prototype bounded Quick replacement replay" OFF)
+option(SUSAMUNE_SAVE_PROBE "Private same-Wii 500 KiB save A/B probe" OFF)
+option(MOONSHINE_MEMORY_TELEMETRY "Private read-only online memory monitor" OFF)
+option(MOONSHINE_MEMORY_CAPTURE "Enable private allocation-map capture controls" ON)
+option(TIMEWARP_QF_MEMORY "Enable guarded extra ghost memory ownership" OFF)
+option(TIMEWARP_QF_MEMORY_PILOT "Exercise claimed ghost memory with a known pattern" OFF)
+option(MOONSHINE_GHOST_TRACE "Private background SD ghost capture experiment" OFF)
+option(TIMEWARP_UPPER_MENU_CODE "Use the admitted 32 KiB CPU-code prefix" OFF)
+if(TIMEWARP_UPPER_MENU_CODE AND (NOT TIMEWARP_QF_MEMORY OR TIMEWARP_QF_MEMORY_PILOT))
+    message(FATAL_ERROR "Upper code requires the guarded memory grant and forbids pattern writes")
+endif()
+option(MOONSHINE_MEMORY_MONITOR_ONLY "Limit private diagnostic launchers to PAL/US" OFF)
+if(MOONSHINE_GHOST_TRACE AND (NOT TIMEWARP_QF_MEMORY OR TIMEWARP_QF_MEMORY_PILOT))
+    message(FATAL_ERROR "MSGT needs admitted memory without the destructive pattern pilot")
+endif()
+if(TIMEWARP_QF_MEMORY_PILOT AND NOT TIMEWARP_QF_MEMORY)
+    message(FATAL_ERROR "The QF memory pilot requires TIMEWARP_QF_MEMORY")
+endif()
 option(TIMEWARP_LIVE_RACING "Prototype nonblocking live racing transport" OFF)
+if(SUSAMUNE_SAVE_PROBE AND (IS_EMULATOR OR NOT MOONSHINE_GHOST_TRACE OR NOT TIMEWARP_SHARED_STORE OR NOT TIMEWARP_QUICK_REPLAY OR TIMEWARP_QF_MEMORY_PILOT))
+    message(FATAL_ERROR "Save probe requires native shared Quick states and admitted trace memory")
+endif()
 if(TIMEWARP_QUICK_REPLAY AND NOT TIMEWARP_SHARED_STORE)
     message(FATAL_ERROR "TIMEWARP_QUICK_REPLAY requires TIMEWARP_SHARED_STORE")
 endif()
@@ -151,6 +171,11 @@ set(MAP_FILE "${CMAKE_SOURCE_DIR}/maps/${VERS_PRIMARY}.map")
 file(GLOB MOD_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 # Compression holds gameplay; keep its hot loops fast in the upper code span.
 set_source_files_properties(src/state_codec.cpp src/state_crc.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+# C wrappers retain the normal source-ownership pipeline; upstream stays unmodified.
+file(GLOB DOLPHIN_LWIP_SOURCES "${CMAKE_SOURCE_DIR}/src/dolphin_lwip_*.cpp")
+set_source_files_properties(${DOLPHIN_LWIP_SOURCES} PROPERTIES COMPILE_OPTIONS
+    "-x;c;-std=c99;-Wno-unused-command-line-argument")
+
 if(NOT ENABLE_MEM_DIAGNOSTICS)
     list(REMOVE_ITEM MOD_SOURCES "${CMAKE_SOURCE_DIR}/src/mem_diagnostics.cpp")
 endif()
@@ -198,7 +223,9 @@ function(susamune_add_mod_object vers)
 
     target_include_directories(susamune_obj_${vers} PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
-        "${CMAKE_SOURCE_DIR}/include/JSystem")
+        "${CMAKE_SOURCE_DIR}/include/JSystem"
+        "${CMAKE_SOURCE_DIR}/include/susamune/lwip_port"
+        "${CMAKE_SOURCE_DIR}/vendor/lwip/src/include")
 
     target_compile_options(susamune_obj_${vers} PRIVATE
         ${SHARED_FLAGS}
@@ -214,7 +241,14 @@ function(susamune_add_mod_object vers)
         TIMEWARP_SHARED_STORE=$<BOOL:${TIMEWARP_SHARED_STORE}>
         TIMEWARP_HEAP_GAP=$<BOOL:${TIMEWARP_HEAP_GAP}>
         TIMEWARP_QUICK_REPLAY=$<BOOL:${TIMEWARP_QUICK_REPLAY}>
+        SUSAMUNE_SAVE_PROBE=$<BOOL:${SUSAMUNE_SAVE_PROBE}>
+        SUSAMUNE_SAVE_SPILL_EXPERIMENT=$<BOOL:${SUSAMUNE_SAVE_PROBE}>
         TIMEWARP_LIVE_RACING=$<BOOL:${TIMEWARP_LIVE_RACING}>
+        MOONSHINE_MEMORY_TELEMETRY=$<BOOL:${MOONSHINE_MEMORY_TELEMETRY}>
+        MOONSHINE_MEMORY_CAPTURE=$<BOOL:${MOONSHINE_MEMORY_CAPTURE}>
+        MOONSHINE_GHOST_TRACE=$<BOOL:${MOONSHINE_GHOST_TRACE}>
+        TIMEWARP_QF_MEMORY=$<BOOL:${TIMEWARP_QF_MEMORY}>
+        TIMEWARP_QF_MEMORY_PILOT=$<BOOL:${TIMEWARP_QF_MEMORY_PILOT}>
         ENABLE_SAVESTATE_DBG=$<BOOL:${ENABLE_SAVESTATE_DBG}>
         ENABLE_MEM_DIAGNOSTICS=$<BOOL:${ENABLE_MEM_DIAGNOSTICS}>
         ENABLE_DEBUG_WARPS=$<BOOL:${ENABLE_DEBUG_WARPS}>
@@ -299,6 +333,12 @@ foreach(_v IN LISTS VERS)
             --work "${_pinned_work}"
             --elf "${CMAKE_BINARY_DIR}/susamune_${_v}.o"
             --out "${_manifest}")
+        if(TIMEWARP_UPPER_MENU_CODE)
+            list(APPEND _manifest_args --upper-menu-code)
+            if(MOONSHINE_GHOST_TRACE)
+                list(APPEND _manifest_args --trace-menu-code)
+            endif()
+        endif()
         set(_pinned_dependencies
             "${CMAKE_SOURCE_DIR}/scripts/link_pinned_mod.py"
             "${CMAKE_SOURCE_DIR}/scripts/pinned_source_sections.py"
@@ -355,6 +395,29 @@ foreach(_v IN LISTS VERS)
     list(APPEND MOD_BINS "${_bin}")
 endforeach()
 add_custom_target(mod_bins ALL DEPENDS ${MOD_BINS})
+
+if(IS_EMULATOR AND TIMEWARP_LIVE_RACING)
+    file(GLOB_RECURSE _native_inputs CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/native/dolphin_https/*"
+        "${CMAKE_SOURCE_DIR}/vendor/lwip/src/*"
+        "${CMAKE_SOURCE_DIR}/launcher/third_party/bearssl/*"
+        "${CMAKE_SOURCE_DIR}/include/susamune/lwip_port/*")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/scripts/build_dolphin_https.py")
+    execute_process(COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/build_dolphin_https.py" --list-inputs
+        OUTPUT_VARIABLE _native_shared_inputs OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+    set(_native_image "${CMAKE_BINARY_DIR}/dolphin-native/image.bin")
+    add_custom_command(OUTPUT "${_native_image}"
+        COMMAND "${VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/build_dolphin_https.py"
+            --output "${CMAKE_BINARY_DIR}/dolphin-native"
+        DEPENDS ${_native_inputs} ${_native_shared_inputs} ${DOLPHIN_LWIP_SOURCES}
+            "${CMAKE_SOURCE_DIR}/scripts/build_dolphin_https.py"
+        COMMENT "Building native Dolphin TCP and HTTPS services" VERBATIM)
+    add_custom_target(dolphin_native DEPENDS "${_native_image}")
+    add_dependencies(mod_bins dolphin_native)
+endif()
+
 
 set(JAPANESE_UI_ASSET "${CMAKE_BINARY_DIR}/ja_ui.bin")
 set(JAPANESE_UI_INPUTS
@@ -530,6 +593,9 @@ ExternalProject_Add(nintendont_launcher
         "-DLAUNCHER_CHANGELOG=${CMAKE_SOURCE_DIR}/doc/timewarp-test-build.md"
         "-DLAUNCHER_DISABLE_SUSAMUNE_PATCH=${LAUNCHER_DISABLE_SUSAMUNE_PATCH}"
         "-DTIMEWARP_LIVE_RACING=${TIMEWARP_LIVE_RACING}"
+        "-DMOONSHINE_GHOST_TRACE=${MOONSHINE_GHOST_TRACE}"
+        "-DMOONSHINE_LOADING_DIAGNOSTICS=${MOONSHINE_MEMORY_TELEMETRY}"
+        "-DMOONSHINE_MEMORY_MONITOR_ONLY=${MOONSHINE_MEMORY_MONITOR_ONLY}"
         "-DSUSAMUNE_LOADER_OPTIMIZATION:STRING=${SUSAMUNE_LOADER_OPTIMIZATION}"
     DEPENDS mod_bins launcher_build_id japanese_ui
     BUILD_ALWAYS ON

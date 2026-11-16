@@ -1,0 +1,75 @@
+PR48 / SD ghost capture r7 - private PAL/US Wii experiment
+
+Use the Moonshine Memory Monitor app. Join the PC monitor using its existing
+room code, then use Start recording, Stop and save, or Discard on the web page.
+Run around for 20-30 seconds first. Watch for game stutters and whether queued
+bytes keep rising. Saves go to Moonshine data/traces/*.msgt. A new attempt/reset
+discards the temporary .part recording. An I/O failure leaves its partial file
+until Discard; a hard power-off can also leave a .part, never a completed trace.
+
+Captured: one frame/VI/RNG-seed observation per director update; controller
+observations before each Mario movement perform; Mario prefix (0x174), camera
+prefix (0x260), flags, FLUDD/Yoshi structures, tracked actor base/enemy prefixes
+and their deltas. Controller records preserve the sampled JUT PADStatus plus
+TMarioGamePad/TMarioControllerWork when valid. These are observations at that
+hook, not a newly sampled physical controller. Actor IDs are capture-local and
+pointer-based; hashes cover captured native bytes, not canonical world state.
+
+Not captured yet: every sound request, particle event, complete actor/boss state
+or all requested viewer metadata. No full-world playback, automatic upload or
+normal .smsghost format change. Files are diagnostic traces. Real Wii SD latency
+and long recordings still need testing; the emulator storage worker used a
+memory-backed filesystem and does not measure physical SD performance.
+
+Validated: native PowerPC recording in an owned JP Dolphin test produced
+2,161,272 bytes, 242 frames, 968 movement updates, five checksummed chunks;
+independent reader accepted the finished file. A second running-game test
+restarted the level and confirmed automatic discard and temporary-file removal.
+Ten writer/parser tests cover two-buffer ordering, final-chunk wait, short and
+failed writes, close/rename failures, stale nonce/chunks, ownership and bounds.
+Six transport tests include the extra code location, install/reset canaries and
+PowerPC branches. PAL/US timer guards retain all 96 protected symbols unchanged.
+State codec: 37 tests, 2 legacy skips; shared-state replay: 14 tests. The exact
+three exported PAL states also passed the earlier pool/refinement reproduction.
+
+Includes the retained-state Quick refinement fix, common list separators and
+the guidebook SD-state panel. The menu panel/separators were visually checked in
+Dolphin. Some bespoke menu lists still need the broader separator pass.
+
+Memory: original MEM1 arena, state pool, normal ghost capacity and disc cache
+unchanged. Optional code uses 32 KiB of the already-admitted upper allocation;
+trace data uses two 512 KiB buffers and the native-owned 384 KiB ARAM cache.
+The destructive memory-pattern pilot is OFF. Only the original Wii / IOS58 /
+PAL-US conditions admitted by the previous memory proof are enabled here.
+
+Format MSTR v1: big-endian 64-byte header (FNV1a checksum in final word), 32-byte
+chunk headers followed by <=512KiB records, then a 32-byte DONE footer. Records
+are type:u16, size:u16, frame:u32, movement_tick:u32, payload. Chunk checksum is
+FNV1a over payload, not an authentication mechanism. START request.scene is the
+scene key; KEEP request.scene is the final published chunk sequence. Error bits
+in the footer mark an incomplete capture. tools/ghost_trace/inspect_trace.py
+validates finished files without reading a whole long recording into memory.
+
+Queued after the hardware capture test: remote controller, paused full RAM dump,
+the normal precise ten-minute ghost format, broader capture coverage and further
+memory savings. Full-world playback remains deferred at the user's request.
+
+R6 startup correction: the recorder stays idle while waiting for native ARAM
+ownership. Only an existing run can send a cancellation. The focused production
+control-flow test reproduces the old r5 failure and passes idle boot, delayed
+ownership, active ownership loss and warm restart with the corrected code.
+The earlier running-game capture evidence is from r5; capture payload and SD
+writer code are unchanged in r6. Wii startup and SD timing need the retry.
+
+R7: starting capture during the current stage intro adopts that stage
+generation's first timer start instead of deleting the recording. A later
+reset, or a new stage generation during the intro, still discards. Timer code
+is unchanged; this uses read-only QFT and existing stage-context observations.
+Focused production-control tests cover intro adoption, subsequent reset and
+reset during intro. PAL/US builds retain all96 protected timer symbols.
+
+Real Wii verification of r6 files: Plaza13,882,908B/1511frames; Bianco5
+20,173,164B/2397frames; Sirena1 23,073,572B/3078frames. All chunks/checksums,
+record boundaries, ordering and final footers passed the independent reader.
+Player reports all three felt normal. Bianco5 was a partial-level capture
+after the intro-start problem, not a full-level coverage claim.

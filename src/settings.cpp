@@ -10,12 +10,14 @@
 // =====================================================================
 
 #include "susamune/settings.hxx"
+#include "susamune/ghost_world_runtime.hxx"
 #include "susamune/finish_breakdown.hxx"
 
 #include "Dolphin/mem.h"
 #include "Dolphin/OS.h"  // DCInvalidateRange, DCStoreRange
 #include "susamune/binds.hxx"
 #include "susamune/creation_extras.hxx"
+#include "susamune/menu_palette.hxx"
 #include "susamune/mario_colors.hxx"
 #include "susamune/iling.hxx"
 #include "susamune/fludd_colors.hxx"
@@ -64,6 +66,7 @@ enum ChoiceSet {
     CHOICES_GRADIENT_MOTION,
     CHOICES_GRADIENT_SPEED,
     CHOICES_DECIMAL_SEPARATOR,
+    CHOICES_MOVIE_SKIPS,
     CHOICES_COUNT,
 };
 
@@ -100,7 +103,7 @@ const char kChoiceLabels[] =
     "0.25x\0" "0.5x\0" "1x\0" "2x\0" "4x\0"
     "0.1 s\0" "0.2 s\0" "0.3 s\0" "0.4 s\0" "0.6 s\0" "0.7 s\0"
     "0.8 s\0" "0.9 s\0" "1.1 s\0" "1.2 s\0" "1.3 s\0" "1.4 s\0" "1.5 s\0"
-    "Landing\0Buttslide\0Mario\0Floor\0World\0Free\0Recorded\0Flow\0Pulse\0Normal\0Ping-pong\0Wave\0Shimmer\0Steps\0Colon\0Dot\0Sparkle\0Curtain\0Alternating";
+    "Landing\0Buttslide\0Mario\0Floor\0World\0Free\0Recorded\0Flow\0Pulse\0Normal\0Ping-pong\0Wave\0Shimmer\0Steps\0Colon\0Dot\0Sparkle\0Curtain\0Alternating\0FMVs\0FMVs and FLUDD theft";
 
 const u8 kChoiceMap[] = {
     0, 1,              // bool
@@ -134,13 +137,14 @@ const u8 kChoiceMap[] = {
     0, 82, 83, 85, 86, 87, 88, 91, 92, 93, // gradient animation
     37, 84, 39, // gradient speed
     89, 90, // seconds / decimal separator
+    0, 94, 95, // movie skips: original Off/On values remain 0/1
 };
 const u8 kChoiceFirst[CHOICES_COUNT + 1] = {
     0, 2, 5, 9, 12, 15, 21, 24, 27, 31, 34, 37, 40, 43, 45, 51, 53, 58,
-    62, 66, 68, 71, 75, 108, 133, 144, 149, 165, 169, 169, 173, 173, 175, 185, 188, 190
+    62, 66, 68, 71, 75, 108, 133, 144, 149, 165, 169, 169, 173, 173, 175, 185, 188, 190, 193
 };
 
-static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 190,
+static_assert(sizeof(kChoiceMap) / sizeof(kChoiceMap[0]) == 193,
               "choice map size changed");
 static_assert(SETTING_FREE_CAMERA_SMOOTHING == SETTING_TAS_BANNER + 1 &&
               SETTING_COUNT <= SUSAMUNE_CFG_TOTAL_SETTINGS,
@@ -255,6 +259,7 @@ void Settings::resetDefaults() {
     gMetadataDisplay.resetDefaults();
     gQftDisplay.resetDefaults();
     gCreationExtras.resetDefaults();
+    MenuPalette::reset();
     MarioColors::resetDefaults();
     FluddColors::resetDefaults();
     FinishBreakdown::resetDefaults();
@@ -322,6 +327,7 @@ void Settings::init() {
 bool Settings::finishInit() { return true; }
 
 void Settings::save() {
+    if (GhostWorldRuntime::temporarySettings()) return;
     volatile SusamuneCfg *cfg = SUSAMUNE_CFG_PPC_PTR;
 
     if (mSaveState == SETTINGS_SAVE_PENDING) return;
@@ -366,6 +372,8 @@ void Settings::save() {
         DCStoreRange(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR, sizeof(SusamuneFinishBreakdownCfg));
     if (cfg->flags & SUSAMUNE_CFG_FLAG_SETTINGS_TAIL)
         DCStoreRange((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
+    if (cfg->flags & MOONSHINE_MENU_PALETTE_FLAG)
+        DCStoreRange(MOONSHINE_MENU_PALETTE_STAGE, sizeof(MoonshineMenuPalette));
     mSaveSeq     = cfg->saveSeq + 1;
     cfg->saveSeq = mSaveSeq;
     DCStoreRange((void *)cfg, 32);  // line 0 includes extraValues and saveSeq
@@ -527,6 +535,12 @@ void Settings::adopt(const volatile SusamuneCfg *cfg) {
         FinishBreakdown::adopt(SUSAMUNE_FINISH_BREAKDOWN_LIVE_PTR);
     }
     FinishBreakdown::clearDirty();
+    if (cfg->flags & MOONSHINE_MENU_PALETTE_FLAG) {
+#if !IS_EMULATOR
+        DCInvalidateRange(MOONSHINE_MENU_PALETTE_STAGE, sizeof(MoonshineMenuPalette));
+#endif
+        MenuPalette::adopt();
+    }
 
     // set() marks dirty; adopting persisted values is not a user edit.
     mDirty     = false;
@@ -555,6 +569,7 @@ void Settings::stageInto(volatile SusamuneCfg *cfg) {
     gCreationExtras.stageMovementInto(&cfg->movementStyle);
     gCreationExtras.stageNativeTimerInto(&cfg->nativeTimerStyle);
     gCreationExtras.clearDirty();
+    if (cfg->flags & MOONSHINE_MENU_PALETTE_FLAG) MenuPalette::stage();
     if (cfg->flags & SUSAMUNE_CFG_FLAG_MARIO_COLORS)
         MarioColors::stageInto(SUSAMUNE_MARIO_COLORS_LIVE_PTR);
     if (cfg->flags & SUSAMUNE_CFG_FLAG_FLUDD_COLORS)
@@ -651,6 +666,11 @@ static_assert(extraFavoritesFit(), "new settings need more Shined storage");
 static_assert(SETTING_SYSTEM_MESSAGES == 142 && SETTING_FAVORITES_EXTRA_7 == 137,
               "existing Shined bits must retain their wire identities");
 #pragma clang section text=""
+
+bool Settings::setTransient(SettingId id, u8 value) {
+    if(id<0||id>=SETTING_COUNT||value>=choiceCount(kSettingDescs[id]))return false;
+    mValues[id]=value;return true;
+}
 
 void Settings::cycle(SettingId id, int dir) {
     if (id == SETTING_SIRENA_PINEAPPLE) {

@@ -11,6 +11,7 @@
 namespace {
 const u8 *sAsset;
 bool sChecked;
+bool sEnglish;
 u16 sCacheIds[64];
 u8 sCache[64][128] __attribute__((aligned(32)));
 unsigned int sNext;
@@ -88,7 +89,7 @@ int units(const char *str) {
     return japanese ? total : -1;
 }
 
-u8 *image(int id) {
+__attribute__((noinline)) u8 *image(int id) {
     static const u8 coverage[] = {0, 7, 12, 15};
     for (unsigned int i = 0; i < 64; ++i)
         if (sCacheIds[i] == id + 1) return sCache[i];
@@ -99,7 +100,9 @@ u8 *image(int id) {
         sNext = 0;
     }
     const unsigned int slot = sNext++;
-    const u8 *src = sAsset + word(40) + id * 64;
+    const u8 *g = sAsset + word(32) + id * 4;
+    u8 src[64];
+    SusamuneJpUiGlyph(sAsset + word(40) + SusamuneJpUiHalf(sAsset+word(52)+id*2),g[3],sAsset+word(56),src);
     u8 *dst = sCache[slot];
     for (unsigned int i = 0; i < 64; ++i) {
         dst[2*i] = (coverage[src[i] >> 6] << 4) | coverage[(src[i] >> 4) & 3];
@@ -120,7 +123,15 @@ void vertex(float x, float y, u32 rgba, u16 s, u16 t) {
 }
 
 namespace JapaneseUi {
+bool available() { return ready(); }
+bool enabled() { return ready() && !sEnglish; }
+void toggle() { if (ready()) sEnglish = !sEnglish; }
+
 const char *text(const char *english) {
+    return sEnglish ? english : translated(english);
+}
+
+const char *translated(const char *english) {
     if (!english || !ready()) return english;
     unsigned int hash = 0x811C9DC5, fingerprint = 5381;
     for (const u8 *p = reinterpret_cast<const u8 *>(english); *p; ++p) {

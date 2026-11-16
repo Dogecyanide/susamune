@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate canonical Susamune V3-V9 ghosts and portable export bundles."""
+"""Validate canonical Susamune V3-V10 ghosts and portable export bundles."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ GHOST_VERSION_V6 = 6
 GHOST_VERSION_V7 = 7
 GHOST_VERSION_V8 = 8
 GHOST_VERSION_V9 = 9
+GHOST_VERSION_V10 = 10
 V6_MAX_INPUT_COUNT = 36_000
 V6_MAX_DURATION_QF = 71_928
 V6_MAX_SAMPLE_COUNT = 17_983
@@ -401,7 +402,7 @@ def _validate_teaching(data: bytes, start_qf: int, end_qf: int, ghost_version: i
         ">IHH6I", data)
     fludd = ghost_version >= 6
     stride = 24 if fludd else 16
-    _require(magic == 0x53475449 and version == (3 if ghost_version >= 7 else 2 if fludd else 1) and header_size == 32,
+    _require(magic == 0x53475449 and version == (4 if ghost_version >= 10 else 3 if ghost_version >= 7 else 2 if fludd else 1) and header_size == 32,
              "invalid teaching header")
     _require(inputs <= (V6_MAX_INPUT_COUNT if fludd else V5_MAX_INPUT_COUNT) and splits <= V5_MAX_SPLIT_COUNT,
              "teaching count exceeds bound")
@@ -412,9 +413,17 @@ def _validate_teaching(data: bytes, start_qf: int, end_qf: int, ghost_version: i
     for index in range(inputs):
         offset = 32 + index * stride
         qf, buttons = struct.unpack_from(">IH", data, offset)
+        if ghost_version >= 10:
+            relative = struct.unpack_from(">H", data, offset)[0] | ((data[offset+15] & 128) << 9)
+            mode = data[offset+15] & 127
+            yaw = struct.unpack_from(">h", data, offset+2)[0]
+            _require(relative <= V6_MAX_DURATION_QF and relative <= end_qf-start_qf,
+                     "packed input timestamp exceeds recording bounds")
+            _require(mode <= 73 or (mode == 127 and yaw == 0), "invalid packed steering camera")
+            qf = start_qf + relative
         _require(start_qf <= qf <= end_qf and (previous is None or qf > previous),
                  "input timestamps outside timeline or unordered")
-        _require(not buttons & ~0x1F7F and data[offset + 15] == 0,
+        _require(not buttons & ~0x1F7F and (ghost_version >= 10 or data[offset + 15] == 0),
                  "input reserved button/flag bits")
         if fludd:
             visual = data[offset + 16:offset + 24]
@@ -449,16 +458,75 @@ def _validate_teaching(data: bytes, start_qf: int, end_qf: int, ghost_version: i
         result.append({"qf": qf, "schema": schema, "route": route, "endpoint": endpoint})
         identity = (schema, route)
         previous = qf
-    return {"input_count": inputs, "splits": result, "input_truncated": bool(flags & 1)}
+    return {"input_count": inputs, "splits": result, "input_truncated": bool(flags & 1),
+            "camera_steering": ghost_version >= 10}
+
+
+def _validate_simulation_settings(data: bytes) -> dict:
+    _require(len(data) == 64, "invalid simulation settings size")
+    maxima = {1: 2, 14: 2, 16: 3, 28: 2, 34: 5, 36: 4, 37: 4, 38: 99, 39: 99,
+              41: 4, 42: 4, 43: 4}
+    for index in range(46):
+        _require(data[index] <= maxima.get(index, 1), "invalid simulation setting value")
+    _require(not data[40] or data[0], "effective Fast text contradicts setting")
+    _require(data[46] in (0, 1, 255) and not data[47] and not any(data[56:]),
+             "unknown simulation settings fields")
+    cadence = struct.unpack_from(">f", data, 48)[0]
+    _require(1 <= cadence <= 240, "invalid simulation cadence")
+    stick_mode = struct.unpack_from(">I", data, 52)[0]
+    _require(stick_mode <= 1, "invalid simulation stick mode")
+    return {'values': list(data[:40]), 'effective_fast_text': bool(data[40]),
+            'pattern_digits': list(data[41:44]), 'fast_forward_active': bool(data[44]),
+            'free_camera_active': bool(data[45]),
+            'pineapple_removed': None if data[46] == 255 else bool(data[46]),
+            'cadence': cadence, 'stick_mode': stick_mode}
+
+
+def _validate_context(data: bytes, segments: list, input_count: int) -> dict:
+    _require(len(data) >= 32, "truncated context header")
+    magic, version, size, count, flags, checksum, stride, schema, r0, r1 = struct.unpack_from(">IHHIIIHHII", data)
+    _require(magic == 0x53474358 and version == 1 and size == 32 and stride == 96 and schema == 1,
+             "invalid context header")
+    _require(count <= 169 and not flags & ~1 and r0 == r1 == 0,
+             "invalid context count/flags/reserved")
+    _require(len(data) == 32 + count * 96, "context size mismatch")
+    _require(_crc32(data[32:]) == checksum, "context checksum mismatch")
+    records, previous = [], None
+    for index in range(count):
+        row = data[32 + index * 96:32 + (index + 1) * 96]
+        qf, source_input, serial, move, director, seed, segment, kind, bits, yaw, mode = struct.unpack_from(">6IHBBhH", row)
+        _require(segment < len(segments) and source_input <= input_count and mode <= 0x49 and 1 <= kind <= 6 and not bits & ~127,
+                 "invalid context event identity")
+        stage = segments[segment]
+        _require(stage['start_qf'] <= qf <= stage['end_qf'], "context timestamp outside segment")
+        _require(not bits & 64 or source_input == 0, "before-inputs observation has a retained input index")
+        _require(bool(bits & 1) or seed == 0, "unknown context seed has a value")
+        _require(bool(bits & 2) or move == director == 0, "unknown context age has a value")
+        _require(bool(bits & 4) or (yaw == mode == 0 and not bits & 8), "unknown context camera has a value")
+        _require(not bits & 16 or kind == 1, "synthetic anchor marker outside segment event")
+        _require(kind != 4 or bool(bits & 32), "restore event lacks restored marker")
+        _require(kind < 5 or qf == stage['end_qf'], "synthetic endpoint is not at segment end")
+        if previous:
+            _require(segment >= previous['segment'] and qf >= previous['qf'] and
+                     (kind == 4 or source_input >= previous['input_index']), "unordered context events")
+            _require(segment != previous['segment'] or (kind != 1 and previous['kind'] < 5),
+                     "duplicate segment context or event after endpoint")
+        current = {'qf': qf, 'input_index': source_input, 'source_frame_serial': serial,
+                   'movement_ticks': move if bits & 2 else None, 'director_ticks': director if bits & 2 else None,
+                   'pre_setup_seed': seed if bits & 1 else None, 'segment': segment, 'kind': kind, 'flags': bits,
+                   'camera_yaw': yaw if bits & 4 else None, 'camera_mode': mode if bits & 4 else None,
+                   'settings': _validate_simulation_settings(row[32:])}
+        records.append(current); previous = current
+    return {'record_count': count, 'truncated': bool(flags & 1), 'settings_schema': schema, 'records': records}
 
 
 def validate_ghost(data: bytes) -> dict:
     _require(len(data) >= 8, "truncated ghost prefix")
     _require(data[:4] == GHOST_MAGIC, "bad ghost magic")
     version = struct.unpack_from(">H", data, 4)[0]
-    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4, GHOST_VERSION_V5, GHOST_VERSION_V6, GHOST_VERSION_V7, GHOST_VERSION_V8, GHOST_VERSION_V9):
+    if version not in (GHOST_VERSION_V3, GHOST_VERSION_V4, GHOST_VERSION_V5, GHOST_VERSION_V6, GHOST_VERSION_V7, GHOST_VERSION_V8, GHOST_VERSION_V9, GHOST_VERSION_V10):
         raise UnsupportedVersion(
-            f"unsupported ghost version {version}; reader supports 3 through 9"
+            f"unsupported ghost version {version}; reader supports 3 through 10"
         )
     _require(len(data) >= GHOST_HEADER_SIZE, "truncated ghost header")
     fields = _GHOST_PREFIX.unpack_from(data)
@@ -513,7 +581,7 @@ def validate_ghost(data: bytes) -> dict:
     expected_file_crc = _crc32_zeroed(data, (12, 16))
     _require(file_checksum == expected_file_crc, "ghost file checksum mismatch")
 
-    supported_features = (63 if version == GHOST_VERSION_V9 else 31 if version == GHOST_VERSION_V8 else 15 if version == GHOST_VERSION_V7 else 7 if version == GHOST_VERSION_V6 else 3 if version == GHOST_VERSION_V5 else SUPPORTED_REQUIRED_FEATURES_V4
+    supported_features = (127 if version == GHOST_VERSION_V10 else 63 if version == GHOST_VERSION_V9 else 31 if version == GHOST_VERSION_V8 else 15 if version == GHOST_VERSION_V7 else 7 if version == GHOST_VERSION_V6 else 3 if version == GHOST_VERSION_V5 else SUPPORTED_REQUIRED_FEATURES_V4
                           if version == GHOST_VERSION_V4
                           else SUPPORTED_REQUIRED_FEATURES_V3)
     if required_features & ~supported_features:
@@ -662,7 +730,7 @@ def validate_ghost(data: bytes) -> dict:
             segment_area, segment_episode, segment_parent, segment_flags,
             segment_variant, f"segment {segment_index} route",
         )
-        if version == GHOST_VERSION_V9 and segment_index == 0:
+        if version >= GHOST_VERSION_V9 and segment_index == 0:
             _require(reserved1 == 1, "invalid initial RNG provenance")
             initial_rng = {"seed": reserved0, "provenance": "first_recorded_pose"}
         else:
@@ -741,12 +809,21 @@ def validate_ghost(data: bytes) -> dict:
     ghost_id = (ghost_id_hi << 32) | ghost_id_lo
     _require(ghost_id != 0, "zero ghost id")
     created_unix = (created_hi << 32) | created_lo
-    camera = _validate_camera(data[teaching_end:], segments) if version >= GHOST_VERSION_V8 else None
+    camera_end = file_size
+    if version >= GHOST_VERSION_V10:
+        _require(file_size - teaching_end >= 32, "truncated camera header before context")
+        count = struct.unpack_from(">I", data, teaching_end + 8)[0]
+        _require(count <= 5312, "camera count exceeds bound")
+        camera_end = teaching_end + 32 + count * 24
+        _require(camera_end <= file_size, "truncated camera before context")
+    camera = _validate_camera(data[teaching_end:camera_end], segments) if version >= GHOST_VERSION_V8 else None
+    context = _validate_context(data[camera_end:], segments, teaching['input_count']) if version >= GHOST_VERSION_V10 else None
     return {
         "kind": "ghost",
         "teaching": teaching,
         "camera": camera,
-        "initial_rng": initial_rng if version == GHOST_VERSION_V9 else None,
+        "initial_rng": initial_rng if version >= GHOST_VERSION_V9 else None,
+        "context": context,
         "version": version,
         "file_size": file_size,
         "file_checksum": file_checksum,

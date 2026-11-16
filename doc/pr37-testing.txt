@@ -1,0 +1,25 @@
+Moonshine 3.0.0 Timewarp - Prototype 37
+
+Delfino Ghosts reconnect follow-up
+
+PR36 was confirmed on Wii: browse, download, then race the imported ghost.
+Reopening without restarting sometimes lost the socket during the secure
+handshake. The saved log contains no HTTP response on those failed attempts;
+it does not establish rate limiting or the underlying cause of the disconnect.
+
+PR37 keeps the Wii network device initialized when a local ghost operation
+reclaims the browser's TLS cache. It still closes the old TCP socket. A fresh
+connection that drops before any HTTP response gets one automatic retry with
+new TLS entropy. Partial responses, certificate errors and server rate limits
+are not replayed. BearSSL's optimized curve routines reduce handshake work.
+Hardware speed and reliability still need testing.
+
+Try the same sequence: browse, download, race/watch, then reopen Delfino Ghosts
+several times without restarting. Try pages and both sorting orders as well.
+If it fails, keep Moonshine data/logs/connection_*.log. The log now records TLS
+bytes sent/received, the last socket operation and successful handshake time.
+
+Install the matching launcher and regional files together. No reservations,
+savestate capacity, ghost formats or ordinary timer calculations change.
+Shared packages contain no personal launcher photo/music; existing personal
+customisation is preserved on the SD installation.

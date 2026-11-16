@@ -1,3 +1,4 @@
+#include "susamune/storage_text.hxx"
 #include "susamune/tas_project.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/savestate.hxx"
@@ -19,6 +20,8 @@ SusamuneTasManifest sSaved, sPending;
 u32 sPhase, sRole, sCurrent, sPreviousCrc;
 bool sActive, sDirty, sReplace, sNew, sOpening, sCatalogReady, sOverwrite;
 bool sHaveCheckpoint;
+bool sPreparedGhostLoad;
+u16 sGhostLoadWait;
 PracticeSession::SavestateData sLoadedCheckpoint;
 const char *sStatus = "New TAS captures your beginning automatically.";
 
@@ -32,15 +35,17 @@ bool valid(const Ref &ref, PracticeSession::SavestateData *out = nullptr) {
     return true;
 }
 void finish(const char *text) {
+    if (sPreparedGhostLoad) SavestateManager::cancelPreparedLoad();
+    sPreparedGhostLoad = false; sGhostLoadWait = 0;
     StateStorage::releaseOwner();
     sPhase = IDLE; sReplace = sNew = sOpening = sOverwrite = false; sStatus = text;
 }
 void failed(u32 result) {
     finish(result == SUSAMUNE_STATE_FULL ? "Not enough room; existing saved TAS files are safe." :
         result == SUSAMUNE_STATE_WRONG_CONFIG ? "Use this TAS's game version, episode and settings." :
-        result == SUSAMUNE_STATE_STALE ? "TAS changed on SD; open it again." :
+        result == SUSAMUNE_STATE_STALE ? STORAGE_TEXT("TAS changed on SD; open it again.", "TAS file changed; open it again.") :
         result == SUSAMUNE_STATE_UNAVAILABLE ? "TAS files need the matching Moonshine launcher." :
-        "TAS could not be opened or saved. Existing SD projects are safe.");
+        STORAGE_TEXT("TAS could not be opened or saved. Existing SD projects are safe.", "Could not open or save TAS. Existing files are safe."));
 }
 bool ready() {
     if (sPhase != IDLE || !gSavestateMgr || SavestateManager::diskBusy() || PracticeSession::starting() ||
@@ -96,7 +101,7 @@ void exportTape() {
         failed(SUSAMUNE_STATE_BAD_REQUEST); return;
     }
     sPending.tapeFrames = take.frames;
-    sPhase = TAPE_EXPORT; sStatus = "Saving TAS recording. Keep SD connected.";
+    sPhase = TAPE_EXPORT; sStatus = STORAGE_TEXT("Saving TAS recording. Keep SD connected.", "Saving TAS recording. Keep Dolphin open.");
 }
 void nextExport() {
     while (sRole < 3) {
@@ -118,7 +123,7 @@ void nextExport() {
     if (!gSavestateMgr->exportSlotExplicit(sRefs[sRole].slot, sRefs[sRole].generation, &request)) {
         finish(gSavestateMgr->sdStatus()); return;
     }
-    sPhase = EXPORT; sStatus = "Saving TAS and checkpoints. Keep SD connected.";
+    sPhase = EXPORT; sStatus = STORAGE_TEXT("Saving TAS and checkpoints. Keep SD connected.", "Saving TAS and checkpoints. Keep Dolphin open.");
 }
 void beginExports() {
     memset(sPending.components, 0, sizeof(sPending.components));
@@ -150,7 +155,7 @@ void nextImport() {
         component.headerCrc, component.packedBytes, &request, &sPending)) {
         finish(gSavestateMgr->sdStatus()); return;
     }
-    sPhase = IMPORT; sStatus = "Opening TAS and checkpoints. Keep SD connected.";
+    sPhase = IMPORT; sStatus = STORAGE_TEXT("Opening TAS and checkpoints. Keep SD connected.", "Opening TAS and checkpoints. Keep Dolphin open.");
 }
 void planOpen() {
     while (sRole < 3) {
@@ -341,7 +346,7 @@ bool rename(u32 id, u32 checksum, const char *text) {
 bool remove(u32 id, u32 checksum) {
     if (!ready() || !StateStorage::projectDelete(id, checksum)) return false;
     sPhase = DELETE; sCatalogReady = false;
-    sStatus = "Deleting the SD project. Memory checkpoints stay."; return true;
+    sStatus = STORAGE_TEXT("Deleting the SD project. Memory checkpoints stay.", "Deleting the file. Memory checkpoints stay."); return true;
 }
 bool catalogReady() { return sCatalogReady && StateStorage::catalogReady(); }
 const SusamuneStateCatalog &catalog() { return StateStorage::catalog(); }
@@ -459,7 +464,7 @@ void update() {
             sPublishedKeys[role][0] = sRefs[role].key[0];
             sPublishedKeys[role][1] = sRefs[role].key[1];
         }
-        finish("TAS recording, Beginning and checkpoints saved to SD.");
+        finish(STORAGE_TEXT("TAS recording, Beginning and checkpoints saved to SD.", "TAS recording, Beginning and checkpoints saved."));
     } else if (sPhase == READ) {
         if (!SusamuneTasManifestValidCapacity(&result.project, StateStorage::archiveCapacity())) { failed(SUSAMUNE_STATE_BAD_FILE); return; }
         if (!gSavestateMgr->projectCompatible(result.project)) { failed(SUSAMUNE_STATE_WRONG_CONFIG); return; }
@@ -473,13 +478,22 @@ void update() {
             if (renaming && sSaved.checksum == sPreviousCrc) sSaved = result.project;
             else { memset(&sSaved, 0, sizeof(sSaved)); sDirty = true; }
         }
-        finish(renaming ? "TAS renamed on SD." : "TAS deleted from SD. Memory checkpoints were kept.");
+        finish(renaming ? STORAGE_TEXT("TAS renamed on SD.", "TAS file renamed.") : STORAGE_TEXT("TAS deleted from SD. Memory checkpoints were kept.", "TAS file deleted. Memory checkpoints were kept."));
     }
 }
 void afterDraw() {
     if (sPhase != LOAD || sReplace) return;
     const Ref ref = sPlan[sRole];
-    if (!valid(ref) || !gSavestateMgr->loadSlot(ref.slot, ref.generation)) {
+    int prepared = valid(ref) ? gSavestateMgr->prepareSlotLoad(ref.slot, ref.generation) : -1;
+    if (prepared == 0) {
+        sPreparedGhostLoad = true;
+        sStatus = "Waiting for ghost checkpoint...";
+        if (++sGhostLoadWait < 600) return;
+        prepared = -1;
+    }
+    if (prepared < 0 && sPreparedGhostLoad) SavestateManager::cancelPreparedLoad();
+    sPreparedGhostLoad = false; sGhostLoadWait = 0;
+    if (prepared < 0 || !gSavestateMgr->loadSlot(ref.slot, ref.generation)) {
         if (sOpening) {
             sHaveCheckpoint = false;
             importTape(); return;

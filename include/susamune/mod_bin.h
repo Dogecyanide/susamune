@@ -255,6 +255,13 @@ static inline unsigned int SusamuneModColdSize(const struct SusamuneModHeader *h
         2u * SUSAMUNE_MOD_V4_DESCRIPTOR + 16u);
 }
 
+static inline unsigned int SusamuneModMenuCodeAddress(const struct SusamuneModHeader *h)
+{
+    const unsigned char *p=(const unsigned char*)h;
+    return SusamuneModFileVersion(h)==SUSAMUNE_MOD_VERSION_V4 && SusamuneModQuickWord(p+32)==4u
+        ? SusamuneModQuickWord(p+SUSAMUNE_MOD_V4_HEADER+3u*SUSAMUNE_MOD_V4_DESCRIPTOR) : 0;
+}
+
 static inline unsigned int SusamuneModMenuCodeSize(const struct SusamuneModHeader *h)
 {
     const unsigned char *p = (const unsigned char *)h;

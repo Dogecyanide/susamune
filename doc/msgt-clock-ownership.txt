@@ -1,0 +1,41 @@
+MSGT clock ownership and source waits (PR59 replay test 3)
+
+Capability 0x00400000 states that the visual QFT observation belongs to a
+fully set-up current stage. GhostStageContext::sample must succeed before
+reading the clock. Pointer equality alone is insufficient: a new director
+can reuse the previous director's address before QFT stage initialization.
+
+Legacy migration is deliberately narrow. Only capability set 0x003FFFFF,
+state 0, incomplete setup, zero director tick, no actor visual, matching
+scene/generation, and a native state-0/incomplete-setup observation qualify.
+The first stage must carry QF zero; a subsequent proven played stage may
+carry its old QF. Only the invalid clock-valid bit and QF are normalized.
+Evidence bits CLOCK_MODEL (0x20) and LEGACY_LOADING_CLOCK (0x1000) remain set.
+REQUIRE_EVIDENCE refuses that migration. New-capability captures may never
+claim a clock before setup; all post-setup comparisons remain exact.
+
+Check 118 detail bits identify mismatched visual fields:
+1 scene, 2 director tick, 4 validity, 8 QFT, 16 position, 32 yaw,
+64 animation ID, 128 animation phase, 256 held object, 512 held name,
+1024 Yoshi, 2048 visibility, 4096 FLUDD.
+The private control +0x3080..+0x3100 holds expected/actual visual diagnostics.
+Each occupies a zero-padded 64-byte slot and is not a public file schema.
+
+When a started/current stage lacks its next complete source frame, replay
+pumps the reader and yields before simulation-side frame preparation. The
+wait is capped at five seconds. Returning to gameLoop instead would advance
+its fader/audio tail without consuming a recorded frame. Native setup waits
+are not folded into this loop: OSYieldThread does not guarantee that a lower
+priority setup worker runs. ARM source I/O progresses independently.
+
+An active mission stopwatch excludes the wait by rebasing mLast, only if its
+owner, active flag and original start remain unchanged. QFT code is untouched.
+New physical cancel input cannot be sampled until this bounded wait ends.
+
+FLUDD's previous-frame emission latch is reset only when a native direct()
+call is admitted. PracticeSession::afterDirect receives that same advancement
+result. A decoder/storage wait must not consume a practice input frame.
+
+The emulator-only State word at +36 injects source delays in private native
+fixtures. It is zeroed at arming and absent from the Wii State layout. Clear it
+through host memory; a native RPC cannot run while the game thread is waiting.

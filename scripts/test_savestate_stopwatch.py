@@ -131,7 +131,11 @@ API unsigned int get(unsigned int key) {
         failure = function_source(SOURCE, "if (!fits) {")
         success = save[save.index(failure) + len(failure):]
         call = "rebaseMissionStopwatch(h->save_time);"
-        self.assertEqual(save.count(call), 4)
+        self.assertEqual(save.count(call), 5)
+        checkpoint_failure = function_source(SOURCE, "if (!traceCheckpoint.capture(sCandidate.trace, stopRecordingIfBankBusy))")
+        self.assertEqual(checkpoint_failure.count(call), 1)
+        self.assertLess(checkpoint_failure.index(call), checkpoint_failure.index("unmuteAudioDma(dma);"))
+        self.assertLess(checkpoint_failure.index(call), checkpoint_failure.index("OSRestoreInterrupts(ints);"))
         self.assertLess(save.index("compressCandidate("), save.index(failure))
         for branch in (failure, success):
             self.assertEqual(branch.count(call), 1)

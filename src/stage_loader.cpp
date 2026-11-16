@@ -585,7 +585,7 @@ bool requestCurrent() {
     sRuntime.state = STATE_REQUESTING;
     const bool requested =
 #if TIMEWARP_LIVE_RACING
-        sOnlinePlan ? ILing::startOnline(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
+        sOnlinePlan ? WarpWheel::requestOnlineILStart(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
 #endif
         WarpWheel::requestILStart(entry);
     if (!requested) {
@@ -611,7 +611,7 @@ bool requestCurrentPostSave() {
     sRuntime.state = STATE_REQUESTING;
     const bool requested =
 #if TIMEWARP_LIVE_RACING
-        sOnlinePlan ? ILing::startOnline(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
+        sOnlinePlan ? WarpWheel::requestOnlineILStart(entry, sOnlinePlan->items[sRuntime.activeIndex].episode & 7u) :
 #endif
         WarpWheel::requestILStart(entry);
     if (!requested) {

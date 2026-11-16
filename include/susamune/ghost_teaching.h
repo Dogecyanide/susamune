@@ -9,6 +9,7 @@
 #define SUSAMUNE_GHOST_TEACHING_VERSION 1u
 #define SUSAMUNE_GHOST_TEACHING_FLUDD_VERSION 2u
 #define SUSAMUNE_GHOST_TEACHING_VISUAL_VERSION 3u
+#define SUSAMUNE_GHOST_TEACHING_STEERING_VERSION 4u
 #define SUSAMUNE_GHOST_TEACHING_HEADER_SIZE 32u
 #define SUSAMUNE_GHOST_INPUT_MAX_COUNT 54000u
 #define SUSAMUNE_GHOST_INPUT_SAMPLE_SIZE 16u
@@ -56,7 +57,8 @@ static int SusamuneGhostTeachingHeaderValid(const unsigned char *p,
         SusamuneGhostReadBe32(p) != SUSAMUNE_GHOST_TEACHING_MAGIC ||
         p[4] != 0 || (p[5] != SUSAMUNE_GHOST_TEACHING_VERSION &&
                      p[5] != SUSAMUNE_GHOST_TEACHING_FLUDD_VERSION &&
-                     p[5] != SUSAMUNE_GHOST_TEACHING_VISUAL_VERSION) ||
+                     p[5] != SUSAMUNE_GHOST_TEACHING_VISUAL_VERSION &&
+                     p[5] != SUSAMUNE_GHOST_TEACHING_STEERING_VERSION) ||
         p[6] != 0 || p[7] != SUSAMUNE_GHOST_TEACHING_HEADER_SIZE)
         return 0;
     inputs = SusamuneGhostReadBe32(p + 8);
@@ -83,6 +85,31 @@ static int SusamuneGhostTeachingInputValid(const unsigned char *p,
     return qf >= startQf && qf <= endQf &&
            (first || qf > previousQf) && p[15] == 0 &&
            !(p[4] & 0xe0) && !(p[5] & 0x80);
+}
+
+/* V10 borrows only the old zero flag byte; all controller values remain intact. */
+static inline unsigned int SusamuneGhostTeachingInputQf(const unsigned char *p,
+        unsigned int startQf, unsigned int version) {
+    if (version >= 10u)
+        return startQf + (((unsigned int)p[0] << 8) | p[1] |
+                         ((unsigned int)(p[15] & 0x80u) << 9));
+    return SusamuneGhostReadBe32(p);
+}
+
+static inline int SusamuneGhostTeachingInputValidVersion(const unsigned char *p,
+        unsigned int startQf, unsigned int endQf,
+        unsigned int previousQf, int first, unsigned int version) {
+    unsigned int relative, mode, qf;
+    if (version < 10u)
+        return SusamuneGhostTeachingInputValid(p, startQf, endQf, previousQf, first);
+    relative = ((unsigned int)p[0] << 8) | p[1] | ((unsigned int)(p[15] & 0x80u) << 9);
+    mode = p[15] & 0x7fu;
+    if (version != 10u || startQf > 0x7fffffffu || endQf > 0x7fffffffu ||
+        endQf < startQf || relative > SUSAMUNE_GHOST_V6_MAX_DURATION_QF ||
+        relative > endQf - startQf || (mode > 0x49u && mode != 0x7fu) ||
+        (mode == 0x7fu && (p[2] || p[3])) || (p[4] & 0xe0u) || (p[5] & 0x80u)) return 0;
+    qf = startQf + relative;
+    return first || qf > previousQf;
 }
 
 static int SusamuneGhostTeachingSplitValid(const unsigned char *p,

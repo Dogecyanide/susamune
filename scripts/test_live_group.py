@@ -12,7 +12,7 @@ HARNESS = r'''
 extern "C" void *memcpy(void*d,const void*s,__SIZE_TYPE__ n){auto*a=(unsigned char*)d;auto*b=(const unsigned char*)s;while(n--)*a++=*b++;return d;}
 extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){auto*a=(unsigned char*)d;while(n--)*a++=c;return d;}
 namespace S=LiveRaceSession; namespace G=LiveGroup; namespace R=LiveGroupRules;
-struct Node {S::Session session;G::Room room;unsigned id,starts,cancels,poseMask,lastX[4],lastRegion[4],lastEpoch[4],lastSequence[4];};
+struct Node {S::Session session;G::Room room;LiveColours::Palette localColours;unsigned id,starts,cancels,poseMask,lastX[4],lastRegion[4],lastEpoch[4],lastSequence[4];};
 struct Packet {unsigned from,to,bytes;unsigned char data[256];};
 static Node nodes[4];static Packet packets[128];static unsigned count,now,players,violations,dropped,dropEvery,sent;
 static unsigned portShift[4];
@@ -59,7 +59,7 @@ API void advance(unsigned ms){for(unsigned elapsed=0;elapsed<ms;elapsed+=16){now
   if(n.session.info.state==S::FAILED||n.session.info.state==S::STOPPED){
    S::Endpoint peer=n.session.info.peer;initNode(i);
    if(!i)S::startHost(n.session,peer,now);else S::startGuest(n.session,endpoint(0),now);}
-  G::tick(n.room,now);}
+  G::setColours(n.room,n.localColours);G::tick(n.room,now);}
  unsigned pending=(!workerFrames||!(frames%workerFrames))?count:0;for(unsigned i=0;i<pending;++i){Packet p=packets[0];for(unsigned j=1;j<count;++j)packets[j-1]=packets[j];--count;deliver(p);}
  if(workerFrames&&!(frames%workerFrames))for(unsigned i=0;i<players;++i)if(hasLatest[i]){hasLatest[i]=false;deliver(latest[i]);}
  }}
@@ -77,8 +77,19 @@ API int ban(unsigned node,unsigned candidate){return G::ban(nodes[node].room,can
 API int ready(unsigned node){return G::ready(nodes[node].room,true);}
 API int finish(unsigned node,int time){return G::result(nodes[node].room,time,time>=0);}
 API void pose(unsigned node){MSRPose p={};p.x=100+node;p.area=2;p.flags=1;p.remoteMs=now;p.sceneEpoch=1;G::localPose(nodes[node].room,p,now);}
+API int setup(unsigned node,unsigned mode){
+ G::Config c=config(mode==1,mode==2);c.rules.freeRoam=mode==0;
+ LivePlaylist::Plan plan={};if(c.playlist){plan.count=50;for(unsigned i=0;i<50;++i)plan.items[i]={(unsigned char)i,0};c.playlistHash=LivePlaylist::hash(plan);}
+ return G::configure(nodes[node].room,c,c.playlist?&plan:nullptr);
+}
 API int nextMatch(){return G::configure(nodes[0].room,nodes[0].room.config,nullptr);}
+API int endMatch(unsigned node){return G::endMatch(nodes[node].room);}
 API int cancelRace(unsigned node){return G::cancel(nodes[node].room);}
+API void colours(unsigned node,unsigned mask,unsigned seed){LiveColours::Palette p={};p.mask=mask;
+ for(unsigned i=0;i<21;++i)((unsigned char*)p.rgb)[i]=seed+i;nodes[node].localColours=p;G::setColours(nodes[node].room,p);}
+API unsigned colour(unsigned node,unsigned player,unsigned byte){return ((const unsigned char*)&nodes[node].room.colours[player])[byte];}
+API int forgedColour(unsigned link,unsigned claimed,unsigned mask){unsigned char b[24]={};b[0]=LiveColours::Message;b[1]=claimed;b[2]=mask;
+ MSRHeader h={};h.kind=MSR_READY;h.round=nodes[0].room.rules.generation;return G::control(nodes[0].room,link,h,b,sizeof(b));}
 API void restart(unsigned node){disabled[node]=false;S::stop(nodes[node].session);initNode(node);S::startGuest(nodes[node].session,endpoint(0),now);}
 API void replacePort(unsigned node){auto old=endpoint(node);portShift[node]+=100;G::replacePeer(nodes[0].room,old,endpoint(node),now);restart(node);}
 API void defer(unsigned node){disabled[node]=true;S::stop(nodes[node].session);G::stop(nodes[node].room);
@@ -105,11 +116,41 @@ class GroupNetworkTests(unittest.TestCase):
         cls.lib = C.CDLL(str(dll))
         cls.addClassCleanup(lambda: FreeLibrary(cls.lib._handle))
         for name, count in [('reset', 4), ('advance', 1), ('get', 3), ('ban', 2), ('ready', 1),
-                            ('finish', 2), ('pose', 1), ('nextMatch', 0), ('cancelRace', 1), ('restart', 1), ('defer', 1), ('worker', 1), ('block', 2), ('hits', 2), ('replacePort', 1)]:
+                            ('finish', 2), ('pose', 1), ('nextMatch', 0), ('cancelRace', 1), ('restart', 1), ('defer', 1), ('worker', 1), ('block', 2), ('hits', 2), ('replacePort', 1),
+                            ('colours', 3), ('colour', 3), ('forgedColour', 3), ('setup', 2)]:
             getattr(cls.lib, name).argtypes = [C.c_uint] * count
 
     def g(self, n, field, index=0):
         return self.lib.get(n, field, index)
+
+    def test_colours_relay_reconnect_and_new_match_without_changing_scores(self):
+        for players in (3,4):
+            self.assertTrue(self.lib.reset(players,0,0,7))
+            self.lib.advance(5000)
+            for player in range(players): self.lib.colours(player,31,player*40)
+            self.lib.advance(5000)
+            for viewer in range(players):
+                for player in range(players):
+                    self.assertEqual([self.lib.colour(viewer,player,i) for i in range(22)], [31,*range(player*40,player*40+21)], (players,viewer,player))
+            self.assertFalse(self.lib.forgedColour(0,2,127))
+            self.assertFalse(self.lib.forgedColour(0,1,128))
+            self.lib.restart(players-1);self.lib.advance(5000)
+            self.lib.colours(players-1,0,0);self.lib.advance(3000)
+            for viewer in range(players): self.assertEqual(self.lib.colour(viewer,players-1,0),0)
+            for player in range(players): self.assertTrue(self.lib.ready(player))
+            self.lib.advance(3000)
+            for player in range(players): self.assertTrue(self.lib.finish(player,12000+100*player))
+            self.lib.advance(3000)
+            for viewer in range(players): self.assertEqual(self.g(viewer,9,0),1)
+            for _ in range(3):
+                if self.g(0,2)==6: break
+                for player in range(players): self.assertTrue(self.lib.ready(player))
+                self.lib.advance(3000)
+                for player in range(players): self.assertTrue(self.lib.finish(player,12000+100*player))
+                self.lib.advance(3000)
+            self.assertTrue(self.lib.nextMatch());self.lib.advance(5000)
+            for viewer in range(players):
+                for player in range(players-1): self.assertEqual(self.lib.colour(viewer,player,1),player*40)
 
     def test_third_and_fourth_guests_join_after_listening_timeouts(self):
         for loss in (0, 7):
@@ -295,6 +336,34 @@ class GroupNetworkTests(unittest.TestCase):
                     self.assertEqual(self.g(n, 1), 4)
                     self.assertEqual(self.g(n, 3), identities[n])
 
+    def test_host_ends_draft_ready_race_and_playlist_without_disconnect(self):
+        for players in (3, 4):
+            for mode in ("ready", "draft", "race", "playlist", "reconnect"):
+                with self.subTest(players=players, mode=mode):
+                    self.room(players, draft=mode == "draft", playlist=mode == "playlist", loss=7)
+                    if mode in ("race", "playlist", "reconnect"):
+                        for n in range(players): self.assertTrue(self.lib.ready(n))
+                        self.lib.advance(5000)
+                        self.assertEqual(self.g(0, 2), 3)
+                    self.assertFalse(self.lib.endMatch(1))
+                    if mode == "reconnect": self.lib.block(1, 1)
+                    self.assertTrue(self.lib.endMatch(0))
+                    self.lib.advance(3000)
+                    if mode == "reconnect":
+                        self.lib.block(1, 0)
+                        self.lib.advance(10000)
+                    for n in range(players):
+                        self.assertEqual(self.g(n, 2), 6)
+                        self.assertEqual(self.g(n, 1), players)
+                        self.assertEqual(self.g(n, 8), 255)
+                        self.assertEqual(self.g(n, 20), 0)
+                        for p in range(players):
+                            self.assertEqual(self.g(n, 9, p), 0)
+                            self.assertEqual(self.g(n, 10, p), 0)
+                    self.assertTrue(self.lib.setup(0, 0))
+                    self.lib.advance(6000)
+                    for n in range(players): self.assertEqual(self.g(n, 2), 7)
+
     def test_playlist_is_complete_before_ready_and_runs_once(self):
         self.room(4, playlist=True, loss=7)
         for n in range(4): self.assertTrue(self.g(n, 14))
@@ -315,6 +384,76 @@ class GroupNetworkTests(unittest.TestCase):
         self.lib.advance(7000)
         for n in range(4): self.assertEqual(self.g(n, 1), 4)
         self.race()
+
+    def test_outage_preserves_running_round_scores_and_finished_results(self):
+        for players in (3, 4):
+            for lost in range(1, players):
+                for outage in (2000, 20000):
+                    with self.subTest(players=players, lost=lost, outage=outage):
+                        self.room(players, draft=True)
+                        self.draft()
+                        self.race()
+                        for n in range(players): self.assertTrue(self.lib.ready(n))
+                        self.lib.advance(2000)
+                        round_id, selected = self.g(0, 7), self.g(0, 5)
+                        self.assertTrue(self.lib.finish(0, 100))
+                        self.lib.advance(1000)
+                        self.lib.block(lost, 1)
+                        self.lib.advance(outage)
+                        for n in range(players):
+                            self.assertEqual(self.g(n, 2), 3)
+                            self.assertEqual(self.g(n, 7), round_id)
+                            self.assertEqual(self.g(n, 9, 0), 1)
+                            self.assertEqual(self.g(n, 15), 0)
+                        self.lib.block(lost, 0)
+                        self.lib.advance(10000)
+                        for n in range(players):
+                            self.assertEqual(self.g(n, 6), 2)
+                            self.assertEqual(self.g(n, 5), selected)
+                        for n in range(1, players): self.assertTrue(self.lib.finish(n, 200 + n))
+                        self.lib.advance(5000)
+                        self.assertEqual(self.g(0, 10, 0), 1)
+
+    def test_setup_changes_preserve_members_and_clear_ready(self):
+        for players in (3, 4):
+            self.assertTrue(self.lib.reset(players, 0, 0, 7))
+            self.lib.advance(6000)
+            self.assertTrue(self.lib.ready(1))
+            self.lib.advance(1000)
+            for mode, phase in ((0, 7), (1, 1), (2, 2)):
+                self.assertFalse(self.lib.setup(1, mode))
+                generation = self.g(0, 19)
+                self.assertTrue(self.lib.setup(0, mode))
+                self.lib.advance(10000)
+                for n in range(players):
+                    self.assertEqual(self.g(n, 19), generation + 1)
+                    self.assertEqual(self.g(n, 2), phase)
+                    self.assertEqual(self.g(n, 20), 0)
+                    self.assertEqual(self.g(n, 1), players)
+                    self.assertEqual(self.g(n, 6), 0)
+            for n in range(players): self.assertTrue(self.lib.ready(n))
+            self.lib.advance(5000)
+            self.assertFalse(self.lib.setup(0, 0))
+            for n in range(players): self.assertEqual(self.g(n, 6), 1)
+
+    def test_ready_outage_requires_missing_player_to_ready_again(self):
+        self.room(4)
+        for n in (1, 2): self.assertTrue(self.lib.ready(n))
+        self.lib.advance(1000)
+        missing = self.g(2, 3)
+        self.lib.block(2, 1)
+        self.lib.advance(20000)
+        self.assertEqual(self.g(0, 2), 2)
+        self.assertFalse(self.g(0, 20) & (1 << missing))
+        self.assertTrue(self.g(0, 20) & (1 << self.g(1, 3)))
+        for n in (0, 3): self.assertTrue(self.lib.ready(n))
+        self.lib.advance(1000)
+        self.lib.block(2, 0)
+        self.lib.advance(10000)
+        for n in range(4): self.assertEqual(self.g(n, 6), 0)
+        self.assertTrue(self.lib.ready(2))
+        self.lib.advance(3000)
+        for n in range(4): self.assertEqual(self.g(n, 6), 1)
 
 
 if __name__ == '__main__':

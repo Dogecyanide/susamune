@@ -1,0 +1,188 @@
+{
+  "name": "MSGT fast RAM restore and asynchronous continuation transport",
+  "document_version": 1,
+  "scope": {
+    "release": "PR76",
+    "primary_writer_abi": 4,
+    "prepare_abi": 3,
+    "branch_abi": 1,
+    "file_version": 3,
+    "policy": "Restore a valid RAM checkpoint promptly. If fresh recording cannot be admitted, skip only the new recording and report it; do not wait for storage or weaken source retention.",
+    "file_compatibility": "Ordinary existing v1-v3 headers with zero dependency words remain accepted by their existing version/capability gates. Required-branch headers use file version 3, the continuation capability and a permanent CRC-covered dependency tag. An update cannot treat a required-branch file as ordinary."
+  },
+  "sources": [
+    "include/susamune/ghost_trace.h",
+    "include/susamune/ghost_trace_prepare.h",
+    "include/susamune/ghost_trace_checkpoint.h",
+    "launcher/kernel/GhostTraceStorage.c",
+    "launcher/kernel/GhostTracePrepareStorage.inc",
+    "launcher/kernel/GhostTraceRetireStorage.inc",
+    "launcher/kernel/GhostTraceAsyncStorage.inc",
+    "launcher/kernel/GhostTraceBranchStorage.inc",
+    "launcher/kernel/GhostTraceReadStorage.c",
+    "launcher/kernel/GhostTraceExportStorage.inc"
+  ],
+  "ownership": {
+    "cache_lines": "Request and payload lines remain PPC-owned; response lines remain ARM-owned. Each side flushes only its own lines. Request/payload identities are copied and validated before ownership transfer.",
+    "live_writer": "The current FIL and its pending payload banks belong to the old run until an exact primary ACK says otherwise. A timeout or missing ACK is never permission to reuse banks or release a different run.",
+    "atomic_job": "The exact 96-byte branch descriptor is copied to ARM-owned PREP union storage after warm FIL consumption. Background source checks and parent/child holds read that clone, never a subsequently reused BRANCHBOX payload.",
+    "failed_handles": "A failed close keeps the exact FIL and active=2. A replacement FILE cannot zero it. Exact original FILE ownerSequence cancellation may retry close; only successful close permits replacement.",
+    "union_alias": "TracePrepare.file and TracePrepare.link.file both start at offset zero. TraceLinkFileAlias checks this at compile time. Failed map cleanup closes the same FIL through either view; its branch/path union is not reused while open.",
+    "source_holds": "While the async map is pending, its cloned parent and child identities block retained-source deletion. RELEASE of the live child does not cancel publication of an edge that may still be required."
+  },
+  "wire": {
+    "byte_order": "All words are big-endian unsigned 32-bit; structures and cache-line offsets are unchanged.",
+    "primary_7_RETAIN": {
+      "request": [
+        "magic",
+        "version=4",
+        "current boot nonce",
+        "fresh primary sequence",
+        "operation=7",
+        "exact old run",
+        "scene unused",
+        "exact old capabilities"
+      ],
+      "preconditions": [
+        "Owned active nonfailed recording writer in this boot",
+        "No prior retired FIL or recovery operation",
+        "At least one acknowledged complete chunk",
+        "Latest published FENCE receipt sequence equals old primary ACK and matches old header hash",
+        "FENCE, complete boundary, file size, canonical path and full header all validate"
+      ],
+      "success": "Transfer the owned old FIL to the existing third slot without closing, syncing or renaming in the foreground. ACK uses phase DISCARDED=5/error=0 to mean old payload ownership was released; it does not mean the retained source is deleted or durably SAVED.",
+      "refusal": "ACK with BUSY=8; old owner and payloads remain authoritative."
+    },
+    "primary_8_CONTINUE": {
+      "request": [
+        "magic",
+        "version=4",
+        "current boot nonce",
+        "fresh primary sequence N",
+        "operation=8",
+        "fresh child run",
+        "restored scene",
+        "exact child capabilities"
+      ],
+      "requirements": "An exact associated branch op5 and a fresh READY PREP3 file are mandatory. There is no cold-open fallback. Child and old run differ; branch, warm owner, boot, game, capabilities and primary sequence must match. Recovery, an occupied retired slot or another active map refuses admission.",
+      "commit": "Validate before consuming the warm FIL. Park retained old source or detach only proven-unreferenced old source, then install the child and immutable dependency header. Publish the adopted child tuple before the primary success ACK.",
+      "before_transfer_refusal": "Nonzero primary error, associated response owner=0; do not change the authoritative old writer or reuse its banks. An exact validated op5 is the only exception to the usual branch-pending retirement exclusion.",
+      "after_transfer_failure": "Associated response identifies the child even if its first header seek/write fails. Failure must never report owner=0 after adoption."
+    },
+    "branch_5_ASYNC_CONTINUE": {
+      "request_words": [
+        "magic=0x4D534742",
+        "version=1",
+        "current boot nonce",
+        "fresh branch sequence",
+        "operation=5",
+        "kind=primary sequence N",
+        "nonce=preserve-old flag 0 or 1",
+        "run=expected old current writer run"
+      ],
+      "payload": "Exact 96-byte MsTraceBranch: new child identity, selected parent prefix and FENCE, ownerKind=FORK(0x464F524B), ownerId=1, ownerGeneration=1, reserved=0. The overloaded request nonce is a preserve flag, not the parent nonce; actual parent nonce is in the payload.",
+      "response_words": [
+        "magic",
+        "version",
+        "bootNonce",
+        "ack=branch sequence",
+        "status",
+        "reserved[0]=adopted child run or 0 before-transfer refusal",
+        "reserved[1]=primary sequence N",
+        "reserved[2]=expected old run"
+      ],
+      "pending_status": "0x100 means ownership accepted and map publication pending, never durable success.",
+      "terminal_status": "0 only after exact source proof and durable verified map publication. Nonzero is a terminal recording/dependency failure; RAM practice may still succeed. Legacy branch operations leave reserved[0..2] zero."
+    },
+    "prepare_3": {
+      "operations": {
+        "1": "HELLO, no FAT",
+        "2": "FILE exact nonce/run/capabilities, target=0",
+        "3": "CANCEL exact run and original FILE ownerSequence, capabilities=0"
+      },
+      "new_phase": {
+        "10_LINKING": "Consumed warm slot temporarily holds the async map FIL and cloned descriptor. New FILE/CANCEL requests return BUSY; HELLO still reports progress."
+      },
+      "permit": {
+        "1_READY": "Ordinary safe-play grant: warm FILE/cleanup, ordinary retirement and required metadata may run.",
+        "2_METADATA": "Only an existing async map plus its exact retained parent may progress. It never admits speculative warming or ordinary unreferenced-tail deletion.",
+        "guards": "Reject unknown flag bits, queue over 0x40000, stale/malformed grant, active read or recovery. Existing pending writer/read/export/branch priority, DI quiet window, fresh-register preflight, no in-flight DI and no pending completion still apply. PPC metadata eligibility is separately limited to a fully loaded stable offline scene with headroom and no replay/freecam/warp/disk/watch conflict. Menu/native pause/FrameAdvance hold may qualify."
+      }
+    }
+  },
+  "permanent_dependency_header": {
+    "bytes": 64,
+    "u32_offsets": {
+      "36": "0x23 continuation/TAS/assisted flags",
+      "40": "PRV1=0x50525631",
+      "44": "BRCH=0x42524348",
+      "48": "parent boot nonce",
+      "52": "parent run",
+      "56": "parent complete chunk sequence",
+      "60": "existing FNV hash of header bytes 0..59"
+    },
+    "shape": "All dependency words zero is ordinary. Otherwise exact BRCH, nonzero parent tuple different from child, continuation capability, PRV1 and flags 0x23 are required. Partial or unknown tags fail closed.",
+    "immutability": "The required tag and parent tuple are never cleared by pending-to-durable progress. FENCE header hashes remain immutable.",
+    "reader": "A tagged child needs its exact final committed .msgb Fork edge, exact child/header/game/capability/parent identity and completed parent DONE source. Pending .mbpt alone is insufficient. Logical graph resolution separately validates every ancestor and rejects cycles; sourceRead does not recursively invoke generic admission.",
+    "export": "Raw self-contained exporter rejects BRCH headers at append and commit. Logical flattening creates a new ordinary self-contained header with all dependency words zero."
+  },
+  "retained_parent_background": {
+    "complete_boundary": "If a chunk header is active, use its chunkOffset; otherwise use response.bytes. Preserve all earlier acknowledged complete chunks and every earlier durable FENCE, not just the checkpoint selected for loading.",
+    "partial_tail": "Only unacknowledged partial tail bytes may be truncated. No retired service reads the old producer buffers after transfer.",
+    "steps": [
+      "Check/seek complete boundary; truncate only partial tail if present",
+      "Write valid DONE footer with acknowledged chunk count and exact completed stored block count",
+      "Sync",
+      "Close",
+      "Rename exact .part to .msgt"
+    ],
+    "metrics": "Footer max/total compression timings may include work on a discarded incomplete tail; these are profiling fields. Stored block count subtracts partial-tail blocks exactly.",
+    "scalar_aliases": {
+      "headerHash": "complete chunk count",
+      "preserve": "maximum compression ticks",
+      "generation": "total compression ticks",
+      "nonce": "complete stored block count"
+    },
+    "nonce_rule": "Only retained same-boot live-writer ownership derives the actual nonce from the boot response. Ordinary retirement keeps its original nonce field. Mode-aware helpers never interpret footer metrics as identity or overwrite them with preservation flags.",
+    "failures": "Truncate/footer/sync/rename failure preserves source; close failure preserves a distinct failed-retained FIL phase. A dependent map receives a terminal error rather than waiting forever. Never fabricate DONE or delete a retained source."
+  },
+  "map_publication": {
+    "steps": [
+      "Wait for retained parent to finish; fail if it reaches a terminal retained error",
+      "Validate exact completed parent and selected FENCE",
+      "Check existing final map read-only; only exact identical bytes may succeed",
+      "Create unique .mbpt without overwrite",
+      "Write all 128 bytes",
+      "Sync",
+      "Close",
+      "Reopen",
+      "Read back exact 128 bytes",
+      "Close",
+      "Rename to final .msgb"
+    ],
+    "cache": "Pause reference-cache scans for the whole active map job so no partial temporary map poisons the negative proof. Increment reference generation on temporary creation; update the known parent summary only if the prior generation remains complete and current. Genuine malformed partial maps conservatively prevent negative deletion proofs.",
+    "no_early_publish": "Pending ownership ACK, valid-looking temporary map or source PART never equals durable branch success. Save/export/watch/checkpoint publication barriers remain until the exact committed edge is acknowledged."
+  },
+  "stale_bank_transition": {
+    "marker": "Child before first chunk only: nonzero permanent parent, ackChunk=0, no active header, saved chunk.sequence=0 and saved chunk.run=known old run.",
+    "rule": "Ignore only that exact old run descriptor while waiting for PPC ownership ACK. Inspect incoming candidate locally before replacing the marker; do not hide arbitrary wrong-run descriptors. First validated child candidate removes marker.",
+    "lifetime": "Independent of map completion. PPC clears both mailbox descriptors after exact adoption ACK and before publishing child chunk 1. Refusal leaves the old bank ownership unchanged."
+  },
+  "memory": {
+    "reservation_growth": 0,
+    "TracePrepare_bytes": 304,
+    "TraceLink_bytes": 200,
+    "TraceRetire_bytes": 112,
+    "TraceWriter_bytes": 3576,
+    "strict_TraceWriter_limit_bytes": 3584,
+    "FIL_offset_in_both_prepare_views": 0,
+    "note": "Current ARM ABI measurements; compile-time fit/alias checks enforce bounds. No new capture arena, source bank, recovery arena, stack reservation or reader slot is borrowed."
+  },
+  "tests": {
+    "arm_async": "scripts/test_ghost_trace_async.py: 21 cases, including exact-owner cancellation, partial-tail finalization, refusal/adoption identities, failed close/rename/source, required orphan rejection, stale banks, reference cache and metadata-only grant exclusions.",
+    "ordinary_prepare": "scripts/test_ghost_trace_prepare.py: 22 cases",
+    "ordinary_retire": "scripts/test_ghost_trace_retirement.py: 20 cases",
+    "base_writer": "scripts/test_ghost_trace_storage.py: 12 cases",
+    "integration": "Real PPC producer/ARM and native manual RAM-load integration are maintained separately by producer/root; host tests do not claim Wii wall-clock speed."
+  }
+}

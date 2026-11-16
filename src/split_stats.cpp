@@ -1,3 +1,4 @@
+#include "susamune/replay_session.hxx"
 #include "susamune/ghost.hxx"
 #include "susamune/ghost_fludd.hxx"
 #include "susamune/hoverless.h"
@@ -281,6 +282,7 @@ void sampleAttemptTime(s32 exactQf = -1) {
 }
 
 void commitAttemptTime(s32 exactQf = -1) {
+    if(ReplaySession::blocksResults())return;
     if (!(sState->flags & FLAG_TIME_ACTIVE) ||
         sState->activeRoute >= SplitStats::ROUTE_COUNT) {
         sState->flags &= ~FLAG_TIME_ACTIVE;
@@ -402,6 +404,7 @@ void formatAnchorQf(s32 qf, char *out, u32 size) {
 }
 
 bool captureSegment(u16 routeId, u8 local, s32 absoluteQf) {
+    if(ReplaySession::blocksResults())return false;
     // Retail split callbacks can run before the IL update sees this emission.
     rejectHoverlessEmission();
     if (routeId >= SplitStats::ROUTE_COUNT ||
@@ -610,6 +613,7 @@ void update() {
 void onStageSetup() { if (sState) clearOverlay(); }
 
 void onILAttemptStarted(int entry, bool eligible) {
+    if(ReplaySession::blocksResults()){if(sState)endAttempt();return;}
     if (!sState) return;
     const int route = routeForAttempt(entry);
     const u32 serial = gQFTTimer.attemptSerial();
@@ -660,6 +664,7 @@ void invalidateAttempt() {
 }
 
 void onILResult(int entry, s32 qf) {
+    if(ReplaySession::blocksResults())return;
     if (!sState) return;
     const int routeIndex = routeForResult(entry);
     if (routeIndex < 0 || qf < 0 || qf > SUSAMUNE_ILING_PB_MAX_QF ||
@@ -751,6 +756,7 @@ bool routeActive(u16 routeId) {
 }
 
 bool supportsEntry(int entry) { return sState && routeForEntry(entry) >= 0; }
+int entryForRoute(u16 route) { return route < ROUTE_COUNT ? kRoutes[route].entry : -1; }
 
 bool summary(int entry, Summary *out) {
     const int routeIndex = routeForEntry(entry);

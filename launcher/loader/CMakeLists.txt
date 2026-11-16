@@ -34,7 +34,12 @@ target_compile_options(loader PRIVATE
     ${SUSAMUNE_LOADER_OPTIMIZATION} -g -std=gnu89 -Wall
     -ffunction-sections -fdata-sections
     -fno-unwind-tables -fno-asynchronous-unwind-tables)
+option(MOONSHINE_MEM2_DIAGNOSTICS "Log read-only IOS/launcher memory ownership" OFF)
+option(MOONSHINE_MEMORY_MONITOR_ONLY "Limit private memory-monitor builds to instrumented regions" OFF)
+
 target_compile_definitions(loader PRIVATE
+    MOONSHINE_MEM2_DIAGNOSTICS=$<BOOL:${MOONSHINE_MEM2_DIAGNOSTICS}>
+    MOONSHINE_MEMORY_MONITOR_ONLY=$<BOOL:${MOONSHINE_MEMORY_MONITOR_ONLY}>
     DEBUG DEBUG_MODULE_PATCH ARCH_IS_BIG_ENDIAN NOUNCRYPT
     SUSAMUNE_MINIMAL_FREETYPE=$<BOOL:${SUSAMUNE_MINIMAL_FREETYPE}>)
 

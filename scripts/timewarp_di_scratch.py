@@ -60,7 +60,7 @@ static void f_read(FIL*,void*dst,u32 n,UINT*actual){
  filePosition+=amount;*actual=amount;
 }
 static FIL GameFile;
-static bool wiiVCInternal=false,ISO_IsCISO=false;
+static bool ISO_IsCISO=false;
 static u32 USBReadTimer;
 #define HW_TIMER 90
 #define CISO_HEADER_SIZE 0x8000u
@@ -224,6 +224,7 @@ def compile_di(folder):
     source += SUPPORT
     source += function_source(ROOT / "launcher/kernel/ISO.c", "static inline void ISOReadDirect(")
     for path, name in (("GCNCard.c", "static void GCNCard_InitCtx("), ("GCNCard.c", "int GCNCard_Load("),
+                       ("ISO.c", "int ISOAdmitExtraCache("), ("ISO.c", "static void ISOSetupCacheBanks("),
                        ("ISO.c", "void ISOSetupCache()"), ("ISO.c", "const u8 *ISORead(")):
         part = function_source(ROOT / "launcher/kernel" / path, name)
         if name.startswith("const u8"):
@@ -252,10 +253,10 @@ def compile_di(folder):
     source += FENCE_TAIL
     source = source.replace("DI_READ_BUFFER_LENGTH", "DIReadBufferLimit")
     path = folder / "di.cpp"
-    path.write_text(source)
+    path.write_text(source, encoding="utf-8")
     library = path.with_suffix(".dll")
     command = [str(ROOT / "toolchain/clang++.exe"), "--target=x86_64-pc-windows-msvc", "-shared", "-O2",
-               "-nostdlib", "-fno-builtin", "-fuse-ld=lld", "-Wl,/noentry", str(path), "-o", str(library)]
+               "-nostdlib", "-fno-builtin", "-fuse-ld=lld", "-Wl,/noentry", "-I", str(ROOT / "launcher/kernel"), str(path), "-o", str(library)]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stderr)

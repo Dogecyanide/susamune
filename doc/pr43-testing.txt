@@ -1,0 +1,43 @@
+Moonshine 3.0.0 Timewarp PR43
+
+Search/ghost crash fix
+The PR42 hardware watchpoint identified the writer: retail collision code
+cleared a collision count on the undersized ghost-render callback. The write
+landed in Search code. The callback now uses a complete native THitActor with
+collision, attack and damage disabled, and a private render-only callback.
+Its original render ordering and savestate registration are retained. The
+PR42 diagnostic watchpoint is removed.
+
+Please try Search from Practice, Display and Online, including dot, Pineapple
+and kana, before and after warps and ghost viewing. Also check ghost playback,
+three/four online models, and saving/loading a state with a ghost visible.
+Dolphin runtime evidence is recorded with the build; Wii acceptance is pending.
+
+Online hardening
+Per-peer packet bursts and repeated handshake responses are bounded. Replayed
+reliable controls cannot keep a dead connection alive. Clearing/kicking an
+invitation immediately rejects all race traffic from that endpoint, including
+old poses and controls. Re-inviting a friend remains possible.
+TAS assistance remains disqualifying across retries and reconnects for both
+ordinary IL and playlist races; it does not clear just because a new attempt
+starts. This does not detect a deliberately modified remote client.
+
+Try reconnect, host removal/re-invitation, draft, forfeit and playlists with
+2/3/4 players. No relay is required. Normal movement uses the existing wire
+format and remains compatible with PR42, although everyone should update to
+get the collision fix and hardening.
+
+Security limits
+Race UDP still has no cryptographic authentication or encryption. Codes and
+endpoint checks are admission controls, not cryptographic protection. Direct
+peers can see each other's IP addresses. Delfino Ghosts retains verified HTTPS.
+A vetted authenticated transport needs a separate protocol/key-establishment
+implementation; the existing 13-bit code secret must not be used as its key.
+
+Dolphin
+The companion-free native UDP path remains experimental and is ready for the
+planned Wii/Dolphin crossplay test. Native website HTTPS and general file
+storage parity remain unfinished. No full-parity claim is made.
+
+Memory reservations, savestate capacity and protected timer code are unchanged.
+Shared packages contain no personal themes, credentials or user data.

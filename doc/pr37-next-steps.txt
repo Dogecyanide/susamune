@@ -1,0 +1,41 @@
+PR37 reconnect evidence and ownership
+
+User confirmed native PR36 download and racing on Wii. The copied evidence is
+build/pr37-evidence/connection_03db75a7_00.log. Initial network startup took
+about 18 seconds; catalogue/download requests on the reused connection took
+about 1.3/1.5 seconds. Three fresh handshakes failed after about 32 seconds with
+IOS -56 (SO_ENOTCONN), no TLS error and no HTTP bytes/response ID. A fresh
+handshake succeeded between failures. Do not describe this as a demonstrated
+rate limit, timeout error code, or permanently poisoned browser state.
+
+Separate network-device and TCP/TLS lifetimes. GhostServiceForget closes the
+socket on the worker and drops all session pointers before the local catalogue
+union is reclaimed. It keeps the initialized /dev/net/ip/top descriptor.
+GhostServiceShutdown retires both socket and descriptor before cancelling the
+worker. Closing uses its own persistent IPC storage, not the reclaimed lease.
+Startup failure retires the descriptor so the next attempt can initialize it.
+
+Each GET has at most two transport attempts. A retry is allowed only before
+any HTTP response bytes; this protects the streaming sink/hash from duplicate
+bytes. Every fresh TLS connection obtains new IOS entropy. The existing TLS
+certificate, hostname, wall-clock and response validation remain mandatory.
+Bearer tokens do not exist in this public-download implementation.
+
+The curve dispatch selects BearSSL's specialized P-256 implementation and keeps
+its generic prime implementation for P-384/P-521. The supported curve set and
+validation profile are unchanged; all arithmetic remains in upstream BearSSL.
+New per-attempt counters identify how far failed handshakes progress. Their
+trace storage remains inside the existing 128 KiB transfer workspace.
+
+Focused tests cover fresh/stale reconnects, retry limits, local-cache reclaim,
+network retirement, entropy, partial-response/certificate rejection, deferred
+IOS ownership, storage and persistent diagnostics. Real public-server checks
+exercise the production TLS code, but cannot establish Wii timing/reliability.
+
+Next: user repeat-open testing, then device linking and opt-in upload. Keep
+credentials out of diagnostics, settings exports and distributable packages.
+
+Primary references
+https://github.com/devkitPro/libogc/blob/master/libogc/network_wii.c
+https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/Network/Socket.h
+https://bearssl.org/speed.html

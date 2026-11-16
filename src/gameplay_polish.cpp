@@ -1,3 +1,4 @@
+#include "susamune/replay_camera.hxx"
 #include "susamune/gameplay_polish.hxx"
 
 #include "JSystem/J2D/J2DSetScreen.hxx"
@@ -134,7 +135,7 @@ void beforeDirect() {
         sCleanPause = !sCleanPause;
     }
     sZHeld = zHeld;
-    sCinemaHidden = PracticeSession::hideHud();
+    sCinemaHidden = PracticeSession::hideHud() || (ReplayCamera::active() && gSettings.getBool(SETTING_FREE_CAMERA_HIDE_HUD));
     if (sCinemaHidden) {
         hideConsoleDraw();
         hideScreens();

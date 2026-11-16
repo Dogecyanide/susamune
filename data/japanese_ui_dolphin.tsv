@@ -1,0 +1,32 @@
+# Console key	Dolphin key	Dolphin translation
+Choose a memory slot here, or press Y on an SD file.	Choose a memory slot here, or press Y on a file.	メモリー枠を選ぶか、ファイルでYを押してください。
+Choose a memory slot with A or C-stick; choose SD files on the SD page.	A or C-stick: choose a memory slot. Files: browse saved states.	A・Cでメモリー枠を選択。ファイルはファイル一覧から。
+Choose a memory state, or save and browse SD states.	Choose a memory state, or save and browse files.	メモリステートを選択。またはファイルに保存・読込。
+Delete this SD state?	Delete this saved state?	このステートを削除しますか？
+Deleting the SD project. Memory checkpoints stay.	Deleting the file. Memory checkpoints stay.	ファイルのTASを削除中です。メモリの中間地点は残ります。
+Finishing the SD transfer; please wait	Finishing the file transfer; please wait	ファイル転送を終了しています。お待ちください。
+Finishing the SD update...	Finishing the file update...	ファイルの更新を終了しています...
+Keep the SD card connected until this finishes.	Keep Dolphin open until this finishes.	完了までDolphinを閉じないでください。
+Name SD state	Name saved state	ステートに名前を付ける
+Name a new SD file from the Save to memory slot.	Name a new file from the Save to memory slot.	「保存先」のステートに名前を付けてファイルへ保存。
+No more SD states	No more saved states	これ以上ステートはありません。
+Opening TAS and checkpoints. Keep SD connected.	Opening TAS and checkpoints. Keep Dolphin open.	TASと中間地点を読込中です。ファイルを抜かないでください。
+Removes this file from SD. Memory states stay saved.	Deletes the file. Memory states stay saved.	ファイルを削除。メモリステートは保持。
+Rename SD state	Rename saved state	ステートの名前変更
+Replaces the Save to memory slot. The SD file stays saved.	Replaces the Save to slot. The file stays saved.	「保存先」の枠を上書き。ファイルは保持。
+SD file	File	ファイル
+SD files stay saved after the console restarts.	Files stay saved after Dolphin restarts.	ファイルはDolphinを再起動しても残ります。
+SD savestates	Saved states	ステート
+SD states	Files	ステート
+SD states need Moonshine Launcher	Set Slot B to GCI Folder in Dolphin	スロットBをGCIフォルダーに設定。
+Save TAS keeps everything together on SD.	Save TAS keeps everything together in files.	TASを保存すると記録全体をファイルに保存。
+Save memory state to SD	Save memory state to file	メモリーのステートをファイルへ保存
+Save states to SD and bring them back after restarting.	Save states to files and reopen them after restarting.	保存したステートは再起動後も読込可能。
+Saving TAS and checkpoints. Keep SD connected.	Saving TAS and checkpoints. Keep Dolphin open.	保存中。Dolphinを終了しないでください。
+TAS changed on SD; open it again.	TAS file changed; open it again.	ファイル上のTASが変更されました。開き直してください。
+TAS could not be opened or saved. Existing SD projects are safe.	Could not open or save TAS. Existing files are safe.	TAS読込・保存失敗。ファイルの既存TASは保持。
+TAS deleted from SD. Memory checkpoints were kept.	TAS file deleted. Memory checkpoints were kept.	ファイルのTASを削除。メモリの中間地点は保持。
+TAS recording, Beginning and checkpoints saved to SD.	TAS recording, Beginning and checkpoints saved.	入力記録・開始地点・中間地点をファイルに保存済み。
+TAS renamed on SD.	TAS file renamed.	ファイル上のTASの名前を変更しました。
+Exporting .smsghost file	Close Dolphin; use manage_data.py export-ghost	終了後、PCの書き出しツールを使用。
+{A} Select  {C} L{SLASH}R Section  {X} Delete  {Z} Export	{A} Select  {C} L{SLASH}R Section  {X} Delete  {Z} Export help	{A} 選択 {C} 左右:区間 {X} 削除 {Z} 書出方法

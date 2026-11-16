@@ -6,6 +6,7 @@
 struct SusamuneMarioColorsCfg;
 class Menu;
 class TMarioGamePad;
+struct ResTIMG;
 
 namespace MarioColors {
 
@@ -28,6 +29,7 @@ void drawEditor(Menu *menu);
 void onStageSetup();
 void update();
 bool preserveSavestateBindings(bool (*keep)(const void *word));
+const ResTIMG *sourceTexture();
 
 } // namespace MarioColors
 

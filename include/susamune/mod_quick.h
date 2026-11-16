@@ -8,7 +8,8 @@ enum {
     SUSAMUNE_MOD_QUICK_INVALID,
     SUSAMUNE_MOD_QUICK_CORRUPT,
     SUSAMUNE_MOD_QUICK_COMMIT_FAILED,
-    SUSAMUNE_MOD_QUICK_BLOCK = 0x20000
+    SUSAMUNE_MOD_QUICK_BLOCK = 0x20000,
+    SUSAMUNE_MOD_QUICK_LARGE_BLOCK = 0x80000
 };
 typedef __UINTPTR_TYPE__ SusamuneModQuickAddress;
 typedef char SusamuneModQuickWordIs32[sizeof(unsigned int) == 4 ? 1 : -1];
@@ -72,16 +73,19 @@ static inline int SusamuneModQuickLz4(const unsigned char *bytes, unsigned int s
 static inline int SusamuneModQuickPass(const unsigned char *bytes, unsigned int packed,
                                   unsigned char *out, unsigned int raw) {
     unsigned int i;
-    if (packed < 8 || SusamuneModQuickWord(bytes) != 0x4D534C34u ||
-        SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_BLOCK) return 0;
+    if (packed < 8 || (SusamuneModQuickWord(bytes) != 0x4D534C34u &&
+        SusamuneModQuickWord(bytes) != 0x4D534C35u) ||
+        (SusamuneModQuickWord(bytes) == 0x4D534C35u && (raw & 3u)) ||
+        (SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_BLOCK &&
+         SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_LARGE_BLOCK)) return 0;
+    const unsigned int block = SusamuneModQuickWord(bytes + 4);
     unsigned int input = 8, output = 0;
     while (output < raw) {
         if (packed - input < 8) return 0;
         const unsigned int count = SusamuneModQuickWord(bytes + input);
         const unsigned int word = SusamuneModQuickWord(bytes + input + 4);
         const unsigned int length = word & 0x7fffffffu;
-        const unsigned int expected = raw - output < SUSAMUNE_MOD_QUICK_BLOCK ?
-            raw - output : SUSAMUNE_MOD_QUICK_BLOCK;
+        const unsigned int expected = raw - output < block ? raw - output : block;
         input += 8;
         if (count != expected || !length || length > packed - input) return 0;
         if (word & 0x80000000u) {
@@ -92,7 +96,18 @@ static inline int SusamuneModQuickPass(const unsigned char *bytes, unsigned int 
         input += length;
         output += count;
     }
-    return input == packed;
+    if (input != packed) return 0;
+    /* Relative calls share destinations after filtering; restore exact words. */
+    if (out && SusamuneModQuickWord(bytes) == 0x4D534C35u) {
+        for (i = 0; i < raw; i += 4) {
+            unsigned int word = SusamuneModQuickWord(out + i);
+            if ((word & 0xfc000003u) != 0x48000001u) continue;
+            word = (word & 0xfc000003u) | ((word - i) & 0x03fffffcu);
+            out[i] = word >> 24; out[i+1] = word >> 16;
+            out[i+2] = word >> 8; out[i+3] = word;
+        }
+    }
+    return 1;
 }
 
 static inline int SusamuneModQuickValidate(const void *source, unsigned int packed,

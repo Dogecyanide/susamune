@@ -23,6 +23,25 @@ NUMERIC_LAYOUT = ROOT / "doc/timewarp-pinned-numeric-pools.json"
 MIXED = (".foxtrot.text", ".foxtrot.rodata", ".foxtrot.data", ".foxtrot.bss")
 
 
+# Exact readonly tables made unreachable by retiring the SGHF reader/writer.
+_RETIRED_GHOST_TABLES = {
+    ".rodata.validPortableRouteTuple__Q25Ghost0FUcUcUcUcl":
+        (244, "b33e76357c515a25091049d146d7acf2ace055261b0fb28aff0572f8c448efb6"),
+    ".rodata..Lswitch.table.update__5GhostFv":
+        (20, "09396eb062eef872c594f8c73784bdc12eeeb09936697af75c010d0f3ab0c4e5"),
+    ".rodata..Lswitch.table.armObserverSegment__Q25Ghost0Fv":
+        (20, "b8c899bc809d3371ad85262ca123ddfdae71dcf6697c7c2f22ce893713600c50"),
+}
+
+
+def retired_ghost_table(row):
+    return (not row.get("owners") and not row.get("group") and
+            row.get("flags") == 2 and not row.get("cold") and
+            not row.get("protected_string") and
+            _RETIRED_GHOST_TABLES.get(row["name"]) ==
+            (row.get("linked_bytes"), row.get("sha256")))
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 

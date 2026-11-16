@@ -90,6 +90,10 @@ bool SavestateManager::importSlotExplicit(u32 slot,u32 gen,u32 id,u32 crc,u32 pa
  }transferReady=true;return true;
 }
 bool SavestateManager::takeTransferResult(TransferResult&out){if(!transferReady)return false;out=transfer;transferReady=false;return true;}
+static int ghostLoadReady=1;
+static unsigned ghostLoadCancels;
+int SavestateManager::prepareSlotLoad(u32,u32){return ghostLoadReady;}
+void SavestateManager::cancelPreparedLoad(){++ghostLoadCancels;}
 bool SavestateManager::loadSlot(u32 slot,u32 gen){++worldLoadAttempts;if(worldLoadFails||!memory[slot].valid||memory[slot].generation!=gen)return false;
  ++loadCount;lastLoaded=slot;const auto&d=stateData[slot];tapeAttached=takePresent=(d.flags&4)!=0;liveFrames=livePosition=d.frames;
  liveKey[0]=d.originKey[0];liveKey[1]=d.originKey[1];++liveRevision;return true;
@@ -215,6 +219,7 @@ extern "C" __declspec(dllexport) void reset(){
  memset(&TasProject::sSaved,0,sizeof(TasProject::sSaved));memset(&TasProject::sPending,0,sizeof(TasProject::sPending));
  memset(TasProject::sPublishedKeys,0,sizeof(TasProject::sPublishedKeys));
  TasProject::sSavedRevision=TasProject::sCurrent=0;TasProject::sActive=TasProject::sDirty=TasProject::sCatalogReady=false;
+ ghostLoadReady=1;ghostLoadCancels=0;TasProject::sPreparedGhostLoad=false;TasProject::sGhostLoadWait=0;
  TasProject::sHaveCheckpoint=false;memset(&TasProject::sLoadedCheckpoint,0,sizeof(TasProject::sLoadedCheckpoint));
  TasProject::finish("ready");
 }
@@ -234,13 +239,13 @@ extern "C" __declspec(dllexport) void option(u32 code,u32 value){switch(code){ca
  case 17:tapeData[published.tape.componentId].data.originKey[1]=value;break;
  case 18:tapeData[published.tape.componentId].data.frames=value;break;
  case 19:worldLoadFails=value;break;case 20:recordedScene=value;break;
- case 21:failBegin=value;break;case 22:failCommit=value;break;case 23:pendingLoad=value;break;
+ case 21:failBegin=value;break;case 22:failCommit=value;break;case 23:pendingLoad=value;break;case 24:ghostLoadReady=(int)value;break;
  }}
 extern "C" __declspec(dllexport) u32 value(u32 code){switch(code){case 0:return TasProject::active();case 1:return TasProject::busy();case 2:return TasProject::replacementNeeded();case 3:return exportCount;case 4:return commitCount;case 5:return importCount;case 6:return loadCount;case 7:return clearCount;case 8:return published.generation;case 9:return published.componentCount;case 10:return published.currentRole;case 11:return TasProject::dirty();case 12:return liveFrames;case 13:return ordinarySave;case 14:return ordinaryLoad;case 15:return lastLoaded;case 16:return TasProject::named();case 17:return TasProject::checkpointOverwritePending();
  case 18:return tapeExportCount;case 19:return tapeImportCount;case 20:return saveCount;case 21:return livePosition;case 22:return tapeAttached;
  case 23:return takePresent;case 24:return published.tapeFrames;case 25:return published.checksum;case 26:return restoreTakeCount;
  case 27:return liveTransitionCount;case 28:return currentScene;case 29:return worldLoadAttempts;case 30:return continueCalls;
- case 31:return beginCount;case 32:return TasProject::sSaved.projectId;case 33:return published.projectId;case 34:return published.buildCrc;default:return 0;}}
+ case 31:return beginCount;case 32:return TasProject::sSaved.projectId;case 33:return published.projectId;case 34:return published.buildCrc;case 35:return ghostLoadCancels;default:return 0;}}
 extern "C" __declspec(dllexport) void legacy(u32 build){
  published.buildCrc=build;
  for(u32 role=0;role<3;++role)if(published.components[role].componentId){
@@ -669,6 +674,24 @@ extern "C" __declspec(dllexport) unsigned seek(unsigned target,unsigned mask){se
         self.save()
         self.assertEqual((self.lib.value(8),self.lib.value(24)),(2,3))
         self.assertEqual(self.lib.value(6),0)
+
+    def test_checkpoint_waits_for_ghost_source_before_restoring_gameplay(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        self.lib.option(24,0);self.assertTrue(self.lib.action(4,1))
+        for _ in range(4):self.lib.tick()
+        self.assertTrue(self.lib.value(1));self.assertEqual(self.lib.value(29),0)
+        self.lib.option(24,1);self.finish()
+        self.assertFalse(self.lib.value(1));self.assertEqual(self.lib.value(29),1)
+        self.assertEqual(self.lib.value(35),0)
+
+    def test_ghost_checkpoint_timeout_preserves_slots_and_releases_preparation(self):
+        self.new();self.lib.append();self.lib.action(1,1);self.finish()
+        before=[self.lib.generation(i) for i in range(3)]
+        self.lib.option(24,0);self.assertTrue(self.lib.action(4,1))
+        for _ in range(601):self.lib.tick()
+        self.assertFalse(self.lib.value(1));self.assertEqual(self.lib.value(29),0)
+        self.assertEqual(self.lib.value(35),1)
+        self.assertEqual([self.lib.generation(i) for i in range(3)],before)
 
     def test_manual_checkpoint_owner_refusal_keeps_live_tape_without_starting_sd_import(self):
         self.new();self.lib.append();self.lib.action(1,1);self.finish();self.lib.append()

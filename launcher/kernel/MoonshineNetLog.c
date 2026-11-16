@@ -1,4 +1,5 @@
 #include "MoonshineNetLog.h"
+#include "susamune/loading_trace.h"
 #include "SusamuneCfg.h"
 #include "susamune/live_race_wire.h"
 #include "ff_utf8.h"
@@ -6,10 +7,15 @@
 #include <string.h>
 
 #define LOG_LIMIT (4u * 1024u * 1024u)
-static char sBuffer[8192], sPath[160];
+static char sBuffer[8192], sPath[96];
 static unsigned sUsed, sWritten, sOmitted, sSampleAt, sFlushAt, sEpoch, sState;
 static unsigned sFlushMs;
 static int sStarted, sFailed, sCreated;
+#if MOONSHINE_LOADING_DIAGNOSTICS
+static int sLoadHold;
+#else
+#define sLoadHold 0
+#endif
 struct Stream {
     TWLiveEndpoint endpoint;
     unsigned count, sequence, remoteMs, scene, area, flags, lastAt, gap;
@@ -80,9 +86,31 @@ void MoonshineNetLogEvent(const char *event, unsigned epoch, unsigned state, int
     unsigned now = clockTicks();
     if (!sStarted) {
         sStarted = 1; sFlushAt = now;
-        append("Moonshine PR33 connection log; clock_hz=1898437 protocol=%u\n", MSR_PROTOCOL);
+        append("Moonshine connection log; clock_hz=1898437 protocol=%u\n", MSR_PROTOCOL);
     }
     append("%u %s epoch=%u state=%u error=%d\n", now, event, epoch, state, error);
+}
+#if MOONSHINE_LOADING_DIAGNOSTICS
+void MoonshineNetLogLoading(const struct MsLoadingEntry *e,const unsigned *iso){
+    if(!sStarted)MoonshineNetLogEvent("load_log",0,0,0);
+    sLoadHold=e->phase!=MS_LOAD_OBJECTS_END&&e->phase!=MS_LOAD_CANCEL;
+    append("%u load p=%u t=%u hz=%u s=%04x a=%u lost=%u iso=%u/%u/%u\n",
+        clockTicks(),e->phase,e->tick,e->clockHz,e->scene,e->value0,e->dropped,iso[0],iso[1],milliseconds(iso[2]));
+}
+void MoonshineNetLogIo(const char *operation,unsigned id,unsigned phase,unsigned bytes,unsigned ticks,int result){
+    if(!sStarted)MoonshineNetLogEvent("storage_log",0,0,0);
+    append("%u io %s id=%u p=%u n=%u ms=%u r=%d\n",clockTicks(),operation,id,phase,bytes,milliseconds(ticks),result);
+}
+#endif
+void MoonshineNetLogWeb(const struct GhostServiceTrace *t)
+{
+    MoonshineNetLogEvent("ghost_http",0,t->phase,t->result);
+    append("  %s %s reused=%u ms=%u startup_ms=%u connect_ms=%u http=%u ios=%d tls=%u retry_after=%u\n",
+        t->method==2?"PUT":t->method==1?"POST":"GET",t->path,t->reused,t->elapsedMs,t->startupMs,t->connectMs,t->httpStatus,t->iosError,t->tlsError,t->retryAfter);
+    append("  sb-request-id=%s date=%s cf-ray=%s server-timing=%s\n",
+        t->requestId,t->date,t->cfRay,t->serverTiming);
+    append("  tls_bytes_tx=%u tls_bytes_rx=%u last_io=%u handshake_ms=%u processing_ms=%u\n",
+        t->sentBytes,t->receivedBytes,t->lastIo,t->handshakeMs,t->processingMs);
 }
 void MoonshineNetLogPacket(int outgoing, const TWLiveEndpoint *endpoint,
     const void *data, unsigned bytes)
@@ -162,7 +190,7 @@ void MoonshineNetLogSample(const struct MoonshineNetStatus *worker, unsigned txQ
 }
 int MoonshineNetLogPending(void)
 {
-    return sStarted && !sFailed && sUsed &&
+    return sStarted && !sFailed && !sLoadHold && sUsed &&
         (sUsed >= sizeof(sBuffer) / 2 || clockTicks() - sFlushAt >= 1898437u * 5u);
 }
 void MoonshineNetLogService(void)

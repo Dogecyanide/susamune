@@ -27,5 +27,5 @@ typedef char tw_dolphin_live_alignment[(TW_DOLPHIN_LIVE_BASE % 32 == 0) ? 1 : -1
 typedef char tw_dolphin_live_gap[(TW_DOLPHIN_LIVE_BASE >=
     SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE + SUSAMUNE_STATE_STAGING_SIZE &&
     TW_DOLPHIN_LIVE_BASE + sizeof(TWDolphinLive) <=
-    SUSAMUNE_DOLPHIN_STATE_POOL_EXTRA_PPC_BASE) ? 1 : -1];
+    SUSAMUNE_DOLPHIN_TCP_HEAP_PPC_BASE) ? 1 : -1];
 #endif

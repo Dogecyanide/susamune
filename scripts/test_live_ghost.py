@@ -43,7 +43,10 @@ bool secondaryVisualState(VisualState*out){out->x=-2;return true;}
 }
 #include "susamune/live_group_rules.hxx"
 namespace LiveRace {LiveGroupRules::State group;bool grouped;const LiveGroupRules::State *groupState(){return grouped?&group:nullptr;}}
-namespace LiveGhost {enum{Channels=3};bool visualStateFor(unsigned,Ghost::VisualState*);bool setName(const char*,unsigned);bool submit(const Ghost::VisualState&,u32,u32,u32,u32,const SusamunePracticeInput* = nullptr);}
+alignas(32) unsigned char testLiveStorage[2048];
+#define SUSAMUNE_LIVE_GHOSTS_PPC_BASE ((__UINTPTR_TYPE__)testLiveStorage)
+#define SUSAMUNE_LIVE_GHOSTS_SIZE 2048
+namespace LiveGhost {void resetAll();enum{Channels=3};bool visualStateFor(unsigned,Ghost::VisualState*);bool setName(const char*,unsigned);bool submit(const Ghost::VisualState&,u32,u32,u32,u32,const SusamunePracticeInput* = nullptr);}
 '''
         code += source[source.index("namespace LiveGhost {"):source.index("void drawName(")]
         code += "\n".join(function(source, name) for name in ("visualStateFor", "submitFor", "tickFor", "resetFor", "resetAll"))

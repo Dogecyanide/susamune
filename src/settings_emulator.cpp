@@ -1,3 +1,4 @@
+#include "susamune/ghost_world_runtime.hxx"
 #include "susamune/settings.hxx"
 #include "susamune/finish_breakdown.hxx"
 
@@ -37,6 +38,7 @@ bool Settings::finishInit() {
 }
 
 void Settings::save() {
+    if (GhostWorldRuntime::temporarySettings()) return;
     if (mSaveState == SETTINGS_SAVE_PENDING) return;
 
     SusamuneCfg *cfg = EmulatorPersistence::lock();

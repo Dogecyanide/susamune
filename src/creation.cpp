@@ -68,7 +68,7 @@ bool sGradientLocalAnimation;
 u16 sOriginalColourSetting;
 u8 sOriginalColourBackup, sEditorHomeRow;
 enum { GROUP_LAYOUT, GROUP_COLOURS, GROUP_ANIMATION, GROUP_COUNT, GROUP_HOME = GROUP_COUNT };
-const char kGroupNames[] = "Position & size\0Colours\0Animation";
+const char kGroupNames[] = "Position / size\0Colours\0Animation";
 u8 sCreationMinimumScale, sCreationMaximumScale;
 u8 sGradientEnds[4][3];
 const char kGradientNames[] = "Current colours\0Sunset\0Ocean\0Rainbow\0Blend ends\0One colour";
@@ -495,7 +495,7 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                 if (mCapabilities & CAP_POSITION) { mStyle->x = defaults.x; mStyle->y = defaults.y; }
                 if (mCapabilities & CAP_SCALE) mStyle->scale = defaults.scale;
             } else if (mOption == OPTION_GRADIENT_STOPS || mOption == OPTION_GRADIENT_STOP) {
-                *sGradientOptions = GradientMotion::withWordStops(*sGradientOptions, 0);
+                *sGradientOptions = (sGradientLocalAnimation ? GradientMotion::withWordStops(*sGradientOptions, 0) : 0);
                 sGradientStop = 0;
                 resetOption(*mStyle, defaults, mTextRgb, defaultRgb,
                             defaultRgbSlots, mCapabilities & CAP_TIMER_GRADIENT ? 13 : mTextSlots, OPTION_GRADIENT, 0);
@@ -523,7 +523,7 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
                     editGradientStops(mTextRgb, mTextSlots, mCapabilities & CAP_TIMER_GRADIENT, stops);
                 if (mOption == OPTION_GRADIENT) {
                     mTextTarget = 0;
-                    if (sGradientOptions) *sGradientOptions = GradientMotion::withWordStops(*sGradientOptions, 0);
+                    if (sGradientOptions) *sGradientOptions = (sGradientLocalAnimation ? GradientMotion::withWordStops(*sGradientOptions, 0) : 0);
                 }
                 if (mOption == OPTION_GRADIENT || mOption <= OPTION_TEXT_L) sGradientPreset = 0;
                 if (mOption <= OPTION_TEXT_L && mCustomMask &&
@@ -635,11 +635,11 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         gSettings.cycle((SettingId)sOriginalColourSetting, delta > 0 ? 1 : -1);
         return result | UPDATE_CHANGED;
     }
-    if (mOption <= OPTION_TEXT_L && sOriginalColourSetting != 0xffff)
+    if ((mOption <= OPTION_TEXT_L || (mOption == OPTION_COLOR_MODE && delta > 0)) && sOriginalColourSetting != 0xffff)
         gSettings.set((SettingId)sOriginalColourSetting, 1);
     if (mOption == OPTION_GRADIENT_STOPS) {
         const unsigned count = (GradientMotion::wordStops(*sGradientOptions) + (delta > 0 ? 1 : 5)) % 6;
-        *sGradientOptions = GradientMotion::withWordStops(*sGradientOptions, count);
+        *sGradientOptions = sGradientLocalAnimation ? GradientMotion::withWordStops(*sGradientOptions, count) : count;
         sGradientStop = 0;
         mTextTarget = 0;
         if (count) editGradientStops(mTextRgb, mTextSlots,
@@ -664,9 +664,11 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         sGradientPreset = delta > 0 ? sGradientPreset % 5 + 1 :
                           sGradientPreset > 1 ? sGradientPreset - 1 : 5;
         mTextTarget = 0;
-        if (sGradientOptions) *sGradientOptions = GradientMotion::withWordStops(*sGradientOptions, 0);
+        if (sGradientOptions) *sGradientOptions = (sGradientLocalAnimation ? GradientMotion::withWordStops(*sGradientOptions, 0) : 0);
         applyGradient(mTextRgb, mTargetSlots, sGradientPreset,
                       mCapabilities & CAP_TIMER_GRADIENT, captureEnds);
+        // Native presets need a visible-span marker separate from editable stop counts.
+        if (sGradientOptions && (mCapabilities & CAP_TIMER_GRADIENT)) *sGradientOptions = 0x40;
         return result | UPDATE_CHANGED | UPDATE_COLOR_CHANGED;
     } else if (mOption == OPTION_COLOR_MODE) {
         const u16 mask = mTextTarget ? 1u << (mTextTarget - 1)
@@ -676,6 +678,9 @@ u8 CreationEditor::update(TMarioGamePad *pad, const CreationStyle &defaults,
         return result | UPDATE_CHANGED | UPDATE_MODE_CHANGED;
     } else if (mOption <= OPTION_TEXT_L) {
         sGradientPreset = 0;
+        if (sGradientOptions && !sGradientLocalAnimation && mTextTarget &&
+            (mTextTarget <= 6 || mTextTarget == 11 || mTextTarget == 12) && *sGradientOptions == 0x40)
+            *sGradientOptions = 0;
         if (sGradientOptions && GradientMotion::wordStops(*sGradientOptions)) {
             editGradientStops(mTextRgb, mTextSlots, mCapabilities & CAP_TIMER_GRADIENT,
                               GradientMotion::wordStops(*sGradientOptions), mOption, delta);
@@ -726,6 +731,7 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
             if (row < GROUP_COUNT && !groupEnabled(row)) continue;
             const char *label = row < GROUP_COUNT ? PackedText::at(kGroupNames, row) :
                                 row == GROUP_COUNT ? "Save changes" : "Discard changes";
+            MenuTheme::listRow(menu, 20, y - 1, 600, row == sEditorHomeRow);
             if (row == sEditorHomeRow) {
                 MenuTheme::selection(menu, 20, y - 1, 600, 23, true);
             }
@@ -786,10 +792,11 @@ void CreationEditor::draw(Menu *menu, const char *title, const char *preview) co
         for (unsigned row = first; row < count && row < first + 5; ++row) {
             const unsigned i = options[row];
             const int y = top + 76 + (row - first) * 19;
+            MenuTheme::listRow(menu, 20, y - 2, 592, i == mOption);
             if (i == mOption) MenuTheme::selection(menu, 20, y - 2, 592, 19);
             const char *name = i == OPTION_GRADIENT_STOPS ? "Colour stops" : i == OPTION_GRADIENT_STOP ? "Selected stop" :
-                i == OPTION_ORIGINAL_COLOURS ? "Appearance" : i == OPTION_GRADIENT_SPEED ? "Speed" : i == OPTION_GRADIENT_MOTION ? "Gradient animation" :
-                i == OPTION_GRADIENT_DIRECTION ? "Direction" : i == OPTION_COLOR_MODE ? "Appearance" :
+                i == OPTION_ORIGINAL_COLOURS ? "Guidebook style" : i == OPTION_GRADIENT_SPEED ? "Speed" : i == OPTION_GRADIENT_MOTION ? "Gradient animation" :
+                i == OPTION_GRADIENT_DIRECTION ? "Direction" : i == OPTION_COLOR_MODE ? (sOriginalColourSetting != 0xffff ? "Section colour" : "Appearance") :
                 i == OPTION_GRADIENT ? "Colour preset" : PackedText::at(
                 mTargetNames && i <= OPTION_TEXT_BRIGHTNESS ? kElementOptionNames : kOptionNames, i);
             menu->drawText(name, 30, y, 14, 14, i == mOption ? selectedInk : ink);

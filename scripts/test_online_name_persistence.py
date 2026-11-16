@@ -25,6 +25,28 @@ class OnlineNameIniTests(unittest.TestCase):
     def block(self):
         return self.lib.onlineNameBlock().contents
 
+    def test_named_contacts_roundtrip_and_keep_other_regions(self):
+        for region in (b'jp', b'us', b'pal'):
+            self.lib.selectRegion(region)
+            other = b'[creation_other]\r\nonline_contact_0_name = Untouched\r\n'
+            rows = b''.join(b'online_contact_' + str(i).encode() + b'_name = Friend ' + str(i).encode() + b'\r\nonline_contact_' + str(i).encode() + b'_code = 192,168,2,40,48222,777\r\n' for i in range(8))
+            text = other + b'[creation_' + region + b']\r\n' + rows
+            self.lib.parse(text)
+            written = self.lib.rewrite(text)
+            self.assertIn(other, written)
+            self.assertIn(rows, written)
+            self.lib.parse(written)
+            self.assertIn(rows, self.lib.rewrite(written))
+
+    def test_invalid_contact_fields_never_emit_a_usable_entry(self):
+        self.lib.selectRegion(b'jp')
+        for name, code in ((b'Longer than fifteen characters', b'1,2,3,4,12,7'),
+                           (b'Friend', b'256,2,3,4,12,7'), (b'Friend', b'1,2,3,4,0,7'),
+                           (b'Friend', b'1,2,3,4,12,8192')):
+            self.lib.selectRegion(b'jp')
+            self.lib.parse(b'[creation_jp]\r\nonline_contact_0_name = ' + name + b'\r\nonline_contact_0_code = ' + code + b'\r\n')
+            self.assertNotIn(b'online_contact_', self.lib.rewrite(b'[creation_jp]\r\n'))
+
     def test_name_roundtrips_per_region_and_keeps_other_sections(self):
         for region in (b'jp', b'us', b'pal'):
             with self.subTest(region=region):

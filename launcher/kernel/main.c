@@ -39,8 +39,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneCfg.h"
 #include "SusamuneCrash.h"
 #include "SusamuneGhost.h"
+#include "GhostServiceNative.h"
 #include "SusamuneStateStorage.h"
 #include "SusamuneTransfer.h"
+#include "MoonshineGhostMemory.h"
+#include "GhostTraceStorage.h"
+#include "GhostReplayReport.h"
 #include "MoonshineLayout.h"
 #if TIMEWARP_LIVE_RACING
 #include "MoonshineNet.h"
@@ -79,7 +83,7 @@ static const WCHAR cfgDevName[3] = { 0x0031, 0x003A, 0x0000 };
 static void NetworkUsbShutdown(void)
 {
 	// /dev/usb/ven shutdown may affect a network adapter with an IOS request.
-	if (MoonshineNetShutdown()) USBStorage_Shutdown();
+	if (MoonshineNetShutdown() && GhostServiceShutdown()) USBStorage_Shutdown();
 }
 #endif
 
@@ -166,6 +170,16 @@ extern u32 DI_MessageQueue;
 extern vu32 DisableSIPatch;
 extern char __bss_start, __bss_end;
 extern char __di_stack_addr, __di_stack_size;
+
+// Storage shares FatFS with DI; observe posted game reads before another file operation.
+static bool StorageReadPending(void)
+{
+    if (!DI_IRQ && DiscCheckAsync()) {
+        _ahbMemFlush(1);
+        DIUpdateRegisters();
+    }
+    return DI_IRQ || !DiscCheckAsync();
+}
 
 u32 virtentry = 0;
 u32 drcAddress = 0;
@@ -407,6 +421,8 @@ int _main( int argc, char *argv[] )
 	// drawn. Nothing else touches FatFS at this point -- the DI thread exists
 	// but is parked on its queue until the game starts asking for reads.
 	SusamuneCfgInit();
+	MoonshineGhostMemoryInit();
+	GhostTraceStorageInit();	GhostReplayReportInit();
 #if TIMEWARP_LIVE_RACING
 	MoonshineNetBridgeInit();
 #endif
@@ -506,6 +522,7 @@ int _main( int argc, char *argv[] )
 	while (1)
 	{
 		_ahbMemFlush(0);
+        GhostTraceLoadingService();
 #if TIMEWARP_LIVE_RACING
 		// The bridge owns no FAT state; service it even during a disc read.
 		MoonshineNetBridgeService();
@@ -543,7 +560,7 @@ int _main( int argc, char *argv[] )
 				PADTimer = read32(HW_TIMER);
 			}
 		}
-		if(DI_IRQ == true)
+		if(StorageReadPending())
 		{
 			if(DiscCheckAsync())
 				DIInterrupt();
@@ -568,6 +585,14 @@ int _main( int argc, char *argv[] )
 		}
 		/* FatFS is shared with the DI thread, so process one bounded ghost
 		 * slice only when no async read or existing Susamune journal is ready. */
+		else if(GhostReplayReportPending())
+		{
+			GhostReplayReportService();
+		}
+		else if(GhostTraceStoragePending())
+		{
+			GhostTraceStorageService();
+		}
 		else if(SusamuneGhostPending())
 		{
 			SusamuneGhostService();
@@ -766,6 +791,11 @@ int _main( int argc, char *argv[] )
 			}
 		}
 #endif
+        else if(GhostTraceBackgroundPending())
+        {
+            // Catalogue checks yield to every foreground storage owner above.
+            GhostTraceBackgroundService();
+        }
 		else if(UseUSB && TimerDiffSeconds(USBReadTimer) > 149) /* Read random sector every 2 mins 30 secs */
 		{
 			DIFinishAsync(); //if something is still running
@@ -777,7 +807,7 @@ int _main( int argc, char *argv[] )
 		}
 		else /* No device I/O so make sure this stays updated */
 			GetCurrentTime();
-		udelay(20); //wait for other threads
+		udelay(GhostServiceMainDelay()); // allow background TLS work between device polls
 
 		if( WaitForRealDisc == 1 )
 		{
@@ -944,6 +974,7 @@ int _main( int argc, char *argv[] )
 	MoonshineNetShutdown();
 #endif
 	HIDClose();
+	GhostServiceShutdown();
 	IOS_Close(DI_Handle); //close game
 	thread_cancel(DI_Thread, 0);
 	DIUnregister();
@@ -1010,6 +1041,7 @@ int _main( int argc, char *argv[] )
 		mask32(0xd8006a8, 0, 2);
 	}
 WaitForExit:
+	GhostServiceShutdown();
 #if TIMEWARP_LIVE_RACING
 	MoonshineNetBridgeRetire();
 	MoonshineNetShutdown();
@@ -1029,6 +1061,7 @@ WaitForExit:
 		sync_after_write((void*)RESET_STATUS, 0x20);
 	}
 	while(1) {
+		GhostServiceShutdown();
 #if TIMEWARP_LIVE_RACING
 		// A stuck IOS request retains its buffers until the existing IOS reload.
 		MoonshineNetShutdown();

@@ -1,3 +1,4 @@
+#include "susamune/camera_path.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/actions.hxx"
 #include "susamune/addresses.hxx"
@@ -192,6 +193,7 @@ struct CameraView {
 };
 CameraView sCameraSaved;
 CameraView sCameraView;
+
 bool sCameraUpdatePending __attribute__((section(".bss.practice_camera_update_pending")));
 u8 sCameraRenderSaved[0x138];
 static_assert(__builtin_offsetof(CPolarSubCamera, mWorldTranslation) == 0x124 &&
@@ -1751,6 +1753,86 @@ void recenterCamera() {
     sPitch = atan2f(dy, PSVECMag(&horizontal));
 }
 
+
+#pragma clang section text="" rodata="" bss=""
+namespace {
+static_assert(sizeof(CameraPath::Path) <= SUSAMUNE_CAMERA_PATH_SIZE, "camera path scalar storage");
+#define sCameraPath (*reinterpret_cast<CameraPath::Path *>(SUSAMUNE_CAMERA_PATH_PPC_BASE))
+bool sPathReady;
+u32 sPathTick, sPathGeneration;
+bool sPathClock;
+void syncCameraPath() {
+    if (!sPathReady) { memset(&sCameraPath, 0, sizeof(sCameraPath)); sPathReady = true; }
+    if (sPathGeneration != sStageGeneration) {
+        sCameraPath.clear(); sPathClock = false; sPathGeneration = sStageGeneration;
+    }
+}
+void applyCameraPathPose(const CameraPath::Pose &pose) {
+    sCameraView.position.set(pose.x, pose.y, pose.z); sYaw = pose.yaw; sPitch = pose.pitch; sCameraView.fovy = pose.fov;
+    sCameraView.target.set(pose.x + sinf(sYaw)*cosf(sPitch)*1000, pose.y + sinf(sPitch)*1000, pose.z + cosf(sYaw)*cosf(sPitch)*1000);
+    sCameraView.up.set(0, 1, 0);
+}
+}
+
+void cameraPathUpdate() {
+    syncCameraPath();
+    if (!sFreeCamera) sCameraPath.stop();
+    if (!sCameraPath.playing || sModal || sCameraWaitButtons || !stageReady() || sCamera != gpCamera) { sPathClock = false; return; }
+    if (sCameraApplied) return;
+    const u32 now = OSGetTick();
+    const float elapsed = sPathClock ? static_cast<float>(now - sPathTick) / static_cast<float>(OS_TIMER_CLOCK) : 0;
+    sPathTick = now; sPathClock = true;
+    CameraPath::Pose pose;
+    if (sCameraPath.advance(elapsed < 0.25f ? elapsed : 0, pose)) applyCameraPathPose(pose);
+}
+
+void cameraPathValue(int row, char *out, unsigned size) {
+    syncCameraPath();
+    const auto &path = sCameraPath;
+    if (row == 0) snprintf(out, size, "%u / 16", path.count);
+    else if (row == 1) snprintf(out, size, "%s", path.playing ? "Stop" : "Play");
+    else if (row == 2) snprintf(out, size, "%u / %u", path.count ? path.selected + 1 : 0, path.count);
+    else if (row == 5) snprintf(out, size, "%.1f s", path.count ? path.frames[path.selected].halves * 0.5f : 3.0f);
+    else if (row == 6) snprintf(out, size, "%s", path.linear ? "Linear" : "Smooth");
+    else if (row == 7) snprintf(out, size, "%s", path.loop ? "On" : "Off");
+    else if (size) out[0] = 0;
+}
+
+bool cameraPathAction(int row, int direction) {
+    syncCameraPath();
+    auto &path = sCameraPath;
+    if (row == 9) { path.stop(); return false; }
+    if (row == 6) { path.linear = !path.linear; return false; }
+    if (row == 7) { path.loop = !path.loop; return false; }
+    if (row == 2 && path.count) { path.selected = (path.selected + path.count + direction) % path.count; return false; }
+    if (row == 5 && path.count) {
+        int halves = path.frames[path.selected].halves + direction;
+        path.frames[path.selected].halves = halves < 1 ? 1 : halves > 120 ? 120 : halves;
+        return false;
+    }
+    if (row == 8) { path.erase(); message("Keyframe deleted"); return false; }
+    if ((row == 1 && path.count < 2) || (row > 1 && !path.count)) {
+        message("Add keyframes first"); return false;
+    }
+    if (row == 1 && path.playing) { path.stop(); message("Stopped"); return false; }
+    if (!sFreeCamera && !requestFreeCameraToggle()) return false;
+    if (!controlStage() || sCamera != gpCamera || sCameraGeneration != sStageGeneration) return false;
+    CameraPath::Pose pose = {sCameraView.position.x, sCameraView.position.y, sCameraView.position.z, sYaw, sPitch, sCameraView.fovy};
+    if (row == 0) {
+        if (!path.add(pose)) { message("16 keyframes maximum"); return false; }
+        message("Keyframe added"); return true;
+    }
+    if (row == 4) { path.stop(); path.frames[path.selected].pose = pose; message("Keyframe replaced"); return false; }
+    if (row == 1) path.start(pose);
+    else if (row == 3) { path.stop(); pose = path.frames[path.selected].pose; }
+    else return false;
+    resetCameraMotion(); sPathClock = false;
+    applyCameraPathPose(pose);
+    message(row == 1 ? "Playing" : "At keyframe");
+    return true;
+}
+
+#pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" bss=".foxtrot.bss"
 bool requestFreeCameraToggle() {
     if (gBinds.wasPressed(BIND_FREE_CAMERA))
         sStripButtons |= gBinds.get(BIND_FREE_CAMERA);
@@ -2220,7 +2302,10 @@ bool seekTapeValid() {
             sTransitionCount ? sTransitions[sTransitionCount - 1].toScene : sStartScene);
 }
 
+bool sPreparedSeekLoad;
 void finishSeek(PracticeSession::SeekOutcome outcome, const char *text, bool attached) {
+    if (sPreparedSeekLoad) SavestateManager::cancelPreparedLoad();
+    sPreparedSeekLoad = false;
     stopTape(nullptr);
     sSeek.phase = outcome;
     sSeek.position = sTakePosition;
@@ -2375,6 +2460,14 @@ void seekAfterDraw() {
             sTransitionCount * sizeof(SusamuneTasTransition)) != sSeek.transitionHash) {
         finishSeek(SEEK_FAILED, kSeekChanged, false); return;
     }
+    const int prepared = gSavestateMgr->prepareSlotLoad(sSeek.slot, sSeek.generation);
+    if (prepared == 0) {
+        sPreparedSeekLoad = true;
+        if (++sSeek.wait >= 600) finishSeek(SEEK_FAILED, kSeekTimedOut, sTakeAttached);
+        return;
+    }
+    if (prepared < 0) { finishSeek(SEEK_FAILED, kSeekLoadFailed, false); return; }
+    sPreparedSeekLoad = false;
     // The ordinary owned restore skips tape/transition writes but restores pad history.
     sOwnRestoreValid = false;
     sOwnLoad = true;
@@ -2422,4 +2515,58 @@ bool recordedInput(u32 index, SusamunePracticeInput *out) {
 namespace ModelEditorPreview {
 __attribute__((section(".text.model_preview_restore_practice")))
 void restorePracticeCamera() { ::restoreCamera(); }
+}
+
+namespace PracticeSession {
+// This wrapper leaves the timer-facing legacy section and its entrypoints fixed.
+void afterDrawWithGhosts() {
+    static bool prepared;
+    if (!sLoadKind) {
+        if (prepared) SavestateManager::cancelPreparedLoad();
+        prepared = false;
+        afterDraw();
+        return;
+    }
+    if ((sStartRelease & sPhysical.buttons) || (gMenu && gMenu->shown()) ||
+        WarpWheel::shown() || WarpWheel::promptPending() || StageLoader::resultOwnsInput() ||
+        SavestateManager::diskBusy() ||
+        (gpCardManager && gpCardManager->getLastStatus() == CARD_ERROR_BUSY)) {
+        afterDraw();
+        return;
+    }
+    if (sPhysical.error || !normalStage() || !seedMatches(sLoadSlot, sLoadGeneration) ||
+        (sLoadKind != 1 && settingsHash() != sSettingsHash)) {
+        if (prepared) SavestateManager::cancelPreparedLoad();
+        prepared = false;
+        afterDraw();
+        return;
+    }
+    const int ready = gSavestateMgr->prepareSlotLoad(sLoadSlot, sLoadGeneration);
+    if (ready == 0) {
+        prepared = true;
+        ModelEditorPreview::restoreAll();
+        if (++sLoadWait < 600) return;
+    }
+    if (ready <= 0) {
+        ModelEditorPreview::restoreAll();
+        if (prepared) SavestateManager::cancelPreparedLoad();
+        prepared = false;
+        stopTape("Ghost checkpoint could not be prepared");
+        return;
+    }
+    prepared = false;
+    afterDraw();
+}
+}
+
+#pragma clang section text="" rodata="" data="" bss=""
+namespace PracticeSession {
+bool replayModeHistory(unsigned short &flags,short &stickTimer,int &disabledFrames) {
+    if(!sHaveRead||!sReadPad||sReadPad!=gpApplication.mGamePads[0]||sReadScene||
+       !RetailInput::stageDirector())return false;
+    memcpy(&flags,sBeforeRead.meaning+0x3e,2);
+    memcpy(&stickTimer,sBeforeRead.meaning+0x40,2);
+    memcpy(&disabledFrames,sBeforeRead.meaning+0x44,4);
+    return true;
+}
 }

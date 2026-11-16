@@ -1,0 +1,28 @@
+Moonshine Memory Monitor r3 — PAL/US testing only
+
+Connect through Online > Join room using the PC monitor code. This revision
+corrects the HUD/guidebook reader and adds Capture allocation map on the PC.
+The capture briefly pauses gameplay, copies bounded allocator metadata and
+loaded audio-bank names, then automatically releases only its own pause. It
+does not resume a pause you had already enabled. Cancel capture and a timeout
+also release an owned pause. The snapshot continues transferring after play
+resumes. Captures are saved as allocation_dump_XXXXXXXX.json on the PC.
+
+This is an allocator-map snapshot, NOT an 88 MiB raw-RAM-content dump. It
+identifies blocks, addresses, sizes, child counts, native bank names when the
+retail type is recognized, and aggregate heap/state/ghost payload ownership.
+Unknown names, incomplete sections and truncation remain explicit. There are
+no arbitrary-address read/write commands. All commands use the existing
+session, are limited to the Memory monitor peer in this private build, and
+the local web command endpoint rejects cross-origin browser requests.
+
+Steady readings measure allocated bytes, not whether a sound is playing at
+that instant. Root MEM1 usage includes child reservations; do not add nested
+heaps together. Audio-bank files stay resident between sound events. Loaded
+bank names let us inspect their corresponding disc assets independently.
+No audio, memory pool, ghost duration or savestate capacity was reduced.
+
+PAL/US builds and protected timer checks passed. Host tests cover scanner
+bounds, capture pause/resume/cancel/timeout, original pause preservation,
+protocol delivery, partial telemetry pages, and PC snapshot publication.
+Live Wii validation of the new detailed capture is still pending.

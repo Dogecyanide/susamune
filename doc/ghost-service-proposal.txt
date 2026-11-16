@@ -51,7 +51,7 @@ as the specification. Do not infer fields from labels/filenames or treat a
 new format as playable merely because its CRC passes. Preserve uploaded bytes
 exactly, including camera, teaching/split and initial-RNG metadata.
 
-Current canonical transfer limit is 1,297,992 bytes. The site's newer 10 MiB
+Current canonical transfer limit is 1,298,016 bytes (eight splits). The site's newer 10 MiB
 migration is above that; advertise the service limit separately from the
 client's supported limit. The repository's older README still mentions 2 MiB;
 please confirm which migration is deployed. Unsupported/larger archive files

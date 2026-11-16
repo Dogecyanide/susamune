@@ -1,0 +1,6 @@
+1. Select a personal saved ghost > A > Z. Confirm its name/account, then A
+   publishes it. Verify the result on Delfino Ghosts.
+2. Check link repeatedly before/after a restart: the account should remain
+   linked without producing a false expiry message.
+3. Keep connection logs if uploading fails. Do not share delfino-link files.
+4. Continue the separately outstanding 3/4-player hardware testing.

@@ -53,7 +53,15 @@ u16 sObserverPrimarySegment,sObserverSecondarySegment;
 bool sGhostVisible,sSecondaryGhostVisible;int sGhostPosition,sSecondaryGhostPosition;
 enum {SETTING_GHOST_DISPLAY,SETTING_GHOST_PATH,SETTING_GHOST_OPACITY};
 struct Settings {bool getBool(int id){return id==SETTING_GHOST_PATH?enabled:display;}u8 get(int){return 0;}}gSettings;
+bool displayEnabled(){return display;}
 bool observerRunning(){return watch;}bool observerLoading(){return loading;}bool observerHasTwo(){return two;}
+namespace GhostVisualProvider {
+struct Query{};bool providerEnabled;unsigned providerCount;SusamuneGhostPoseSample provided[97];
+bool active(){return providerEnabled;}
+bool path(Query,const SusamuneGhostPoseSample *&out,unsigned &count){out=provided;count=providerCount;return providerEnabled;}
+}
+GhostVisualProvider::Query providerQuery(unsigned,s32,bool){return {};}
+s32 sVisualQf;
 namespace GhostScrub {void drawStatus(Menu*){}}
 namespace GhostModel {bool submitted(bool){return true;}}
 void drawMarker(Menu*,int,bool,u8){}bool playbackIsTas(bool=false){return false;}
@@ -70,12 +78,16 @@ API void reset(unsigned count){
  scenes[0]={0,count,0,100,0,2,0,255,0,0,0};scenes[1]=scenes[0];
  sPlayback={poses,scenes,count,1,true};sObserverSecondary={poses,scenes+1,count,1,true};
  for(unsigned i=0;i<count&&i<26974;++i){put(poses[i].x,(int)i%800-400);put(poses[i].y,-64);put(poses[i].z,-800);}
+ GhostVisualProvider::providerEnabled=false;GhostVisualProvider::providerCount=count<97?count:97;
+ if(count>1)for(unsigned i=0;i<GhostVisualProvider::providerCount;++i)
+  GhostVisualProvider::provided[i]=poses[i*(count-1)/(GhostVisualProvider::providerCount-1)];
 }
 API void option(unsigned kind,unsigned value){switch(kind){case 0:watch=value;break;case 1:enabled=value;break;
  case 2:loading=value;break;case 3:sObserverStageReady=value;break;case 4:shown=value;break;
  case 5:two=value;break;case 6:scenes[0].routeArea=value;break;case 7:sObserverPrimarySegment=value;break;
  case 8:matricesReady=value;break;case 9:display=value;break;case 10:sLiveRouteValid=value;break;
- case 11:scenes[0].firstSample=value;break;case 12:scenes[0].sampleCount=value;break;}}
+ case 11:scenes[0].firstSample=value;break;case 12:scenes[0].sampleCount=value;break;
+ case 13:GhostVisualProvider::providerEnabled=value;sPlayback.samples=sObserverSecondary.samples=nullptr;break;}}
 API void pose(unsigned i,int x,int y,int z){put(poses[i].x,x*8);put(poses[i].y,y*8);put(poses[i].z,z*8);}
 API void tick(){calls=bad=colors[0]=colors[1]=0;draw(&menu);}
 API unsigned get(unsigned field){return field==0?calls:field==1?bad:field==2?colors[0]:colors[1];}
@@ -99,6 +111,13 @@ API int endpoint(unsigned field){return ends[field];}
             self.lib.tick()
             self.assertEqual([self.lib.get(i) for i in range(4)],
                              [2 * min(count - 1, 96), 0, min(count - 1, 96), min(count - 1, 96)])
+
+    def test_provider_path_uses_bounded_points_with_no_resident_pose_pointer(self):
+        self.lib.reset(26974)
+        self.lib.option(13,1)
+        self.lib.option(5,1)
+        self.lib.tick()
+        self.assertEqual([self.lib.get(i) for i in range(4)],[192,0,96,96])
 
     def test_path_is_watch_only_and_requires_ready_current_scene(self):
         for kind, value in ((0, 0), (1, 0), (2, 1), (3, 0), (4, 1), (6, 3),

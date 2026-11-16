@@ -17,8 +17,8 @@ BLOCK = 0x20000
 ALLOC = (BLOCK + 8 + 31) & ~31
 FRAME = b'MSL4\0\2\0\0'
 
-EXTRA = '#define TIMEWARP_QUICK_REPLAY 1\n#include "' + (ROOT/'src/state_quick_replay.cpp').as_posix() + '"\n' + r'''
-static_assert(__builtin_offsetof(StateQuickReplay::Plan, comparison) % __alignof__(StateQuickReplay::VerifyCache) == 0,
+EXTRA = '#define TIMEWARP_QUICK_REPLAY 1\n#define SUSAMUNE_SAVE_SPILL_EXPERIMENT 1\n#include "' + (ROOT/'src/state_quick_replay.cpp').as_posix() + '"\n' + r'''
+static_assert(__builtin_offsetof(StateQuickReplay::Plan, comparison) % __alignof__(StateQuickReplay::AdlerCache) == 0,
  "verification cache alignment");
 struct ReplayContext {
  const StateCodec::ReadSpan *blocks;const unsigned *adlers;void *work;
@@ -26,6 +26,9 @@ struct ReplayContext {
 } replayContext;
 static StateQuickReplay::Plan *replayPlan;
 static unsigned char *encodeFault;
+static StateQuickReplay::SpillCache experiment;
+static unsigned experimentPermitted;
+
 static void replayEncode(void*p,unsigned n,StateCodec::PreparedQuickBlock&b){
  ReplayContext&c=*(ReplayContext*)p;++c.calls;
  if(encodeFault){*encodeFault^=1;encodeFault=nullptr;}
@@ -42,19 +45,24 @@ static unsigned replayChecksum(void*p,unsigned n,const StateCodec::PreparedQuick
 }
 static bool replayAdmitted(void*p){return ((ReplayContext*)p)->permitted!=0;}
 #define API extern "C" __declspec(dllexport)
+static bool experimentAdmitted(void*,const void*,unsigned){return experimentPermitted!=0;}
+API void replayExperiment(void*data,unsigned bytes){experiment={data,bytes,nullptr,experimentAdmitted};experimentPermitted=1;}
+API void replayExperimentPermit(unsigned permitted){experimentPermitted=permitted;}
 API unsigned replaySize(){return StateQuickReplay::workspaceSize();}
 API unsigned replayPrepare(StateStore::Store*s,unsigned slot,const StateCodec::ReadSpan*b,
  const unsigned*a,unsigned count,void*tail,unsigned bytes,void*work,unsigned actual,unsigned permitted,unsigned deferred){
  replayContext={};replayContext.blocks=b;replayContext.adlers=a;replayContext.actual=actual;
  replayContext.work=work;replayContext.permitted=permitted;replayContext.deferred=deferred;unsigned raw=0;
- if(actual){StateCodec::WriteSpan destinations[TW_BANK_MAX+2];unsigned n=0;
+ if(actual){StateCodec::WriteSpan destinations[TW_BANK_MAX+3];unsigned n=0;
   for(unsigned i=0;i<s->memory->pool->count;++i)destinations[n++]={s->memory->pool->banks[i],s->memory->pool->sizes[i]};
   if(s->memory->size)destinations[n++]={s->memory->staging,s->memory->size};destinations[n++]={tail,bytes};
+  if(experiment.bytes)destinations[n++]={experiment.data,experiment.bytes};
   if(StateCodec::prepareQuickSource(work,0x4e000,b,count,destinations,n,replayContext.prepared)!=StateCodec::SUCCESS)return 1;
   raw=replayContext.prepared.rawBytes;
  }else for(unsigned i=0;i<count;++i)raw+=TWChunkWord((const unsigned char*)b[i].data);
  StateQuickReplay::Source source={&replayContext,raw,replayEncode,replayAdmitted,deferred?replayChecksum:nullptr};
- return StateQuickReplay::prepare(*s,slot,s->roots[slot],source,tail,bytes,replayPlan);
+ return experiment.bytes ? StateQuickReplay::prepareWithSpill(*s,slot,s->roots[slot],source,tail,bytes,replayPlan,experiment) :
+  StateQuickReplay::prepare(*s,slot,s->roots[slot],source,tail,bytes,replayPlan);
 }
 API void replayInfo(StateStore::Identity*i,unsigned generation){
  const StateCodec::Result r=StateQuickReplay::result(*replayPlan);
@@ -75,6 +83,10 @@ API unsigned replayRepack(StateStore::Store*s,unsigned slot,StateStore::Identity
   StateStore::abort(*s);return 0;}
  *i=next;return 1;
 }
+static unsigned refinementTag(unsigned slot,unsigned packed){return 0xa1190000u^(slot<<24)^packed;}
+API unsigned replayRefine(StateStore::Store*s,unsigned slots,void*w,unsigned wn,void*p,unsigned pn){
+ return StateQuickReplay::refineRetained(*s,slots,w,wn,p,pn,refinementTag);}
+API void replayRoot(StateStore::Store*s,unsigned slot,StateStore::Identity*i){*i=s->roots[slot];}
 API unsigned replayCommit(StateStore::Identity*i){return StateQuickReplay::commit(*replayPlan,*i);}
 API unsigned replayAbort(){return StateQuickReplay::abort(*replayPlan);}
 API void replayPermit(unsigned p){replayContext.permitted=p;}
@@ -108,10 +120,57 @@ class ReplayTests(unittest.TestCase):
             'replayPrepare':[p,u,C.POINTER(Span),C.POINTER(u),u,p,u,p,u,u,u],
             'replayInfo':[C.POINTER(Identity),u], 'replayStat':[u],
             'replayCommit':[C.POINTER(Identity)],'replayAbort':[],
-            'replayPermit':[u],'replayFault':[u],'replayEncodeFault':[p],
+            'replayRefine':[p,u,p,u,p,u],'replayRoot':[p,u,C.POINTER(Identity)],
+            'replayExperiment':[p,u],'replayExperimentPermit':[u],'replayPermit':[u],'replayFault':[u],'replayEncodeFault':[p],
             'replayNormal':[p,C.POINTER(Span),u,p,u,C.POINTER(Result)]
             ,'replayRepack':[p,u,C.POINTER(Identity),p,p]
         }.items(): getattr(cls.codec.lib,name).argtypes=args
+
+    def refine(self, store, mask=6, workspace=None, scratch=None):
+        tail=Guarded(self.codec.lib.replaySize())
+        result=self.codec.lib.replayRefine(store.storage.ptr,mask,
+            self.codec.work.ptr if workspace is None else workspace,0x4e000,
+            tail.ptr if scratch is None else scratch,tail.size)
+        self.assertTrue(tail.guards())
+        if result:
+            for slot in range(3):
+                info=Identity();self.codec.lib.replayRoot(store.storage.ptr,slot,C.byref(info))
+                raw=store.roots[slot][0];store.identities[slot]=info
+                seq,parts=store.borrowed(slot)
+                packed=b''.join(C.string_at(p.data,p.size) for p in parts)
+                self.assertTrue(store.call('su',seq));store.roots[slot]=(raw,packed)
+        return result
+
+    def test_refine_shared_blocks_preserves_raw_generations_and_restore_filters(self):
+        a=(b'abcdefgh'*16384);b=(bytes(range(128))*1024);c=(b'xyz12345'*16384)
+        store=self.seeded([[a],[a,b],[b,c]])
+        generations=[i.generation for i in store.identities]
+        before=[len(r[1]) for r in store.roots]
+        self.assertTrue(self.refine(store))
+        self.assertEqual([i.generation for i in store.identities],generations)
+        self.assertTrue(all(len(r[1])<old for r,old in zip(store.roots,before)))
+        for slot in range(3):store.decode(slot,True)
+        saved=[bytes(i) for i in store.identities]
+        self.assertFalse(self.refine(store));self.assertEqual(saved,[bytes(i) for i in store.identities])
+        store.guards()
+
+    def test_refine_rejects_bad_payload_and_workspace_aliases_before_writes(self):
+        store=self.seeded([[bytes([i+1])*BLOCK] for i in range(3)])
+        states=store.pool.states()
+        self.assertFalse(self.refine(store,workspace=store.storage.ptr))
+        self.assertFalse(self.refine(store,scratch=self.codec.work.ptr))
+        self.assertEqual(store.pool.states(),states)
+        chunk=store.pool.directory.chunks[store.pool.directory.slots[1].ids[0]-1]
+        byte=C.c_ubyte.from_address(store.pool.memory.banks[0]+chunk.offset+16);byte.value^=1
+        damaged=store.pool.states()
+        self.assertFalse(self.refine(store));self.assertEqual(store.pool.states(),damaged)
+        byte.value^=1;store.guards()
+
+    def test_refine_no_gain_keeps_all_roots(self):
+        store=self.seeded()
+        before=store.pool.states()
+        self.assertFalse(self.refine(store));self.assertEqual(store.pool.states(),before)
+        for slot in range(3):store.decode(slot,True)
 
     def seeded(self, roots=None, sizes=None, staging=0):
         if roots is None:
@@ -123,7 +182,9 @@ class ReplayTests(unittest.TestCase):
             self.assertTrue(store.put(slot,raw,packed,100+slot,0))
         return store
 
-    def prepare(self,store,slot,blocks,actual=False,permitted=True,scratch=None,deferred=False):
+    def prepare(self,store,slot,blocks,actual=False,permitted=True,scratch=None,deferred=False,extra=0,spill_address=None):
+        self.spill=Guarded(extra)
+        self.codec.lib.replayExperiment(self.spill.ptr,extra)
         self.tail=Guarded(self.codec.lib.replaySize())
         self.owners=[C.create_string_buffer(b if actual else plain(b)) for b in blocks]
         self.spans=(Span*len(blocks))(*(Span(C.addressof(o),len(b) if actual else len(b)+8)
@@ -135,20 +196,84 @@ class ReplayTests(unittest.TestCase):
             self.codec.lib.replayNormal(self.codec.work.ptr,self.spans,len(blocks),out.ptr,out.size,C.byref(r))
             self.assertEqual(r.status,0);self.packed=out.data()[:r.compressed]
         else:self.packed=FRAME+b''.join(map(plain,blocks))
+        if spill_address is not None:
+            ptr=self.tail.ptr if spill_address=='plan' else C.addressof(self.owners[0]) if spill_address=='source' else spill_address
+            self.codec.lib.replayExperiment(ptr,extra)
         status=self.codec.lib.replayPrepare(store.storage.ptr,slot,self.spans,self.adlers,len(blocks),
             self.tail.ptr,self.tail.size if scratch is None else scratch,self.codec.work.ptr,actual,permitted,deferred)
         if status==0:
             self.info=Identity();self.codec.lib.replayInfo(C.byref(self.info),500+slot)
             self.assertEqual((self.info.raw,self.info.packed,self.info.adler,self.info.checksum),
                 (len(self.raw),len(self.packed),zlib.adler32(self.raw),zlib.crc32(self.packed)))
-        self.assertTrue(self.tail.guards())
+        self.assertTrue(self.tail.guards());self.assertTrue(self.spill.guards())
         return status
 
     def publish(self,store,slot):
         self.assertTrue(self.codec.lib.replayCommit(C.byref(self.info)))
         store.identities[slot]=self.info;store.roots[slot]=(self.raw,self.packed)
         for i in range(3):store.decode(i,True)
-        self.assertTrue(self.tail.guards())
+        self.assertTrue(self.tail.guards());self.assertTrue(self.spill.guards())
+
+    def test_extra_spill_cache_preserves_all_roots_and_avoids_repeat_encoding(self):
+        roots=[[random.Random(1190+i*8+j).randbytes(BLOCK) for j in range(4)] for i in range(3)]
+        incoming=[random.Random(1290+j).randbytes(BLOCK) for j in range(4)]
+        for extra,spills in ((0,4),(500*1024,1)):
+            store=self.seeded(roots)
+            before=store.pool.states()
+            self.assertEqual(self.prepare(store,1,incoming,actual=True,deferred=True,extra=extra),0)
+            self.assertEqual(store.pool.states(),before)
+            self.assertEqual(self.codec.lib.replayStat(1),spills)
+            calls=self.codec.lib.replayStat(4);self.publish(store,1)
+            self.assertEqual(self.codec.lib.replayStat(4)-calls,spills)
+            store.guards()
+
+    def test_extra_spill_corruption_and_owner_loss_fail_before_any_commit(self):
+        for damage in ('payload','owner','spill_owner','plan'):
+            store=self.seeded();before=store.pool.states()
+            self.assertEqual(self.prepare(store,0,[random.Random(1390).randbytes(BLOCK)],actual=True,extra=500*1024),0)
+            payload=C.c_ubyte.from_address(self.spill.ptr+32)
+            if damage=='payload':payload.value^=1
+            elif damage=='owner':self.codec.lib.replayPermit(0)
+            elif damage=='spill_owner':self.codec.lib.replayExperimentPermit(0)
+            else:self.codec.lib.replayFault(0)
+            generations=[store.pool.stage('stGeneration',i) for i in range(3)]
+            self.assertFalse(self.codec.lib.replayCommit(C.byref(self.info)))
+            self.assertEqual(store.pool.states(),before)
+            self.assertEqual([store.pool.stage('stGeneration',i) for i in range(3)],generations)
+            if damage=='payload':payload.value^=1
+            elif damage=='owner':self.codec.lib.replayPermit(1)
+            elif damage=='spill_owner':self.codec.lib.replayExperimentPermit(1)
+            else:self.codec.lib.replayFault(0)
+            self.assertTrue(self.codec.lib.replayAbort())
+            for i in range(3):store.decode(i,True)
+            self.assertTrue(self.tail.guards());self.assertTrue(self.spill.guards())
+
+    def test_extra_spill_requires_bounded_disjoint_owned_span(self):
+        store=self.seeded();before=store.pool.states()
+        raw=random.Random(1490).randbytes(BLOCK)
+        for extra,scratch in ((500*1024+32,None),(33,None),(500*1024,self.codec.lib.replaySize()-32)):
+            self.assertEqual(self.prepare(store,0,[raw],actual=True,extra=extra,scratch=scratch),1)
+            self.assertEqual(store.pool.states(),before)
+
+    def test_extra_spill_aliases_refuse_without_changing_retained_payloads(self):
+        store=self.seeded(staging=ALLOC);before=store.pool.states()
+        raw=random.Random(1491).randbytes(BLOCK)
+        for ptr in (store.pool.memory.banks[0],store.pool.stage_memory.staging,
+                    store.storage.ptr,self.codec.work.ptr,'plan','source'):
+            self.assertNotEqual(self.prepare(store,0,[raw],actual=True,extra=32,spill_address=ptr),0)
+            self.assertEqual(store.pool.states(),before)
+        store.guards()
+
+    def test_extra_spill_exact_duplicate_shares_one_checked_cached_block(self):
+        store=self.seeded([[random.Random(1492+i).randbytes(BLOCK) for i in range(3)],
+                           [b'B'*BLOCK],[b'C'*BLOCK]])
+        raw=random.Random(1499).randbytes(BLOCK)
+        self.assertEqual(self.prepare(store,0,[raw,raw,raw],actual=True,deferred=True,extra=500*1024),0)
+        self.assertEqual(self.codec.lib.replayStat(1),0)
+        calls=self.codec.lib.replayStat(4);self.publish(store,0)
+        self.assertEqual(self.codec.lib.replayStat(4),calls)
+        ids=store.pool.directory.slots[0].ids
+        self.assertEqual(ids[0],ids[1]);self.assertEqual(ids[1],ids[2])
 
     def test_full_pool_each_slot_replays_with_no_candidate_buffer(self):
         for slot in range(3):
@@ -335,7 +460,7 @@ class ReplayTests(unittest.TestCase):
                 self.assertTrue(self.codec.lib.replayAbort())
                 self.assertEqual(store.pool.states(),old)
                 for slot in range(3):store.decode(slot,True)
-                self.assertTrue(self.tail.guards())
+                self.assertTrue(self.tail.guards());self.assertTrue(self.spill.guards())
         store=self.seeded();old=store.pool.states()
         chunk=store.pool.directory.chunks[store.pool.directory.slots[1].ids[0]-1]
         address=store.pool.memory.banks[0]+chunk.offset+16
@@ -345,6 +470,28 @@ class ReplayTests(unittest.TestCase):
         C.c_ubyte.from_address(address).value^=1
         self.assertEqual(store.pool.states(),old)
         for slot in range(3):store.decode(slot,True)
+
+
+class DefaultReplayTests(unittest.TestCase):
+    seeded=ReplayTests.seeded
+    prepare=ReplayTests.prepare
+    publish=ReplayTests.publish
+
+    @classmethod
+    def setUpClass(cls):
+        global EXTRA
+        original=EXTRA
+        EXTRA=EXTRA.replace('#define SUSAMUNE_SAVE_SPILL_EXPERIMENT 1','#define SUSAMUNE_SAVE_SPILL_EXPERIMENT 0')
+        try:ReplayTests.setUpClass.__func__(cls)
+        finally:EXTRA=original
+
+    def test_default_build_refuses_extra_cache_and_retains_normal_save(self):
+        store=self.seeded();before=store.pool.states();raw=random.Random(1501).randbytes(BLOCK)
+        self.assertEqual(self.prepare(store,0,[raw],actual=True,extra=500*1024),1)
+        self.assertEqual(store.pool.states(),before)
+        self.assertEqual(self.prepare(store,0,[raw],actual=True),0)
+        calls=self.codec.lib.replayStat(4);self.publish(store,0)
+        self.assertEqual(self.codec.lib.replayStat(4),calls+1)
 
 
 if __name__=='__main__':unittest.main()

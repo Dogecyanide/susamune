@@ -18,6 +18,10 @@ struct State {
     unsigned char bannedMask, bans, rotation, winner;
     unsigned char roundWins[MaxPlayers], setWins[MaxPlayers];
 };
+inline bool canConfigure(const State &s) {
+    return s.phase == Finished || s.phase == Roaming ||
+        (!s.round && (s.phase == Draft || s.phase == Ready || s.phase == NeedCandidates));
+}
 bool begin(State &, Config, unsigned generation, unsigned short entry);
 Token token(const State &);
 unsigned actor(const State &);
@@ -28,4 +32,5 @@ bool start(State &, unsigned connectedMask);
 bool result(State &, unsigned player, int qf, bool eligible, unsigned generation, unsigned round);
 bool advance(State &);
 void cancel(State &);
+bool endMatch(State &);
 }

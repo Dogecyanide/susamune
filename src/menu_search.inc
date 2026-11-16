@@ -3,15 +3,31 @@
 #define SEARCH_CODE(name) __attribute__((section(".menu_search.text." #name)))
 
 namespace MenuSearch {
-static char lower(char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
+// Fold ASCII and kana as characters: CP932 trail bytes can look like Latin letters.
+SEARCH_CODE(character) static unsigned character(const char *&text) {
+    const unsigned a = (unsigned char)*text++;
+    if (((a >= 0x81 && a <= 0x9f) || (a >= 0xe0 && a <= 0xfc)) && *text) {
+        const unsigned b = (unsigned char)*text++;
+        if (a == 0x82 && b >= 0x9f && b <= 0xf1) return 0x3041 + b - 0x9f;
+        if (a == 0x83 && b >= 0x40 && b <= 0x93 && b != 0x7f)
+            return 0x3041 + b - 0x40 - (b > 0x7f);
+        return 0x10000 | (a << 8) | b;
+    }
+    return a >= 'A' && a <= 'Z' ? a + ('a' - 'A') : a;
+}
 SEARCH_CODE(contains) static bool contains(const char *text, const char *word, unsigned length) {
     if (!text) return false;
-    for (; *text; ++text) {
-        unsigned i = 0;
-        while (i < length && text[i] && lower(text[i]) == lower(word[i])) ++i;
-        if (i == length) return true;
+    for (; *text; character(text)) {
+        const char *candidate = text, *part = word;
+        while (part < word + length && *candidate) {
+            if (character(candidate) != character(part)) break;
+            if (part == word + length) return true;
+        }
     }
-    return false;
+    return !length;
+}
+SEARCH_CODE(labelContains) static bool labelContains(const char *text, const char *word, unsigned length) {
+    return contains(text, word, length) || contains(JapaneseUi::translated(text), word, length);
 }
 SEARCH_CODE(matches) bool matches(const char *query, const Entry &entry) {
     while (*query) {
@@ -19,10 +35,10 @@ SEARCH_CODE(matches) bool matches(const char *query, const Entry &entry) {
         const char *word = query;
         while (static_cast<unsigned char>(*query) > ' ') ++query;
         const unsigned length = query - word;
-        if (length && !contains(entry.label, word, length) &&
-            !contains(entry.section, word, length) &&
-            !contains(entry.group, word, length) &&
-            !contains(entry.page, word, length)) return false;
+        if (length && !labelContains(entry.label, word, length) &&
+            !labelContains(entry.section, word, length) &&
+            !labelContains(entry.group, word, length) &&
+            !labelContains(entry.page, word, length)) return false;
     }
     return true;
 }
@@ -217,14 +233,14 @@ SEARCH_CODE(entry) bool Menu::searchEntry(unsigned index, MenuSearch::Entry &ent
             page = 1;
             entry.page = GhostVisualMenu::kTitle;
             for (row = 0; row < GhostVisualMenu::kCount; ++row)
-                if (offer(Settings::name(GhostVisualMenu::kSettings[row]))) goto found;
+                if (offer(row == GhostVisualMenu::kCount - 1 ? "Extra replay data" : Settings::name(GhostVisualMenu::kSettings[row]))) goto found;
             break;
         case GUIDE:
             for (row = 0; row < 6; ++row)
                 if (offer(GuideTab::pageName(row))) goto found;
             break;
         case DISPLAY:
-            for (row = 0; row < 2; ++row)
+            for (row = 0; row < MenuSoundsDisplayTab::topRows(); ++row)
                 if (offer(MenuSoundsDisplayTab::rowName(row))) goto found;
             break;
 #if TIMEWARP_LIVE_RACING
@@ -279,7 +295,7 @@ found:
             target->mPromptInput.begin(SUSAMUNE_BIND_BUTTON_MASK);
             break;
         }
-        case CAMERA: static_cast<PracticeControlsTab *>(tab)->mSel = row < 0 ? 0 : row; break;
+        case CAMERA: static_cast<PracticeControlsTab *>(tab)->mPath = false; static_cast<PracticeControlsTab *>(tab)->mSel = row < 0 ? 0 : row; break;
         case ILS: {
             auto *target = static_cast<ILingTab *>(tab);
             target->mSel = row < 0 ? 0 : row;
@@ -332,16 +348,17 @@ SEARCH_CODE(available) bool Menu::searchAvailable() const {
 SEARCH_CODE(shortcut) bool Menu::searchShortcut(TMarioGamePad *pad) {
     const u32 search = searchAvailable() ? gBinds.get(BIND_MENU_SEARCH) : 0;
     if (search && gBinds.wasPressedRaw(BIND_MENU_SEARCH)) {
+        sMenuButtons.deferred = 0;
         openSearch();
         return true;
     }
     // A shoulder that starts a search combo changes tabs on release instead,
     // so holding it for the combo does not leave the page first.
     const u32 shoulder = (search & (search - 1)) ? search & (TMarioGamePad::L | TMarioGamePad::R) : 0;
-    const u32 tabs = (pad->mButtons.mRapidInput & ~shoulder) | (pad->mButtons._8 & shoulder);
+    const u32 tabs = sMenuButtons.tabs(TMarioGamePad::L | TMarioGamePad::R, shoulder);
     if (tabs & TMarioGamePad::L) switchTab(-1);
-    if (tabs & TMarioGamePad::R) switchTab(+1);
-    return false;
+    else if (tabs & TMarioGamePad::R) switchTab(+1);
+    return tabs != 0;
 }
 
 SEARCH_CODE(open) void Menu::openSearch() {

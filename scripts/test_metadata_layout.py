@@ -27,7 +27,7 @@ class MetadataLayoutTests(unittest.TestCase):
             "struct LayoutOptions {", "struct HorizontalMetrics {"))
         funcs = "\n".join(function_source(path, s) for s in (
             "inline int clampi(", "LayoutOptions layoutOptions(", "int lineHeight(",
-            "int fieldPrecision(", "const u8 *fieldLabelOffsets(",
+            "int fieldPrecision(", "const char *fieldLabel(",
             "void drawBackground(", "int labelValueOffset(", "void drawStandard(",
             "bool horizontalWrap(",
             "HorizontalMetrics horizontalMetrics(", "void drawStandardHorizontal("))
@@ -45,7 +45,8 @@ typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;
 struct Color { Color(int,int,int,int) {} };
 struct CreationStyle { u16 x,y;u8 scale,textA,bgR,bgG,bgB,bgA,textBrightness,padding; };
 struct MetadataDisplayLiveCfg { unsigned fieldMask,labelMode; };
-struct Values { char text[11][32]; };
+struct Values { char text[19][32]; };
+namespace MetadataValues { const char *label(unsigned,bool) {return "Extra";} }
 static const int kSafeRight=624,kSafeBottom=456;
 extern "C" void *memcpy(void *d,const void *s, unsigned long long n) {
     for(unsigned long long i=0;i<n;i++)((char*)d)[i]=((const char*)s)[i];return d;
@@ -89,7 +90,7 @@ int snprintf(char *out,unsigned cap,const char *,...) {
     __builtin_va_end(a);return n;
 }
 struct Draw { int x,y,width,slot; };
-static Draw calls[32];static int count,bgx,bgy,bgw,bgh;
+static Draw calls[64];static int count,bgx,bgy,bgw,bgh;
 struct Menu {
     static int textWidth(const char *s,int size) {
         int w=0;while(*s) { w+=*s=='1'?size/3:(*s==' '||*s==':'?size/2:size);s++; }return w;
@@ -106,8 +107,8 @@ void drawTextLine(Menu*,const CreationStyle&,const u8(*)[3],int,
 class MetadataDisplay {
 public:
 enum {FIELD_X,FIELD_Y,FIELD_Z,FIELD_ANGLE,FIELD_HSPD,FIELD_VSPD,
-      FIELD_QF,FIELD_CANGLE,FIELD_INVINC,FIELD_GOOP,FIELD_SPIN,FIELD_COUNT};
-CreationStyle mStyle;u8 mTextRgb[SUSAMUNE_METADATA_STYLE_TEXT_SLOTS][3];
+      FIELD_QF,FIELD_CANGLE,FIELD_INVINC,FIELD_GOOP,FIELD_SPIN,FIELD_DIRECTION,FIELD_GAIN,FIELD_HEIGHT,FIELD_ACTION,FIELD_SLOPE,FIELD_FLOOR,FIELD_WATER,FIELD_HOVER,FIELD_COUNT};
+MetadataDisplayLiveCfg mCfg;CreationStyle mStyle;u8 mTextRgb[SUSAMUNE_METADATA_STYLE_TEXT_SLOTS][3];
 u8 mFieldGap,mRowGap,mColumns,mValueGap;bool mCompact,mDirty;
 void clampLayout();
 void adoptStyle(const volatile SusamuneMetadataStyleCfg*);
@@ -124,18 +125,18 @@ void formatValue(char *out,u32 cap,int field,int,const Values &v) {
             '__builtin_va_start(a,cap)', '__builtin_va_start(a,format)')
         more = r'''
 Values editorValues() {
-    Values v={};for(int i=0;i<11;i++)for(int j=0;j<kMaximumValueSlots[i];j++)v.text[i][j]='9';return v;
+    Values v={};for(int i=0;i<19;i++)for(int j=0;j<kMaximumValueSlots[i];j++)v.text[i][j]='9';return v;
 }
 void MetadataDisplay::clampLayout() {
     mFieldGap=(u8)clampi(mFieldGap,0,32);mRowGap=(u8)clampi(mRowGap,0,16);
-    mColumns=(u8)clampi(mColumns,0,11);
+    mColumns=(u8)clampi(mColumns,0,19);
     mValueGap=(u8)clampi(mValueGap,0,32);
 }
 extern "C" __declspec(dllexport) int render(unsigned mask,int editing,int compact,
     int columns,int gap,int rowGap,int size,int x,int y,int digits,
     int valueGap,int vertical,int labels) {
     Values v=editing?editorValues():Values{};
-    if(!editing)for(int i=0;i<11;i++)for(int j=0;j<digits;j++)v.text[i][j]='1';
+    if(!editing)for(int i=0;i<19;i++)for(int j=0;j<digits;j++)v.text[i][j]='1';
     MetadataDisplayLiveCfg cfg={mask,(unsigned)labels};CreationStyle style={};
     style.x=(u16)x;style.y=(u16)y;style.padding=0;style.bgA=255;
     LayoutOptions options=layoutOptions((u8)gap,(u8)rowGap,(u8)columns,compact!=0,(u8)valueGap);
@@ -255,7 +256,7 @@ extern "C" __declspec(dllexport) const char *iniText() {
         compact = self.render(mask=1, editing=1, compact=1)
         stable = self.render(mask=1, editing=1, compact=0)
         self.assertEqual(compact, stable)
-        self.assertEqual(len(compact[0]), 22)
+        self.assertEqual(len(compact[0]), 38)
 
     def test_large_actual_values_still_fit_reserved_cells_and_background(self):
         calls, bg = self.render(compact=0, columns=2, digits=20, size=7)
@@ -283,7 +284,7 @@ extern "C" __declspec(dllexport) const char *iniText() {
             self.assertEqual(list(out[:5]), [32, 16, 11, 1, gap])
         self.assertEqual(list(out[5:]), [0] * 9)
         self.lib.persist(0x7c00, 255, 255, 255, 255, 255, out)
-        self.assertEqual(list(out[:5]), [32, 16, 11, 1, 32])
+        self.assertEqual(list(out[:5]), [32, 16, 19, 1, 32])
 
 
     def test_value_gap_ini_roundtrip_keeps_existing_controls(self):
@@ -293,7 +294,7 @@ extern "C" __declspec(dllexport) const char *iniText() {
                     self.lib.iniReset(region)
                     fields = {b'field_gap': b'12', b'row_gap': b'4', b'columns': b'3',
                               b'compact': b'1', b'value_gap': str(gap).encode(),
-                              b'char_7_rgb': b'17,23,241'}
+                              b'char_7_rgb': b'17,23,241', b'extra_fields': b'173'}
                     for key, value in fields.items():
                         self.lib.iniKey(key, value)
                     first = self.lib.iniText()

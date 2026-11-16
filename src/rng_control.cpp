@@ -5,6 +5,9 @@
 
 #include "Dolphin/types.h"
 #include "SMS/System/MarDirector.hxx"
+#include "SMS/System/Application.hxx"
+#include "SMS/MapObj/MapObjBase.hxx"
+#include "susamune/retail_input.hxx"
 #include "susamune/addresses.hxx"
 #include "susamune/features.hxx"
 #include "susamune/iling.hxx"
@@ -105,6 +108,38 @@ int craneIndex(void *crane, bool upDown) {
     return -1;
 }
 
+bool traceCraneSpan(const void *p, unsigned bytes) {
+    const __UINTPTR_TYPE__ address = reinterpret_cast<__UINTPTR_TYPE__>(p);
+    return address >= 0x80000000u && address <= 0x81800000u - bytes;
+}
+
+bool savedCraneIdentity(const void *actor, unsigned index) {
+    if (index >= kCraneCount || (reinterpret_cast<__UINTPTR_TYPE__>(actor) & 3u) ||
+        !traceCraneSpan(actor, index < kRotYCount ? 0x14c : 0x148)) return false;
+    const u8 *bytes = static_cast<const u8 *>(actor);
+    const u32 *words = static_cast<const u32 *>(actor);
+    const u32 vtable = (index < kRotYCount ? kRotYControlSlot : kUpDownControlSlot) - 0xc8u;
+    if (words[0] != vtable || *reinterpret_cast<const u16 *>(bytes + 8) != kCraneKeys[index]) return false;
+    const char *name = reinterpret_cast<const char *>(static_cast<__UINTPTR_TYPE__>(words[1]));
+    return traceCraneSpan(name, 16) && sameText(name, kCraneNames[index]);
+}
+
+void clearCraneCache() {
+    for (unsigned i = 0; i < kCraneCount; ++i) {
+        sCranes[i].actor = nullptr;
+        sCranes[i].retailSpeed = 0.0f;
+        sCranes[i].roll = kNoRoll;
+        sCranes[i].speedCaptured = false;
+    }
+}
+
+u32 craneStateHash(const u32 *words) {
+    const u8 *bytes = reinterpret_cast<const u8 *>(words);
+    u32 hash = 2166136261u;
+    for (unsigned i = 0; i < 17 * sizeof(u32); ++i) hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+
 u8 cranePercent(u16 roll) {
     u8 choice = gSettings.get(SETTING_RICCO_CRANE_SPEED);
     if (choice < 1 || choice > 5) return 0;
@@ -172,12 +207,7 @@ void rngControlInit() {
 void rngControlBeforeStageSetup() {
     sKingBooSlot = nullptr;
     sKingBooRestorePending = false;
-    for (int i = 0; i < kCraneCount; i++) {
-        sCranes[i].actor = nullptr;
-        sCranes[i].retailSpeed = 0.0f;
-        sCranes[i].roll = kNoRoll;
-        sCranes[i].speedCaptured = false;
-    }
+    clearCraneCache();
 }
 
 void rngControlOnSavestateLoaded() {
@@ -186,8 +216,101 @@ void rngControlOnSavestateLoaded() {
         gSettings.getBool(SETTING_KING_BOO_ALWAYS_FRUIT);
 }
 
+bool rngControlValidateSavestate(const u32 *words, unsigned count) {
+    static_assert(2 + 3 * kCraneCount + 1 == RNG_CONTROL_SAVESTATE_DATA_WORDS, "crane state rows");
+    if (!words || count < RNG_CONTROL_SAVESTATE_DATA_WORDS || count > RNG_CONTROL_SAVESTATE_WORDS || words[0] != RNG_CONTROL_SAVESTATE_MAGIC ||
+        words[1] != 1 || words[17] != craneStateHash(words)) return false;
+    for (unsigned i = RNG_CONTROL_SAVESTATE_DATA_WORDS; i < count; ++i) if (words[i]) return false;
+    for (unsigned i = 0; i < kCraneCount; ++i) {
+        const u32 *row = words + 2 + i * 3;
+        if (!row[0]) { if (row[1] || row[2]) return false; continue; }
+        if ((row[0] & 3u) || !traceCraneSpan(reinterpret_cast<const void *>(static_cast<__UINTPTR_TYPE__>(row[0])),
+                i < kRotYCount ? 0x14c : 0x148) || (row[2] & ~0x1ffffu) || (row[2] & 0xffffu) >= 0x8000u ||
+            (row[2] & 0x10000u ? (row[1] & 0x7f800000u) == 0x7f800000u : row[1] != 0) ||
+            (i >= kRotYCount && (row[2] & 0x10000u))) return false;
+    }
+    return true;
+}
+
+bool rngControlCaptureSavestate(u32 *words, unsigned count) {
+    if (!words || count < RNG_CONTROL_SAVESTATE_DATA_WORDS || count > RNG_CONTROL_SAVESTATE_WORDS) return false;
+    for (unsigned i = 0; i < count; ++i) words[i] = 0;
+    words[0] = RNG_CONTROL_SAVESTATE_MAGIC; words[1] = 1;
+    for (unsigned i = 0; i < kCraneCount; ++i) {
+        const CraneRoll &record = sCranes[i];
+        if (!record.actor) continue;
+        if (!inRicco() || !savedCraneIdentity(record.actor, i) || record.roll >= 0x8000u ||
+            (i >= kRotYCount && record.speedCaptured)) return false;
+        u32 *row = words + 2 + i * 3;
+        row[0] = static_cast<u32>(reinterpret_cast<__UINTPTR_TYPE__>(record.actor));
+        if (record.speedCaptured) __builtin_memcpy(row + 1, &record.retailSpeed, sizeof(u32));
+        row[2] = record.roll | (record.speedCaptured ? 0x10000u : 0u);
+    }
+    words[17] = craneStateHash(words);
+    return rngControlValidateSavestate(words, count);
+}
+
+bool rngControlRestoreSavestate(const u32 *words, unsigned count) {
+    if (!rngControlValidateSavestate(words, count)) { clearCraneCache(); return false; }
+    for (unsigned i = 0; i < kCraneCount; ++i) {
+        const u32 actor = words[2 + i * 3];
+        if (actor && (!inRicco() || !savedCraneIdentity(reinterpret_cast<const void *>(static_cast<__UINTPTR_TYPE__>(actor)), i))) {
+            clearCraneCache(); return false;
+        }
+    }
+    // Replace every row only after all restored owners have been checked.
+    clearCraneCache();
+    for (unsigned i = 0; i < kCraneCount; ++i) {
+        const u32 *row = words + 2 + i * 3;
+        if (!row[0]) continue;
+        CraneRoll &record = sCranes[i];
+        record.actor = reinterpret_cast<void *>(static_cast<__UINTPTR_TYPE__>(row[0]));
+        __builtin_memcpy(&record.retailSpeed, row + 1, sizeof(u32));
+        record.roll = row[2] & 0xffffu; record.speedCaptured = (row[2] & 0x10000u) != 0;
+    }
+    return true;
+}
+
+void rngControlRestoreLegacySavestate() { clearCraneCache(); }
+bool rngControlSavestateRequired() { return inRicco(); }
+
 void rngControlApply() {
     applyPeteyTornadoControl();
+}
+
+unsigned rngControlTraceCrane(unsigned index, unsigned *out, unsigned capacity) {
+    static_assert(__builtin_offsetof(TMapObjBase, mState) == 0xfc &&
+        __builtin_offsetof(TMapObjBase, mStateTimer) == 0x104 &&
+        __builtin_offsetof(TMapObjBase, mInitialPosition) == 0x10c &&
+        __builtin_offsetof(TMapObjBase, mInitialRotation) == 0x118,
+        "native crane base fields");
+    if (!out || capacity < RNG_TRACE_CRANE_WORDS || index >= kCraneCount) return 0;
+    const TMarDirector *director = RetailInput::stageDirector();
+    if (!director || !director->_260 || director->mAreaID != kRiccoArea ||
+        !OSIsThreadTerminated(&gSetupThread)) return 0;
+    const CraneRoll &record = sCranes[index];
+    const __UINTPTR_TYPE__ address = reinterpret_cast<__UINTPTR_TYPE__>(record.actor);
+    // Retail factories allocate 0x14c (rotating) and 0x148 (vertical).
+    if ((address & 3u) || !traceCraneSpan(record.actor, 0x148) || record.roll >= 0x8000u) return 0;
+    const u8 *bytes = static_cast<const u8 *>(record.actor);
+    const u32 *words = static_cast<const u32 *>(record.actor);
+    const bool vertical = index >= kRotYCount;
+    const u32 vtable = (vertical ? kUpDownControlSlot : kRotYControlSlot) - 0xc8u;
+    if (words[0] != vtable || *reinterpret_cast<const u16 *>(bytes + 8) != kCraneKeys[index]) return 0;
+    const char *name = reinterpret_cast<const char *>(words[1]);
+    if (!traceCraneSpan(name, 16) || !sameText(name, kCraneNames[index])) return 0;
+    out[0] = index; out[1] = static_cast<unsigned>(address); out[2] = record.roll;
+    out[3] = (vertical ? 1u : 0u) | (record.speedCaptured ? 2u : 0u);
+    out[4] = *reinterpret_cast<const u16 *>(bytes + 0xfc); out[5] = words[0x104 / 4];
+    __builtin_memcpy(out + 6, bytes + 0x10, 12);
+    __builtin_memcpy(out + 9, bytes + 0x30, 12);
+    __builtin_memcpy(out + 12, bytes + 0x10c, 12);
+    __builtin_memcpy(out + 15, bytes + 0x118, 12);
+    __builtin_memcpy(out + 18, bytes + 0x138, 16);
+    out[22] = *reinterpret_cast<volatile const u32 *>(kUpDownRetailSpeed);
+    out[23] = 0;
+    if (record.speedCaptured) __builtin_memcpy(out + 23, &record.retailSpeed, 4);
+    return RNG_TRACE_CRANE_WORDS;
 }
 
 

@@ -29,6 +29,15 @@ STAGE = shared_define("SUSAMUNE_MEM2_MODBIN_PPC_BASE", "mem2_map.h")
 CEILING = shared_define("SUSAMUNE_MOD_STAGED_FILE_MAX_SIZE", "mem2_map.h")
 JP_CEILING = CEILING
 BLOCK = 0x20000
+BOOT_BLOCK = 0x80000
+
+
+def menu_capacity(flags, target):
+    environment="DOLPHIN" if flags else "CONSOLE"
+    for prefix in ("SUSAMUNE_MENU_CODE_", "SUSAMUNE_UPPER_MENU_CODE_", "SUSAMUNE_TRACE_MENU_CODE_"):
+        if target==shared_define(prefix+environment+"_PPC_BASE", "mem2_map.h"):
+            return shared_define(prefix+"SIZE", "mem2_map.h")
+    return 0
 
 
 def align32(value):
@@ -104,13 +113,15 @@ def _lz4(raw, depth=1, lazy=False):
     return bytes(output)
 
 
-def encode_quick(raw):
+def _encode_quick(raw, block_size=BLOCK):
     raw = bytes(raw)
+    if block_size not in (BLOCK, BOOT_BLOCK):
+        raise ValueError("Unsupported boot block size")
     if not raw:
         raise ValueError("Quick requires nonempty initialized data")
-    output = bytearray(struct.pack(">2I", 0x4D534C34, BLOCK))
-    for start in range(0, len(raw), BLOCK):
-        block = raw[start:start + BLOCK]
+    output = bytearray(struct.pack(">2I", 0x4D534C34, block_size))
+    for start in range(0, len(raw), block_size):
+        block = raw[start:start + block_size]
         # A longer local match can hurt later choices; retain the smaller stream.
         encoded = min((_lz4(block), _lz4(block, 4), _lz4(block, 32),
                        _lz4(block, 512, lazy=True),
@@ -126,9 +137,36 @@ def encode_quick(raw):
     return result
 
 
+def branch_filter(raw, decode=False):
+    result = bytearray(raw)
+    for offset in range(0, len(result) - 3, 4):
+        word = struct.unpack_from(">I", result, offset)[0]
+        if word & 0xFC000003 == 0x48000001:
+            address = word - offset if decode else word + offset
+            struct.pack_into(">I", result, offset, (word & 0xFC000003) | (address & 0x03FFFFFC))
+    return bytes(result)
+
+
+def encode_quick(raw):
+    raw = bytes(raw)
+    candidates = []
+    for block_size in ((BLOCK, BOOT_BLOCK) if len(raw) > BLOCK else (BLOCK,)):
+        candidates.append(_encode_quick(raw, block_size))
+        if not len(raw) & 3:
+            filtered = bytearray(_encode_quick(branch_filter(raw), block_size))
+            filtered[:4] = struct.pack(">I", 0x4D534C35)
+            candidates.append(bytes(filtered))
+    result = min(candidates, key=len)
+    if decode_quick(result, len(raw)) != raw:
+        raise ValueError("Boot compression differs from the initialized image")
+    return result
+
+
 def decode_quick(packed, expected):
-    if len(packed) < 8 or packed[:8] != struct.pack(">2I", 0x4D534C34, BLOCK):
+    if (len(packed) < 8 or packed[:4] not in (b"MSL4", b"MSL5") or
+            struct.unpack_from(">I", packed, 4)[0] not in (BLOCK, BOOT_BLOCK) or (packed[:4] == b"MSL5" and expected & 3)):
         raise ValueError("Invalid Quick header")
+    block_size = struct.unpack_from(">I", packed, 4)[0]
     cursor, result = 8, bytearray()
     while len(result) < expected:
         if len(packed) - cursor < 8:
@@ -136,7 +174,7 @@ def decode_quick(packed, expected):
         raw, size = struct.unpack_from(">2I", packed, cursor)
         cursor += 8
         plain, size = bool(size & 0x80000000), size & 0x7FFFFFFF
-        if (raw != min(BLOCK, expected - len(result)) or not size or
+        if (raw != min(block_size, expected - len(result)) or not size or
                 (size != raw if plain else size >= raw) or size > len(packed) - cursor):
             raise ValueError("Invalid Quick block lengths")
         payload = packed[cursor:cursor + size]
@@ -184,7 +222,7 @@ def decode_quick(packed, expected):
         result.extend(block)
     if cursor != len(packed):
         raise ValueError("Trailing Quick data")
-    return bytes(result)
+    return branch_filter(result, True) if packed[:4] == b"MSL5" else bytes(result)
 
 
 def build_mod_v4(game, segments, writes, *, flags=0, cold=None, cold_vma=None, menu_code=None, menu_vma=None):
@@ -228,9 +266,8 @@ def build_mod_v4(game, segments, writes, *, flags=0, cold=None, cold_vma=None, m
             append(index, offset, len(raw), memory, packed, QUICK)
     if menu_code is not None:
         raw = bytes(menu_code)
-        expected = shared_define("SUSAMUNE_MENU_CODE_" + ("DOLPHIN" if flags else "CONSOLE") +
-                                 "_PPC_BASE", "mem2_map.h")
-        if not raw or len(raw) & 31 or len(raw) > shared_define("SUSAMUNE_MENU_CODE_SIZE", "mem2_map.h") or menu_vma != expected:
+        expected = menu_vma
+        if not raw or len(raw) & 31 or not menu_capacity(flags,menu_vma) or len(raw) > menu_capacity(flags,menu_vma):
             raise ValueError("Menu code exceeds its fixed presentation span")
         packed = encode_quick(raw)
         if decode_quick(packed, len(raw)) != raw:
@@ -250,9 +287,10 @@ def build_mod_v4(game, segments, writes, *, flags=0, cold=None, cold_vma=None, m
         struct.pack_into(">8I", body, i * DESCRIPTOR, *descriptor)
     header = bytearray(struct.pack(">16I", MAGIC, VERSION, game, BASES[game], code_size,
                                   len(writes), ARENA, hot_memory, count,
-                                  zlib.crc32(body), 0, flags, 0, 0, 0, 0))
+                                  zlib.crc32(body), 0, flags, shared_define("NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID", "mem2_map.h") if not flags else 0, 0, 0, 0))
     struct.pack_into(">I", header, 40, zlib.crc32(header))
     result = bytes(header + body)
-    if len(result) > (JP_CEILING if game == GAMES["jp"] else CEILING):
-        raise ValueError("container exceeds reset-safe regional ceiling")
+    ceiling = JP_CEILING if game == GAMES["jp"] else CEILING
+    if len(result) > ceiling:
+        raise ValueError(f"container is {len(result)} bytes, over reset-safe regional ceiling {ceiling}")
     return result

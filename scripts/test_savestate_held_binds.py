@@ -25,7 +25,9 @@ enum {SETTING_ATTEMPT_COUNTER, SETTING_ATTEMPT_IN_STAGE_CONTROLS};
 struct Settings {bool counter; bool getBool(int){return counter;}} gSettings;
 static u32 saves,loads,cycles,holdMask,savedSlot;
 static bool sAwaitingLoadApproval;
-static u32 sLoadSlot,sPendingSlot,sPendingGeneration,sSelectedSD,sPendingSD;
+static u32 sLoadSlot,sPendingSlot,sPendingGeneration;
+static struct {u32 id;}sSelectedSD,sPendingSD;
+static int prepareRamCheckpointLoad(u32,u32){return 1;}
 namespace PracticeSession {void armLoadHold(u32 m){holdMask=m;}void cancelLoadHold(){holdMask=0;}}
 namespace WarpWheel {
 bool prompt,approved;
@@ -39,7 +41,7 @@ public:
  bool mLoadPending;u32 mLoadWaitFrames;
  bool diskBusy(){return false;}
  struct Info{u32 generation;};Info slotInfo(u32){return {123};}
- void saveState(){++saves;}void saveSlotExplicit(u32 slot){++saves;savedSlot=slot;}
+ void saveState(){++saves;}void saveSlotManual(u32 slot){++saves;savedSlot=slot;}
  void cycleSlot(){++cycles;}void cycleSaveSlot(){++cycles;}void cycleLoadSlot(){++cycles;}
  void updateHook();
 } manager,*gSavestateMgr=&manager;
@@ -51,7 +53,7 @@ public:
 API void reset(){
  saves=loads=cycles=holdMask=0;savedSlot=99;sAwaitingLoadApproval=false;
  manager.mLoadPending=false;manager.mLoadWaitFrames=0;
- sLoadSlot=sPendingSlot=sPendingGeneration=sSelectedSD=sPendingSD=0;
+ sLoadSlot=sPendingSlot=sPendingGeneration=0;sSelectedSD={};sPendingSD={};
  WarpWheel::prompt=WarpWheel::approved=gSettings.counter=false;
  localBinds.mHeld=localBinds.mPrevHeld=0;localBinds.mRecState=0;
  localBinds.mRecSilent=true; // e.g. the preceding Step, while A remains held

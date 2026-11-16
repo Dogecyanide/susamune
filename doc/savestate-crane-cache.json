@@ -1,0 +1,51 @@
+{
+  "name": "Mod-owned crane cache in opaque savestate metadata",
+  "schema": 1,
+  "scope": "Restores the original RNG rolls and captured retail rotation speed which live outside the retail heap snapshot. Native actors are restored by the existing codec.",
+  "placement": {
+    "container": "Ghost::SavestateData (128 native u32 words, unchanged512 bytes)",
+    "first_word": 106,
+    "word_count": 18,
+    "bytes": 72,
+    "ends_before_word": 124,
+    "legacy_saved_prefix_bytes": 268,
+    "legacy_prefix_limit_bytes": 424,
+    "context_words": [
+      124,
+      125
+    ],
+    "camera_words": [
+      126,
+      127
+    ],
+    "stored_state_size_changed": false,
+    "snapshot_version_changed": false,
+    "extra_memory_reservation": 0
+  },
+  "payload": {
+    "word0": "CRNG0x43524e47",
+    "word1": "schema1",
+    "words2_to16": "Five fixed-order triples: actor address, captured retail-speed f32 bits (zero if uncaptured), roll | (speedCaptured <<16). Empty triples are canonical zero.",
+    "word17": "FNV1a of preceding68 bytes; existing StoredState.metadataTag also covers the entire Ghost metadata block."
+  },
+  "validation": [
+    "Before any game memory restore: tag/schema/hash/reserved bits/empty rows/bounded aligned pointers/finite captured speed. No actor dereference.",
+    "After heap restore: verify all nonempty actors against expected region-specific vtable, name and key, then replace all five cache rows atomically. Any rejection clears every row, preventing reuse of a later reset cache.",
+    "Control wrappers and retail rand call counts are unchanged. No RNG roll is reconstructed from a customized native speed."
+  ],
+  "legacy": {
+    "zero_or_sgpf_tail_zero": "Remains structurally readable. Native actors remain untouched and unknown mod caches clear.",
+    "ricco_manual_ram": "Valid practice RAM restores immediately; recording continuation is unavailable and the user is told to reset for crane controls.",
+    "ricco_direct_or_sd": "Refuse missing controller metadata before copying rather than claim precise controller restoration. The archived file is preserved.",
+    "other_scenes": "Missing crane metadata is harmless outside the crane scene.",
+    "older_builds": "Older zero-prefix readers reject the nonzero optional tail. Older SGPF readers may ignore historically unused padding, so do not claim old implementations apply the new cache."
+  },
+  "reason": "A native Ricco replay isolated one actor whose rotating speed was restored from snapshotA then overwritten with cached resetB values. Restoring this cache fixes source gameplay state; replay witness validation remains strict.",
+  "tests": [
+    "scripts/test_rng_trace_crane.py",
+    "scripts/test_rng_control_runtime.py",
+    "scripts/test_ghost_rng_tail.py",
+    "scripts/test_savestate_queue.py",
+    "Native manual RAM capture -> reset -> restore -> full WorldWatch"
+  ]
+}

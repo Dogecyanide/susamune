@@ -12,3 +12,5 @@ syms.log
 tools/dolphin_online/connection-logs/
 # Generated mod-injection header (build artifact, lives in build/ at build time)
 launcher/kernel/susamune_inject.h
+# Local Delfino Ghosts account journals must never be shared.
+**/delfino-link-*.bin*

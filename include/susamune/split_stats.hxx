@@ -198,6 +198,7 @@ bool onRouteEvent(u16 routeId, u8 eventId, s32 absoluteQf);
 bool routeActive(u16 routeId);
 
 bool supportsEntry(int entry);
+int entryForRoute(u16 route);
 bool summary(int entry, Summary *out);
 DeleteGoldResult deleteGold(int entry, u8 localSegment);
 

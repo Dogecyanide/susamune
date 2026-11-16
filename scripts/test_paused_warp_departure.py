@@ -19,8 +19,15 @@ class PausedWarpTests(unittest.TestCase):
         code = r'''
 using u8=unsigned char;
 int events, moves; bool ready, pending, busy;
+int traceGate;bool traceEnabled;
+struct Dest{unsigned char area,episode;};Dest sDest;bool sArmStartedIL;
+namespace GhostWorldRuntime {bool active(){return false;}bool permitsStartWarp(unsigned){return false;}void stop(){}}
+namespace GhostRecording {enum Gate{DEPART_READY,DEPART_WAIT,DEPART_REFUSED};bool enabled(){return traceEnabled;}const char*statusText(){return "test";}}
+namespace GhostDeparture {GhostRecording::Gate begin(unsigned,bool){return static_cast<GhostRecording::Gate>(traceGate);}}
+extern bool sArmed;void cancelArmedCourseWarp(){sArmed=false;}
+struct Menu{void toast(const char*){}};Menu*gMenu=nullptr;
 void event(int value){events=events*10+value;}
-struct TPauseMenu2{void setDrawEnd(){event(2);}}pause;
+struct TPauseMenu2{enum{MENU_OPEN=1,MENU_SAVING=3};int mState;void setDrawEnd(){event(2);}}pause;
 struct TMarDirector {
     enum{STATE_INTRO_PLAYING=1,STATE_GAME_STARTING=2,STATE_NORMAL=4,STATE_PAUSE_MENU=5,STATE_DEATH=7,STATE_STAGE_EXIT=9,STATE_SAVE_CARD=11};
     u8 mCurState;int _260;TPauseMenu2 *mPauseMenu;
@@ -47,7 +54,7 @@ namespace LevelWarp {
 #define API extern "C" __declspec(dllexport)
 API void reset(int state){
     director={(u8)state,1,&pause};events=moves=0;
-    ready=sArmed=true;pending=busy=sWaitForSave=false;sSaveIdleFrames=0;
+    ready=sArmed=true;pending=busy=sWaitForSave=false;traceEnabled=false;traceGate=0;sSaveIdleFrames=0;
     sQueuedSessionDeathRestart=sWaitForRetailDeathTail=false;
 }
 API void set(int option,int value){
@@ -57,17 +64,25 @@ API void set(int option,int value){
     case 7:sWaitForRetailDeathTail=value;break;case 8:director.mPauseMenu=value?&pause:nullptr;}
 }
 API int tick(){return servicePausedWarp(&director);}
+API void recordingGate(int value){traceEnabled=true;traceGate=value;}
 API int value(int id){return id==0?director.mCurState:id==1?events:id==2?moves:sArmed;}
 API int nullDirector(){return servicePausedWarp(nullptr);}
 API int onlineGate(int fault){
- director={4,1,&pause};fader.mFadeStatus=1;gpApplication={&director,&fader};gpMarDirector=&director;
+ pause.mState=0;director={4,1,&pause};fader.mFadeStatus=1;gpApplication={&director,&fader};gpMarDirector=&director;
  sArmed=sTailPending=sPendingTitleExit=sHoldNaturalDeparture=busy=false;sDeferredRestart=sHeldSessionDeparture=0;
  switch(fault){case 1:gpMarDirector=nullptr;break;case 2:gpApplication.mDirector=nullptr;break;
  case 3:director._260=0;break;case 4:director.mCurState=1;break;case 5:director.mCurState=9;break;
  case 6:director.mCurState=11;break;case 7:fader.mFadeStatus=3;break;case 8:gpApplication.mFader=nullptr;break;
  case 9:sArmed=true;break;case 10:sTailPending=true;break;case 11:busy=true;break;
  case 12:sPendingTitleExit=true;break;case 13:sHoldNaturalDeparture=true;break;
- case 14:sDeferredRestart=1;break;case 15:sHeldSessionDeparture=1;break;}
+ case 14:sDeferredRestart=1;break;case 15:sHeldSessionDeparture=1;break;
+ case 16:director.mCurState=5;pause.mState=3;break;
+ case 17:director.mCurState=5;pause.mState=1;break;case 18:director.mCurState=11;busy=true;break;
+ case 19:director.mCurState=5;pause.mState=3;busy=true;break;
+ case 20:director.mCurState=5;pause.mState=1;busy=true;break;
+ case 21:director.mCurState=5;director.mPauseMenu=nullptr;break;
+ case 22:director.mCurState=5;pause.mState=0;break;
+ case 23:director.mCurState=5;pause.mState=4;break;}
  return LevelWarp::readyForOnlineRace();
 }
 '''
@@ -82,10 +97,29 @@ API int onlineGate(int fault){
 
     def test_online_requires_loaded_stable_scene_without_pending_work(self):
         self.assertEqual(self.lib.onlineGate(0), 1)
-        for fault in range(1, 16):
+        for fault in [i for i in range(1, 24) if i not in (6, 16, 17)]:
             with self.subTest(fault=fault):
                 self.assertEqual(self.lib.onlineGate(fault), 0)
         self.assertEqual(self.lib.onlineGate(0), 1)
+
+    def test_save_box_is_safe_only_while_card_is_idle(self):
+        for fault in (6, 16):
+            self.assertEqual(self.lib.onlineGate(fault), 1)
+        for fault in (18, 19):
+            self.assertEqual(self.lib.onlineGate(fault), 0)
+
+    def test_online_accepts_open_pause_but_not_closing_menu_or_card_write(self):
+        self.assertEqual(self.lib.onlineGate(17),1)
+        for fault in (20,21,22,23):self.assertEqual(self.lib.onlineGate(fault),0)
+
+    def test_recording_io_starts_the_fade_without_advancing_new_stage_setup(self):
+        for state in (5,11):
+            self.lib.reset(state);self.lib.recordingGate(1)
+            self.assertEqual(self.lib.tick(),1)
+            self.assertEqual(self.lib.value(0),9)
+            self.assertEqual(self.lib.value(2),1)
+        self.lib.reset(5);self.lib.recordingGate(2)
+        self.assertEqual(self.lib.tick(),0);self.assertEqual(self.lib.value(2),0)
 
     def test_pause_closes_retail_ui_and_transitions_once(self):
         self.lib.reset(5)

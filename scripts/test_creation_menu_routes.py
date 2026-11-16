@@ -168,17 +168,17 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
         return count, list(out)
 
     def test_eighteen_item_pages_expose_every_action_once_and_no_headers(self):
-        self.assertEqual(self.lib.pageCount(), 18)
-        ranges = [range(self.lib.range(p, 0), self.lib.range(p, 1)) for p in range(18)]
+        self.assertEqual(self.lib.pageCount(), 24)
+        ranges = [range(self.lib.range(p, 0), self.lib.range(p, 1)) for p in range(24)]
         self.assertEqual([len(rows) for rows in ranges],
-                         [3, 7, 7, 21, 9, 3, 3, 3] + [2] * 8 + [10, 2])
+                         [3, 7, 7, 8, 9, 3, 3, 3] + [2] * 8 + [10, 2, 6, 5, 3, 2, 3, 8])
         exposed = [row for rows in ranges for row in rows]
         headers = {self.lib.headerRow(i) for i in range(6)}
         self.assertEqual(len(exposed), len(set(exposed)))
         self.assertEqual(set(exposed), set(range(self.lib.rowCount())) - headers)
         for page, rows in enumerate(ranges):
             for local in range(len(rows)):
-                self.assertEqual(self.route(page, local)[0], 1, (page, local))
+                self.assertEqual(self.route(page, local)[0], 0 if page==3 and local>=2 else 1, (page, local))
 
     def test_breakdown_toggle_and_editor_are_adjacent(self):
         self.assertEqual(self.route(17, 0)[1][0], 5)
@@ -202,9 +202,10 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
             self.assertEqual(self.route(page, 1)[1][:2], [4, row])
 
     def test_metadata_visibility_and_style_share_page_with_all_twenty_one_actions(self):
-        expected = [0, 14, 13, 20, 16, 19, 17, 18] + list(range(1, 13)) + [15]
-        for local, row in enumerate(expected):
-            self.assertEqual(self.route(3, local)[1][:3], [3, row, 1])
+        groups=[[0,14],[6,7,21,22,24,12],[2,3,4,5,9],[23,25,26],[27,28],[8,10,11],[13,20,16,19,17,18,1,15]]
+        for page,expected in zip([3,18,19,20,21,22,23],groups):
+            for local,row in enumerate(expected):
+                self.assertEqual(self.route(page,local)[1][:3],[3,row,1])
 
     def test_display_visibility_and_style_are_adjacent(self):
         for page, local, owner, action in ((2, 0, 2, 0), (2, 1, 2, 4),
@@ -219,21 +220,21 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
     def test_x_shines_display_options_without_toggling_or_opening_editor(self):
         for page, local in ((0, 0), (0, 2), (1, 0), (1, 3), (1, 6),
                             (2, 0), (2, 2), (2, 3), (2, 4), (2, 6), (3, 0),
-                            (3, 2), (3, 4), (3, 15), (3, 17), (3, 5),
+                            (23, 0), (23, 2), (19, 0), (19, 2), (23, 3),
                             (5, 2), (6, 2), (7, 2), (8, 0), (11, 0),
                             (16, 6), (16, 9), (17, 0)):
             count, out = self.route(page, local, held=0x400)
             self.assertEqual((count, out[0]), (1, 6), (page, local))
-        for page, local in ((0, 1), (1, 1), (2, 1), (2, 5), (3, 1), (3, 20),
+        for page, local in ((0, 1), (1, 1), (2, 1), (2, 5), (3, 1), (23, 7),
                             (4, 7), (5, 0), (5, 1), (8, 1), (16, 0), (17, 1)):
             self.assertEqual(self.route(page, local, held=0x400)[0], 0, (page, local))
 
     def test_new_metadata_geometry_has_bidirectional_controls_without_opening_editors(self):
-        for local, row in ((3, 20), (4, 16), (5, 19), (6, 17), (7, 18)):
+        for local, row in ((1, 20), (2, 16), (3, 19), (4, 17), (5, 18)):
             for nav, direction in ((4, -1), (8, 1)):
-                self.assertEqual(self.route(3, local, nav, 0), (1, [3, row, direction, local]))
-        for local in (0, 20):
-            self.assertEqual(self.route(3, local, 4, 0)[0], 0)
+                self.assertEqual(self.route(23, local, nav, 0), (1, [3, row, direction, local]))
+        for local in (0, 7):
+            self.assertEqual(self.route(23, local, 4, 0)[0], 0)
 
     def test_navigation_wraps_within_each_item_page(self):
         for page in range(18):
@@ -248,7 +249,7 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
             self.assertEqual(list(out[:3]), [0, page + 1, 1])
             group = self.lib.pageGroup(page)
             items = [self.lib.groupPage(group, i) for i in range(self.lib.groupItems(group))]
-            self.assertEqual(list(out[5:]), [19 + group, items.index(page), 1])
+            self.assertEqual(list(out[5:]), [25 + group, items.index(page), 1])
 
     def test_root_groups_do_not_toggle_or_edit_and_navigation_wraps(self):
         out = (C.c_int * 2)()
@@ -256,7 +257,7 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
             self.assertEqual(self.lib.rootAction(group, 0, 0x400, out), 0)
             self.assertEqual(list(out), [0, group])
             self.assertEqual(self.lib.rootAction(group, 0, 0x100, out), 0)
-            self.assertEqual(list(out), [19 + group, 0])
+            self.assertEqual(list(out), [25 + group, 0])
         self.assertEqual(self.lib.rootAction(0, 1, 0, out), 0)
         self.assertEqual(list(out), [0, 3])
         self.assertEqual(self.lib.rootAction(3, 2, 0, out), 0)
@@ -275,9 +276,9 @@ extern "C" __declspec(dllexport) int movementPage(int display,int mode,int same)
                 self.assertEqual(self.lib.groupAction(group, item, 0, 0x100, out), 0)
                 self.assertEqual(list(out), [page + 1, self.lib.range(page, 0)])
             self.assertEqual(self.lib.groupAction(group, 0, 1, 0, out), 0)
-            self.assertEqual(list(out), [19 + group, count - 1])
+            self.assertEqual(list(out), [25 + group, count - 1])
             self.assertEqual(self.lib.groupAction(group, count - 1, 2, 0, out), 0)
-            self.assertEqual(list(out), [19 + group, 0])
+            self.assertEqual(list(out), [25 + group, 0])
         self.assertEqual(sorted(pages), list(range(18)))
 
     def test_movement_editors_follow_the_settings_list_after_page_reordering(self):

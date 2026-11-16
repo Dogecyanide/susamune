@@ -63,6 +63,7 @@ void VIDEO_Flush(void){blackVisible=blackPending;flushes++;}
 void VIDEO_SetBlack(int value){blackPending=value;}
 void VIDEO_WaitVSync(void){}
 '''
+        source += "void SusamuneMusicInit(void); int SusamuneMusicLoad(const char*); void SusamuneMusicStart(void);\n"
         source += function(cls.main, "PreloadLauncherTheme")
         source += function(graphics, "GRRLIB_RenderMode")
         source += r'''
@@ -82,7 +83,7 @@ void GRRLIB_Render(void){GRRLIB_RenderMode(true);}
 static int warningMask,menuOpened,mountChecks,blankChecks,elapsedTicks;
 static bool LauncherCanSave;
 void SusamuneMusicInit(void){}
-void SusamuneMusicLoad(const char*root){}
+bool SusamuneMusicLoad(const char*root){return true;}
 void SusamuneMusicStart(void){}
 const char *SusamuneThemeWarning(void){return warningMask&1?"Theme warning":"";}
 const char *SusamuneMusicWarning(void){return warningMask&2?"Music warning":"";}

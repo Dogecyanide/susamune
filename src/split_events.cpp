@@ -1,4 +1,5 @@
 #include "susamune/split_events.hxx"
+#include "susamune/stage_transition.hxx"
 
 #include "susamune/addresses.hxx"
 #include "susamune/features.hxx"
@@ -597,7 +598,7 @@ bool publishTransition(u16 route, u8 event, u8 target) {
     s32 qf;
     u16 capturedTarget;
     if (!gQFTTimer.transitionEntryQf(&qf, &capturedTarget) ||
-        capturedTarget != target ||
+        StageTransition::area(capturedTarget) != target ||
         gpApplication.mNextScene.mAreaID != target ||
         gpApplication.mNextScene.mEpisodeID != 0) return false;
     if (!publishEventAt(route, event, qf)) return false;
@@ -1052,6 +1053,12 @@ void updateHeldObject() {
 
 void noteTalk(TBaseNPC *npc) {
     if (!npc || !sRetailDirectOpen || !stageIdentityValid()) return;
+    // The first Plaza chase speaks through Peach, with no connected dummy actor.
+    if (routeScene(SplitStats::ROUTE_DELFINO_SHADOW_MARIO, 1, 1) &&
+        npc->mObjectID == 0x04000018u) {
+        publishEvent(sActiveRoute, 0);
+        return;
+    }
     const u32 talkActor = objectVtable(npc->mDummyConnectActor);
     if (isShadowRoute(sActiveRoute) &&
         (talkActor == kEmarioVtable || talkActor == kEnemyMarioVtable)) {

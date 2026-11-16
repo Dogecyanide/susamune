@@ -19,6 +19,9 @@ u32 prefixSize(const void *poseBank);
 void *prefix(void *poseBank);
 const void *prefix(const void *poseBank);
 bool evaluate(const void *poseBank, u32 qf, u8 segment, View *out);
+// Checked adjacent keys from a bounded cache; lastTruncated refers to the whole source.
+bool evaluatePair(const SusamuneGhostCameraSample &first, const SusamuneGhostCameraSample *next,
+                  u32 qf, u8 segment, bool lastTruncated, View *out);
 bool encode(const View &view, u32 qf, u8 flags, SusamuneGhostCameraSample *out);
 void decode(const SusamuneGhostCameraSample &sample, View *out);
 void matrix(const View &view, f32 out[3][3]);

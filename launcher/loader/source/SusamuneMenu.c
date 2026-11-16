@@ -32,6 +32,7 @@ anyway, and at 60 Hz over a handful of text rows the cost is invisible.
 #include "font.h"
 #include "exi.h"
 #include "FPad.h"
+#include <ogc/lwp_watchdog.h>
 #include "menu.h"
 #include "SusamuneIni.h"
 #include "SusamuneMenu.h"
@@ -143,32 +144,26 @@ static const char *ShortenPath(const char *path, char *buf, u32 bufSize, u32 max
 	return buf;
 }
 
-/** Key repeat **/
-
-typedef struct
-{
-	u32 Up;
-	u32 Down;
-	u32 Left;
-	u32 Right;
-} HeldCounters;
-
+/** Key repeat, matching Nintendont's menu wrapper. **/
+typedef struct {u32 Up,Down,Left,Right;bool redraw;} HeldCounters;
 #define FPAD_REPEAT(Key) \
 static int Repeat##Key(HeldCounters *h) \
 { \
-	int ret = 0; \
-	if (FPAD_##Key(1)) { \
-		ret = !((h->Key == 0 || h->Key > 10) ? (h->Key & 0b111) : 1); \
-		h->Key++; \
-	} else { \
-		h->Key = 0; \
-	} \
-	return ret; \
+    int ret=0; \
+    if(FPAD_##Key(1)) {ret=(h->Key==0 || h->Key>10);++h->Key;} \
+    else h->Key=0; \
+    if(ret)h->redraw=true; \
+    return ret; \
 }
 FPAD_REPEAT(Up)
 FPAD_REPEAT(Down)
 FPAD_REPEAT(Left)
 FPAD_REPEAT(Right)
+#undef FPAD_REPEAT
+static bool MenuButton(HeldCounters *h,bool pressed) {
+    if(pressed)h->redraw=true;
+    return pressed;
+}
 
 /** Devices **/
 
@@ -398,21 +393,23 @@ static int BrowseDevices(u8 version)
 	bool failed[2] = {false, false};
 
 	memset(&held, 0, sizeof(held));
+		held.redraw = true;
 
 	while (1)
 	{
 		int i;
 
+		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
 			LoaderShutdown();
 
-		if (FPAD_Start(0))
+		if (MenuButton(&held, FPAD_Start(0)))
 		{
 			SaveIfDirty();
 			ExitToLoader(0);
 		}
-		if (FPAD_Cancel(0))
+		if (MenuButton(&held, FPAD_Cancel(0)))
 			return -2;
 
 		if (RepeatDown(&held))
@@ -420,7 +417,7 @@ static int BrowseDevices(u8 version)
 		if (RepeatUp(&held))
 			pos = (pos + kRowCount - 1) % kRowCount;
 
-		if (FPAD_OK(0))
+		if (MenuButton(&held, FPAD_OK(0)))
 		{
 			if (pos == 0)
 			{
@@ -438,6 +435,8 @@ static int BrowseDevices(u8 version)
 				failed[pos - 1] = true;
 		}
 
+		if (!held.redraw) continue;
+		held.redraw = false;
 		ClearScreen();
 		DrawHeader("Exit", "Select", "Cancel");
 
@@ -522,6 +521,7 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 	HeldCounters held;
 
 	memset(&held, 0, sizeof(held));
+		held.redraw = true;
 	snprintf(cwd, sizeof(cwd), "%s:/", kDevName[dev]);
 
 	while (1)
@@ -539,17 +539,18 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 			reload = false;
 		}
 
+		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
 			LoaderShutdown();
 
-		if (FPAD_Start(0))
+		if (MenuButton(&held, FPAD_Start(0)))
 		{
 			SaveIfDirty();
 			ExitToLoader(0);
 		}
 
-		if (FPAD_Cancel(0))
+		if (MenuButton(&held, FPAD_Cancel(0)))
 		{
 			// Up one level, or back to the device list from the root.
 			char *slash;
@@ -600,7 +601,7 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 					scroll = pos;
 				}
 			}
-			if (FPAD_Right(0))
+			if (MenuButton(&held, FPAD_Right(0)))
 			{
 				pos += BROWSE_ROWS;
 				if ((u32)pos >= count)
@@ -608,7 +609,7 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 				if (pos >= scroll + BROWSE_ROWS)
 					scroll = pos - BROWSE_ROWS + 1;
 			}
-			if (FPAD_Left(0))
+			if (MenuButton(&held, FPAD_Left(0)))
 			{
 				pos -= BROWSE_ROWS;
 				if (pos < 0)
@@ -617,7 +618,7 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 					scroll = pos;
 			}
 
-			if (FPAD_OK(0))
+			if (MenuButton(&held, FPAD_OK(0)))
 			{
 				const BrowseEntry *e = &list[pos];
 				if (e->isDir)
@@ -636,6 +637,8 @@ static bool BrowseDevice(int dev, u8 version, char *out, u32 outSize)
 			}
 		}
 
+		if (!held.redraw) continue;
+		held.redraw = false;
 		ClearScreen();
 		DrawHeader("Exit", "Select", "Up");
 
@@ -932,25 +935,28 @@ static void GuideScreen(void)
 	const int count = SusamuneGuideTopicCount();
 
 	memset(&held, 0, sizeof(held));
+		held.redraw = true;
 	while (1)
 	{
 		int i;
 		int lines;
 
+		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
 			LoaderShutdown();
-		if (FPAD_Start(0))
+		if (MenuButton(&held, FPAD_Start(0)))
 		{
 			SaveIfDirty();
 			ExitToLoader(0);
 		}
-		if (FPAD_Cancel(0))
+		if (MenuButton(&held, FPAD_Cancel(0)))
 		{
 			if (!reading)
 				return;
 			reading = false;
 			memset(&held, 0, sizeof(held));
+		held.redraw = true;
 		}
 		else if (reading)
 		{
@@ -969,14 +975,17 @@ static void GuideScreen(void)
 			if (pos < firstTopic) firstTopic = pos;
 			if (pos >= firstTopic + SUSAMUNE_GUIDE_ROWS)
 				firstTopic = pos - SUSAMUNE_GUIDE_ROWS + 1;
-			if (FPAD_OK(0))
+			if (MenuButton(&held, FPAD_OK(0)))
 			{
 				reading = true;
 				firstLine = 0;
 				memset(&held, 0, sizeof(held));
+		held.redraw = true;
 			}
 		}
 
+		if (!held.redraw) continue;
+		held.redraw = false;
 		ClearScreen();
 		PrintCenter(BLACK, MENU_POS_Y, "Moonshine guide");
 		PrintCenter(BLACK, MENU_POS_Y + 20, "3.0.0 Timewarp");
@@ -1022,6 +1031,7 @@ static void SettingsScreen(void)
 	int pos = 0;
 
 	memset(&held, 0, sizeof(held));
+		held.redraw = true;
 	while (!SettingUsable(pos))
 		pos++;
 
@@ -1030,17 +1040,18 @@ static void SettingsScreen(void)
 		int i;
 		const char *const *help;
 
+		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
 			LoaderShutdown();
 
-		if (FPAD_Start(0))
+		if (MenuButton(&held, FPAD_Start(0)))
 		{
 			SaveIfDirty();
 			ExitToLoader(0);
 		}
 
-		if (FPAD_Cancel(0))
+		if (MenuButton(&held, FPAD_Cancel(0)))
 		{
 			// Same convention as the in-game menu: write on close.
 			SaveIfDirty();
@@ -1059,9 +1070,11 @@ static void SettingsScreen(void)
 				pos = (pos + SET_COUNT - 1) % SET_COUNT;
 			} while (!SettingUsable(pos));
 		}
-		if (FPAD_OK(0) && SettingUsable(pos))
+		if (MenuButton(&held, FPAD_OK(0)) && SettingUsable(pos))
 			CycleSetting(pos);
 
+		if (!held.redraw) continue;
+		held.redraw = false;
 		ClearScreen();
 		DrawHeader("Exit", "Change", "Back");
 
@@ -1363,6 +1376,7 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 	LauncherDev = launcherDev;
 	CanSave = canSave;
 	memset(&held, 0, sizeof(held));
+		held.redraw = true;
 	// ErrorLine is deliberately left alone: a failed auto boot put its reason
 	// there, and that is the first thing the user needs to see.
 	if (ErrorLine[0] == '\0' && gIni.path[gIni.version][0] != '\0')
@@ -1370,11 +1384,12 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 
 	while (1)
 	{
+		VIDEO_WaitVSync();
 		FPAD_Update();
 		if (Shutdown)
 			LoaderShutdown();
 
-		if (FPAD_Start(0))
+		if (MenuButton(&held, FPAD_Start(0)))
 		{
 			SaveIfDirty();
 			ShowMessageScreenAndExit("Returning to loader...", 0);
@@ -1393,7 +1408,7 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 			BlinkFrames = 0;
 		}
 
-		if (FPAD_OK(0))
+		if (MenuButton(&held, FPAD_OK(0)))
 		{
 			switch (pos)
 			{
@@ -1427,16 +1442,19 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 					SaveIfDirty();
 					BlinkFrames = 0;
 					memset(&held, 0, sizeof(held));
+		held.redraw = true;
 					break;
 
 				case ROW_SETTINGS:
 					SettingsScreen();
 					memset(&held, 0, sizeof(held));
+		held.redraw = true;
 					break;
 
 				case ROW_GUIDE:
 					GuideScreen();
 					memset(&held, 0, sizeof(held));
+		held.redraw = true;
 					break;
 
 				default:
@@ -1444,9 +1462,13 @@ void SusamuneMenuRun(const char *launcherDev, bool canSave)
 			}
 		}
 
-		if (BlinkFrames > 0)
+		if (BlinkFrames > 0) {
 			BlinkFrames--;
+			held.redraw = true;
+		}
 
+		if (!held.redraw) continue;
+		held.redraw = false;
 		ClearScreen();
 		DrawMainMenu(pos);
 		GRRLIB_Render();

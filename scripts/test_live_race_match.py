@@ -48,7 +48,7 @@ void cancel(){stageActive[current]=false;}
 bool copyOnlinePlaylist(LivePlaylist::Plan*out){*out={};out->count=60;for(unsigned i=0;i<60;++i){out->items[i].entry=i%16;out->items[i].episode=i%8;}return true;}
 bool startOnlinePlaylist(const LivePlaylist::Plan&p){stageActive[current]=true;startedPlans[current]=p;++starts[current];return true;}
 }
-namespace PracticeSession {bool ownsGameplayInput(){return false;}}
+namespace PracticeSession {bool ownsGameplayInput(){return false;}bool assisted(){return false;}}
 namespace SavestateManager {bool diskBusy(){return false;}}
 namespace TasProject {bool busy(){return false;}}
 namespace WarpWheel {bool shown(){return false;}bool promptPending(){return false;}}
@@ -94,7 +94,7 @@ void receiveVisual(unsigned,const MSRHeader&,const MSRPose&,unsigned){}
 '''
         code += match[match.index("bool validOptions("):match.index("bool begin(")]
         code += function(match, "acceptConnection") + "\n}\n"
-        code += "\n".join(function(match, name) for name in ("configure", "ready", "newMatch", "chooseDraft", "onILResult", "onPlaylistResult", "forfeit", "serviceAutoOpen"))
+        code += "\n".join(function(match, name) for name in ("configure", "ready", "newMatch", "chooseDraft", "onILResult", "onPlaylistResult", "forfeit", "endRace", "serviceAutoOpen"))
         code += "\n}\n"
         code += r'''
 using namespace LiveRace;
@@ -110,15 +110,26 @@ static bool deliver(unsigned to,unsigned kind=0){
  acceptConnection();keep();return ok;
 }
 static void pump(unsigned rounds=12){for(unsigned i=0;i<rounds;++i){clockMs+=10;for(unsigned p=0;p<2;++p){for(unsigned n=0;n<4&&find(p)>=0;++n)deliver(p);service(p);}}}
-static bool connect(unsigned best=3,bool freeRoam=false,bool draft=false,bool setBo5=false,unsigned pool=0,bool playlist=false){
+static bool connect(unsigned best=3,bool freeRoam=false,bool draft=false,bool setBo5=false,unsigned pool=0,bool playlist=false,bool editEmptyRoom=false){
  memset(peers,0,sizeof(peers));memset(opts,0,sizeof(opts));memset(extras,0,sizeof(extras));memset(queue,0,sizeof(queue));queueEnd=0;clockMs=1;
  stageActive[0]=stageActive[1]=false;transition[0]=transition[1]=false;memset(plans,0,sizeof(plans));sent[0]=sent[1]=0;
  starts[0]=starts[1]=blocked[0]=blocked[1]=0;congested[0]=congested[1]=false;
- for(unsigned p=0;p<2;++p){select(p);sOptions={};memcpy(sOptions.name,p?"Guest":"Host",p?6:5);sOptions.bestOf=best;sOptions.entry=2;sOptions.episode=4;sOptions.freeRoam=!p&&freeRoam;
-  if(!p){sOptions.draft=draft;sOptions.setBo5=setBo5;sOptions.pool=pool;sOptions.playlist=playlist;if(playlist&&!configure(sOptions))return false;}
+ for(unsigned p=0;p<2;++p){select(p);sOptions={};memcpy(sOptions.name,p?"Guest":"Host",p?6:5);sOptions.bestOf=best;sOptions.entry=2;sOptions.episode=4;sOptions.freeRoam=!p&&freeRoam&&!editEmptyRoom;
+  if(!p&&!editEmptyRoom){sOptions.draft=draft;sOptions.setBo5=setBo5;sOptions.pool=pool;sOptions.playlist=playlist;if(playlist&&!configure(sOptions))return false;}
   LiveRaceSession::Config c={};memcpy(c.name,sOptions.name,16);c.pin=123456;c.nonceLow=p+1;c.region=p;c.timing=MSR_TIMING_60HZ;
   if(!LiveRaceSession::init(s.session,c,kCallbacks))return false;s.hosting=p==0;s.active=s.started=true;
   TWLiveEndpoint any={};if(p?!LiveRaceSession::startGuest(s.session,endpoints[0],clockMs):!LiveRaceSession::startHost(s.session,any,clockMs))return false;keep();}
+ if(editEmptyRoom){
+  select(1);if(configure(sOptions))return false;keep();
+  select(0);Options next=sOptions;next.freeRoam=freeRoam;next.draft=draft;next.playlist=playlist;
+  next.setBo5=setBo5;next.pool=pool;
+  if(!canConfigureRace())return false;
+  x.networkRetry=true;
+  if(!configure(next)||newMatch()||s.newMatchNeeded)return false;
+  x.networkRetry=false;
+  if(!canConfigureRace())return false;
+  keep();
+ }
  pump();const auto expected=freeRoam?ROAMING:draft?DRAFTING:WAIT_READY;return peers[0].connected&&peers[1].connected&&peers[0].phase==expected&&peers[1].phase==expected&&!peers[0].session.info.pending&&!peers[1].session.info.pending;
 }
 // The link drops and both sides restart their sessions with the same room, as
@@ -187,6 +198,31 @@ API unsigned startGateScenario(unsigned test){
   CHECK(chooseAndPump(1,1));select(1);serviceAutoOpen();keep();CHECK(menuOpens==2);
   gMenu=nullptr;
  }
+ return 0;
+}
+API unsigned emptySetupScenario(unsigned mode){
+ CHECK(connect(mode==2?1:3,mode==0,mode==1,false,0,mode==2,true));
+ CHECK(opts[1].freeRoam==(mode==0)&&opts[1].draft==(mode==1)&&opts[1].playlist==(mode==2));
+ CHECK(peers[0].round==1&&peers[1].round==1&&!starts[0]&&!starts[1]);
+ select(0);s.connected=false;x.reconnecting=true;x.matchStarted=true;s.phase=RUNNING;
+ CHECK(!canConfigureRace()&&!configure(sOptions));
+ return 0;
+}
+API unsigned setupScenario(unsigned mode){
+ CHECK(connect());CHECK(setReady(1));pump();
+ select(1);CHECK(!configure(sOptions));keep();
+ select(0);Options next=sOptions;next.freeRoam=mode==0;next.draft=mode==1;next.playlist=mode==2;
+ if(next.playlist)next.bestOf=1;
+ CHECK(configure(next));CHECK(s.newMatchNeeded&&!s.startPrepared&&!s.localReady&&!s.peerReady);keep();
+ congested[0]=true;pump(20);CHECK(!starts[0]&&!starts[1]);
+ congested[0]=false;pump(150);
+ CHECK(peers[0].connected&&peers[1].connected&&peers[0].round==peers[1].round);
+ CHECK(!peers[0].localReady&&!peers[1].localReady&&!starts[0]&&!starts[1]);
+ CHECK(opts[1].freeRoam==next.freeRoam&&opts[1].draft==next.draft&&opts[1].playlist==next.playlist);
+ if(mode==0){select(0);next=sOptions;next.freeRoam=false;CHECK(configure(next));CHECK(newMatch());keep();pump();}
+ if(mode==1)CHECK(openingDraft());
+ CHECK(race());select(0);CHECK(!configure(sOptions));keep();
+ CHECK(starts[0]==1&&starts[1]==1);
  return 0;
 }
 API unsigned forfeitScenario(unsigned test){
@@ -466,6 +502,20 @@ API unsigned draftScenario(unsigned test){
 }
 '''
         code += r"""
+API int endScenario(unsigned test){
+ CHECK(connect(test==2?1:3,false,test==1,false,0,test==2));pump();
+ if(test!=1&&test!=3)CHECK(race());
+ select(1);CHECK(!endRace());keep();
+ select(0);CHECK(endRace());CHECK(s.phase==MATCH_DONE&&!s.localResult&&!s.startPrepared);keep();
+ if(test==4)CHECK(reconnect());
+ pump(200);
+ for(unsigned p=0;p<2;++p){CHECK(peers[p].connected&&peers[p].session.info.connected);CHECK(peers[p].phase==MATCH_DONE);CHECK(!peers[p].localWins&&!peers[p].peerWins&&!stageActive[p]);}
+ select(0);CHECK(!endRace());CHECK(newMatch());keep();pump(200);
+ CHECK(peers[0].phase==peers[1].phase&&peers[0].phase!=MATCH_DONE);
+ // A delayed End from the prior round cannot cancel the next setup.
+ select(1);MSRHeader old={};old.kind=MSR_READY;old.round=s.round-1;u8 b[4]={END_MATCH,0,0,0};receivedControlBody(old,b,4);CHECK(s.phase!=MATCH_DONE);keep();
+ return 0;
+}
 API int playlistScenario(unsigned test){
  CHECK(connect(1,false,false,false,0,true));
  CHECK(plans[0].complete&&plans[1].complete&&plans[1].plan.count==60);
@@ -514,6 +564,12 @@ API int playlistScenario(unsigned test){
         cls.lib = C.CDLL(str(dll))
         cls.addClassCleanup(lambda: _ctypes.FreeLibrary(cls.lib._handle))
 
+    def test_host_ends_match_without_awarding_wins_or_losing_room(self):
+        for scenario in range(5):
+            with self.subTest(scenario=scenario):
+                line = self.lib.endScenario(scenario)
+                self.assertEqual(line, 0, self.generated.splitlines()[line - 1] if line else "")
+
     def test_forfeit_results_keep_room_and_award_valid_finisher(self):
         for scenario in range(5):
             with self.subTest(scenario=scenario):
@@ -527,6 +583,20 @@ API int playlistScenario(unsigned test){
             with self.subTest(name=name):
                 line = self.lib.startGateScenario(number)
                 detail = self.generated.splitlines()[line - 1] if line else ""
+                self.assertEqual(line, 0, detail)
+
+    def test_empty_host_setup_reaches_first_guest(self):
+        for mode in range(3):
+            with self.subTest(mode=mode):
+                line = self.lib.emptySetupScenario(mode)
+                detail = self.generated.splitlines()[line - 1] if line else ""
+                self.assertEqual(line, 0, detail)
+
+    def test_setup_changes_before_first_race(self):
+        for mode in range(3):
+            with self.subTest(mode=mode):
+                line = self.lib.setupScenario(mode)
+                detail = self.generated.splitlines()[line - 1] if line else ''
                 self.assertEqual(line, 0, detail)
 
     def test_match_packet_ordering(self):

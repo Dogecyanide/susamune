@@ -1,3 +1,6 @@
+#include "susamune/ghost_recording.hxx"
+#include "susamune/state_save_probe.hxx"
+#include "susamune/storage_text.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/movement_timing_display.hxx"
 #include "susamune/retail_input.hxx"
@@ -290,7 +293,7 @@ const int kNumPointedAllocs = sizeof(kPointedAllocs) / sizeof(kPointedAllocs[0])
 // One header lives at the very start of the snapshot buffer; the saved
 // bytes follow at kHeaderSize.
 const u32 kSnapshotMagic   = 0x53555341u; // 'SUSA'
-const u32 kSnapshotVersion = 18u;
+const u32 kSnapshotVersion = 19u;
 const u32 kHeaderSize      = 0x120u;
 // One slot per static range, one per pointed alloc, plus one for the heap.
 const int kMaxRegions      = kNumStaticRanges + kNumPointedAllocs + 1;
@@ -329,6 +332,7 @@ struct StoredState {
     QFTTimer::SavestateData timer;
     ILing::SavestateData attempt;
     Ghost::SavestateData ghost;
+    GhostTrace::CheckpointSnapshot trace;
     PracticeSession::SavestateData practice;
     StateArchiveProfile::Data archiveProfile;
     u32 generation;
@@ -370,6 +374,7 @@ u32 sPendingSlot;
 u32 sPendingGeneration;
 bool sAwaitingLoadApproval;
 bool sOrdinaryRamLoad;
+bool sManualRamSave;
 bool sBusy;
 u32 sDurableSlots;
 u32 sPackedChecksums[SavestateManager::kSlotCount];
@@ -391,7 +396,7 @@ const u32 kStreamWindows = (SUSAMUNE_TRANSFER_POOL_SIZE + SUSAMUNE_TRANSFER_STAG
 static_assert(kStreamWindows <= 32, "SD window bitmap exceeded");
 u32 sStreamChecksums[kStreamWindows], sStreamSeen, sStreamOffset, sStreamSize, sStreamCrc, sStreamId;
 bool sStreamCommit;
-const char *sDiskStatus = "SD states ready";
+const char *sDiskStatus = STORAGE_TEXT("SD states ready", "Saved states ready");
 const char kTransferWaitText[] __attribute__((section(".rodata.state_transfer_wait"))) = "Wait for the pending transfer";
 const char kOldSnapshotText[] __attribute__((section(".rodata.state_old_snapshot"))) = "Savestate is from another build";
 const char kCaptureModelsCode[] __attribute__((section(".rodata.state_capture_models_code"))) = "E:models";
@@ -544,6 +549,9 @@ bool abortSharedCandidate() {
 }
 
 bool sealSharedCandidate(u32 slot, StateCodec::Result result, u32 kind) {
+#if SUSAMUNE_SAVE_PROBE
+    if (!StateSaveProbe::validActive()) return false;
+#endif
     if (result.status != StateCodec::SUCCESS || result.rawBytes != sCandidate.rawSize) return false;
     sCandidate.packedSize = result.compressedBytes;
     sCandidate.adler32 = result.adler32;
@@ -552,6 +560,10 @@ bool sealSharedCandidate(u32 slot, StateCodec::Result result, u32 kind) {
     const StateStore::Identity identity = {sCandidate.generation, sCandidate.metadataTag,
         sCandidate.rawSize, sCandidate.packedSize, sCandidate.adler32, checksum, kind};
     if (!StateStore::seal(sSharedStore, identity, codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE) ||
+        
+#if SUSAMUNE_SAVE_PROBE
+        !StateSaveProbe::validActive() ||
+#endif
         !StateStore::commit(sSharedStore, identity)) return false;
     sSlots[slot] = sCandidate;
     sPackedChecksums[slot] = checksum;
@@ -563,6 +575,10 @@ struct QuickReplayContext {
     StateCodec::PreparedQuickSource source;
     JKRHeap *heap;
     unsigned int epoch;
+    bool compact;
+#if SUSAMUNE_SAVE_PROBE
+    StateSaveProbe::Token probe;
+#endif
 };
 
 bool quickReplayAdmitted(void *opaque) {
@@ -572,12 +588,17 @@ bool quickReplayAdmitted(void *opaque) {
     // Interrupt masking does not drain DVD or THP locked-cache writes.
     return !(msr & 0x8000u) && !(hid2 & 0x0F000000u) && context.epoch &&
         StateWorkLease::epoch() == context.epoch && gpApplication.mCurrentHeap == context.heap &&
-        OSIsThreadTerminated(&gSetupThread) && DVDGetDriveStatus() == DVD_STATE_END;
+        OSIsThreadTerminated(&gSetupThread) && DVDGetDriveStatus() == DVD_STATE_END
+#if SUSAMUNE_SAVE_PROBE
+        && StateSaveProbe::admitted(context.probe)
+#endif
+        ;
 }
 
 void encodeReplayBlock(void *opaque, unsigned int index, StateCodec::PreparedQuickBlock &block) {
     const QuickReplayContext &context = *static_cast<const QuickReplayContext *>(opaque);
-    StateCodec::encodePreparedQuickBlockDeferred(codecWorkspace(), context.source, index, block);
+    if (context.compact) StateCodec::encodePreparedQuickBlockCompactDeferred(codecWorkspace(), context.source, index, block);
+    else StateCodec::encodePreparedQuickBlockDeferred(codecWorkspace(), context.source, index, block);
 }
 
 unsigned int checksumReplayBlock(void *opaque, unsigned int index, const StateCodec::PreparedQuickBlock &block) {
@@ -586,8 +607,12 @@ unsigned int checksumReplayBlock(void *opaque, unsigned int index, const StateCo
 }
 
 bool replaySharedCandidate(const StateCodec::ReadSpan *source, u32 count, u32 slot,
-                           StateCodec::Result &result, StateCodec::ZeroRange zero) {
-    QuickReplayContext context = {{}, gpApplication.mCurrentHeap, StateWorkLease::epoch()};
+                           StateCodec::Result &result, StateCodec::ZeroRange zero, bool compact = false) {
+    QuickReplayContext context = {{}, gpApplication.mCurrentHeap, StateWorkLease::epoch(), compact
+#if SUSAMUNE_SAVE_PROBE
+        , StateSaveProbe::current()
+#endif
+    };
     if (!quickReplayAdmitted(&context)) return false;
     for (u32 i = 0; i < count; ++i) {
         const u32 address = reinterpret_cast<u32>(source[i].data), size = source[i].size;
@@ -596,13 +621,16 @@ bool replaySharedCandidate(const StateCodec::ReadSpan *source, u32 count, u32 sl
         const bool mem2 = address >= 0x90000000u && address < 0x94000000u && size <= 0x94000000u - address;
         if (!mem1 && !mem2) return false;
     }
-    StateCodec::WriteSpan destinations[TW_BANK_MAX + 2];
+    StateCodec::WriteSpan destinations[TW_BANK_MAX + 3];
     unsigned int destinationCount = 0;
     for (unsigned int i = 0; i < sSharedBanks.count; ++i)
         destinations[destinationCount++] = {sSharedBanks.banks[i], sSharedBanks.sizes[i]};
     if (sSharedMemory.size)
         destinations[destinationCount++] = {sSharedMemory.staging, sSharedMemory.size};
     destinations[destinationCount++] = {StateStorage::tailWindowBase(), StateStorage::tailWindowSize()};
+#if SUSAMUNE_SAVE_PROBE
+    if (context.probe.serial) destinations[destinationCount++] = StateSaveProbe::destination(context.probe);
+#endif
     if (StateCodec::prepareQuickSource(codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE,
         source, count, destinations, destinationCount, context.source, zero) != StateCodec::SUCCESS)
         return false;
@@ -617,13 +645,24 @@ bool replaySharedCandidate(const StateCodec::ReadSpan *source, u32 count, u32 sl
     const StateQuickReplay::Source frozen = {
         &context, context.source.rawBytes, encodeReplayBlock, quickReplayAdmitted, checksumReplayBlock};
     StateQuickReplay::Plan *plan = nullptr;
-    const StateQuickReplay::Status status = StateQuickReplay::prepare(sSharedStore, slot,
-        sharedIdentity(slot), frozen, StateStorage::tailWindowBase(), StateStorage::tailWindowSize(), plan);
+    StateQuickReplay::Status status;
+#if SUSAMUNE_SAVE_PROBE
+    const StateQuickReplay::SpillCache spill=StateSaveProbe::spill(context.probe);
+    if (context.probe.mode==StateSaveProbe::EXTRA)
+        status=StateQuickReplay::prepareWithSpill(sSharedStore,slot,sharedIdentity(slot),frozen,
+            StateStorage::tailWindowBase(),StateStorage::tailWindowSize(),plan,spill);
+    else
+#endif
+        status=StateQuickReplay::prepare(sSharedStore,slot,sharedIdentity(slot),frozen,
+            StateStorage::tailWindowBase(),StateStorage::tailWindowSize(),plan);
     if (status != StateQuickReplay::READY) {
         if (!abortSharedCandidate()) __builtin_trap();
         return false;
     }
     result = StateQuickReplay::result(*plan);
+#if SUSAMUNE_SAVE_PROBE
+    StateSaveProbe::note(StateQuickReplay::stats(*plan));
+#endif
     sCandidate.packedSize = result.compressedBytes;
     sCandidate.adler32 = result.adler32;
     sCandidate.metadataTag = metadataTag(sCandidate);
@@ -669,6 +708,9 @@ u32 repackedMetadataTag(const StoredState &saved, u32 packedSize) {
 }
 
 bool repackSharedRetained(u32 slot, bool compact) {
+#if SUSAMUNE_SAVE_PROBE
+    if (!StateSaveProbe::validActive()) return false;
+#endif
     StoredState &saved = sSlots[slot];
     const StateStore::Identity old = sharedIdentity(slot);
     if (!StateStore::begin(sSharedStore, slot, old)) return false;
@@ -682,6 +724,10 @@ bool repackSharedRetained(u32 slot, bool compact) {
     if (result.status != StateCodec::SUCCESS || result.rawBytes != old.raw || result.adler32 != old.adler ||
         result.compressedBytes >= old.packed ||
         !StateStore::seal(sSharedStore, next, codecWorkspace(), SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE) ||
+        
+#if SUSAMUNE_SAVE_PROBE
+        !StateSaveProbe::validActive() ||
+#endif
         !StateStore::commit(sSharedStore, next, true)) {
         if (!abortSharedCandidate()) __builtin_trap();
         return false;
@@ -692,14 +738,35 @@ bool repackSharedRetained(u32 slot, bool compact) {
     return true;
 }
 
+#if TIMEWARP_QUICK_REPLAY && !IS_EMULATOR
+unsigned int refinedSharedTag(unsigned int slot, unsigned int packed) { return repackedMetadataTag(sSlots[slot], packed); }
+bool refineSharedRetained(u32 destination) {
+#if SUSAMUNE_SAVE_PROBE
+    if (!StateSaveProbe::validActive()) return false;
+#endif
+    if (!StateQuickReplay::refineRetained(sSharedStore, 7u & ~(1u << destination), codecWorkspace(),
+        SUSAMUNE_STATE_CODEC_WORKSPACE_SIZE, StateStorage::tailWindowBase(), StateStorage::tailWindowSize(), refinedSharedTag)) return false;
+    for (u32 slot = 0; slot < SavestateManager::kSlotCount; ++slot) if (sSlots[slot].packedSize) {
+        const StateStore::Identity &next = sSharedStore.roots[slot];
+        sSlots[slot].packedSize = next.packed; sSlots[slot].metadataTag = next.tag;
+        sPackedChecksums[slot] = next.checksum;
+    }
+    return true;
+}
+#endif
+
 bool saveSharedCandidate(const StateCodec::ReadSpan *source, u32 count, u32 raw, u32 slot,
                          StateCodec::Result &result, StateCodec::ZeroRange zero = {}) {
     sCandidate.rawSize = raw;
     sCandidate.generation = sNextGeneration + 1;
     if (!sCandidate.generation) sCandidate.generation = 1;
     sCandidate.header.magic = kSnapshotMagic;
-    if (compressSharedCandidate(source, count, slot, 0, result, zero) ||
-        compressSharedCandidate(source, count, slot, 1, result, zero)) return true;
+    if (compressSharedCandidate(source, count, slot, 0, result, zero)) return true;
+#if TIMEWARP_QUICK_REPLAY && !IS_EMULATOR
+    if (replaySharedCandidate(source, count, slot, result, zero, true) ||
+        (refineSharedRetained(slot) && replaySharedCandidate(source, count, slot, result, zero, true))) return true;
+#endif
+    if (compressSharedCandidate(source, count, slot, 1, result, zero)) return true;
     for (u32 mode = 0; mode < 2; ++mode) {
         if (mode && compressSharedCandidate(source, count, slot, 2, result, zero)) return true;
         for (u32 i = 0; i < SavestateManager::kSlotCount; ++i) {
@@ -958,12 +1025,13 @@ void reconcilePauseAudio(u8 previousState) {
     if (!gpMSound || !gpMarDirector) return;
     const u8 restoredState = gpMarDirector->mCurState;
     if (restoredState == TMarDirector::STATE_PAUSE_MENU) {
-        if (previousState != TMarDirector::STATE_PAUSE_MENU) gpMSound->pauseOn(false);
+        if (previousState != TMarDirector::STATE_PAUSE_MENU) { gpMSound->pauseOn(false); GhostRecording::noteContinuationAudio(MS_TRACE_AUDIO_PAUSE_ON); }
     } else if (previousState == TMarDirector::STATE_PAUSE_MENU &&
                restoredState == TMarDirector::STATE_NORMAL && !gpMarDirector->mDemoState) {
         // JAudio is retained across a load, so bypassing retail unpause must
         // release its category mute through the same silent retail API.
         gpMSound->pauseOff(2);
+        GhostRecording::noteContinuationAudio(MS_TRACE_AUDIO_PAUSE_OFF);
     }
 }
 
@@ -1006,9 +1074,17 @@ bool archiveStageReady(bool restore = false) {
 
 bool admitArchiveStage(bool restore = false) {
     if (archiveStageReady(restore)) return true;
-    sDiskStatus = "Return to normal play before using SD states";
+    sDiskStatus = STORAGE_TEXT("Return to normal play before using SD states", "Return to normal play before using saved states");
     if (gMenu) gMenu->toast(sDiskStatus);
     return false;
+}
+
+bool archiveTraceMatches(const SusamuneStateArchiveHeader &file) {
+    if (!GhostTrace::checkpointValid(sCandidate.trace)) return false;
+    if (!sCandidate.trace.magic) return !file.reserved[0] && !file.reserved[1];
+    return file.reserved[0] == MS_STATE_TRACE_REFERENCE_MAGIC &&
+        file.reserved[1] == __builtin_offsetof(StoredState, trace) &&
+        sCandidate.trace.game == file.gameId && sCandidate.trace.fence.sequence;
 }
 
 bool archiveCandidateMatches(const SusamuneStateArchiveHeader &file) {
@@ -1020,6 +1096,7 @@ bool archiveCandidateMatches(const SusamuneStateArchiveHeader &file) {
         file.rawSize != sCandidate.rawSize || h.magic != kSnapshotMagic ||
         h.version != kSnapshotVersion || h.game_version != SUSAMUNE_GAME_VERSION ||
         sCandidate.metadataTag != metadataTag(sCandidate) || !sCandidate.generation ||
+        !archiveTraceMatches(file) ||
         h.area_id != gpApplication.mCurrentScene.mAreaID ||
         h.episode_id != gpApplication.mCurrentScene.mEpisodeID ||
         sCandidate.parentEpisode != parentEpisode() || inLoadTransition()) return false;
@@ -1049,6 +1126,7 @@ bool archiveProjectCandidateMatches(const SusamuneStateArchiveHeader &file) {
         file.rawSize != sCandidate.rawSize || h.magic != kSnapshotMagic ||
         h.version != kSnapshotVersion || h.game_version != SUSAMUNE_GAME_VERSION ||
         sCandidate.metadataTag != metadataTag(sCandidate) || !sCandidate.generation ||
+        !archiveTraceMatches(file) ||
         file.sceneKey != ((static_cast<u32>(h.area_id) << 24) | (static_cast<u32>(h.episode_id) << 16) |
                           (sCandidate.parentEpisode & 0xFFFFu)) ||
         h.heap_addr < 0x80000000u || h.heap_addr >= 0x81800000u ||
@@ -1132,6 +1210,7 @@ u32 appendSharedImport(const StateStorage::Result &result, bool &imported, bool 
         sCandidate.rawSize, sCandidate.adler32};
     if (!sealSharedCandidate(sDiskSlot, decoded, sDiskImport.kind))
         return StateStore::capacityRefused(sSharedStore) ? SUSAMUNE_STATE_FULL : SUSAMUNE_STATE_BAD_FILE;
+    if (!GhostRecording::checkpointSaved(sDiskSlot, sCandidate.generation)) __builtin_trap();
     sDurableSlots |= 1u << sDiskSlot;
     imported = true;
     return SUSAMUNE_STATE_OK;
@@ -1189,6 +1268,7 @@ bool readStateWindow(void *, unsigned int offset, StateCodec::ReadSpan *out) {
 }
 
 void finishDiskBorrow() {
+    GhostRecording::abandonCheckpoint();
     if (sDiskBorrow.generation) {
         StateStorage::consumeResult(sDiskBorrow);
         sDiskBorrow = {};
@@ -1259,14 +1339,14 @@ bool prepareSDRecovery(SDRecovery &recovery, u32 heapStart, u32 heapEnd) {
 
 const char *archiveStatusText(u32 status) {
     switch (status) {
-    case SUSAMUNE_STATE_CANCELLED: return "SD transfer cancelled";
+    case SUSAMUNE_STATE_CANCELLED: return STORAGE_TEXT("SD transfer cancelled", "File transfer cancelled");
     case SUSAMUNE_STATE_FULL: return "Not enough state memory - clear a slot";
-    case SUSAMUNE_STATE_BAD_FILE: return "SD state is damaged or unsupported";
-    case SUSAMUNE_STATE_NOT_FOUND: return "SD state was not found";
-    case SUSAMUNE_STATE_STALE: return "SD state changed - refresh the list";
-    case SUSAMUNE_STATE_WRONG_CONFIG: return "SD state needs the same game setup";
-    case SUSAMUNE_STATE_UNAVAILABLE: return "SD states unavailable";
-    default: return "SD transfer failed - try again";
+    case SUSAMUNE_STATE_BAD_FILE: return STORAGE_TEXT("SD state is damaged or unsupported", "Saved state is damaged or unsupported");
+    case SUSAMUNE_STATE_NOT_FOUND: return STORAGE_TEXT("SD state was not found", "Saved state was not found");
+    case SUSAMUNE_STATE_STALE: return STORAGE_TEXT("SD state changed - refresh the list", "Saved state changed - refresh the list");
+    case SUSAMUNE_STATE_WRONG_CONFIG: return STORAGE_TEXT("SD state needs the same game setup", "Saved state needs the same game setup");
+    case SUSAMUNE_STATE_UNAVAILABLE: return STORAGE_TEXT("SD states unavailable", "Saved states unavailable");
+    default: return STORAGE_TEXT("SD transfer failed - try again", "File transfer failed - try again");
     }
 }
 
@@ -1445,7 +1525,7 @@ bool SavestateManager::selectSDForLoad(u32 id, u32 crc, u32 packed, const char *
     sSelectedSD.headerCrc = crc;
     sSelectedSD.packedSize = packed;
     if (name) strncpy(sSelectedSD.name, name, sizeof(sSelectedSD.name) - 1);
-    if (gMenu) gMenu->toast("SD state selected - use your Load bind");
+    if (gMenu) gMenu->toast(STORAGE_TEXT("SD state selected - use your Load bind", "File selected - use your Load bind"));
     return true;
 }
 
@@ -1513,6 +1593,13 @@ bool SavestateManager::beginSDExport(u32 slot, u32 expectedGeneration, const cha
                   saved.header.area_id, saved.header.episode_id);
     // Export a compatible header without changing the retained state or its file.
     sCandidate = saved;
+    if (!GhostRecording::checkpointExport(sCandidate.trace)) {
+        sDiskStatus = GhostRecording::statusText(); if (gMenu) gMenu->toast(sDiskStatus); return false;
+    }
+    if (sCandidate.trace.magic) {
+        h.reserved[0] = MS_STATE_TRACE_REFERENCE_MAGIC;
+        h.reserved[1] = __builtin_offsetof(StoredState, trace);
+    }
     if (!StateArchiveProfile::reidentify(sCandidate.archiveProfile, archiveBuildId())) return false;
     sCandidate.metadataTag = metadataTag(sCandidate);
     if (TransferLease::sharedMap()) {
@@ -1526,7 +1613,7 @@ bool SavestateManager::beginSDExport(u32 slot, u32 expectedGeneration, const cha
     sExplicitTransfer = project != nullptr;
     sDiskStarted = OSGetTime();
     sDiskActive = true;
-    sDiskStatus = "Saving state to SD...";
+    sDiskStatus = STORAGE_TEXT("Saving state to SD...", "Saving state to file...");
     return true;
 }
 #pragma clang section text=""
@@ -1588,7 +1675,7 @@ bool SavestateManager::beginSDLoad(u32 id, u32 crc, u32 packed, bool restore,
     sDiskStream = stream;
     sDiskRecovered = false;
     sStreamId = id;
-    sDiskStatus = "Reading state from SD...";
+    sDiskStatus = STORAGE_TEXT("Reading state from SD...", "Reading state file...");
     return true;
 }
 
@@ -1597,7 +1684,7 @@ bool SavestateManager::renameSD(u32 id, u32 crc, const char *name) {
     if (!StateStorage::rename(id, crc, name)) return false;
     sDiskStarted = OSGetTime();
     sDiskActive = true;
-    sDiskStatus = "Renaming SD state...";
+    sDiskStatus = STORAGE_TEXT("Renaming SD state...", "Renaming state file...");
     return true;
 }
 
@@ -1606,7 +1693,7 @@ bool SavestateManager::deleteSD(u32 id, u32 crc) {
     if (!StateStorage::remove(id, crc)) return false;
     sDiskStarted = OSGetTime();
     sDiskActive = true;
-    sDiskStatus = "Deleting SD state...";
+    sDiskStatus = STORAGE_TEXT("Deleting SD state...", "Deleting state file...");
     return true;
 }
 
@@ -1616,7 +1703,7 @@ bool SavestateManager::refreshSD(u32 afterId) {
     if (!StateStorage::refresh(afterId)) return false;
     sDiskStarted = OSGetTime();
     sDiskActive = true;
-    sDiskStatus = "Reading SD states...";
+    sDiskStatus = STORAGE_TEXT("Reading SD states...", "Reading saved states...");
     return true;
 }
 
@@ -1627,7 +1714,7 @@ bool SavestateManager::cancelSD() {
         return true;
     }
     if (!StateStorage::cancel()) return false;
-    sDiskStatus = "Cancelling SD transfer...";
+    sDiskStatus = STORAGE_TEXT("Cancelling SD transfer...", "Cancelling file transfer...");
     return true;
 }
 
@@ -1674,6 +1761,7 @@ void SavestateManager::updateDisk() {
                     archiveCandidateMatches(result.header);
             }
         }
+        if (valid) valid = GhostRecording::importCheckpoint(sCandidate.trace);
         if (valid && sExplicitTransfer)
             valid = PracticeSession::projectSavestateMatches(sCandidate.practice,
                 sProjectStartKey, sProjectRole, sProjectFrames);
@@ -1714,6 +1802,7 @@ void SavestateManager::updateDisk() {
                 sCandidate.packedSize, reinterpret_cast<const u8 *>(StateStorage::stagingBase()), StateStorage::stagingSize());
             if (valid) {
                 sCandidate.generation = nextGeneration();
+                if (!GhostRecording::checkpointSaved(sDiskSlot, sCandidate.generation)) __builtin_trap();
                 sCandidate.metadataTag = metadataTag(sCandidate);
                 sSlots[sDiskSlot] = sCandidate;
                 sDurableSlots |= 1u << sDiskSlot;
@@ -1731,6 +1820,7 @@ void SavestateManager::updateDisk() {
         sDiskNextWindow = true;
         return;
     }
+    if (wasActive && !imported && !sDiskLoadReady) GhostRecording::abandonCheckpoint();
     if (sDiskChunkImport) {
         if (!imported && !abortSharedCandidate()) result.status = SUSAMUNE_STATE_BAD_FILE;
         result.command = SUSAMUNE_STATE_CMD_IMPORT;
@@ -1755,20 +1845,20 @@ void SavestateManager::updateDisk() {
         PracticeSession::cancelLoadHold();
     }
     else if (result.command == SUSAMUNE_STATE_CMD_EXPORT) sDiskStatus = projectTransfer ?
-        "TAS checkpoint saved" : "State saved in Moonshine data/states";
-    else if (result.command == SUSAMUNE_STATE_CMD_CATALOG) sDiskStatus = "SD states ready";
+        "TAS checkpoint saved" : STORAGE_TEXT("State saved in Moonshine data/states", "State saved in Moonshine data");
+    else if (result.command == SUSAMUNE_STATE_CMD_CATALOG) sDiskStatus = STORAGE_TEXT("SD states ready", "Saved states ready");
     else if (result.command == SUSAMUNE_STATE_CMD_RENAME) {
-        sDiskStatus = "SD state renamed";
+        sDiskStatus = STORAGE_TEXT("SD state renamed", "State file renamed");
         if (sSelectedSD.id == result.id)
             memcpy(sSelectedSD.name, result.name, sizeof(sSelectedSD.name));
     } else if (result.command == SUSAMUNE_STATE_CMD_DELETE) {
-        sDiskStatus = "SD state deleted";
+        sDiskStatus = STORAGE_TEXT("SD state deleted", "State file deleted");
         if (sSelectedSD.id == result.id) memset(&sSelectedSD, 0, sizeof(sSelectedSD));
     }
-    if (sDiskLoadReady) sDiskStatus = "Restoring SD state...";
+    if (sDiskLoadReady) sDiskStatus = STORAGE_TEXT("Restoring SD state...", "Restoring saved state...");
     if (imported) {
         PracticeSession::onSavestateCleared(sDiskSlot, sDiskGeneration);
-        sDiskStatus = "SD state imported into memory";
+        sDiskStatus = STORAGE_TEXT("SD state imported into memory", "Saved state imported into memory");
         char message[48];
         snprintf(message, sizeof(message), "Imported into state %lu", sDiskSlot + 1);
         if (gMenu && !projectTransfer) gMenu->toast(message);
@@ -1788,6 +1878,7 @@ bool SavestateManager::clearSlot(u32 slot, u32 expectedGeneration) {
         sBusy = false;
         return false;
     }
+    GhostRecording::checkpointCleared(slot, expectedGeneration);
     memset(&sSlots[slot], 0, sizeof(sSlots[slot]));
     sDurableSlots &= ~(1u << slot);
     sPackedChecksums[slot] = 0;
@@ -1798,10 +1889,24 @@ bool SavestateManager::clearSlot(u32 slot, u32 expectedGeneration) {
 }
 
 bool SavestateManager::saveState() {
-    return saveSlotExplicit(sActiveSlot);
+    return saveSlotManual(sActiveSlot);
+}
+
+bool SavestateManager::saveSlotManual(u32 slot) {
+    const bool previous = sManualRamSave;
+    sManualRamSave = true;
+    const bool saved = saveSlotExplicit(slot);
+    sManualRamSave = previous;
+    return saved;
 }
 
 bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracticeTake) {
+    // Consume the manual policy before any callbacks so a nested save stays strict.
+    const bool stopRecordingIfBankBusy = sManualRamSave;
+    sManualRamSave = false;
+#if SUSAMUNE_SAVE_PROBE
+    const u32 probeStart=OSGetTick();
+#endif
     if (sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval) {
         feedback("E:busy", "Wait for the pending state load");
         return false;
@@ -1811,6 +1916,7 @@ bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracti
             "Savestates need matching Moonshine Launcher");
         return false;
     }
+    GhostRecording::CheckpointLoad traceLoad;
     // Refuse while a stage load is in flight or the intro sequence is playing;
     // the heap is not yet stable there. See inLoadTransition().
     if (inLoadTransition()) {
@@ -1894,6 +2000,14 @@ bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracti
     // Silence the DAC for the whole interrupts-off window so the frozen audio
     // DMA doesn't buzz; restored just before interrupts come back.
     bool dma = muteAudioDma();
+#if SUSAMUNE_SAVE_PROBE
+    StateSaveProbe::Trial probe(StateWorkLease::epoch(),slot,probeStart);
+    if (!probe) {
+        unmuteAudioDma(dma); OSRestoreInterrupts(ints); sBusy=false;
+        feedback("E:probe", "Save probe unavailable - stop trace and replay");
+        return false;
+    }
+#endif
 
     if (!captureLiveVideo()) {
         unmuteAudioDma(dma);
@@ -1980,6 +2094,13 @@ bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracti
         feedback("E:ghost", "Ghost recording unavailable - try again");
         return false;
     }
+    const bool wasRecording = stopRecordingIfBankBusy && GhostRecording::capturing();
+    GhostRecording::CheckpointSave traceCheckpoint;
+    if (!traceCheckpoint.capture(sCandidate.trace, stopRecordingIfBankBusy)) {
+        rebaseMissionStopwatch(h->save_time); invalidateVideoReadBuffer();
+        unmuteAudioDma(dma); OSRestoreInterrupts(ints); sBusy=false;
+        feedback("E:ghost", GhostRecording::statusText()); return false;
+    }
     StateCodec::ReadSpan practiceSource[PracticeSession::kSavestateSpanCount];
     if (!PracticeSession::captureSavestate(sCandidate.practice, practiceSource, forceRng, omitPracticeTake)) {
         rebaseMissionStopwatch(h->save_time);
@@ -2029,6 +2150,7 @@ bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracti
     sCandidate.packedSize = result.compressedBytes;
     sCandidate.adler32 = result.adler32;
     sCandidate.generation = nextGeneration();
+    if (!traceCheckpoint.commit(slot, sCandidate.generation)) __builtin_trap();
     h->magic = kSnapshotMagic;
     sCandidate.metadataTag = metadataTag(sCandidate);
     sSlots[slot] = sCandidate;
@@ -2043,10 +2165,15 @@ bool SavestateManager::saveSlotExplicit(u32 slot, bool forceRng, bool omitPracti
     OSRestoreInterrupts(ints);
     sBusy = false;
 
+#if SUSAMUNE_SAVE_PROBE
+    probe.success(rawSize,result.compressedBytes);
+#endif
     PracticeSession::onSavestateSaved(slot, sCandidate.generation);
     CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 1, slot + 1);
     char text[48];
-    snprintf(text, sizeof(text), "State %lu saved", slot + 1);
+    const bool recordingStopped = wasRecording && !sCandidate.trace.magic;
+    snprintf(text, sizeof(text), recordingStopped ? "State %lu saved. Ghost recording stopped" :
+        "State %lu saved", slot + 1);
     if (!forceRng) feedback("saved", text);
     return true;
 }
@@ -2064,12 +2191,47 @@ bool SavestateManager::loadOrdinarySlot(u32 slot, u32 expectedGeneration) {
     return loaded;
 }
 
+namespace {
+int prepareRamCheckpointLoad(u32 slot, u32 generation) {
+    if (gpCardManager && gpCardManager->getLastStatus() == CARD_ERROR_BUSY) return 0;
+    if (slot >= SavestateManager::kSlotCount || !generation || !validStore() || inLoadTransition()) return -1;
+    const StoredState &saved = sSlots[slot];
+    const SavestateHeader &h = saved.header;
+    if (saved.generation != generation || h.magic != kSnapshotMagic || h.version != kSnapshotVersion ||
+        h.game_version != SUSAMUNE_GAME_VERSION || saved.metadataTag != metadataTag(saved) ||
+        h.heap_addr != reinterpret_cast<u32>(gpApplication.mCurrentHeap) ||
+        h.area_id != gpApplication.mCurrentScene.mAreaID || h.episode_id != gpApplication.mCurrentScene.mEpisodeID ||
+        saved.parentEpisode != parentEpisode()) return -1;
+    const int rng = Ghost::savestateRngStatus(saved.ghost);
+    if (rng <= 0) return rng;
+    return GhostRecording::prepareFastCheckpointLoad(saved.trace, slot, generation);
+}
+}
+
+int SavestateManager::prepareSlotLoad(u32 slot, u32 generation) {
+    if (sBusy || diskBusy() || mLoadPending || sAwaitingLoadApproval ||
+        slot >= kSlotCount || !validStore() || inLoadTransition()) return -1;
+    const StoredState &saved = sSlots[slot];
+    const SavestateHeader &h = saved.header;
+    if (!generation || saved.generation != generation || h.magic != kSnapshotMagic ||
+        h.version != kSnapshotVersion || h.game_version != SUSAMUNE_GAME_VERSION ||
+        saved.metadataTag != metadataTag(saved) ||
+        h.heap_addr != reinterpret_cast<u32>(gpApplication.mCurrentHeap) ||
+        h.area_id != gpApplication.mCurrentScene.mAreaID ||
+        h.episode_id != gpApplication.mCurrentScene.mEpisodeID ||
+        saved.parentEpisode != parentEpisode()) return -1;
+    return GhostRecording::prepareCheckpointLoad(saved.trace, slot, generation);
+}
+
+void SavestateManager::cancelPreparedLoad() { GhostRecording::cancelCheckpointLoad(); }
+
 bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     const bool fromSD = slot == kSlotCount && sDiskLoadReady;
     if (sBusy || (diskBusy() && !fromSD) || mLoadPending || sAwaitingLoadApproval) {
         feedback("E:busy", "Wait for the pending state load");
         return false;
     }
+    GhostRecording::CheckpointLoad traceLoad;
     // Refuse while a stage load is in flight or the intro sequence is playing;
     // overwriting a heap the setup thread is still filling crashes. See
     // inLoadTransition().
@@ -2084,6 +2246,13 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
         return false;
     }
     StoredState &saved = fromSD ? sCandidate : sSlots[slot];
+    if (!GhostRecording::checkpointLoadReady(saved.trace, slot, expectedGeneration)) {
+        feedback("E:ghost", "Ghost continuation is not ready"); return false;
+    }
+    const int rngStatus = Ghost::savestateRngStatus(saved.ghost);
+    if (rngStatus < 0 || (!sOrdinaryRamLoad && rngStatus == 0)) {
+        feedback("E:rng", "State lacks valid crane controller data"); return false;
+    }
     SavestateHeader *h = &saved.header;
     if (h->magic != kSnapshotMagic) {
         char text[48];
@@ -2176,6 +2345,8 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     // loads wait frame-by-frame in processPendingLoad(); keep this guard for
     // direct callers and the tiny race between that check and this one.
     if (gpCardManager && gpCardManager->getLastStatus() == CARD_ERROR_BUSY) {
+        GhostRecording::cancelCheckpointLoad();
+        GhostRecording::abandonCheckpoint();
         feedback("E:cardbsy", "Memory card busy - try again");
         return false;
     }
@@ -2190,6 +2361,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     // Same reasoning as save().
     if (gpMSound) {
         gpMSound->stopAllSound();
+        GhostRecording::noteContinuationAudio(MS_TRACE_AUDIO_STOP);
     }
 
     // Never overwrite heap-resident textures or display-list backing storage
@@ -2221,7 +2393,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
             unmuteAudioDma(dma);
             OSRestoreInterrupts(ints);
             sBusy = false;
-            feedback("E:owners", "SD state needs the same stage setup");
+            feedback("E:owners", STORAGE_TEXT("SD state needs the same stage setup", "Saved state needs the same stage setup"));
             return false;
         }
     }
@@ -2254,7 +2426,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
             unmuteAudioDma(dma);
             OSRestoreInterrupts(ints);
             sBusy = false;
-            feedback("E:recover", "Save a RAM state here before streaming SD");
+            feedback("E:recover", STORAGE_TEXT("Save a RAM state here before streaming SD", "Save a RAM state before loading this file"));
             return false;
         }
         StateCodec::StreamSource source = {
@@ -2287,6 +2459,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
                     recovery.source, STATE_POOL_MEMORY_BANKS, recovery.destination, recovery.count, fallback.rawSize,
                     fallback.adler32, copyStateBytes, &sLiveArchiveProfile);
                 if (recovered != StateCodec::SUCCESS) __builtin_trap();
+                GhostRecording::cancelCheckpointLoad();
                 sCandidate = fallback;
                 slot = recovery.slot;
                 sDiskRecovered = true;
@@ -2365,6 +2538,7 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     SplitEvents::onSavestateLoaded();
     SplitStats::onSavestateLoaded();
     Ghost::restoreSavestate(saved.ghost);
+    const bool rngCacheRestored = Ghost::restoreSavestateRng(saved.ghost);
     GhostStorage::onSavestateLoaded();
     rngControlOnSavestateLoaded();
     MovementDisplay::onSavestateLoaded();
@@ -2379,14 +2553,22 @@ bool SavestateManager::loadSlot(u32 slot, u32 expectedGeneration) {
     PracticeSession::resetGameplaySpeed();
     PracticeSession::onSavestateLoaded();
     const bool practiceRestored = PracticeSession::restoreSavestate(saved.practice, slot, saved.generation);
+    if (!rngCacheRestored && GhostRecording::checkpointLoadPending()) GhostRecording::cancelCheckpointLoad();
+    if (!traceLoad.commit()) { feedback("E:ghost", "State loaded; ghost continuation failed"); return false; }
     CrashReport::note(SUSAMUNE_CRASH_EVENT_SAVESTATE, 2, slot + 1);
     char text[48];
-    if (sDiskRecovered && fromSD) snprintf(text, sizeof(text), "SD read failed; restored state %lu", slot + 1);
-    else if (fromSD) strcpy(text, "SD state loaded");
+    if (sDiskRecovered && fromSD) snprintf(text, sizeof(text), STORAGE_TEXT("SD read failed; restored state %lu", "File read failed; restored state %lu"), slot + 1);
+    else if (fromSD) strcpy(text, STORAGE_TEXT("SD state loaded", "Saved state loaded"));
     else snprintf(text, sizeof(text), "State %lu loaded", slot + 1);
-    if (practiceRestored) feedback(sDiskRecovered && fromSD ? "E:recovered" : "loaded", text);
+    if (!rngCacheRestored) {
+        snprintf(text, sizeof(text), "State %lu loaded; reset for crane controls", slot + 1);
+        feedback("E:rng", text);
+    } else if (saved.trace.magic && !GhostRecording::checkpointLoadRecorded()) {
+        snprintf(text, sizeof(text), "State %lu loaded; ghost recording stopped", slot + 1);
+        feedback("E:ghostbusy", text);
+    } else if (practiceRestored) feedback(sDiskRecovered && fromSD ? "E:recovered" : "loaded", text);
     else if (sDiskRecovered && fromSD) {
-        snprintf(text, sizeof(text), "SD read failed; state %lu restored, TAS stopped", slot + 1);
+        snprintf(text, sizeof(text), STORAGE_TEXT("SD read failed; state %lu restored, TAS stopped", "File read failed; state %lu restored, TAS stopped"), slot + 1);
         feedback("E:recovered", text);
     }
     return true;
@@ -2432,6 +2614,7 @@ void SavestateManager::updateHook() {
     if (mLoadPending) return;
     if (approvedLoad && sAwaitingLoadApproval) {
         sAwaitingLoadApproval = false;
+        if (!sPendingSD.id) prepareRamCheckpointLoad(sPendingSlot, sPendingGeneration);
         mLoadPending = true;
         mLoadWaitFrames = 0;
         SET_STATUS("loading");
@@ -2445,7 +2628,7 @@ void SavestateManager::updateHook() {
         // Silence overlapping ordinary binds (notably B+Left fast-forward).
         gBinds.suppressUntilRelease();
         if (saveBind == BIND_SAVESTATE_SAVE) saveState();
-        else saveSlotExplicit(saveBind == BIND_SAVESTATE_SAVE_2 ? 1 : 2);
+        else saveSlotManual(saveBind == BIND_SAVESTATE_SAVE_2 ? 1 : 2);
     } else if (loadBind != BIND_COUNT) {
         gBinds.suppressUntilRelease();
         PracticeSession::armLoadHold(gBinds.get(loadBind));
@@ -2463,6 +2646,7 @@ void SavestateManager::updateHook() {
         // submits the rest of the frame after this hook returns. Restoring here
         // made those systems consume half-live/half-restored state. Defer the
         // operation until after the post-render GXDrawDone barrier instead.
+        if (!sPendingSD.id) prepareRamCheckpointLoad(sPendingSlot, sPendingGeneration);
         mLoadPending = true;
         mLoadWaitFrames = 0;
         SET_STATUS("loading");
@@ -2494,8 +2678,39 @@ void SavestateManager::processPendingLoad() {
         }
         sDiskLoadReady = false;
         PracticeSession::cancelLoadHold();
+        GhostRecording::cancelCheckpointLoad();
         feedback("E:cardbsy", "Memory card busy - try again");
         return;
+    }
+
+    if (!sPendingSD.id && (sDiskLoadReady || sPendingSlot < kSlotCount)) {
+        const StoredState &saved=sDiskLoadReady?sCandidate:sSlots[sPendingSlot];
+        if (!sDiskLoadReady || saved.trace.magic) {
+            const SavestateHeader &h=saved.header;
+            const bool valid=saved.generation==sPendingGeneration && h.magic==kSnapshotMagic && h.version==kSnapshotVersion &&
+                h.game_version==SUSAMUNE_GAME_VERSION && saved.metadataTag==metadataTag(saved) &&
+                h.heap_addr==reinterpret_cast<u32>(gpApplication.mCurrentHeap) &&
+                h.area_id==gpApplication.mCurrentScene.mAreaID && h.episode_id==gpApplication.mCurrentScene.mEpisodeID &&
+                saved.parentEpisode==parentEpisode() && !inLoadTransition();
+            int ready=valid?(sDiskLoadReady?
+                GhostRecording::prepareCheckpointLoad(saved.trace,sPendingSlot,sPendingGeneration):
+                prepareRamCheckpointLoad(sPendingSlot,sPendingGeneration)):-1;
+            // A valid RAM restore never waits for recorder storage at this barrier.
+            if (ready==0 && !sDiskLoadReady)
+                ready=GhostRecording::authorizeFastCheckpointLoad(saved.trace,sPendingSlot,sPendingGeneration)?1:-1;
+            if (ready==0) {
+                if (++mLoadWaitFrames==1) feedback("ghostwait", "Waiting for ghost checkpoint...");
+                if (mLoadWaitFrames<600) return;
+            }
+            if (ready<=0) {
+                GhostRecording::cancelCheckpointLoad();mLoadPending=false;mLoadWaitFrames=0;PracticeSession::cancelLoadHold();
+                if (sDiskLoadReady) {
+                    GhostRecording::abandonCheckpoint();rebaseMissionStopwatch(sDiskStarted);
+                    finishDiskBorrow();sDiskLoadReady=false;
+                }
+                feedback("E:ghost", ready==0?"Ghost storage timed out - state kept":"Ghost continuation unavailable - state kept");return;
+            }
+        }
     }
 
     // Clear first so a rejected snapshot is not retried every frame.
@@ -2505,16 +2720,19 @@ void SavestateManager::processPendingLoad() {
         const bool restored = loadSlot(kSlotCount, sPendingGeneration);
         finishDiskBorrow();
         if (!restored) {
+            GhostRecording::cancelCheckpointLoad();
             rebaseMissionStopwatch(sDiskStarted);
             PracticeSession::cancelLoadHold();
         }
         sDiskLoadReady = false;
-        sDiskStatus = sDiskRecovered ? "SD read failed; RAM state restored" :
-            restored ? "SD state loaded" : "SD state could not be restored";
+        sDiskStatus = sDiskRecovered ? STORAGE_TEXT("SD read failed; RAM state restored", "File read failed; RAM state restored") :
+            restored ? STORAGE_TEXT("SD state loaded", "Saved state loaded") : STORAGE_TEXT("SD state could not be restored", "Saved state could not be restored");
     } else if (sPendingSD.id) {
         if (!beginSDLoad(sPendingSD.id, sPendingSD.headerCrc, sPendingSD.packedSize, true))
             PracticeSession::cancelLoadHold();
-    } else if (!loadOrdinarySlot(sPendingSlot, sPendingGeneration)) PracticeSession::cancelLoadHold();
+    } else if (!loadOrdinarySlot(sPendingSlot, sPendingGeneration)) {
+        GhostRecording::cancelCheckpointLoad();PracticeSession::cancelLoadHold();
+    }
     memset(&sPendingSD, 0, sizeof(sPendingSD));
 }
 
@@ -2529,3 +2747,29 @@ void SavestateManager::draw(Menu *menu) {
         !gSettings.getBool(SETTING_SYSTEM_MESSAGES) || !gSettings.getBool(SETTING_SAVESTATE_FEEDBACK)) return;
     gCreationExtras.drawSavestateFeedback(menu, mFeedback);
 }
+
+#if MOONSHINE_MEMORY_TELEMETRY
+extern "C" bool memoryTelemetryStates(unsigned *out) {
+    if (!out || !sMetadataReady || sBusy || sDiskActive || sDiskLoadReady) return false;
+    const unsigned capacity = StatePoolMemoryCapacity(&sPoolMemory);
+    unsigned extent = sPool.used, occupied = extent;
+    if (TransferLease::sharedMap()) {
+        if (!sSharedReady || sSharedStore.pending) return false;
+        const TWChunkPool *pool = TWChunkDirectory(&sSharedBanks);
+        if (!pool || !TWChunkLayoutValid(&sSharedBanks, pool) || pool->target != TW_CHUNK_SLOTS) return false;
+        extent = pool->highWater; occupied = TW_CHUNK_DIRECTORY_BYTES;
+        for (unsigned i = 0; i < TW_CHUNK_DESCRIPTORS; ++i) {
+            const TWChunk &chunk = pool->chunks[i];
+            if (!chunk.refs) continue;
+            if (!chunk.size || chunk.size > TW_CHUNK_RAW_BYTES + 8u || chunk.offset > extent ||
+                TWChunkAlign(chunk.size) > extent - chunk.offset || occupied > capacity - TWChunkAlign(chunk.size)) return false;
+            occupied += TWChunkAlign(chunk.size);
+        }
+    }
+    if (!capacity || extent > capacity || occupied > capacity) return false;
+    out[0] = capacity; out[1] = extent;
+    for (unsigned i = 0; i < 3; ++i) out[2+i] = sSlots[i].header.magic == kSnapshotMagic ? sSlots[i].packedSize : 0;
+    out[5] = occupied;
+    return true;
+}
+#endif

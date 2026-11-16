@@ -129,11 +129,14 @@ class EmulatorExportTests(unittest.TestCase):
         for i in range(24):
             self.assertEqual(ppc.mem[export.STAGING + i * 4], 0)
             self.assertEqual(ppc.mem[self.cold_base + i * 4], i * 0x10203 + 17)
-        expected = []
-        for name, address in (("dcbf", self.cold_base), ("dcbf", export.STAGING), ("icbi", self.cold_base)):
-            expected.extend((name, address + i * 32) for i in range(3))
-            expected.append(("sync", 0))
-        self.assertEqual(ppc.cache, [*expected, ("isync", 0)])
+        first_invalidate = next(i for i, row in enumerate(ppc.cache) if row[0] == "icbi")
+        expected_flush = {("dcbf", address + i * 32)
+                          for address in (self.cold_base, export.STAGING) for i in range(3)}
+        self.assertEqual({row for row in ppc.cache[:first_invalidate] if row[0] == "dcbf"}, expected_flush)
+        self.assertIn(("sync", 0), ppc.cache[:first_invalidate])
+        self.assertEqual([row for row in ppc.cache if row[0] == "icbi"],
+                         [("icbi", self.cold_base + i * 32) for i in range(3)])
+        self.assertEqual(ppc.cache[-2:], [("sync", 0), ("isync", 0)])
 
     def test_live_fst_collision_or_invalid_range_halts_before_copy(self):
         for address, size in ((export.STAGING, 32), (export.STAGING - 4, 8),
@@ -195,6 +198,32 @@ class EmulatorExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             export.plan_dol(*args, model_assets=b"bad")
 
+    def test_https_with_menu_and_models_fits_bootstrap_and_preserves_neighbors(self):
+        menu = (0x713BA000, 32)
+        https = (0x71B20000, 96)
+        spans = [(self.cold_base, 96), menu, *export.dolphin_ghost_assets.copy_spans(), https]
+        code = export.build_bootstrap(self.stub, export.STAGING, self.cold_base, 96,
+                                      self.hardware, ((self.base, 0x50000), (self.base + 0x80000, 0x3F400)),
+                                      menu_code=menu, model_assets=True, native_https=https)
+        self.assertLessEqual(len(code), export.BOOTSTRAP_CAPACITY)
+        ppc = PPC(code, self.stub, self.hardware)
+        ppc.mem.update({0x80000038: 0x817FE000, 0x8000003C: 0x1000})
+        staged = export.STAGING
+        for address, size in spans:
+            ppc.mem[address - 4] = ppc.mem[address + size] = 0xCAFE
+            for i in range(0, size, 4):ppc.mem[staged + i] = address + i
+            staged += size
+        ppc.execute()
+        self.assertFalse(ppc.halted)
+        for address, size in spans:
+            self.assertEqual(ppc.mem[address - 4], 0xCAFE)
+            self.assertEqual(ppc.mem[address + size], 0xCAFE)
+            for i in range(0, size, 4):self.assertEqual(ppc.mem[address + i], address + i)
+        self.assertTrue(all(ppc.mem[a] == 0 for a in range(export.STAGING, staged, 4)))
+        for wrong in [(0x71C00000, 96), (https[0], 0xD0020), (https[0], 1)]:
+            with self.assertRaises(ValueError):
+                export.build_bootstrap(self.stub, export.STAGING, self.cold_base, 96, self.hardware, native_https=wrong)
+
     def test_source_free_patch_round_trip_preserves_assets_and_fst(self):
         retail, manifest, cold, symbols, protected = self.fixture()
         changed, payloads, length, info = export.plan_dol(retail, manifest, cold, symbols, protected)
@@ -216,7 +245,7 @@ class EmulatorExportTests(unittest.TestCase):
         self.assertEqual(len(list(actual.sections)), 4)
         self.assertEqual(actual.entryPoint, symbols["__start"])
         self.assertEqual(result[target + 0x104:target + 0x108], struct.pack(">I", export.branch(0x80003004, self.stub, True)))
-        self.assertEqual(info["bootstrap_bytes"], 420)
+        self.assertEqual(info["bootstrap_bytes"], 400)
         self.assertTrue(any(op["kind"] == "source" for op in operations))
 
     def test_rejects_changed_boot_protected_bytes_or_full_upper_tail(self):
@@ -278,6 +307,22 @@ class EmulatorExportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "provenance"):
                 export.verify_current_inputs(dict(proof, complete=False), build, "pal")
 
+
+class LanguageExportTests(unittest.TestCase):
+    def asset(self):
+        payload=bytearray(64);struct.pack_into(">3I",payload,0,0x4D4A5549,2,64)
+        struct.pack_into(">I",payload,12,zlib.crc32(payload)&0xFFFFFFFF)
+        return bytes(payload)
+    def test_japanese_export_is_bounded_and_does_not_replace_original_ranges(self):
+        operations=[{"target_offset":0x420,"size":4,"kind":"literal","value":b"abcd"}]
+        result,evidence=export.language_operations(operations,[(0,0x4000)],"jp","ja",self.asset())
+        self.assertEqual(len(operations),1);self.assertEqual(len(result),2)
+        self.assertEqual(evidence["offset"],0x00C00000)
+        self.assertEqual(result[1]["value"],self.asset())
+        for region,extents,payload in (("pal",[],self.asset()),("jp",[(0x00C00000,32)],self.asset()),("jp",[],self.asset()[:-1]),("jp",[],bytes(64))):
+            with self.subTest(region=region,extents=extents):
+                with self.assertRaises(ValueError):export.language_operations(operations,extents,region,"ja",payload)
+        self.assertEqual(export.language_operations(operations,[],"jp","en"),(operations,{}))
 
 if __name__ == "__main__":
     unittest.main()

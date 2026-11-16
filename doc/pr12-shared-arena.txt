@@ -1,0 +1,199 @@
+R12 shared ghost arena and compact visual cache — 2026-10-30
+
+Status
+
+Implemented and host-tested components, not runtime integration. No legacy
+payload bank was reclaimed, no mem2_map address changed, no SD deployment or
+Dolphin/Wii session was performed. Ordinary recording/save/library, legacy
+.smsghost adapters, source-bound cache publication and renderer wiring remain
+integration work. These components do not establish full-world replay fidelity.
+
+Files
+
+include/susamune/ghost_arena.hxx
+include/susamune/ghost_trace_index.hxx / src/ghost_trace_index.cpp
+include/susamune/ghost_trace_race_stream.hxx / src/ghost_trace_race_stream.cpp
+scripts/test_ghost_arena.py / scripts/test_ghost_trace_index.py
+
+Arena contract
+
+Zero-initialize Arena once, configure only owner-audited, disjoint 32-byte spans,
+and serialize calls on the PPC side. No native addresses are selected here.
+RECORDING, PLAYBACK, RACING and WORKSPACE acquire distinct generation-bearing
+leases from one pool. There are 24 live leases and up to eight backing spans.
+Allocation rounds to 32 bytes and chooses the smallest fitting contiguous gap.
+available() reports total free bytes; largest() reports the largest free span.
+The lease-table limit can refuse an allocation even when bytes remain.
+
+pin(lease, owner, sequence, READS_MEMORY) permits local reads but blocks writes
+and release while a backend consumes the buffer. WRITES_MEMORY blocks local
+reads and writes. Only the matching lease generation, owner and pending sequence
+can complete it. Transfer sequences increase within a lease. Generation wrap
+fails closed. Live leases prevent reconfiguration. Callers perform cache-line
+flush/invalidate operations; the allocator does not issue hardware cache calls.
+
+Compact cache construction
+
+This is disposable internal derived data, not a second user-facing recording
+format and not a new MSGT record type. Its structs are native-endian and contain
+no native object pointers. A future persisted cache wrapper must identify its
+layout and source recording by stable identity/content verification. Never use
+Moonshine's release number alone to reject an otherwise compatible recording.
+A failed/interrupted cache build must not replace a previously valid cache.
+
+Give Capture an 8 KiB aligned scratch lease and a bounded Page array. Feed only
+GhostTraceDecode events from chunks admitted by GhostTraceReader. Retain the
+checked reader chunk until its decoder reports CHUNK_DONE. Decoder's complete
+300-byte input delta baseline remains chronological; this cache does not
+reconstruct or apply controller/native-world memory on its own.
+
+feed() delays each visual until the next recorded frame, pairing only that
+same frame's input with the frame-boundary bit. MOVE inputs never replace it.
+The sample retains the observed signed QFT and native movement counter at the
+pre-direct phase. No quarter-frame timestamps, poses or missing input are
+invented. Missing pose and missing clock/input are explicit flags.
+
+ACCEPTED consumes the event. PAGE_READY does not: pendingPage() describes the
+sealed scratch page; persist it, call commitPage(), then retry the same event.
+finish() uses the same flush/retry protocol and reports FINISHED only when every
+page has been committed. Capacity exhaustion is an explicit failure; it cannot
+publish a silently truncated successful index. Do not recycle a pending page
+until its storage transfer completes.
+
+Each sample is 64 bytes and each page holds at most 128 samples (8 KiB).
+Descriptors are 48 bytes. Page storage slots are ordinal * 8192 bytes; a sealed
+partial page's unused suffix is zeroed so the full slot can be written safely.
+Page hash and reads cover count * 64 useful bytes. Directory storage remains
+bounded by caller capacity and the internal 65,535-page ceiling. An empty index
+is not a playable recording.
+
+Scene, QFT-attempt identity, stage generation, clock validity or QFT regression
+starts a new segment; capture-frame order must still increase. Duplicate QFT
+values remain distinct observations. This permits explicit frame scrubbing for
+untimed intros and explicit QFT segment selection for racing/split alignment.
+The cache does not manufacture semantic split events or map two runs' splits:
+existing split metadata must select each run's segment and time independently.
+
+Sampling
+
+validDirectory() admits descriptor order and bounds. validPage() verifies the
+payload hash, native sample bounds, monotonic frame/QFT order and descriptor
+endpoints before a page can be sampled. Animation bounds come from ghost_format.h;
+FLUDD/Yoshi validation is the existing shared schema. Cache bytes never supply
+an I/O destination or a native restore pointer.
+
+locate(byQf(segment, qf)) or locate(byFrame(segment, frame)) selects at most two
+adjacent pages. Exact duplicate timestamps select the latest observed frame.
+bracket() returns borrowed before/after samples and a fraction for the existing
+renderer; input remains the before-sample value. It does not interpolate across
+missing poses, nonconsecutive capture frames or segment boundaries. Out-of-range
+queries clamp and mark clamped; the UI controls end-of-run visibility. The caller
+must check POSE before drawing. Samples remain borrowed until the next request
+can evict their pages or the stream closes.
+
+GhostTraceRaceStream uses two separate 8 KiB RACING leases per stream. begin()
+validates a caller-owned immutable directory and acquires both leases or rolls
+back. request() selects an explicit query; nextRead() yields bounded cache-file
+offset, byte count, destination and completion sequence. The backend's complete
+read/cache maintenance precedes acceptRead(). Pending I/O prevents reseeking or
+closing. Failure completions must still be reported so leases can return.
+Sequence counters survive close/reopen and reject delayed duplicate ACKs.
+Two streams provide Watch2's independent seeks while recording holds its own
+leases. No whole-world decode workspace is retained by visual racing.
+
+Legacy .smsghost Watch/racing is still required. Preserve its existing visual
+semantics and split identity; either adapt its checked samples into this cache
+or stream the existing wire records through separately leased small pages.
+Do not pretend missing historical world state can be recovered. The current
+legacy banks and savestate prefix assumptions must be migrated before any
+prefix is released. Full-world playback still requires matching Sunshine region;
+visual cache sampling itself imposes no region restriction.
+
+Memory costs
+
+PowerPC sizeof, measured from isolated compiler objects:
+  GhostArena::Arena 748 bytes (reserve 768 if separately aligned)
+  GhostTraceIndex::Builder 116 bytes; Capture 196 bytes
+  GhostTraceRaceStream::Stream 84 bytes each
+  GhostTraceDecode::Decoder 348 bytes; Event 228 bytes
+
+Visual racing data: 16 KiB per stream; Watch2: 32 KiB total, plus descriptors and
+control objects. At 60 visual samples/second, one minute needs 230,400 useful
+sample bytes on storage and about 1,350 descriptor bytes, rounded up by page and
+segment boundaries. At 30 samples/second those figures halve. This is arithmetic,
+not a new promised recording duration or a measured device transfer rate.
+
+Building a cache temporarily needs the existing reader's 512 KiB decoded output
+and 16 KiB packed scratch, one 8 KiB page and bounded descriptors/controls. Build
+before race admission, release the world-reader leases, then admit small race
+leases. The final backend must account for source/cache I/O and atomic lifetime.
+Final object section sizes are recorded in
+build/pr48-sd-trace/r12-shared-arena-check/object-sizes.json. They are pre-link
+allocated totals, not final retained code or new MEM1 headroom. There are no
+module-owned runtime banks or global cache arrays in either new source file.
+
+Current ownership audit (not a new grant)
+
+Gross planning sources:
+  two pose/camera/context prefixes: 863,168 bytes (2 * 0x695E0)
+  two legacy input prefixes:       1,728,000 bytes (2 * 0xD2F00)
+  separately admitted extension:  2,359,296 bytes
+  total:                           4,950,464 bytes
+
+User reserves 1,572,864 bytes for loading/cache and 512,000 bytes for the
+savestate experiment (or loading/cache if it misses the two-frame threshold).
+That leaves 2,865,600 bytes for the complete shared ghost system, not merely
+queue payloads. No reservation is already freed by this calculation.
+
+Currently fixed inside the separately admitted extension:
+  upper core code:                  32 KiB  0x93400000..0x93408000
+  producer buffer 0:               512 KiB  0x93408000..0x93488000
+  mailbox/control/blob cache:       64 KiB  0x93488000..0x93498000
+  private trace code:               64 KiB  0x93498000..0x934A8000
+  ARM compression workspace:        64 KiB  0x934A8000..0x934B8000
+  producer buffer 1:               512 KiB  0x934F4000..0x93574000
+  actor cache in allocated ARAM:   384 KiB  0x90FA0000..0x91000000
+
+Core/control/code/codec/actors therefore charge 608 KiB before recording queues
+or the new index/control leases. The current upper gaps are 240 KiB at
+0x934B8000..0x934F4000 and 432 KiB at 0x93574000..0x935E0000. They are conditional
+candidates only: production admission, complete owner migration and disabled
+TIMEWARP_QF_MEMORY_PILOT must precede registration. The pilot writes the whole
+extension. GhostMemory::primary() returns nominal half-bank spans which include
+live code/control/codec; those whole spans must not be given to the allocator.
+
+Actor currently uses 16-byte identity + 0x150 data + 32 padding = 384 bytes,
+times 1024. Removing the padding could save 32 KiB inside its existing allocation
+while retaining 32-byte element alignment. This file does not change Actor,
+its clear lengths or its reservation; those must move together if integrated.
+
+Legacy conditional prefix candidates are exactly [base, base+0x695E0) for the
+record/play pose slots and [base, base+0xD2F00) for both input slots. Everything
+beyond those endpoints stays with the existing owners: model heaps, catalogue,
+online/live state, camera backup, tracks, segment table, savestate metadata,
+live owner profile/split statistics and presentation/code/collision scratch.
+ghost.cpp currently still binds fixed record/play pointers and its saved-prefix
+validation requires the physical pair; Watch2 borrows the recording bank. This
+is direct evidence that these candidate prefixes are not yet assignable.
+The separate file-transfer bank is shared savestate capacity, never spare RAM.
+
+Verification
+
+11 arena tests: malformed/aliased/overflow spans, mixed owners, alignment,
+fragmentation, lease count, pin direction, stale handles/completions, generation
+exhaustion and 6,000 randomized nonoverlap/accounting operations.
+
+15 index/stream tests: exact timings, page boundaries, input phase pairing,
+missing poses/gaps, identity and clock boundaries, duplicate timestamps, bounds,
+flush/retry, capacity refusal, corruption, two streams beside a recording lease,
+pending completion/release and close/reopen stale-ACK rejection. One test runs
+the production reader -> typed decoder -> cache -> leased sampler on the actual
+runtime-r12-capture.msgt: all 151 visuals retained in two pages, QFT 1140..1740.
+That fixture predates frame-boundary input; its INPUT flags correctly stay clear.
+It is a mid-level JP Dolphin capture, not full-world or Wii replay proof.
+
+Both new source files compile independently with the actual PowerPC compiler
+and freestanding release flags. Shared native build folders were not run.
+Final pinned-code registration, full linking, backend/cache publication,
+ordinary recording/library/renderer wiring, legacy migration and native/Wii
+validation remain with the parent integration work.

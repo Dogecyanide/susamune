@@ -1,3 +1,7 @@
+#include "susamune/loading_trace.hxx"
+#include "susamune/ghost_world_runtime.hxx"
+#include "susamune/ghost_recording.hxx"
+#include "susamune/ghost_departure.hxx"
 // =====================================================================
 // warp_wheel.cpp
 //
@@ -6,6 +10,8 @@
 // =====================================================================
 
 #include "susamune/warp_wheel.hxx"
+#include "susamune/menu_theme.hxx"
+#include "susamune/menu_palette.hxx"
 
 #include "Dolphin/string.h"
 #include "SMS/GC2D/SmplFader.hxx"
@@ -112,6 +118,8 @@ enum PromptAction : u8 {
     PROMPT_RESTART_SAVE_FULL,
     PROMPT_SAVESTATE_LOAD,
     PROMPT_NATURAL_DEPARTURE,
+    PROMPT_ONLINE_IL,
+    PROMPT_ONLINE_MENU,
 };
 
 enum DeferredRestart : u8 {
@@ -493,6 +501,20 @@ void updateAutoSave() {
     if (gMenu) gMenu->toast("Auto-saving PB ghost...");
 }
 
+#if TIMEWARP_LIVE_RACING
+__attribute__((noinline)) bool executeOnlinePrompt(const PromptState &action) {
+    if (action.action == PROMPT_ONLINE_IL) {
+        if (ILing::startOnline(action.detail, action.dest.episode)) sArmedILIndex = action.detail;
+        return true;
+    }
+    if (action.action == PROMPT_ONLINE_MENU) {
+        if (gMenu) gMenu->openOnline();
+        return true;
+    }
+    return false;
+}
+#endif
+
 void executePromptAction() {
     const PromptState action = sPrompt;
     const bool closeSaveMenu = sPromptSaving;
@@ -500,6 +522,9 @@ void executePromptAction() {
     gBinds.suppressUntilRelease();
     if (closeSaveMenu && gMenu && gMenu->shown()) gMenu->hide();
 
+#if TIMEWARP_LIVE_RACING
+    if (executeOnlinePrompt(action)) return;
+#endif
     switch (action.action) {
     case PROMPT_WARP:
         LevelWarp::warpToGuarded(action.dest, 0, false);
@@ -630,7 +655,7 @@ bool restartPromptPending() {
 }
 
 bool requestCourseWarp(const LevelWarp::Dest &dest) {
-    if (StageLoader::departureResultPending()) {
+    if ((StageLoader::departureResultPending() || ILing::resultPendingForDeparture())) {
         sHeldSessionDeparture = HELD_SESSION_DEPARTURE_WARP;
         sHeldSessionDest = dest;
         sHeldSessionDetail = -1;
@@ -766,9 +791,9 @@ void applyDest(const LevelWarp::Dest &dest) {
 }
 
 void overrideSourceForDefaultSpawn(const LevelWarp::Dest &source) {
-    // Airstrip's only spawn ignores mPrevScene. Its special load path needs the
-    // live source sequence rather than the synthetic self-source courses use.
-    if (source.area == TGameSequence::AREA_AIRPORT) return;
+    // Only a destination in Airstrip needs the live source sequence. Plaza ILs
+    // may intentionally use Airstrip as their source to select its exit spawn.
+    if (gpApplication.mNextScene.mAreaID == TGameSequence::AREA_AIRPORT) return;
     gpApplication.mCurrentScene.mAreaID    = source.area;
     gpApplication.mCurrentScene.mEpisodeID = source.episode;
     gpApplication.mCurrentScene.mFlag      = 0;
@@ -806,6 +831,11 @@ void prepareArmedDeparture() {
 
 __attribute__((noinline)) void armWarp(const LevelWarp::Dest &dest,
                                        bool keepSpawn, bool overrideSource) {
+    if (GhostWorldRuntime::active() &&
+        !GhostWorldRuntime::permitsStartWarp((unsigned(dest.area)<<8)|dest.episode))
+        GhostWorldRuntime::stop();
+    LoadingTrace::mark(MS_LOAD_ARM,(unsigned(dest.area)<<8)|dest.episode);
+    GhostDeparture::cancel();
     PracticeSession::resetGameplaySpeed();
     PracticeSession::releaseForDeparture();
     sDest = dest;
@@ -834,6 +864,9 @@ void armGuardedWarp(const LevelWarp::Dest &dest, bool overrideSource,
 }
 
 void cancelArmedCourseWarp() {
+    if(sArmed||sTailPending)LoadingTrace::mark(MS_LOAD_CANCEL);
+    GhostDeparture::cancel();
+    GhostRecording::cancelArmed();
     const bool cancelIL = sArmStartedIL;
     sArmed = false;
     sWaitForRetailDeathTail = false;
@@ -946,6 +979,7 @@ void cancelPending(bool keepExitApproval) {
             sExitSelectorPending && (sArmed || sTailPending);
         if (!keepExitTail) {
             if (sArmed) cancelArmedCourseWarp();
+            GhostDeparture::cancel();
             sTailPending = false;
             sWaitForRetailDeathTail = false;
             sQueuedSessionDeathRestart = false;
@@ -980,6 +1014,7 @@ void cancelPending(bool keepExitApproval) {
     }
 
     if (sArmed) cancelArmedCourseWarp();
+    GhostDeparture::cancel();
     // Savestate restore can rewind a director after kick() has consumed the
     // arm but before its fade reaches onDirected(). That tail lives in mod BSS,
     // outside the snapshot, and must not fire on some later retail departure.
@@ -1043,7 +1078,30 @@ void restartFullAfterSave() {
 
 bool readyForOnlineRace() {
     return gpMarDirector && gpApplication.mDirector == gpMarDirector && gpMarDirector->_260 &&
-        gpMarDirector->mCurState == TMarDirector::STATE_NORMAL &&
+        (gpMarDirector->mCurState == TMarDirector::STATE_NORMAL ||
+         gpMarDirector->mCurState == TMarDirector::STATE_SAVE_CARD ||
+         (gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU &&
+          gpMarDirector->mPauseMenu &&
+          (gpMarDirector->mPauseMenu->mState == TPauseMenu2::MENU_OPEN ||
+           gpMarDirector->mPauseMenu->mState == TPauseMenu2::MENU_SAVING))) &&
+        gpApplication.mFader && gpApplication.mFader->mFadeStatus == TSMSFader::FADE_OFF &&
+        !sArmed && !sTailPending && !sPendingTitleExit && !sHoldNaturalDeparture &&
+        sDeferredRestart == DEFERRED_RESTART_NONE &&
+        sHeldSessionDeparture == HELD_SESSION_DEPARTURE_NONE &&
+        (!gpCardManager || gpCardManager->getLastStatus() != CARD_ERROR_BUSY);
+}
+
+bool readyForStorageMaintenance(u8 heldDirectorState) {
+    // The overlay supplies the state saved before borrowing state 12.
+    if (!gpMarDirector || (gpMarDirector->mCurState != heldDirectorState &&
+        gpMarDirector->mCurState != TMarDirector::STATE_STAGE_EXIT_2)) return false;
+    return gpMarDirector && gpApplication.mDirector == gpMarDirector && gpMarDirector->_260 &&
+        (heldDirectorState == TMarDirector::STATE_NORMAL ||
+         heldDirectorState == TMarDirector::STATE_SAVE_CARD ||
+         (heldDirectorState == TMarDirector::STATE_PAUSE_MENU &&
+          gpMarDirector->mPauseMenu &&
+          (gpMarDirector->mPauseMenu->mState == TPauseMenu2::MENU_OPEN ||
+           gpMarDirector->mPauseMenu->mState == TPauseMenu2::MENU_SAVING))) &&
         gpApplication.mFader && gpApplication.mFader->mFadeStatus == TSMSFader::FADE_OFF &&
         !sArmed && !sTailPending && !sPendingTitleExit && !sHoldNaturalDeparture &&
         sDeferredRestart == DEFERRED_RESTART_NONE &&
@@ -1074,6 +1132,14 @@ u8 kick(TMarDirector *director, u8 state) {
         return state;
     }
     if (!armedCourseWarpReady()) return state;
+    LoadingTrace::mark(MS_LOAD_KICK,(unsigned(sDest.area)<<8)|sDest.episode);
+    if (GhostWorldRuntime::active() &&
+        !GhostWorldRuntime::permitsStartWarp((unsigned(sDest.area)<<8)|sDest.episode))
+        GhostWorldRuntime::stop();
+    if (GhostRecording::enabled()) {
+        const GhostRecording::Gate gate=GhostDeparture::begin((unsigned(sDest.area)<<8)|sDest.episode,sArmStartedIL);
+        if(gate==GhostRecording::DEPART_REFUSED){cancelArmedCourseWarp();if(gMenu)gMenu->toast(GhostRecording::statusText());return state;}
+    }
     prepareArmedDeparture();
 
     director->moveStage();
@@ -1081,6 +1147,15 @@ u8 kick(TMarDirector *director, u8 state) {
 }
 
 s32 onDirected(s32 appState) {
+    if(sTailPending && gpApplication.mFader && gpMarDirector &&
+       (gpMarDirector->mCurState==TMarDirector::STATE_STAGE_EXIT ||
+        gpMarDirector->mCurState==TMarDirector::STATE_STAGE_EXIT_2))
+        gpApplication.mFader->setFadeStatus(TSMSFader::FADE_ON);
+    GhostDeparture::poll();
+    // Keep the recording barrier even when an explicit warp cuts the fade.
+    if(appState!=0&&(sTailPending||appState>TApplication::CONTEXT_DIRECT_MAIN_LOOP)&&GhostDeparture::waiting()){
+        LoadingTrace::mark(MS_LOAD_GHOST_WAIT,(unsigned(sDest.area)<<8)|sDest.episode);return 0;
+    }
     if (appState == 0) {
         return appState;
     }
@@ -1121,6 +1196,9 @@ s32 onDirected(s32 appState) {
         sWaitForSave = false;
     }
     if (sArmed) {
+        if ((!sCourseGuard || holdPostSave) && GhostRecording::enabled() &&
+            GhostDeparture::begin((unsigned(sDest.area)<<8)|sDest.episode,sArmStartedIL)==GhostRecording::DEPART_WAIT)
+            return 0;
         sWaitForSave = false;
         if (sCourseGuard) {
             if (holdPostSave) {
@@ -1141,6 +1219,7 @@ s32 onDirected(s32 appState) {
     sExplicitRetailExit = false;
 
     if (sTailPending) {
+        if(GhostDeparture::finish()&&gMenu)gMenu->toast(GhostRecording::statusText());
         sTailPending = false;
         const bool applyExitSelector = sExitSelectorPending;
         sExitSelectorPending = false;
@@ -1229,6 +1308,7 @@ constexpr char kSlotLabels[] =
     "Sand Bird\0"
     "Mecha-Bowser\0"
     "Pinna 2\0"
+    "Pinna EYG\0"
     "Pinna 6\0"
     "Balloons\0"
     "Sirena 2\0"
@@ -1282,6 +1362,7 @@ constexpr Slot kSlots[] = {
     // Pinna subareas
     { 0, 0x3A, 1, 0 },
     { 1, 0x32, 0, 1 },
+    { 2, 5, 2, 2 },
     { 5, 0x29, 0, 5 },
     { 7, 0x3A, 0, 7 },
     // Sirena subareas
@@ -1353,13 +1434,13 @@ constexpr Wheel kWheels[] = {
     { 0, 3 },
     { 3, 3 },
     { 6, 2 },
-    { 8, 4 },
-    { 12, 3 },
-    { 15, 1 },
-    { 16, 4 },
-    { 20, 8 },
-    { 28, 8 },
-    { 36, 9 },
+    { 8, 5 },
+    { 13, 3 },
+    { 16, 1 },
+    { 17, 4 },
+    { 21, 8 },
+    { 29, 8 },
+    { 37, 9 },
 };
 
 constexpr int kNumWheels = sizeof(kWheels) / sizeof(kWheels[0]);
@@ -1431,29 +1512,50 @@ const s16 kUnit[16][2] = {
 // direction. kRadiusLabel is the mid-ring apothem, where the flat edges are.
 const int kCx = 320;
 const int kCy = 245;
-const int kRadiusOuter = 180;
+const int kRadiusOuter = 170;
 const int kRadiusInner = 78;
 const int kRadiusLabel = 125;
 const int kGap = 6;
 
-const int kTitleY   = 32;
-const int kTitleSz  = 20;
 const int kLabelSz  = 12;
 const int kRootSz   = 16;
 const int kDigitSz  = 26;
-const int kFooterY  = 430;
-const int kFooterSz = 12;
+const int kFooterY  = 432;
+const int kFooterSz = 14;
 
 const int kCentreSlot = 8;
 
 inline Color col(u8 r, u8 g, u8 b, u8 a) { return Color(r, g, b, a); }
 
-inline Color cBackdrop() { return col(6, 8, 14, 150); }
-inline Color cSlice()    { return col(34, 48, 61, 235); }
-inline Color cSelected() { return col(255, 194, 61, 255); }
-inline Color cLabel()    { return col(233, 241, 247, 255); }
-inline Color cOnAccent() { return col(27, 18, 6, 255); }
-inline Color cFooter()   { return col(127, 149, 166, 255); }
+inline Color cBackdrop() { return col(4, 19, 21, 155); }
+inline Color cSlice()    { return MenuTheme::paperColor(); }
+inline Color cSelected() { return MenuPalette::colour(MENU_SELECTED_TAB, col(49, 110, 76, 255)); }
+inline Color cLabel()    { return MenuTheme::textColor(); }
+inline Color cOnAccent() { return MenuPalette::colour(MENU_SELECTED_TEXT, col(255, 248, 209, 255)); }
+inline Color cFooter()   { return MenuTheme::footerColor(); }
+
+void drawWheelTile(const s16 *points, int count, bool selected) {
+    Color trim = MenuPalette::colour(MENU_TRIM, col(187, 133, 37, 255));
+    if (!selected) {
+        gMenu->fillPoly(points, count, cSlice());
+        trim.a = 125;
+        gMenu->strokePoly(points, count, trim);
+        return;
+    }
+    int cx = 0, cy = 0;
+    for (int i = 0; i < count; ++i) { cx += points[i * 2]; cy += points[i * 2 + 1]; }
+    cx /= count; cy /= count;
+    const Color colours[] = { trim,
+        MenuPalette::colour(MENU_TRIM_LIGHT, col(255, 236, 162, 255)), cSelected() };
+    for (int layer = 0; layer < 3; ++layer) {
+        s16 inset[16];
+        for (int i = 0; i < count; ++i) {
+            inset[i * 2] = cx + (points[i * 2] - cx) * (100 - layer * 4) / 100;
+            inset[i * 2 + 1] = cy + (points[i * 2 + 1] - cy) * (100 - layer * 4) / 100;
+        }
+        gMenu->fillPoly(inset, count, colours[layer]);
+    }
+}
 
 s8    sRoot = -1;  // -1 while the root wheel is up
 bool  sSubMode;
@@ -1585,7 +1687,7 @@ void drawSlice(int i, bool selected) {
     corner((centreK + 1) & 15, centreK, kRadiusOuter, quad + 2);
     corner((centreK + 1) & 15, centreK, kRadiusInner, quad + 4);
     corner((centreK + 15) & 15, centreK, kRadiusInner, quad + 6);
-    gMenu->fillPoly(quad, 4, selected ? cSelected() : cSlice());
+    drawWheelTile(quad, 4, selected);
 
     const int size = (sRoot < 0) ? kRootSz : ((!currentWheelData()) ? kDigitSz : kLabelSz);
     drawCentred(label, kCx + kUnit[centreK][0] * kRadiusLabel / 4096,
@@ -1605,7 +1707,7 @@ void drawCentre(bool selected) {
         octagon[k * 2 + 1] = (s16)(kCy + kUnit[k * 2 + 1][1] * kRadiusInner / 4096);
     }
     const int size = (sRoot < 0) ? kRootSz : kLabelSz;
-    gMenu->fillPoly(octagon, 8, selected ? cSelected() : cSlice());
+    drawWheelTile(octagon, 8, selected);
     drawCentred(label, kCx, kCy - size / 2, size,
                 selected ? cOnAccent() : cLabel());
 }
@@ -1619,6 +1721,25 @@ void close() {
 }  // namespace
 
 namespace WarpWheel {
+
+#if TIMEWARP_LIVE_RACING
+bool requestOnlineMenu() {
+    if (promptPending()) return true;
+    const LevelWarp::Dest key = {0, 0, 0};
+    return beginPrompt(PROMPT_ONLINE_MENU, key);
+}
+
+bool requestOnlineILStart(int entry, u8 episode) {
+    if (entry < 0 || entry >= ILing::count() || episode >= 8 ||
+        gSettings.getBool(SETTING_DISABLE_WARPS)) return false;
+    // Keep the host's episode choice while a protected PB is being saved.
+    const LevelWarp::Dest key = {0, episode, 0};
+    if (beginPrompt(PROMPT_ONLINE_IL, key, entry)) return true;
+    if (!ILing::startOnline(entry, episode)) return false;
+    sArmedILIndex = entry;
+    return true;
+}
+#endif
 
 bool requestILStart(int entry) {
     if (gSettings.getBool(SETTING_DISABLE_WARPS)) return false;
@@ -1634,7 +1755,7 @@ bool requestExplicitILStart(int entry) {
         gSettings.getBool(SETTING_DISABLE_WARPS)) {
         return false;
     }
-    if (StageLoader::departureResultPending()) {
+    if ((StageLoader::departureResultPending() || ILing::resultPendingForDeparture())) {
         sHeldSessionDeparture = HELD_SESSION_DEPARTURE_IL;
         sHeldSessionDest.area = 0;
         sHeldSessionDest.episode = 0;
@@ -1645,6 +1766,14 @@ bool requestExplicitILStart(int entry) {
 
     cancelExplicitPractice();
     return requestILStart(entry);
+}
+
+bool requestReplayStart(const LevelWarp::Dest &source, const LevelWarp::Dest &destination) {
+    if (!GhostWorldRuntime::active() || gSettings.getBool(SETTING_DISABLE_WARPS) ||
+        StageLoader::departureResultPending() || promptPending() || Ghost::hasUnsavedPB()) return false;
+    cancelExplicitPractice();
+    LevelWarp::warpFromGuarded(source, destination, 0, false);
+    return true;
 }
 
 bool requestSavestateLoad() {
@@ -1711,7 +1840,7 @@ void suppressClassicInstantUntilRelease() {
 
 void resolveDeferredRestart() {
     if (sHeldSessionDeparture != HELD_SESSION_DEPARTURE_NONE) {
-        if (StageLoader::departureResultPending()) return;
+        if ((StageLoader::departureResultPending() || ILing::resultPendingForDeparture())) return;
 
         const HeldSessionDeparture held = sHeldSessionDeparture;
         const LevelWarp::Dest heldDest = sHeldSessionDest;
@@ -2058,14 +2187,12 @@ void draw() {
             ? SUSAMUNE_GLYPH_B " Use Ask instead; the PB stays protected"
             : savestateLoad
               ? SUSAMUNE_GLYPH_A " Ghosts / Save    "
-                SUSAMUNE_GLYPH_B " Load & lose ghost"
+                SUSAMUNE_GLYPH_B " Load / lose ghost"
             : SUSAMUNE_GLYPH_A " Ghosts / Save    "
               SUSAMUNE_GLYPH_B " Continue unsaved";
 
         gMenu->fillBox(0, 0, 640, 480, cBackdrop());
-        gMenu->fillBox(x, y, w, h, cSlice());
-        gMenu->fillBox(x, y, w, 3, cSelected());
-        drawCentred(title, kCx, y + 26, 22, cLabel());
+        MenuTheme::panel(gMenu, x, y, w, h, title, MenuThemeAssets::TabGhost);
         int nameSize = 18;
         while (nameSize > 11 &&
                Menu::textWidth(sPrompt.name, nameSize) > w - 24) {
@@ -2073,14 +2200,20 @@ void draw() {
         }
         drawCentred(sPrompt.name, kCx, y + 64, nameSize, cSelected());
         drawCentred(note, kCx, y + 104, 14, cLabel());
-        drawCentred(hint, kCx, y + 148, 15, cFooter());
+        drawCentred(hint, kCx, y + h - 20, 15, cFooter());
         return;
     }
 
     const int selected = stickSlot(gpApplication.mGamePads[0]);
 
     gMenu->fillBox(0, 0, 640, 480, cBackdrop());
-    drawCentred(currentTitle(), kCx, kTitleY, kTitleSz, cSelected());
+    const char *title = currentTitle();
+    const int titleWidth = Menu::textWidth(title, 18) + 68;
+    const int titleX = kCx - titleWidth / 2;
+    MenuTheme::selection(gMenu, titleX, 28, titleWidth, 32);
+    MenuTheme::image(MenuThemeAssets::get(MenuThemeAssets::Boat, (gpMarDirector->unk5C / 90) & 1),
+                     titleX + 9, 33, 26, 22);
+    gMenu->drawText(title, titleX + 46, 36, 18, 18, cOnAccent());
 
     for (int i = 0; i < 8; i++) {
         drawSlice(i, i == selected);
@@ -2089,7 +2222,9 @@ void draw() {
 
     const char *hint = SUSAMUNE_GLYPH_A " Select    " SUSAMUNE_GLYPH_B
                        " Back    " SUSAMUNE_GLYPH_X " Subareas";
-    drawCentred(hint, kCx, kFooterY, kFooterSz, cFooter());
+    const int hintWidth = Menu::textWidth(hint, kFooterSz) + 28;
+    MenuTheme::selection(gMenu, kCx - hintWidth / 2, kFooterY - 5, hintWidth, 26);
+    drawCentred(hint, kCx, kFooterY, kFooterSz, cOnAccent());
 }
 
 }  // namespace WarpWheel

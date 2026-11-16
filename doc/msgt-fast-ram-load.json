@@ -1,0 +1,54 @@
+{
+  "name": "MSGT fast manual RAM restore",
+  "protocol": {
+    "primary_version": 4,
+    "optional_prepare_version": 3,
+    "retain": 7,
+    "continue": 8,
+    "async_continue": 5,
+    "pending_status": 256,
+    "metadata_permit": 2
+  },
+  "authorization": {
+    "prepareFastCheckpointLoad": "-1 rejects structural checkpoint/slot ownership mismatch; 0 means recording pending or unavailable; 1 means the exact provisional child is ready.",
+    "authorizeFastCheckpointLoad": "Validates the same slot/generation/prefix and permits the normal RAM restore even when its recording handshake is pending. It neither waits nor promises that recording will attach.",
+    "commit": "After real RAM decoding/restoration, poll the exact ownership acknowledgment. Attach CONT before the next simulation step if ready; otherwise practice restoration succeeds and only the new recording stops. checkpointLoadRecorded reports that outcome. No later callback may restart a skipped recording.",
+    "integrity": "The full existing StoredState metadata tag, region, generation, heap, scene, payload and GX/CARD guards remain authoritative. A matching pin whose storage receipt is pending or failed is recording availability, not permission to bypass RAM validation."
+  },
+  "atomic_request": {
+    "primary": "MsTraceRequest operation8 carries the new child identity, scene, capabilities and primary sequence N.",
+    "side": "MsTraceBranchRequest operation5 carries kind=N, nonce=preserve-old0/1 and run=expected old run; bootNonce binds its old owner. Its 96-byte payload is the exact child/parent prefix/fence descriptor.",
+    "response": "For operation5 only, reserved[0] is the adopted child run (zero for refusal), reserved[1] is N and reserved[2] is the old run. Both primary and side acknowledgment must match before producer banks can be cleared or reused.",
+    "acceptance": "Require a checked exact READY warm file and bounded free retirement owner. No cold create fallback occurs at this transition. Old source ownership is moved before new-buffer use; original sources remain preserved on refusal or error.",
+    "publication": "Status0x100 acknowledges ownership only. Status0 becomes successful publication only after a completed checked parent and exact reference write, sync, readback, close and rename. Terminal errors stop only the new recorder."
+  },
+  "producer_phases": {
+    "FAST_PENDING": "Old run and payload leases remain authoritative until the exact atomic acknowledgment.",
+    "FAST_READY": "Child storage is adopted but append remains held until the actual RAM restore commits.",
+    "PUBLISHING": "CONT is emitted first at the saved frame/tick. Capture continues while parent completion/reference publication advances in the background.",
+    "UNTRACKED": "Practice has resumed without a new recording. Pending owners and pins remain held until their terminal storage outcome; no late capture activation is allowed."
+  },
+  "finish": "Seal final observations at the original finish boundary and stop further capture. Delay only the footer/publication eligibility until the exact dependency is durable. A finished draft remains saveable after an unrecorded warp; stage and reset callbacks cannot discard it.",
+  "busy_policy": "Cold preparation, a full bounded owner slot, another pending dependency, or an unavailable storage response may stop the new recording. Manual RAM restoration and later unrecorded practice departures do not wait for that metadata. Old saved or finished ghosts and every checkpoint prefix remain protected.",
+  "metadata_grant": {
+    "ordinary": "READY_FLAG1 retains normal-time, offline, safe-stage and headroom admission for speculative warming and ordinary cleanup.",
+    "required": "METADATA_FLAG2 is limited to an existing async map and its exact retained parent. The PPC passes the original director state through a read-only readiness query, allowing stable menu, native-pause and frame-advance holds.",
+    "denied": "Setup/warp transitions, conflicting SD/TAS transfers, active file readers, replay/Watch, free camera, online sessions, and incompatible arena ownership deny admission. The compatible manual RAM copy may overlap its ownership handshake. Flag2 never authorizes speculative preparation or unrelated retirement."
+  },
+  "child_header": {
+    "flags_offset36": "0x23 continuation provenance",
+    "tag_offset40": "PRV1",
+    "tag_offset44": "BRCH (0x42524348)",
+    "parent_offsets48_52_56": "nonce, run, chunk",
+    "invariant": "The tag and parent tuple are immutable and covered by the original header hash. A child cannot fall back to an ordinary file if its exact graph edge is absent or invalid. Checked standalone flattening creates a fresh header with BRCH and its tuple cleared while retaining aggregate TAS provenance."
+  },
+  "storage": "Consumed PREP storage is reused for the single async publication job; independent retained FIL ownership stays bounded. No transfer, replay, snapshot or kernel reservation grows.",
+  "compatibility": "Older PREP1/2 backends retain existing ordinary capture behavior. Manual fast restore may continue practice without recording rather than send an unsupported atomic operation. Existing slow SD/TAS preparation APIs keep their durable-before-restore contract.",
+  "tests": [
+    "scripts/test_ghost_trace_fast_producer.py",
+    "scripts/test_ghost_trace_warm_producer.py",
+    "scripts/test_ghost_trace_prepare_client.py",
+    "scripts/test_ghost_trace_producer.py",
+    "scripts/test_ghost_recording_manager.py"
+  ]
+}

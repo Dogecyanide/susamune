@@ -1,3 +1,5 @@
+#include "susamune/replay_session.hxx"
+#include "susamune/japanese_ui.hxx"
 #include "susamune/records.hxx"
 
 #include "Dolphin/mem.h"
@@ -878,6 +880,7 @@ void queueUnlock(Records::AchievementId id) {
 }
 
 void unlock(Records::AchievementId id, bool notify = true) {
+    if(ReplaySession::blocksResults())return;
     if (!validAchievement(id)) return;
     const u16 value = (u16)id;
     const u8 mask = (u8)(1u << (value & 7));
@@ -901,6 +904,7 @@ __attribute__((noinline)) u32 saturatedAdd(u32 a, u32 b) {
 void evaluateStatAchievements(bool notify);
 
 void addStat(Records::StatId id, u32 amount) {
+    if(ReplaySession::blocksResults())return;
     if (id >= Records::STAT_COUNT || amount == 0) return;
     const u32 next = saturatedAdd(sStats[id], amount);
     if (next == sStats[id]) return;
@@ -1435,7 +1439,7 @@ void reconcileRegionalStats(const u32 regional[][STAT_CAPACITY],
 
 void update(bool creationEditing, bool observerFrame) {
     const u32 serial = gQFTTimer.attemptSerial();
-    if (observerFrame) {
+    if (observerFrame || ReplaySession::blocksResults()) {
         // Watch owns the stage but not the runner's persistent statistics.
         sLastAttemptSerial = serial;
         sWasDead = false;
@@ -1544,6 +1548,7 @@ void onStageExit() {
 }
 
 void onILAttemptStarted(int entry) {
+    if(ReplaySession::blocksResults())return;
     if (sAttemptActive) failCurrentAttempt();
     sAttemptEntry = (s16)entry;
     sAttemptActive = true;
@@ -1663,6 +1668,7 @@ void onILResult(int entry, u8 pbSlot, s32 qf, s32 igtCentis,
 }
 
 void onPBAccepted(int, u8, s32 previousQf, s32 newQf) {
+    if(ReplaySession::blocksResults())return;
     addStat(STAT_PBS_EARNED, 1);
     if (previousQf >= 0 && previousQf - newQf == 4)
         unlock(ACH_BY_A_NOSE);
@@ -1864,15 +1870,28 @@ const AchievementDesc *achievement(AchievementId id) {
                                    id - ACHIEVEMENT_FIRST);
     } else if (id <= ACH_PIANTA_MASTER) {
         const int mastery = id - ACH_BIANCO_BEGINNINGS;
+#if defined(SUSAMUNE_VERSION_JP)
+        char format[32];
+        snprintf(format, sizeof(format), "%%s %s",
+                 PackedText::at(kMasterySuffixes, mastery / 7));
+        JapaneseUi::format(name, sizeof(sState->achievementName), format,
+                           JapaneseUi::text(worldName((World)(mastery % 7))));
+#else
         sprintf(name, "%s %s", worldName((World)(mastery % 7)),
                 PackedText::at(kMasterySuffixes, mastery / 7));
+#endif
         desc.name = name;
     } else if (id <= ACH_DEEP_END_DIVIDEND) {
         desc.name = PackedText::at(kStreakNames, id - ACH_GETTING_THERE);
     } else if (id >= ACH_BIANCO_ENTHUSIAST &&
                id <= ACH_DELFINO_ENTHUSIAST) {
+#if defined(SUSAMUNE_VERSION_JP)
+        JapaneseUi::format(name, sizeof(sState->achievementName), "%s Enthusiast",
+            JapaneseUi::text(worldName((World)(id - ACH_BIANCO_ENTHUSIAST))));
+#else
         sprintf(name, "%s Enthusiast",
                 worldName((World)(id - ACH_BIANCO_ENTHUSIAST)));
+#endif
         desc.name = name;
     } else if (id <= ACH_TRIAL_BY_SUNSHINE) {
         const int special = id <= ACH_COMPLETIONIST

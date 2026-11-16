@@ -1,0 +1,23 @@
+PR35 follow-up
+
+First confirm the new public catalogue and download path on a real Wii.
+Then add device-code account linking and opt-in uploads, following Zel's
+MOONSHINE-INTEGRATION.md. Keep rotating refresh tokens in a separate atomic
+credential store; never include them in logs, settings exports or packages.
+Respect the service's polling interval, Retry-After and idempotency rules.
+
+Native HTTPS uses a dedicated low-priority ARM worker. IOS calls and their
+buffers stay owned until completion, even after cancellation. Blocking IOS
+open/connect/close calls run on that worker, not the gameplay/storage loop.
+The worker never does FAT I/O. SusamuneGhost drains at most 16 KiB per eligible
+storage pass under the existing disc-idle guard.
+
+The TLS/parser/ring workspace occupies the last 128 KiB of the existing shared
+GHOST transfer lease. A download streams into a temporary file; after the
+worker retires, the same lease stages full canonical validation before rename.
+No MEM1/MEM2 reservation or savestate capacity grows. Ghost storage protocol 6
+requires the matching launcher and regional modules.
+
+Do not conflate native HTTPS verification with Wii hardware validation.
+Keep PR34's Stageloader/save-box and three/four-player tests outstanding until
+their users report results. Keep the separate offline Search investigation.

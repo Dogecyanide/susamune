@@ -1,0 +1,51 @@
+#ifndef MOONSHINE_LWIP_OPTS_H
+#define MOONSHINE_LWIP_OPTS_H
+#include "susamune/mem2_map.h"
+#define NO_SYS 1
+#define LWIP_TIMERS 0
+#define SYS_LIGHTWEIGHT_PROT 0
+#define LWIP_NOASSERT 1
+#define LWIP_IPV4 1
+#define LWIP_IPV6 0
+#define LWIP_ARP 0
+#define LWIP_ETHERNET 0
+#define LWIP_ICMP 0
+#define LWIP_IGMP 0
+#define LWIP_RAW 0
+#define LWIP_DHCP 0
+#define LWIP_AUTOIP 0
+#define LWIP_DNS 0
+#define LWIP_UDP 0
+#define LWIP_UDPLITE 0
+#define LWIP_TCP 1
+#define LWIP_SOCKET 0
+#define LWIP_NETCONN 0
+#define LWIP_STATS 0
+#define LWIP_NETIF_HOSTNAME 0
+#define LWIP_NETIF_LOOPBACK 0
+#define LWIP_SINGLE_NETIF 1
+#define LWIP_TCP_KEEPALIVE 0
+#define LWIP_TCP_TIMESTAMPS 0
+#define TCP_LISTEN_BACKLOG 0
+#define TCP_QUEUE_OOSEQ 1
+#define TCP_OOSEQ_MAX_BYTES 2048
+#define TCP_OOSEQ_MAX_PBUFS 4
+#define TCP_MSS 536
+#define TCP_WND 4096
+#define TCP_SND_BUF 4096
+#define TCP_SND_QUEUELEN 32
+#define IP_REASSEMBLY 0
+#define IP_FRAG 0
+#define MEM_ALIGNMENT 4
+#define MEM_SIZE (SUSAMUNE_DOLPHIN_TCP_HEAP_SIZE - 64u)
+#ifdef MOONSHINE_LWIP_HOST_TEST
+extern unsigned char moonshine_tcp_heap[SUSAMUNE_DOLPHIN_TCP_HEAP_SIZE];
+#define LWIP_RAM_HEAP_POINTER ((void *)moonshine_tcp_heap)
+#else
+#define LWIP_RAM_HEAP_POINTER ((void *)SUSAMUNE_DOLPHIN_TCP_HEAP_PPC_BASE)
+#endif
+#define MEMP_MEM_MALLOC 1
+#define MEM_LIBC_MALLOC 0
+#define LWIP_NETIF_API 0
+#define LWIP_NO_PACKED_STRUCTS 0
+#endif

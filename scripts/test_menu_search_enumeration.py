@@ -18,7 +18,7 @@ class SearchEnumerationTests(unittest.TestCase):
         source = (ROOT / "src/menu_search.inc").read_text()
         header = (ROOT / "include/susamune/menu_search.hxx").read_text()
         state = function(header, "namespace MenuSearch")
-        matcher = source[source.index("static char lower"):source.index("\nenum Kind")]
+        matcher = source[source.index("SEARCH_CODE(character)"):source.index("\nenum Kind")]
         groups = source[source.index("enum Kind"):source.index("#undef SEARCH_GROUP")]
         fields = "tasProject practiceControls savestate misc rng qol iling stageLoader streaking pbSafety timer creation layoutProfiles ui cosmetic binds guide ghosts soundDisplay online settingsHub ilsHub displayHub systemHub".split()
         code = r'''
@@ -32,6 +32,7 @@ extern "C" void *memcpy(void*p,const void*q,decltype(sizeof(0))n){
 struct RawPromptInput {void begin(unsigned){}};
 constexpr unsigned SUSAMUNE_BIND_BUTTON_MASK=0x1f7f;
 #define SEARCH_CODE(name)
+namespace JapaneseUi { const char *translated(const char*) {return nullptr;} }
 #define ENABLE_DEBUG_WARPS 0
 #define TIMEWARP_LIVE_RACING 1
 ''' + state + r'''
@@ -44,7 +45,7 @@ struct Tab {
        IMPORTED_PAGE_SELECTION=7,CHOICE_VISUALS=1,CHOICE_NONE=0};
  int mPage=0,mSel=0,mMode=0,mSD=0,mSDsel=0,mChoice=0,mTopRow=0;
  using Option=int;static constexpr int OPTION_FAILURE=0;
- bool mPbPage=false,mFailurePage=false,mStreaking=false;
+ bool mPath=false, mPbPage=false,mFailurePage=false,mStreaking=false;
  bool filtered=false;Tab*mParent=nullptr;Tab*child=nullptr;RawPromptInput mPromptInput;
  const char*title(){++labels;return "Menu";}
  void focus(){}void openChild(Tab*t){child=t;}
@@ -60,6 +61,7 @@ struct Tab {
  static const char*groupName(int i){++labels;static const char*names[]={"Timers","Inputs & movement","HUD & messages","Custom text"};return names[i];}
  static const char*rowName(int i,int=0){++labels;return i%2?"Odd row":"Even row";}
  static int bindAt(int i){return i;}
+ static int topRows(){return 3;}
  int rowCount(){return 3;}
  static const char*optionName(int){++labels;return "Option";}
  int optionCount(){return 3;}int optionAt(int i){return i;}

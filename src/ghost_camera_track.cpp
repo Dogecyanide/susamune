@@ -153,15 +153,28 @@ bool evaluate(const void *bank, u32 qf, u8 segment, View *out) {
         if (index+1 >= h->count || (samples[index+1].bytes[23] & 63) != segment) return false;
         ++index;
     }
-    const u32 firstQf = SusamuneGhostReadBe32(samples[index].bytes);
-    if ((h->flags & SUSAMUNE_GHOST_CAMERA_TRUNCATED) && index+1 == h->count && qf > firstQf)
-        return false;
-    decode(samples[index], out);
-    if (index+1 == h->count || qf <= firstQf ||
-        samples[index+1].bytes[23] != segment) return true;
+    return evaluatePair(samples[index], index+1<h->count ? samples+index+1 : nullptr,
+                        qf, segment, (h->flags & SUSAMUNE_GHOST_CAMERA_TRUNCATED) && index+1==h->count, out);
+}
+
+bool evaluatePair(const SusamuneGhostCameraSample &first, const SusamuneGhostCameraSample *after,
+                  u32 qf, u8 segment, bool lastTruncated, View *out) {
+    if (!out || segment>=64 || (first.bytes[23]&63)!=segment || qf>0x7fffffffu) return false;
+    const SusamuneGhostCameraSample *pair[2] = {&first, after};
+    for (unsigned i=0;i<(after?2u:1u);++i) {
+        const u8 *p=pair[i]->bytes;const u32 time=SusamuneGhostReadBe32(p), scene=p[23]&63;
+        if (!SusamuneGhostCameraSampleValid(p,0,0x7fffffffu,time?time-1:0,scene,scene,(p[23]&0x40)!=0))return false;
+    }
+    const u32 firstQf = SusamuneGhostReadBe32(first.bytes);
+    if (after && (SusamuneGhostReadBe32(after->bytes)<firstQf ||
+        (SusamuneGhostReadBe32(after->bytes)==firstQf && (after->bytes[23]&63)==segment))) return false;
+    if (lastTruncated && !after && qf > firstQf) return false;
+    decode(first, out);
+    if (!after || qf <= firstQf || after->bytes[23] != segment) return true;
+    const u32 nextQf = SusamuneGhostReadBe32(after->bytes);
+    if (qf>nextQf)return false;
     View next;
-    decode(samples[index+1], &next);
-    const u32 nextQf = SusamuneGhostReadBe32(samples[index+1].bytes);
+    decode(*after, &next);
     const f32 t = static_cast<f32>(qf-firstQf) / static_cast<f32>(nextQf-firstQf);
     for (u32 i=0;i<3;++i) out->position[i] += (next.position[i]-out->position[i])*t;
     out->fovy += (next.fovy-out->fovy)*t;
@@ -172,6 +185,7 @@ bool evaluate(const void *bank, u32 qf, u8 segment, View *out) {
     normalize(out->rotation);
     return true;
 }
+
 static_assert(SUSAMUNE_GHOST_CAMERA_BANK_OFFSET + SUSAMUNE_GHOST_CAMERA_MAX_SIZE <= 0x695e0,
               "camera exceeds the existing pose-bank tail");
 }

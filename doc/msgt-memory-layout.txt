@@ -1,0 +1,77 @@
+MSGT memory ownership (PR59 integration, 2026-11-01)
+
+The admitted upper grant remains 0x1E0000 bytes. Offsets below are relative
+to MOONSHINE_GHOST_UPPER_PPC_BASE (Wii) or its Dolphin alias. This layout does
+not retire the old ghost banks. Do not assign their payloads to ISO cache yet.
+
+Upper grant
+000000..008000  reserved core code
+008000..088000  recorder buffer0 / decoded playback buffer0 (512 KiB)
+088000..098000  shared controls (see below)
+098000..0F0000  verified PPC trace code (352 KiB)
+0F0000..0FC000  ARM compression workspace (48 KiB)
+0FC000..100000  playback packed scratch (16 KiB)
+100000..104000  ARM read destination0 (16 KiB)
+104000..108000  ARM read destination1 (16 KiB)
+108000..188000  recorder buffer1 / decoded playback buffer1 (512 KiB)
+188000..189000  shared recording/playback actor-witness scratch (4 KiB)
+189000..1D9000  full-world logical recording plan (up to 320 KiB)
+1D9000..1DA000  flattened-export controls (compile-size checked)
+1DA000..1DB000  unassigned tail (4 KiB)
+1DB000..1E0000  flattened-export output (20 KiB)
+
+The separate admitted 384 KiB actor cache holds recording baselines or the
+replay RNG queue. These are mutually exclusive owners.
+Visual racing needs its own bounded leases; it must not borrow a live recorder,
+world replay, pending read, or savestate buffer merely because it looks unused.
+
+Control offsets relative to MS_TRACE_CONTROL_PPC / MS_TRACE_CONTROL_PHYS
+0000..00A0  existing writer request, chunk descriptors, response and metrics
+00A0..0100  PPC-only save-comparison probe (disabled in the final configuration)
+0100..0200  two read mailboxes; each field obeys its declared cache-line owner
+0200..1000  ARM writer/branch service state (compile-size checked)
+1000..1040  two PPC-owned read grants
+1040..10E0  branch payload/request and separate ARM response line
+10E0..1100  ARM-owned checkpoint fence receipt
+1100..11A0  ARM-owned checked file/map lookup result
+11A0..1220  export request/transfer, ARM response and identity
+1240..1C00  ARM export service state (compile-size checked)
+1C00..2000  ARM library-pin transaction (compile-size checked)
+2000..2220  ARM reader state (compile-size checked)
+2400..3000  persistent recording/checkpoint Runtime lease (max 3072 bytes)
+3000..3080  private diagnostic result scratch
+3100..3200  private Wii replay test controls
+3200..3240  failure-report request/PPC and acknowledgement/ARM cache lines
+3400..3800  ARM failure-report writer (size checked)
+4000..5000  PPC recorder state (compile-size checked)
+5000..7000  world replay state (compile-size checked)
+7000..8000  native file/arena/stream controls (compile-size checked)
+8000..10000 recording blob baselines
+
+Do not append fence fields to MsTraceMailbox: +0xA0 belongs to the PPC probe.
+ARM and PPC never write the same cache line. A completed/canceled playback is
+still an owner while its stream has pending I/O, a borrowed Event, or an open
+remote handle. Timeouts do not grant reuse. The native reader can write only
+the two fixed 16 KiB transport windows, not arbitrary addresses in this grant.
+
+The constants are checked by ghost_trace.h, ghost_trace_checkpoint.h,
+ghost_trace_stream_native.h, state_save_probe.hxx and the producer/runtime
+size assertions. Packed/read scratch follows the code/codec boundary by
+formula. Keep changes consistent across launcher and regional mod binaries.
+
+Wii measurement decision: the 500 KiB save spill did not improve visible saves.
+Its 512000 bytes join the previously requested 1572864-byte loading-cache budget:
+2084864 bytes total, approximately 2 MiB, once previous owners are retired.
+
+A failed replay may reuse its idle384 KiB RNG/actor cache for a checked diagnostic
+snapshot. New recording/playback stays blocked until the exact report ACK; timeouts
+or failed closes do not release this lease. Actor rows are never restore targets.
+
+Boot package encoding (PR64)
+---------------------------
+The boot encoder selects a 128 KiB or 512 KiB independent LZ4 block size,
+with the existing optional relative-call filter. Both installed decoders
+accept those two sizes. They decode directly into the already reserved output;
+there is no block-sized allocation. Savestate compression and memory grants
+are unchanged. Ship the matching launcher with these mod files: an older
+loader can reject the larger block header.

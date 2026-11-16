@@ -7,6 +7,18 @@ namespace {
 const unsigned kHandshakeMs = 30000, kTimeoutMs = 15000;
 const unsigned kHeartbeatMs = 1000, kRetryMs = 250;
 
+// Per-peer burst allowance; ordinary 30 Hz poses never wait for controls.
+bool receiveBudget(Session &s) {
+    const unsigned refill = (s.nowMs - s.receiveBudgetMs) / 8u;
+    if (refill) {
+        s.receiveTokens = refill >= 32u - s.receiveTokens ? 32u : s.receiveTokens + refill;
+        s.receiveBudgetMs += refill * 8u;
+    }
+    if (!s.receiveTokens) return false;
+    --s.receiveTokens;
+    return true;
+}
+
 void copy(void *out, const void *in, unsigned bytes) {
     unsigned char *d = static_cast<unsigned char *>(out);
     const unsigned char *s = static_cast<const unsigned char *>(in);
@@ -131,7 +143,9 @@ bool acceptHello(Session &s, const Endpoint &from, const MSRHeader &h,
         if (!sameEndpoint(from, s.info.peer) || h.region != s.info.remoteRegion ||
             MSRRead32(p + 4) != s.guestNonceHigh || MSRRead32(p + 8) != s.guestNonceLow ||
             !equal(p + 12, s.info.remoteName, MSR_NAME_BYTES)) return false;
-    } else {
+    }
+    if (!receiveBudget(s)) return false;
+    if (s.info.state == LISTENING) {
         s.info.peer = from; s.info.remoteRegion = h.region;
         copy(s.info.remoteName, p + 12, MSR_NAME_BYTES);
         s.info.remoteName[MSR_NAME_BYTES] = 0;
@@ -140,7 +154,9 @@ bool acceptHello(Session &s, const Endpoint &from, const MSRHeader &h,
         s.info.state = ACCEPTING;
         s.handshakeSent = false;
     }
-    if (sendAccept(s)) { s.handshakeSent = true; s.lastHandshakeMs = s.nowMs; }
+    if ((!s.handshakeSent || s.nowMs - s.lastHandshakeMs >= kRetryMs) && sendAccept(s)) {
+        s.handshakeSent = true; s.lastHandshakeMs = s.nowMs;
+    }
     return true;
 }
 bool acceptOffer(Session &s, const Endpoint &from, const MSRHeader &h,
@@ -152,15 +168,20 @@ bool acceptOffer(Session &s, const Endpoint &from, const MSRHeader &h,
         !validName(reinterpret_cast<const char *>(p + 8))) return false;
     if (s.guestAccepted) {
         if (!bound(s, from, h) || !equal(p + 8, s.info.remoteName, MSR_NAME_BYTES)) return false;
-    } else {
+    }
+    if (!receiveBudget(s)) return false;
+    const bool repeated = s.guestAccepted;
+    if (!repeated) {
         s.sessionHigh = h.sessionHigh; s.sessionLow = h.sessionLow;
         s.info.remoteRegion = h.region;
         copy(s.info.remoteName, p + 8, MSR_NAME_BYTES);
         s.info.remoteName[MSR_NAME_BYTES] = 0;
         s.guestAccepted = true;
     }
-    s.handshakeAck = true;
-    sendHandshakeAck(s);
+    if (!repeated || s.nowMs - s.lastHandshakeMs >= kRetryMs) {
+        s.handshakeAck = true;
+        if (sendHandshakeAck(s)) s.lastHandshakeMs = s.nowMs;
+    }
     return true;
 }
 }
@@ -175,6 +196,7 @@ bool init(Session &s, const Config &config, const Callbacks &callbacks) {
     if (!validName(c.name) || c.pin > 999999 || !(c.nonceHigh | c.nonceLow) ||
         c.region > 2 || c.timing != MSR_TIMING_60HZ || !cb.sendControl ||
         !cb.sendLatestPose) { fail(s, INVALID_CONFIG); return false; }
+    s.receiveTokens = 32;
     s.initialized = true;
     return true;
 }
@@ -185,13 +207,13 @@ bool startHost(Session &s, const Endpoint &allowedPeer, unsigned nowMs) {
     // Keep the reservation through repeated listener timeouts, before HELLO arrives.
     s.info.peer = allowedPeer;
     s.info.host = true; s.info.state = LISTENING;
-    s.nowMs = s.startedMs = nowMs;
+    s.nowMs = s.startedMs = s.receiveBudgetMs = nowMs;
     return true;
 }
 bool startGuest(Session &s, const Endpoint &host, unsigned nowMs) {
     if (!s.initialized || s.info.state != STOPPED || !validEndpoint(host)) return false;
     s.info.host = false; s.info.peer = host; s.info.state = JOINING;
-    s.nowMs = s.startedMs = nowMs;
+    s.nowMs = s.startedMs = s.receiveBudgetMs = nowMs;
     tick(s, nowMs);
     return true;
 }
@@ -301,7 +323,7 @@ bool receivePacket(Session &s, const Endpoint &from, const void *data,
     const unsigned char *p = static_cast<const unsigned char *>(data) + MSR_HEADER_BYTES;
     if (h.kind == MSR_HELLO) return acceptHello(s, from, h, p);
     if (h.kind == MSR_ACCEPT) return acceptOffer(s, from, h, p);
-    if (!bound(s, from, h)) return false;
+    if (!bound(s, from, h) || !receiveBudget(s)) return false;
     if (h.kind == MSR_ACK && h.payloadBytes == 1 && p[0] == MSR_ACCEPT &&
         !h.sequence && !h.round && s.info.host) {
         if (s.info.state == ACCEPTING) connected(s);
@@ -339,7 +361,7 @@ bool receivePacket(Session &s, const Endpoint &from, const void *data,
             h.kind != s.receivedHeader.kind || h.round != s.receivedHeader.round ||
             h.payloadBytes != s.receivedHeader.payloadBytes ||
             !equal(p, s.receivedData, h.payloadBytes)) return false;
-        s.controlAck = true; s.lastReceiveMs = nowMs;
+        s.controlAck = true; // Replayed controls must not keep a dead peer alive.
         sendControlAck(s);
         return true;
     }

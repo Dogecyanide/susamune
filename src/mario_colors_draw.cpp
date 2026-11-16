@@ -143,6 +143,11 @@ void onStageSetup() {
     sDraw.director = gpMarDirector;
     sDraw.mario = gpMarioAddress;
 }
+__attribute__((noinline, section(".text.mario_source_texture"))) const ResTIMG *sourceTexture() {
+    if (!live() || !mem1(gpMarioAddress->mModelData, 12)) return nullptr;
+    J3DModel *model = gpMarioAddress->mModelData->mModel;
+    return supportedModel(model, 11) ? mainTexture(model->mModelData) : nullptr;
+}
 
 bool preserveSavestateBindings(bool (*keep)(const void *word)) {
     if (!keep || !live() || !sDraw.packetCount || sDraw.packetCount > 16) return false;

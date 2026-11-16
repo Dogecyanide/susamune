@@ -22,7 +22,7 @@ class PracticeSlotSeedTests(unittest.TestCase):
         production = ROOT / "src/practice_session.cpp"
         seed_match = function_source(production, "bool seedMatches(")
         functions = "\n".join(function_source(production, signature) for signature in (
-            "void afterDraw()", "void onSavestateSaved(", "void onSavestateCleared(", "bool requestRecordFrom(", "bool requestRecord()",
+            "void afterDraw()", "void afterDrawWithGhosts()", "void onSavestateSaved(", "void onSavestateCleared(", "bool requestRecordFrom(", "bool requestRecord()",
             "static bool requestReview(", "bool requestPlayback()", "bool requestBeginning()", "void stripShortcutButtons("))
         narrow = "reinterpret_cast<u32>(gpApplication.mCurrentHeap)"
         replacement = "static_cast<u32>(reinterpret_cast<size_t>(gpApplication.mCurrentHeap))"
@@ -52,6 +52,10 @@ u32 SavestateManager::activeSlot()const{return selected;}
 SavestateManager::SlotInfo SavestateManager::slotInfo(u32 slot)const {
     return slot<3?infos[slot]:SlotInfo{};
 }
+static int ghostLoadReady=1;
+static unsigned ghostLoadCancels;
+int SavestateManager::prepareSlotLoad(u32,u32){return ghostLoadReady;}
+void SavestateManager::cancelPreparedLoad(){++ghostLoadCancels;}
 bool SavestateManager::loadSlot(u32 slot,u32 generation) {
     ++loadCalls;loadedSlot=slot;loadedGeneration=generation;sOwnRestoreValid=restorePadValid;
     if(slot<3)pad.history=sSeeds[slot].pad;
@@ -84,6 +88,7 @@ static Menu menu,*gMenu=&menu;
 struct JUTGamePad {enum {A=0x100};};
 namespace WarpWheel {bool shown(){return wheelOpen;}bool promptPending(){return promptOpen;}}
 namespace StageLoader {bool resultOwnsInput(){return resultOpen;}}
+namespace ModelEditorPreview {void restoreAll(){}}
 namespace Ghost {bool observerStatsSuppressed(){return false;}}
 namespace CrashReport {void note(u32,u32,u32){}}
 const int SUSAMUNE_CRASH_EVENT_REPLAY=1,CARD_ERROR_BUSY=-1;
@@ -133,6 +138,7 @@ extern "C" __declspec(dllexport) void reset() {
     currentHash=tapeHash=42;currentFingerprint=123;recordBind=4;replayBind=8;
     sTapeStart=0;sEditArmed=false;sDesyncFrame=-1;lastMessage="";
     gpApplication.mCurrentHeap=(void*)0x80500000;gpApplication.mGamePads[0]=&pad;
+    PracticeSession::afterDrawWithGhosts();ghostLoadReady=1;ghostLoadCancels=0;
 }
 extern "C" __declspec(dllexport) void save(u32 slot,u32 generation,u32 marker) {
     infos[slot]={true,2,0,generation,1234};pad.history.meaning[0]=(u8)marker;
@@ -147,7 +153,9 @@ extern "C" __declspec(dllexport) u32 beginning(){return PracticeSession::request
 extern "C" __declspec(dllexport) u32 replay(){return PracticeSession::requestPlayback();}
 extern "C" __declspec(dllexport) void shortcut(u32 buttons){PracticeSession::stripShortcutButtons((u16)buttons);}
 extern "C" __declspec(dllexport) void finishTake(){sCount=4;sTapeHash=42;sRecord=false;}
-extern "C" __declspec(dllexport) void poll(){PracticeSession::afterDraw();}
+extern "C" __declspec(dllexport) void poll(){PracticeSession::afterDrawWithGhosts();}
+extern "C" __declspec(dllexport) void cancelTake(){stopTape("canceled");PracticeSession::afterDrawWithGhosts();}
+extern "C" __declspec(dllexport) unsigned ghostCancels(){return ghostLoadCancels;}
 extern "C" __declspec(dllexport) void busy(u32 yes){cardStatus=yes?-1:0;}
 extern "C" __declspec(dllexport) void clear(u32 slot){infos[slot].valid=false;}
 extern "C" __declspec(dllexport) void clearNotify(u32 slot,u32 generation) {
@@ -162,7 +170,7 @@ extern "C" __declspec(dllexport) void config(u32 which,u32 value) {
     case 3:currentHash=value;break;case 4:currentFingerprint=value;break;
     case 5:rngSaved=value!=0;break;case 6:diskActive=value!=0;break;
     case 7:promptOpen=value!=0;break;case 8:sPhysical.error=(s8)value;break;
-    case 9:tapeHash=value;break;case 10:restorePadValid=value!=0;break;
+    case 9:tapeHash=value;break;case 10:restorePadValid=value!=0;break;case 11:ghostLoadReady=(int)value;break;
     }
 }
 extern "C" __declspec(dllexport) const char *status(){return lastMessage;}
@@ -406,6 +414,28 @@ extern "C" __declspec(dllexport) u32 value(u32 which) {
         self.assertIn(b"Settings changed", self.lib.status())
 
 
+
+    def test_recording_waits_for_ghost_continuation_then_loads_once(self):
+        self.lib.save(0,10,70);self.lib.config(11,0)
+        self.assertTrue(self.lib.recordExplicit(0))
+        for _ in range(4):self.lib.poll()
+        self.assertEqual(self.lib.value(0),0)
+        self.lib.config(11,1);self.lib.poll()
+        self.assertEqual(self.lib.value(0),1);self.assertTrue(self.lib.value(4))
+        self.assertEqual(self.lib.ghostCancels(),0)
+
+    def test_cancel_releases_pending_ghost_without_restoring_a_state(self):
+        self.lib.save(0,10,70);self.lib.config(11,0)
+        self.assertTrue(self.lib.recordExplicit(0));self.lib.poll();self.lib.cancelTake()
+        self.assertEqual(self.lib.value(0),0);self.assertEqual(self.lib.ghostCancels(),1)
+        self.lib.poll();self.assertEqual(self.lib.ghostCancels(),1)
+
+    def test_replaced_slot_cancels_pending_ghost_and_keeps_the_replacement(self):
+        self.lib.save(0,10,70);self.lib.config(11,0)
+        self.assertTrue(self.lib.recordExplicit(0));self.lib.poll();self.lib.save(0,11,80);self.lib.poll()
+        self.assertEqual(self.lib.value(0),0);self.assertEqual(self.lib.ghostCancels(),1)
+        self.lib.config(11,1);self.assertTrue(self.lib.recordExplicit(0));self.lib.poll()
+        self.assertEqual((self.lib.value(2),self.lib.value(3)),(11,80))
 
 if __name__ == "__main__":
     unittest.main()

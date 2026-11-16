@@ -96,8 +96,26 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
                 self.assertEqual(self.get(device + ':' + MARKER), b'MSD1')
                 self.assertEqual(self.lib.reboot(), 0)
                 self.assertEqual(self.prepare(device), 0)
-                self.assertEqual([self.lib.stat(i) for i in (0, 1, 2, 4, 5, 6)], [0] * 6)
+                self.assertEqual([self.lib.stat(i) for i in (0, 1, 2, 4, 6)], [0] * 5)
+                self.assertEqual(self.lib.stat(5), 3)
 
+    def test_existing_trace_directory_moves_as_one_store_with_references(self):
+        self.put('sd:' + MARKER, b'MSD1')
+        files={'trace_AAAAAAAA_80000001.msgt':b'capture',
+               'ref_AAAAAAAA_80000001_00000002_00000003_00000004.msgb':b'reference',
+               'trace_AAAAAAAA_80000002.part':b'checkpoint prefix'}
+        for leaf,data in files.items():self.put('sd:' + DATA + '/traces/' + leaf,data)
+        self.assertEqual(self.prepare(),0)
+        self.assertFalse(self.exists('sd:' + DATA + '/traces'))
+        for leaf,data in files.items():self.assertEqual(self.get('sd:' + DATA + '/ghosts/recordings/' + leaf),data)
+        self.assertEqual(self.lib.reboot(),0);self.assertEqual(self.prepare(),0)
+    def test_conflicting_recording_stores_are_not_merged_or_overwritten(self):
+        self.put('sd:' + MARKER,b'MSD1')
+        old='sd:' + DATA + '/traces/trace_AAAAAAAA_80000001.msgt'
+        new='sd:' + DATA + '/ghosts/recordings/trace_AAAAAAAA_80000001.msgt'
+        self.put(old,b'old');self.put(new,b'new')
+        self.assertNotEqual(self.prepare(),0)
+        self.assertEqual(self.get(old),b'old');self.assertEqual(self.get(new),b'new')
     def test_all_recognized_journals_ini_chain_and_crash_files_keep_contents(self):
         names = ['susamune.ini' + suffix for suffix in ('', '.bak', '.tmp')]
         for copy in 'ab':
@@ -120,7 +138,7 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
         mappings = {'Moonshine_Theme': 'theme', 'susamune_backups': 'backups'}
         for old, new in mappings.items():
             self.put(f'sd:/{old}/nested/.hidden', old.encode(), hidden=True)
-            self.put(f'sd:/{old}/nested/日本語.smsghost', new.encode())
+            self.put(f'sd:/{old}/nested/Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾.smsghost', new.encode())
             self.put(f'sd:{DATA}/{new}/nested/already.txt', b'new data')
         unrelated = {'sd:/Darkmoonshine/save.bin': b'luigi', 'sd:/games/Sunshine/game.iso': b'game',
                      'sd:/not_susamune_pbs_v2_pal_a.bin': b'unrelated', 'sd:/apps/other/boot.dol': b'app'}
@@ -131,7 +149,7 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
             base = f'sd:{DATA}/{new}/nested/'
             self.assertEqual(self.get(base + '.hidden'), old.encode())
             self.assertTrue(self.lib.attributes((base + '.hidden').encode()) & 2)
-            self.assertEqual(self.get(base + '日本語.smsghost'), new.encode())
+            self.assertEqual(self.get(base + 'Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾.smsghost'), new.encode())
             self.assertEqual(self.get(base + 'already.txt'), b'new data')
             self.assertFalse(self.exists('sd:/' + old))
         for path, contents in unrelated.items():
@@ -210,16 +228,16 @@ API int prepare(const char*device){memset(stats,0,sizeof(stats));diskWrites[0]=d
                          ('moonshine_tas', 'tas')):
             with self.subTest(library=new):
                 self.assertEqual(self.lib.reset(), 0)
-                self.put(f'sd:/{old}/nested/日本語.bin', b'whole library')
+                self.put(f'sd:/{old}/nested/Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾.bin', b'whole library')
                 self.assertEqual(self.lib.mkdirs(f'sd:{DATA}/{new}'.encode()), 0)
                 self.lib.failRenamePath(f'sd:/{old}'.encode())
                 self.assertNotEqual(self.prepare(), 0)
                 self.assertFalse(self.exists('sd:' + MARKER))
-                self.assertEqual(self.get(f'sd:/{old}/nested/日本語.bin'), b'whole library')
+                self.assertEqual(self.get(f'sd:/{old}/nested/Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾.bin'), b'whole library')
                 self.assertEqual(self.lib.reboot(), 0)
                 self.lib.failRenamePath(b'')
                 self.assertEqual(self.prepare(), 0)
-                self.assertEqual(self.get(f'sd:{DATA}/{new}/nested/日本語.bin'), b'whole library')
+                self.assertEqual(self.get(f'sd:{DATA}/{new}/nested/Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾.bin'), b'whole library')
                 self.assertFalse(self.exists(f'sd:/{old}'))
 
     def test_existing_destination_ini_backup_cannot_be_shadowed_by_old_main(self):

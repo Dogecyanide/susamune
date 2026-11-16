@@ -5,11 +5,13 @@ import json
 import re
 import struct
 import zlib
+import collections
+import heapq
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIZE = 0x18900
 MAGIC = 0x4D4A5549
-VERSION = 1
+VERSION = 2
 TOKENS = dict(zip('A B X Y L R Z C AMP SLASH LEFT UP RIGHT DOWN SHINE'.split(),
                  '8197 8194 817b 818f 8183 8184 8190 8193 8195 815e 81a9 81aa 81a8 81ab 819a'.split()))
 JA_TOKENS = dict(TOKENS, **dict(zip('A B X Y L R Z C'.split(),
@@ -30,7 +32,14 @@ def hashes(data):
     return h, f
 
 
-def catalogue(path):
+def catalogue(path, dolphin=False):
+    overrides = {}
+    if dolphin:
+        for line in (ROOT/'data/japanese_ui_dolphin.tsv').read_text(encoding='utf-8').splitlines():
+            if not line.strip() or line.startswith('#'): continue
+            original, english, japanese = line.split('\t')
+            if original in overrides: raise ValueError('duplicate Dolphin translation override')
+            overrides[original] = (english, japanese)
     result, seen = [], set()
     for number, line in enumerate(path.read_text(encoding='utf-8-sig').splitlines(), 1):
         if not line.strip() or line.lstrip().startswith('#'):
@@ -38,6 +47,7 @@ def catalogue(path):
         if line.count('\t') != 1:
             raise ValueError(f'line {number}: expected one tab')
         en, ja = line.split('\t')
+        if en in overrides: en, ja = overrides.pop(en)
         if ([s for s in SPEC.findall(en) if s != '%%'] !=
                 [s for s in SPEC.findall(ja) if s != '%%']) or '%n' in en:
             raise ValueError(f'line {number}: incompatible format arguments')
@@ -46,6 +56,7 @@ def catalogue(path):
             raise ValueError(f'line {number}: empty/duplicate/colliding key')
         seen.add(hashes(key)[0])
         result.append((hashes(key), value))
+    if overrides: raise ValueError('Dolphin translation has no console counterpart: '+next(iter(overrides)))
     return sorted(result)
 
 
@@ -117,16 +128,73 @@ def supplemental_glyphs(path=ROOT/'data/fonts/noto-japanese-supplement.json'):
     return result
 
 
-def build(path=ROOT/'data/japanese_ui.tsv'):
-    rows = catalogue(path)
+def text_pool(values):
     pool, offsets = bytearray(), {}
-    for value in sorted({value for _, value in rows}):
-        offsets[value] = len(pool); pool.extend(value + b'\0')
+    # Suffixes share the same terminating NUL; character bytes remain unchanged.
+    for value in sorted(set(values), key=lambda v: (-len(v), v)):
+        offset = pool.find(value + b'\0')
+        if offset < 0:
+            offset = len(pool)
+            pool.extend(value + b'\0')
+        offsets[value] = offset
+    return pool, offsets
+
+
+def glyph_codes(images):
+    frequencies=collections.Counter(b for image in images for b in image)
+    heap=[(count,b,b) for b,count in frequencies.items()]
+    heapq.heapify(heap);serial=256
+    while len(heap)>1:
+        a,b=heapq.heappop(heap),heapq.heappop(heap)
+        heapq.heappush(heap,(a[0]+b[0],serial,(a[2],b[2])));serial+=1
+    tree,codes=bytearray(),{}
+    def visit(node,bits=0,length=0):
+        if isinstance(node,int):
+            codes[node]=(bits,length)
+            return 0x8000|node
+        index=len(tree)//4;tree.extend(bytes(4))
+        left=visit(node[0],bits<<1,length+1)
+        right=visit(node[1],bits<<1|1,length+1)
+        struct.pack_into('>HH',tree,index*4,left,right)
+        return index
+    visit(heap[0][2])
+    return bytes(tree),codes
+
+
+def pack_glyph(image,codes):
+    bits,length=0,0
+    for byte in image:
+        value,count=codes[byte];bits=(bits<<count)|value;length+=count
+    packed=(bits<<(-length%8)).to_bytes((length+7)//8,'big')
+    return packed if len(packed)<64 else bytes(image)
+
+
+def unpack_glyph(packed,tree):
+    if len(packed) == 64:
+        return bytes(packed)
+    image,bit=bytearray(),0
+    while len(image)<64:
+        node=0
+        while not node&0x8000:
+            if bit>=len(packed)*8:raise ValueError('short packed glyph')
+            branch=(packed[bit//8]>>(7-bit%8))&1;bit+=1
+            node=struct.unpack_from('>H',tree,node*4+branch*2)[0]
+        image.append(node&255)
+    if (bit+7)//8!=len(packed) or packed[-1]&((1<<(-bit%8))-1):
+        raise ValueError('invalid packed glyph')
+    return bytes(image)
+
+
+def build(path=ROOT/'data/japanese_ui.tsv', *, dolphin=False):
+    rows = catalogue(path, dolphin=dolphin)
+    pool, offsets = text_pool(value for _, value in rows)
     if len(pool) > 65535:
         raise ValueError('text pool exceeds 16-bit offsets')
     table = b''.join(struct.pack('>IHH', *key, offsets[value]) for key, value in rows)
     codes = {ord(c) for _, value in rows for c in value.decode('cp932')}
     codes.update(range(32, 127))
+    codes.update(range(0x3041, 0x3094))
+    codes.update(range(0x30A1, 0x30F4))
     codes.update(ord(bytes.fromhex(v).decode('cp932')) for v in JA_TOKENS.values())
     source_codes = json.loads((ROOT/'data/fonts/droid-japanese-codepoints.json').read_text())
     source_map = {code: i for i, code in reversed(list(enumerate(source_codes)))}
@@ -147,15 +215,43 @@ def build(path=ROOT/'data/japanese_ui.tsv'):
         glyphs[int.from_bytes(encoded, 'big')] = glyph
     for name, old in TOKENS.items():
         glyphs[int(old, 16)] = glyphs[int(JA_TOKENS[name], 16)]
-    glyph_table, pixels = bytearray(), bytearray()
+    tree,codes=glyph_codes(image for _,image in glyphs.values())
+    # Glyphs have independent offsets and lengths; identical byte substrings
+    # and overlapping tails can share storage without changing the decoder.
+    packed_glyphs = {code: pack_glyph(image,codes) for code,(_,image) in glyphs.items()}
+    pixels, images = bytearray(), {}
+    remaining = set(packed_glyphs.values())
+    prefixes = {}
+    for packed in sorted(remaining, key=lambda p: (-len(p), p)):
+        for n in range(1, min(16,len(packed))+1):
+            prefixes.setdefault(packed[:n], []).append(packed)
+    while remaining:
+        overlap, chosen = 0, None
+        for n in range(min(16,len(pixels)),0,-1):
+            candidates=prefixes.get(bytes(pixels[-n:]), [])
+            while candidates and candidates[0] not in remaining: candidates.pop(0)
+            if candidates: overlap,chosen=n,candidates[0];break
+        if chosen is None: chosen=min(remaining,key=lambda p:(-len(p),p))
+        offset=pixels.find(chosen)
+        if offset<0:
+            offset=len(pixels)-overlap;pixels.extend(chosen[overlap:])
+        images[chosen]=offset;remaining.remove(chosen)
+    glyph_table, glyph_offsets = bytearray(), bytearray()
     for code, (width, image) in sorted(glyphs.items()):
-        glyph_table.extend(struct.pack('>HBB', code, width, 0)); pixels.extend(image)
+        packed = packed_glyphs[code]
+        glyph_table.extend(struct.pack('>HBB', code, width, len(packed)))
+        glyph_offsets.extend(struct.pack('>H', images[packed]))
+    if len(pixels) > 65535:
+        raise ValueError('glyph pool exceeds 16-bit offsets')
+    pixels.extend(bytes(-len(pixels) % 32))
     text_offset = 64 + len(table)
     glyph_offset = text_offset + len(pool)
-    pixel_offset = (glyph_offset + len(glyph_table) + 31) & ~31
-    payload = table + pool + glyph_table + bytes(pixel_offset-glyph_offset-len(glyph_table)) + pixels
+    offsets_offset = glyph_offset + len(glyph_table)
+    tree_offset=offsets_offset+len(glyph_offsets)
+    pixel_offset = (tree_offset + len(tree) + 31) & ~31
+    payload = table + pool + glyph_table + glyph_offsets + tree + bytes(pixel_offset-tree_offset-len(tree)) + pixels
     header = struct.pack('>16I', MAGIC, VERSION, 64+len(payload), 0, 64, len(rows),
-                         text_offset, len(pool), glyph_offset, len(glyphs), pixel_offset, 16, 64, 0, 0, 0)
+                         text_offset, len(pool), glyph_offset, len(glyphs), pixel_offset, 16, 64, offsets_offset, tree_offset, len(tree)//4)
     result = bytearray(header + payload)
     struct.pack_into('>I', result, 12, zlib.crc32(result))
     if len(result) > MAX_SIZE:

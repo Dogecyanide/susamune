@@ -1,0 +1,38 @@
+Moonshine 3.0.0 Timewarp - Prototype 35
+
+New: community ghost downloads directly on Wii
+
+Ghosts > Get ghosts > Delfino Ghosts opens the public community catalogue.
+Choose a ghost and press A to download. R shows the next page; Y returns to
+the newest page. B returns or cancels a pending request. Downloaded files
+appear in Imported ghosts after leaving the online browser.
+Recorded times appear beside each ghost to three decimal places. An unfinished
+recording shows its duration and is marked '(clip)' below the title.
+
+No account or PC companion is needed. This first native Wii build supports
+browsing and downloading; account linking and uploads are still to follow.
+The catalogue asks for ghosts playable on your current game region.
+The Wii clock must be reasonably correct for secure HTTPS connections.
+
+Each download is checked against the advertised size and SHA-256, then the
+ordinary Moonshine ghost validator. Incomplete files are not imported and
+existing ghosts are not replaced. A temporary download uses the existing
+transfer workspace, so saving/loading states and other ghost transfers may
+report busy until it finishes or cancellation is acknowledged.
+
+Install the matching launcher and all regional mod files together.
+Standalone Dolphin builds continue to use the website on the PC.
+No custom music, photo, account token or personal data is in this package.
+
+Wii checks needed
+1. Open the catalogue on a Wii with working internet; browse and turn a page.
+2. Download a ghost, return, select Imported ghosts, and watch it.
+3. Download that same ghost again: the existing copy must remain intact.
+4. Cancel while connecting/downloading, then try again. The menu must remain
+   responsive; other storage may remain busy until IOS completes its request.
+5. Check ordinary gameplay/ISO loading after leaving the catalogue.
+
+The PC checks cover production TLS against the real public service, HTTP/JSON
+parsing, IOS request layouts and cancellation ownership, and temporary-file
+validation/publication. They do not establish real Wii connectivity or speed.
+Four-player online stability still requires the separate hardware session.

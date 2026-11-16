@@ -4,6 +4,695 @@
 # {AMP}, {SLASH}, {LEFT}, {UP}, {RIGHT}, {DOWN}, and {SHINE}.
 
 # Core navigation, tabs, and shared values.
+# 3.0 guidebook, online races and sharing.
+Shows the pinned race ghost; press A or X to clear it.	固定中の競走ゴースト。A・Xで解除。
+Shows the recent QFT section history.	最近のQFT区間履歴を表示。
+Shows the selected ghost input, or two controllers for comparison.	選択ゴーストの入力、または2体の比較を表示。
+Shows the timing of Mario's last wall kick.	直前の壁キックのタイミングを表示。
+Shows when a restart has been queued.	再開の予約を表示。
+Skip payload checks for this boot's RAM states. Off restores full checks.	今回のRAMステートの検証を省略。オフで全検証に戻ります。
+Skips supported pre-rendered movies.	対応するムービーをスキップ。
+Skips the Shine-get animation.	シャイン取得演出をスキップ。
+Skips the boot logos on the next launch.	次回起動時のロゴをスキップ。
+Skips the stage-opening camera sequence.	ステージ開始のカメラ演出をスキップ。
+Small status messages and diagnostic counters.	状態通知と診断カウンター。
+Socket diagnostics unavailable	通信の診断情報なし
+Space between each label and its value.	項目名と数値の間隔。
+Space between horizontal fields.	横並びの項目間隔。
+Speed used by Slowdown: toggle preset in Binds. Press it again for 100 pct.	キー設定の低速切替で使う速度。再度押すと100%に戻ります。
+Split comparison: Off, PB, SOB or Ghost.	区間比較: なし・PB・ベスト合計・ゴースト。
+Split stats coming later	区間統計は後日対応
+Stacks metadata vertically or arranges fields across rows.	情報を縦並びか横並びに配置。
+Stage	ステージ
+Stage session counter	ステージの試行カウンター
+Stageloader race	連続ステージレース
+Start declined	開始が拒否されました
+Start streak	連続成功を開始
+Starting Dolphin broadband adapter	Dolphinの通信を開始中
+Starting Wii network	Wiiの通信を開始中
+Starting network	通信を開始中
+Statistics overview	統計の概要
+Stats are read only	統計は閲覧専用です
+Still trying - check codes	接続試行中 - コードを確認
+Stop	停止
+Stop watching	観戦を終了
+Stops Z opening the retail debug-style menu.	Zメニューの機能を無効化します。
+Stops blue coins setting their collected flag.	青コインの取得済みフラグを設定しません。
+Stops loose fruit disappearing over time.	置いた果物が時間で消えるのを防止。
+Stops the third Chomplet targeting Mario early.	3匹目のワンワンが早く狙うのを防止。
+Streak failure banner	連続成功の失敗通知
+Streak level selected	連続成功のステージを選択しました
+Sum of best	区間ベスト合計
+Sunshine timer editor	ゲーム内タイマーの編集
+Switch Records between this region and all regions.	記録をこのリージョン・全リージョンで切替。
+Symmetric NAT - direct play fails	対称NAT - 直接対戦不可
+TAS PRACTICE	TAS練習
+TAS ghosts cannot earn ordinary PB credit.	TASゴーストは通常の自己ベストになりません。
+TIME image	TIMEの画像
+Take over here	ここから操作
+Takeover paused - Step or Resume gameplay in Practice	引継ぎ停止中 - 練習でコマ送り・再開
+Target missed - streak 0{SLASH}3	目標未達 - 連続0{SLASH}3
+Target time	目標タイム
+Target time set	目標タイムを設定しました
+Terminal	終点
+That guest is in another slot	そのゲストは別の欄に登録済み
+That is your own code	自分のコードです
+The IL draft appears once everyone has connected.	全員接続するとILドラフトが開きます。
+The beginning is captured automatically.	開始場面は自動保存されます。
+The host chooses the next race setup.	次のレースはホストが設定。
+The timer stops while frame advance is paused.	コマ送りで停止中はタイマーも止まります。
+This IL has a fixed start	このILの開始地点は固定です
+This ghost has no recorded camera; Watch uses Free.	視点記録なし。観戦は自由カメラを使用。
+This guest is already connected	このゲストは接続済みです
+This match is in progress; setup is locked.	対戦中は設定を変更できません。
+This setting invalidates an active IL attempt.	この設定は進行中のILを無効に。
+This setting is PB-safe.	この設定はPBに影響しません。
+Tie - ready again	引き分け - 再び準備完了を選択
+Timers includes the full Sunshine timer editor.	タイマーからゲーム内タイマーを編集可能。
+Title	見出し
+Toggle on/off; multi-choice features cycle through their options.	オン・オフ切替。複数選択は順番に切替。
+Total	合計
+Total attempts	総試行回数
+Tracks and displays attempts for the current practice.	現在の練習の試行回数を記録・表示。
+Turns any stage exit into a restart of that area.	エリアを出ると同じエリアを再開。
+Two-player online prototype	2人オンライン試作版
+UPLOAD GHOST	ゴーストを公開
+Unknown game version	不明なゲーム版
+Unlink this Wii	このWiiの連携を解除
+Until leaving level	ステージを出るまで
+Upload refused; check ghost or account limits	アップロード拒否。ゴーストや上限を確認
+Use	使用
+Use M:SS.mmm, or leave blank	M:SS.mmm形式、または空欄
+Use printable characters	表示可能な文字を使用してください
+Uses Mario's Shine celebration outfit.	シャイン記念の衣装を使用。
+Uses compact route names in the recent-IL display.	最近のIL表示でルート名を短縮。
+Uses only Moonshine's pause handling.	スタートボタンのポーズ機能を無効化します。
+Vertical offset from the original timer position.	元のタイマー位置からの縦方向のずれ。
+View overall play, attempt, PB and ghost statistics.	プレイ時間・試行・PB・ゴーストの総合統計。
+View time and completion statistics for each world.	ワールド別の時間と完走統計。
+Visibility and appearance together for each display.	各表示のオン・オフと見た目をまとめて設定。
+Visibility and the full native timer layout editor.	タイマーの表示と配置を編集。
+Waiting for all players to be warp-ready	全員がワープ可能になるのを待機
+Waiting for friend	相手を待っています
+Waiting for host's IL	ホストのIL選択を待機
+Waiting for players: %u / %u	参加者を待機: %u / %u
+Warps and restarts	ワープと再開
+Watch / Take over	観戦・操作引継ぎ
+Watch is still loading	観戦を読込中です
+Watch one ghost in a loaded level before taking over	ステージ内で1体を観戦してから引継ぎ
+Watch timeline	観戦タイムライン
+Wii net: %s %us  IP %u.%u.%u.%u:%u  Error %ld	通信: %s %u秒 IP %u.%u.%u.%u:%u エラー%ld
+Wii network lost - reconnect	Wiiの接続が切れました。再接続してください
+Wii network not ready; check connection	Wiiの通信準備未完了。接続を確認
+Wii secure connection unavailable	Wiiの安全な接続が利用不可
+Winner: ban one IL	勝者: ILを1つ除外
+Write and style your three custom text displays.	3つのカスタム文字を入力・装飾。
+You %lu:%02lu.%02lu   Peer %lu:%02lu.%02lu	自分%lu:%02lu.%02lu 相手%lu:%02lu.%02lu
+You can leave this list.	この一覧から離れても構いません。
+You: %s  |  Peer: %s  |  %s	自分: %s | 相手: %s | %s
+Your account	自分のアカウント
+Your code	自分のコード
+Your code changed - resend it	コードが変わりました。送り直してください
+Your turn	自分の番
+failed	失敗
+failed, code %d	失敗、コード%d
+no reply - retry A	応答なし - Aで再試行
+off	オフ
+one reply - retry A	1件応答 - Aで再試行
+probing...	確認中...
+waiting for IP	IPを待機中
+{A} / {B} Cancel transfer	{A} / {B} 転送を中止
+{A} Add   {C} L{SLASH}R World	{A} 追加 {C} 左{SLASH}右 ワールド
+{A} Ban selected IL    {B} Online setup	{A} ILを除外 {B} 通信設定
+{A} Change   {C} L{SLASH}R Option	{A} 変更 {C} 左{SLASH}右 項目
+{A} Change  {C} Select  {B} Back	{A} 変更 {C} 選択 {B} 戻る
+{A} Choose selected IL    {B} Online setup	{A} ILを決定 {B} 通信設定
+{A} Clear    {B} Cancel	{A} 消去 {B} 取消
+{A} Delete    {B} Cancel	{A} 削除 {B} 取消
+{A} Discard and continue    {B} Cancel	{A} 破棄して続行 {B} 取消
+{A} Download  {R} Next  {L} First  {Y} Level  {B} Back	{A} 取得 {R} 次 {L} 最初 {Y} ステージ {B} 戻る
+{A} Fix   {X} Fix all	{A} 修正 {X} すべて修正
+{A} Forfeit race   {B} Keep racing	{A} 棄権 {B} 続行
+{A} Import    {B} Cancel	{A} 取込 {B} 取消
+{A} Import  {Y} Load from  {X} Delete  Start Rename  {B} Back	{A} 取込 {Y} 読込 {X} 削除 START 改名 {B} 戻る
+{A} Keep  {B} Back  {C} Select episode	{A} 決定 {B} 戻る {C} エピソード
+{A} Kick guest   {B} Cancel	{A} 退出させる {B} 取消
+{A} Load   {C} L{SLASH}R Preset	{A} 読込 {C} 左{SLASH}右 プリセット
+{A} Load code   {Z} Forget   {X} Back	{A} コード使用 {Z} 削除 {X} 戻る
+{A} Open{SLASH}Change   Saved on close	{A} 開く{SLASH}変更 閉じると保存
+{A} Remove   {C} L{SLASH}R Reorder	{A} 削除 {C} 左{SLASH}右 並替
+{A} Replace    {B} Cancel	{A} 置換 {B} 取消
+{A} Segments   {B}{SLASH}START Back	{A} 区間 {B}{SLASH}START 戻る
+{A} Select    {B} Back	{A} 選択 {B} 戻る
+{A} Select   {B} Back	{A} 選択 {B} 戻る
+{A} Select   {B} Back   {X} Shine	{A} 選択 {B} 戻る {X} お気に入り
+{A} Select   {C} L{SLASH}R Levels	{A} 選択 {C} 左{SLASH}右 ステージ
+{A} Select   {C} L{SLASH}R Slot	{A} 選択 {C} 左{SLASH}右 スロット
+{A} Select   {C} L{SLASH}R World	{A} 選択 {C} 左{SLASH}右 ワールド
+{A} Select   {C} L{SLASH}R World   {B} Cancel	{A} 選択 {C} 左{SLASH}右 ワールド {B} 取消
+{A} Set bind    {X} Clear    {B} Back	{A} キー設定 {X} 解除 {B} 戻る
+{A} Start  {X} Delete  {Y} Stats  {C} Move	{A} 開始 {X} 削除 {Y} 統計 {C} 移動
+{A} Start  {Z} Episode  {Y} Stats  {X} Delete	{A} 開始 {Z} エピソード {Y} 統計 {X} 削除
+{A} Toggle / Edit   {B} Back	{A} 切替・編集 {B} 戻る
+{A} Type   {B} Delete   {Y} Saved codes   START Enter	{A} 入力 {B} 消去 {Y} 保存コード START 決定
+{A} Use playlist   {B} Back	{A} リストを使用 {B} 戻る
+{A} Watch / Take over    {X} Stop Watch	{A} 観戦・引継ぎ {X} 観戦終了
+{C} L/R Tier   {A} Details   {B} Back	{C} 左右 等級 {A} 詳細 {B} 戻る
+{C} Select   {X} Delete Gold   {B} Summary   START Close	{C} 選択 {X} ベスト削除 {B} 概要 START 閉じる
+{X} Back to Online	{X} オンラインに戻る
+{Z} Upload to Delfino Ghosts	{Z} Delfino Ghostsに公開
+Opponent is banning	相手が除外中
+Opponent is choosing	相手が選択中
+Opponent left	相手が退出しました
+Opponent model	相手のモデル
+Opponent's turn	相手の番
+Opponent: %lu:%02lu.%02lu	相手: %lu:%02lu.%02lu
+Optional	任意
+Options saved. Create or join when ready.	設定済み。準備ができたら部屋を作成・参加。
+PB OFF	PB記録オフ
+PB SPLIT (SEGMENT) / GOLD	PB区間 / 区間ベスト
+PB options	自己ベストの設定
+PB recording is off; other Records remain eligible.	PB保存はオフ。他の記録は有効です。
+PB setting fixed	PB用の設定に修正しました
+PB setting fixed - restart the IL	設定を修正しました。ILを再開してください
+PB settings already safe	PBに影響する設定はありません
+PB settings fixed	PB用の設定に修正しました
+PB settings fixed - restart the IL	設定を修正しました。ILを再開してください
+PERSONAL  %lu ghosts	個人 %lu体
+PLAYLIST	ステージリスト
+PRACTICE	練習
+Packet details	パケットの詳細
+Park	パーク
+Pause, scrub and compare Watch. X stops watching.	観戦を停止・巻戻し・比較。Xで観戦終了。
+Peer ready - press A	相手は準備完了 - Aを押す
+Places numeric values above, below or inside the pad.	数値をコントローラーの上・下・内側に配置。
+Play as Mario	マリオとして操作
+Player	プレイヤー
+Player 1: ban one IL	プレイヤー1: ILを1つ除外
+Player 1: pick the IL	プレイヤー1: ILを選択
+Player 2: ban two ILs	プレイヤー2: ILを2つ除外
+Players are saved when they connect. Codes may change.	接続時に相手を保存。コードは変わる場合があります。
+Playlist	ステージリスト
+Playlist cleared	リストを消去しました
+Playlist empty or unavailable	リストが空か、利用できません
+Playlist is already empty	リストはすでに空です
+Playlist is empty	リストが空です
+Playlist is full	リストがいっぱいです
+Playlist loaded	リストを読み込みました
+Playlist race  %u levels	連続レース %uステージ
+Playlist race - advance independently	連続レース - 各自で次へ進みます
+Playlist save already pending	リストを保存中です
+Playlist save queued	リストの保存を予約しました
+Playlist storage unavailable	リストの保存先が利用不可
+Plays a fanfare when an IL personal best is accepted.	IL自己ベスト更新時にファンファーレを再生。
+Plaza	タウン
+Position, size and colours	位置・大きさ・色
+Practice at 1-100 pct speed. Slowed attempts cannot set records or win races.	1〜100%の速さで練習。低速時は記録・レース勝利が無効。
+Practice feedback: wallkick, rollout and dust.	練習表示: 壁キック・ロールアウト・砂煙。
+Practice: Free camera pauses and explores.	練習→フリーカメラで停止して探索。
+Practice: TAS projects pauses or steps.	練習→TASで停止・コマ送り。
+Practice: TAS projects, then New TAS.	練習→TAS→新規TAS。
+Preparing five ILs	5つのILを準備中
+Preparing the next IL draft	次のILドラフトを準備中
+Preset could not load	プリセットを読み込めませんでした
+Preset loaded	プリセットを読み込みました
+Press A to test	Aでテスト
+Press A when ready	準備ができたらA
+Press X on an action to change its shortcut.	操作を選んでXでキー設定を変更。
+Press early to pause when Mario can move.	先に押すと、マリオが動ける時点で停止。
+Prevents Blooper surfing crashes from killing Mario.	イカサーフィンの衝突死を防止。
+Prevents Mario's life count from dropping.	マリオの残機が減らなくなります。
+Prevents Petey using his tornado attack.	ボスパックンの竜巻攻撃を防止。
+Prevents Yoshi's juice meter from draining.	ヨッシーのジュースが減らなくなります。
+Publish this ghost	このゴーストを公開
+Published ghosts are visible to everyone.	公開したゴーストは誰でも閲覧可能。
+QFT total	QFT合計
+QFT total: %s	QFT合計: %s
+QFT transition	QFT加算時間
+QFT, Sunshine timer and the finish breakdown.	QFT・ゲーム内タイマー・終了時の内訳。
+RACING TAS	TASと競走中
+Race live - first IL finish wins	レース中 - 先にILを完走すると勝利
+Race setup	レース設定
+Randomises the crane within the selected speed band.	指定した範囲でクレーン速度をランダム化。
+Raw QFs	QF数
+Read only	閲覧専用
+Ready - A to cancel	準備完了 - Aで解除
+Ready - waiting for a safe stage	準備完了 - ワープ可能な状態を待機
+Ready - waiting for opponent	準備完了 - 相手を待機
+Ready when you are	準備ができたら開始
+Receiving the host's playlist	ホストのリストを受信中
+Recent sections	最近の区間
+Reconnecting...	再接続中...
+Recorded follows the captured view in Watch. Free keeps camera control.	観戦時のカメラをフリーカメラか、記録時のカメラ・固定にします。
+Red fish	赤い魚
+Release and press A again for a fresh jump.	Aを離して押し直すと新たにジャンプ。
+Remove this guest? They cannot rejoin until you enter their code again.	退出させますか？再招待にはコードの再入力が必要です。
+Removed by host - ask for a new invitation	ホストが退出させました。再招待を依頼してください
+Removed from playlist	リストから削除しました
+Report any missing or incorrect checkpoints.	チェックポイントの不足・誤りを報告してください。
+Reset breakdown style	内訳の見た目を初期化
+Respawns one-time Shines for repeat practice.	一度きりのシャインを繰り返し出現させます。
+Restores settings, binds and layouts to defaults.	設定・キー設定・配置を初期化。
+Restores the controller overlay's default layout.	入力表示の配置を初期化。
+Restores the metadata overlay's default layout.	情報表示の配置を初期化。
+Resume keeps the free camera running.	再開してもフリーカメラを維持。
+Reveal practice-only objects, volumes and routes.	練習用のオブジェクト・判定・経路を表示。
+Reveals spray-hidden fruit and coin locations globally.	放水で出る果物・コインの場所を表示。
+Reveals the ordered checkpoints used by the Ricco race.	リコのレースの通過点を順番付きで表示。
+Ricco 4 Full	リコ4 全区間
+Room size	部屋の人数
+Round cancelled	ラウンド中止
+Round lost	ラウンド敗北
+Round won	ラウンド勝利
+Rows	表示する行
+SAME - should work	同じ - 接続可能
+SD-backed	SD保存
+SELECT LEVEL	ステージを選択
+SESSIONS	セッション
+START EPISODE	開始エピソード
+START: Keep   {X} {AMP} START: Cancel   {Z}: Clear	START: 保存 {X} {AMP} START: 取消 {Z}: 消去
+SUMMARY	概要
+Safe	安全
+Same router? Exchange the Same-network codes.	同じルーターなら同一ネットワーク用コードを交換。
+Same-network code	同一ネットワーク用コード
+Save TAS keeps everything together on SD.	TASを保存すると記録全体をSDに保存。
+Save failed	保存できませんでした
+Save latest	最新を保存
+Save or dismiss the ghost first	先にゴーストを保存・破棄してください
+Saved and imported ghosts available for racing or watching.	保存・取込したゴーストと競走・観戦可能。
+Saved codes	保存したコード
+Saved ghost (pinned)	保存済みゴースト (固定)
+Saved playlist %d	保存リスト%d
+Savestate messages	ステートの通知
+Saving...	保存中...
+Scales the original timer artwork without changing its timing.	計測に影響せず、元のタイマー画像を拡大・縮小。
+Scan	検索
+Scan SD imports	SDの取込を検索
+Score %u-%u  |  %s	スコア%u-%u | %s
+Score: %u - %u   |   IL Best of %u	スコア: %u - %u | IL全%u戦
+Secret	秘密
+Section numbers	区間番号
+Secure connection failed; check Wii date	安全な接続に失敗。Wiiの日付を確認
+Segment %d	区間%d
+Selected	選択中
+Selects a repeatable Gelato 6 fish pattern.	マンマ6の魚のパターンを固定。
+Selects a repeatable blue-bird pattern.	青い鳥のパターンを固定。
+Selects which IL profile supplies PBs and ghost names.	PB・ゴースト名に使うILプロフィールを選択。
+Send this code to a friend	このコードを相手に送信
+Send your code, enter theirs	自分のコードを送り、相手のコードを入力
+Send your code, enter your friend's	自分のコードを送り、相手のコードを入力
+Send your code, then enter your friend's code.	自分のコードを送り、相手のコードを入力。
+Sending selection...	選択内容を送信中...
+Service busy; please wait before retrying	混雑しています。少し待って再試行してください
+Session could not start	セッションを開始できませんでした
+Session only	今回のみ
+Set %u - %u  |  IL %u - %u	セット%u - %u | IL %u - %u
+Set %u-%u  |  Rounds %u-%u  |  %s	セット%u-%u | ラウンド%u-%u | %s
+Set length	セットの試合数
+Set lost - host sets up next	セット敗北 - 次はホストが設定
+Set streak finishes	連続成功の完走回数
+Set streak target time	連続成功の目標タイム
+Set the Wii's date before connecting	接続前にWiiの日付を設定してください
+Set won - host sets up next	セット勝利 - 次はホストが設定
+Set: %u - %u  (Bo%u)   |   IL rounds: %u - %u  (Bo3)	セット: %u - %u (全%u戦) | IL: %u - %u (全3戦)
+Set: %u - %u  (Bo%u)   |   Rounds: %u - %u	セット: %u - %u (全%u戦) | ラウンド: %u - %u
+Sets how long event-triggered QFT freezes remain.	イベント後にQFT表示を止める時間を設定。
+Setting is already PB-safe	この設定はPBに影響しません
+Settings and records survive updates.	更新しても設定と記録は残ります。
+Setup invalid or busy	設定が無効か、処理中です
+Setup locked	設定を変更できません
+Sharing the next setup	次の設定を共有中
+Show	表示
+Show QFT section history	QFT区間履歴を表示
+Show TIME label	TIME表記を表示
+Show breakdown	内訳を表示
+Show history	履歴を表示
+Show opponent	相手を表示
+Show or remove Plaza's pipe pineapple. Changes the current game flag; marks this attempt assisted.	シレナビーチ入り口のパイナップルを消したり再生したりできます。使用した試行は補助あり扱い。
+Show score bar	スコアを表示
+Show the collision colours and surface types.	当たり判定の色と地形の種類を表示。
+Show the recorded route while watching. Cosmetic only; no effect when racing.	観戦中に経路を表示。見た目のみで競走に影響なし。
+Shows Shadow Mario's remaining health.	ニセマリオの残り体力を表示。
+Shows a popup and chime when an achievement unlocks.	実績解除時に通知と音を出。
+Shows a popup when an IL PB is accepted.	IL自己ベスト更新時に通知。
+Shows a short history of recently completed ILs.	最近完走したILの履歴を表示。
+Shows a status popup after saving or loading a state.	ステート保存・読込後に通知。
+Shows a warning before Yoshi or nozzle progress saves.	ヨッシー騎乗、ノズル取得時にセーブテキストを表示、非表示。
+Shows all enemies or only Eely's teeth.	全敵、またはウナギの歯だけを表示。
+Shows frames from landing until the rollout input.	着地からロールアウト入力までのフレーム数。
+Shows free music slots for audio diagnostics.	音楽診断用の空きスロット数を表示。
+Shows internal IDs instead of episode names.	エピソード名の代わりに内部IDを表示。
+Shows or hides this custom HUD word.	このカスタム文字の表示を切替。
+Shows or hides this value in the metadata overlay.	この情報の表示を切替。
+Shows the controller overlay when Moonshine starts.	起動時に入力表示をオン。
+Shows the effective A-hold frames of a rollout.	ロールアウトの有効なA長押しフレーム数を表示。
+Shows the metadata overlay when Moonshine starts.	起動時に情報表示をオン。
+Display: Displays and styles, then choose a group.	表示→表示とスタイルでグループを選択。
+Displays and styles	表示とスタイル
+Dolphin broadband adapter unavailable	Dolphinのネットワークアダプターが利用不可
+Download cancelled	ダウンロードを中止しました
+Download changed; refresh and retry	内容が更新されました。一覧を再取得してください
+Download compatible ghosts directly from the community. No account needed.	対応ゴーストを直接ダウンロード。連携は不要です。
+Draft IL list	ドラフトIL一覧
+Draft set	ドラフト対戦
+Draft sets only	ドラフト対戦のみ
+Each Step advances the game and timer together.	コマ送りではゲームとタイマーが一緒に進みます。
+Edit appearance	見た目を編集
+Edit score bar	スコア表示を編集
+Edits the custom word shown on the game HUD.	HUDに表示するカスタム文字を編集。
+Enable Broadband Adapter (HLE) in Dolphin	Dolphinでブロードバンドアダプタ(HLE)を有効に
+Enables repeatable patterns for supported practice.	対応する練習でパターンを固定。
+Enter	決定
+Enter a number from 1 to 999	1〜999の数値を入力
+Enter code	コードを入力
+Enter each invited guest code. Select a connected guest to kick them.	ゲストコードを入力。接続済みの相手を選ぶと退出。
+Enter the host's code	ホストのコードを入力
+Enter the host's code, send yours	ホストのコードを入力し、自分のコードを送信
+Entry	進入
+Entry segment	進入区間
+Episode	エピソード
+Episode %d	エピソード%d
+Events / QFT freezes	イベント・QFT一時停止
+Events share the QFT freeze toggles. Visual options only change this history.	イベントはQFT一時停止と共通。表示設定は履歴のみ。
+Experimental repeatable course patterns.	コースのパターン固定。実験機能です。
+Explore together. Race setup starts a new match.	一緒に自由探索。レース設定で対戦を開始。
+FAILURE BANNER	連続成功の失敗通知
+FRAME BY FRAME	コマ送り
+FRAME CONTROLS	コマ送り操作
+FREE CAMERA	フリーカメラ
+Failure banner appearance	失敗通知の見た目
+Fast RAM loads (test)	高速RAM読込 (実験)
+Feature toggles	機能の切替
+Find .smsghost files copied into your SD import folder.	SDの取込フォルダーにある.smsghostを検索。
+Find Timer and splits in Runs or Display.	タイマーとスプリットは走行・表示から開けます。
+Finish breakdown	終了時の内訳
+Finish breakdown editor	終了時の内訳を編集
+Finish breakdown style	内訳のスタイル
+Finish count set	完走回数を設定しました
+Finish the current action first	現在の操作を終えてください
+Finish the match first	対戦を終えてください
+Finished	完走
+Finished - waiting for opponent	完走 - 相手を待っています
+Finished - waiting for the group	完走 - 全員を待っています
+Floor or coloured World collision; Wireframe adds game mesh edges underneath. Marks the attempt assisted.	床・全体の判定を表示。ワイヤーは地形の線を追加。補助扱い。
+Force the supported Petey and King Boo outcomes.	対応するボスパックン・ボステレサの行動を固定。
+Forces King Boo's valid fruit and no-fruit cycle.	ボステレサの果物の有無を固定。
+Forces Mario to keep the selected FLUDD nozzle.	選択したポンプのノズルを固定。
+Forces Petey's N1, S1, S2, S3 flight route.	ボスパックンの飛行経路をN1・S1・S2・S3に固定。
+Forces a Piantissimo race speed preset.	モンテマンの速さを指定値に固定。
+Forces a selected Delfino crate-game layout.	木箱割り屋の木箱配置を指定した値で固定します。
+Forces the Ricco fruit machine to give durians.	リコのスロットでドリアンを固定。
+Forfeit race	レースを棄権
+Forfeit this race? You stay in the room. Other racers can finish.	棄権しますか？部屋には残り、他の人は走行を続けられます。
+Forfeited - waiting for other racers	棄権済み - 他の人を待っています
+Frame feedback for movement practice.	移動練習用のフレーム表示。
+Free roam	自由探索
+Free roam - host can pick IL racing	自由探索 - ホストがILレースに変更可能
+Free roam - host can set a race	自由探索 - ホストがレースを設定可能
+Freezes the QFT display when this event occurs.	このイベントでQFT表示を一時停止。
+Friend's code	相手のコード
+Friend's code (14 characters)	相手のコード (14文字)
+Full English and Japanese guides are in the ZIP.	日本語・英語のガイドはZIPに同梱。
+GB timing	GBのタイミング
+GET GHOSTS	ゴーストを入手
+GHOST 1 TAS	ゴースト1 TAS
+Game HUD colours, savestate messages, results and notifications.	ゲームHUDの色・ステート通知・結果の表示。
+General-purpose deterministic practice helpers.	再現性のある練習用設定。
+Get ghosts	ゴーストを入手
+Getting address...	アドレスを取得中...
+Getting your address...	自分のアドレスを取得中...
+Ghost description	ゴーストの説明
+Ghost ready - restart to race	準備完了 - 再開するとゴーストと競走
+Ghost storage is full	ゴーストの保存先がいっぱいです
+Ghost visuals	ゴーストの表示
+Ghosts: Ghost inputs: Both ghosts for Watch2.	ゴースト→入力で、2体観戦時は両方を選択。
+Gold deleted	区間ベストを削除しました
+Gold deleted (session only)	区間ベストを削除 (今回のみ)
+Golds	区間ベスト
+Guest 1 code	ゲスト1のコード
+Guest 2 code	ゲスト2のコード
+Guest 3 code	ゲスト3のコード
+HUD / messages	HUDと通知
+Health and HUD colours	体力とHUDの色
+Health colour	体力の色
+Hide	非表示
+Hide all HUD removes overlays for filming.	HUDをすべて隠すと撮影用に表示を消せます。
+Hold Mario's buttons, then tap Step.	マリオの操作ボタンを押しながらコマ送り。
+Hold Y while adjusting HSL for steps of 1.	HSL調整中はYを押すと1ずつ変更。
+Horizontal offset from the original timer position.	元のタイマー位置からの横方向のずれ。
+Host can edit race setup	ホストがレース設定を変更できます
+Host chooses; each player advances independently.	ホストが選択。各自が独立して次へ進みます。
+Host code - enter the joiner's	ホスト用コードです。参加者のコードを入力
+Host only	ホスト専用
+Host: pick the next IL or mode, then Apply.	ホストが次のIL・モードを選び、適用。
+IL SEGMENTS	ILの区間
+IL STATS	ILの統計
+IL draft	ILドラフト
+IL name	IL名
+IL pool	IL候補
+IL race	ILレース
+IL racing	ILレース
+IMPORTED  %lu ghosts	取込済み %lu体
+Imported (pinned)	取込済み (固定)
+Includes the game RNG seed in practice savestates.	練習ステートにゲームの乱数シードを含めます。
+Inputs / movement	入力と移動
+Invalid settings	無効な設定
+Join room	部屋に参加
+Joiner code - enter the host's	参加者用コードです。ホストのコードを入力
+Keep crash reports when reporting a problem.	不具合報告の際はクラッシュ記録を残してください。
+Keep visible	表示を維持
+Keeps Delfino Plaza story events available.	条件を満たしてなくてもイベントを強制的に再生します。
+Keeps in-game time running while paused.	ポーズ中もゲーム内時間を進めます。
+L and R change height. Hold X for a boost.	L・Rで高さ変更。Xを押すと加速。
+Later segments	以降の区間
+Leave session	部屋から退出
+Lets any fruit colour open a Yoshi egg.	どの果物でもヨッシーの卵を割れます。
+Level sorting is not available yet	ステージ順はまだ利用できません
+Link / unlink	連携・解除
+Link account	アカウントを連携
+Link account first	先にアカウントを連携
+Link expired; request a new code	期限切れです。新しいコードを取得してください
+Link once to publish your saved ghosts from this Wii.	一度連携すればWiiからゴーストを公開可能。
+Link your Delfino Ghosts account first	先にDelfino Ghostsと連携してください
+Live	ライブ
+Loading ghost page...	ゴースト一覧を読込中...
+Look sensitivity changes how fast you turn.	視点感度でカメラの回転速度を変更。
+Loser: counterpick	敗者: 次のILを選択
+MARIO	マリオ
+Main stick moves; C-stick turns the camera.	メインスティックで移動、Cで視点を回転。
+Makes Rocket and Turbo boxes available.	ロケット・ターボの箱を使用可能に。
+Makes Yoshi available without story progression.	物語の進行に関係なくヨッシーを使用可能に。
+Makes normally hidden goop easier to see.	通常見えない汚れを見やすく。
+Match finished	対戦終了
+Match lost - host sets up next	敗北 - 次はホストが設定
+Match over - host sets up next	対戦終了 - 次はホストが設定
+Match won - host sets up next	勝利 - 次はホストが設定
+Menu and displays	メニューと表示
+Metadata: field gap, row gap, columns, width.	情報表示: 項目間隔・行間・列数・幅。
+Move the stick yourself for each frame of a spin.	スピンの各フレームでスティックを自分で回。
+Move, resize and style the original Sunshine timer.	ゲーム内タイマーの位置・大きさ・見た目を編集。
+Movement metadata	移動情報
+Movement speed changes how fast you travel.	移動速度を変更。
+Moves Mario to one ghost and pauses. Resume in Practice. World state is unchanged; PBs disabled.	ゴーストの再生位置から練習できます。練習メニューで再開。ワールドの状態は戻りません。PB無効。
+Moves and styles the Stage Loader counter.	ステージローダーのカウンターを配置・装飾。
+Moves, resizes and recolours the controller overlay.	入力表示の位置・大きさ・色を変更。
+Moves, resizes and recolours the metadata overlay.	情報表示の位置・大きさ・色を変更。
+Moves, resizes and recolours this custom HUD word.	カスタム文字の位置・大きさ・色を変更。
+Mutes background music without muting sound effects.	効果音を残してBGMだけを消。
+NAT already tested online	オンラインでNAT確認済み
+NAT test	NATテスト
+NAT test runs offline. Details help diagnose a connection.	部屋に入らずNATを確認。接続の診断に使えます。
+Name	名前
+Native HUD colours includes health and air.	ゲームHUDの色には体力・空気も含まれます。
+Network busy or closing	通信中、または終了処理中
+New file	新規ファイル
+No Gold saved	区間ベストなし
+No race	レースなし
+No reply from address servers	アドレス確認先から応答がありません
+Not available - check connection	利用不可 - 接続を確認
+Not linked	未連携
+Not ready	準備未完了
+Nothing sent - see Diagnostics	送信なし - 診断を確認
+Objects and Yoshi	オブジェクトとヨッシー
+Offline	オフライン
+On your phone or PC, visit:	スマホやPCでこちらを開いてください:
+Online	オンライン
+Online  %u - %u   Best of %u	オンライン %u - %u 全%u戦
+Online free roam	オンライン自由探索
+Online name (16 characters)	オンライン名 (16文字)
+Online requires 60 Hz	オンラインには60Hzが必要です
+Online score bar	オンラインのスコア表示
+Open IL list	IL一覧を開く
+Open TAS keeps the full saved recording.	TASを開くと記録全体を読み込みます。
+Open the timeline to choose a moment, or take over at the current position.	場面を選ぶか、現在位置で操作を引継ぎ。
+Opens search on the top Settings, ILs and System pages.	設定・IL・システムのトップで検索を開きます。
+Opponent display	相手の表示
+Opponent inputs	相手の入力
+   %s Search	 %s 検索
+  Load (real): %s	 実ロード: %s
+  QFT transition: %s	 QFT加算: %s
+ (assisted)	 (補助あり)
+ (clip)	 (クリップ)
+ (forfeit)	 (棄権)
+ - host sets up next	 - 次はホストが設定
+ the round	ラウンド
+%d blocked	%d件無効
+%d levels	%dステージ
+%lu (unavailable)	%lu (利用不可)
+%s   Gold: %s	%s ベスト: %s
+%s  %lu:%02lu.%02lu%s  IL %u Set %u	%s %lu:%02lu.%02lu%s IL %u セット%u
+%s  DNF  IL %u Set %u	%s 未完走 IL %u セット%u
+%s  |  Peer: %.16s  |  %s	%s | 相手: %.16s | %s
+%s (%ss)   Gold: %s	%s (%s秒) ベスト: %s
+%s won%s	%sが%sに勝利
+%s%s   IL %u   Set %u	%s%s IL %u セット%u
+%s: ban one IL	%s: ILを1つ除外
+%u / %u players | %s	%u / %u人 | %s
+%u levels	%uステージ
+%u players	%u人
+%u players | One ban each | BO3 ILs | BO%u set	%u人 | 各自1つ除外 | ILは2勝先取 | 全%u戦
+(blank = any finish)	(空欄ならタイム不問)
+(empty - add levels below)	(空き - 下からステージを追加)
+3 per IL	ILごとに3戦
+A saved ghost. Select to Race or Watch; use Personal page to browse more.	保存済みゴーストと競走・観戦。個人一覧で探せます。
+A: keep. B: discard. Z: reset selected option.	Aで保存、Bで破棄、Zで選択項目を初期化。
+ADD LEVELS	ステージを追加
+APPEARANCE	見た目
+Account	アカウント
+Account full; manage uploads on the website	上限に達しました。サイトで整理してください
+Actual load	実ロード
+Actual load is separate from QFT's transition time.	実ロード時間とQFTの加算時間は別です。
+Add	追加
+Add description	説明を追加
+Added to playlist	リストに追加しました
+Adds Fruit and Coin names to hidden-item markers.	隠しアイテムに果物・コインの名前を表示。
+Adds a stronger gleam to Shine Sprites.	シャインをより強く光らせます。
+Adds stick-only or full numeric input values.	スティックのみ、または全入力の数値を表示。
+All ILs	全IL
+All levels	全ステージ
+Allows Exit Area wherever pausing is available.	ポーズできる場所ならエリアから出られます。
+Allows attempt-count binds while inside a stage.	ステージ内で試行回数のキー設定を使用。
+Allows completed ILs to update their saved PB.	完走したILの自己ベストを保存。
+Allows pausing during normally locked moments.	通常ポーズできない場面でもポーズ可能。
+Also works while watching ghosts.	ゴースト観戦中も使えます。
+Always uses this RAM state; selected save/load slots stay unchanged.	選択スロットを変えず、このRAMステートを使用。
+An imported file. Select to Race or Watch; use Imported page to browse more.	取込済みゴーストと競走・観戦。取込一覧で探せます。
+Any finish	タイム不問
+Any finish counts	完走すれば成功
+Appearance, recorded inputs and the camera used while watching.	ゴーストの見た目・記録入力・観戦カメラ。
+Apply	適用
+Apply next setup	次の設定を適用
+Arm race	レースを準備
+Armed	準備済み
+Assisted - round void	補助あり - ラウンド無効
+Assisted ghosts are marked TAS; pauses are cut.	補助使用はTAS表記。停止時間は省かれます。
+Automatic online	オンラインで自動
+Available	利用可能
+B: return to the room and enter guest codes	Bで部屋に戻り、ゲストのコードを入力
+BANNED	除外済み
+BREAKDOWN STYLE	内訳の表示設定
+Background	背景
+Background streak	背景の帯
+Ban an IL	ILを除外
+Beach	ビーチ
+Best of	試合数
+Best of 3	3戦2勝先取
+Best of 5	5戦3勝先取
+Blooper race	イカレース
+Both players choose Ready to start.	両者が準備完了を選ぶと開始。
+Browse	一覧
+Browse Delfino Ghosts online, or scan .smsghost files copied onto your SD.	サイトのゴーストやSDの.smsghostを探。
+Browse every achievement and its unlock requirements.	全実績と解除条件を確認。
+C-stick left/right adjusts the space between metadata rows.	Cスティック左右で情報の行間を調整。
+C-stick left/right changes groups. Shortcuts accept up to four buttons.	C左右でグループ変更。最大4ボタンを登録可能。
+C-stick left/right changes pages. A opens the next page.	C左右でページ変更。Aで次のページを開きます。
+C-stick left/right sets fields per row; Auto wraps at the screen edge.	C左右で1行の項目数を設定。自動は画面端で改行。
+C-stick: choose/change   A: edit/toggle   B: back	C: 選択・変更 A: 編集・切替 B: 戻る
+C-stick: previous or next page	Cスティック: 前後のページ
+CHOSEN	選択済み
+Camera On turns Mario input off.	カメラがオンの間はマリオを操作できません。
+Can't connect directly	直接接続できません
+Casino	カジノ
+Change visibility here; edit this display on the same page. X adds it to Shined.	表示と見た目をここで設定。Xでお気に入りに追加。
+Changes the mod menu's panel colour.	メニューの背景色を変更。
+Changes the savestate status popup layout.	ステート通知の配置を変更。
+Changes this display option. X removes it from Shined.	表示設定を変更。Xでお気に入りから解除。
+Changes this part of the retail HUD's colour theme.	ゲームHUDのこの部分の色を変更。
+Check both codes; a firewall may block play	コードを確認。通信が遮断されている可能性もあります
+Check link	連携を確認
+Checkpoints save places to return to.	戻りたい場面をチェックポイントに保存。
+Choose	選択
+Choose ILs in the draft list	ドラフト一覧でILを選んでください
+Choose Mario's optional costume pieces.	マリオの追加衣装を選びます。
+Choose Original or custom colours for each outfit part.	服の各部を元の色かカスタム色に設定。
+Choose a guest code slot	ゲストの入力欄を選択
+Choose a name, then create or join a room.	名前を決め、部屋を作成・参加。
+Choose a personal saved ghost to upload	アップロードする個人ゴーストを選択
+Choose an IL	ILを選択
+Choose an action group to set or clear its shortcuts.	操作グループを選び、キーを設定・解除。
+Choose an item. Its toggle and appearance are on the same page.	項目を選ぶと、表示と見た目を一緒に設定可能。
+Choose room size before connecting	接続前に部屋の人数を選択
+Choose rows, duration, position, size and colours.	表示する行・時間・位置・大きさ・色を設定。
+Choose the timers, history and split overlays shown.	表示するタイマー・履歴・スプリットを選択。
+Choose what you see. Score visibility and style are separate.	表示する項目を選択。スコアの表示と見た目は別設定。
+Choose where the ghost starts. Other objectives from that scene may appear too.	開始ステージを選択。同じ場面の別目標も表示。
+Choose which actions briefly freeze the QFT display.	QFT表示を一時停止させる動作を選択。
+Chooses Shadow Mario, Piantissimo or Mario as the ghost model.	ニセマリオ・モンテマン・マリオから選択。
+Chooses how enemy damage volumes are drawn.	敵のダメージ判定の表示方法を選択。
+Chooses raw controller data or Mario-processed input.	生の入力かマリオ処理後の入力を表示。
+Chooses short, long or custom field labels.	情報名を短縮・通常・カスタムから選択。
+Chooses when a newly accepted PB ghost is saved to the SD.	自己ベストのゴーストをSDに保存する時期を設定。
+Chooses when the bottom-left QFT is shown.	左下のQFTの表示条件を設定。
+Chooses when the main Sunshine timer is shown.	ゲーム内タイマーの表示条件を設定。
+Chooses whether a restart races the last attempt or success.	再開時に直前の試行か成功ゴーストと競走。
+Clear	消去
+Clears Records progress without deleting IL PBs.	ILの自己ベストを残して記録の進行を消去。
+Code not valid - check it	コードが無効です。確認してください
+Colon or dot before fractions. Minutes stay colon; native race timers keep their format.	小数の前をコロンか点に。分とゲーム内レースは従来通り。
+Colour each FLUDD part and the water it sprays.	ポンプの各部と放水の色を変更。
+Compact follows the value width; Stable keeps space after it for larger values.	詰めるは数値幅に追従。固定は大きい数値用の余白を確保。
+Compare existing splits with PB, sum of best, or the selected ghost.	自己ベスト・区間ベスト合計・ゴーストと比較。
+Connect first	先に接続してください
+Connect in Draft set mode first	ドラフト形式で接続してください
+Connected	接続済み
+Connecting directly...	直接接続中...
+Connection help	接続ヘルプ
+Connection lost	接続が切れました
+Connection timed out; try again	接続時間切れ。再試行してください
+Continue edits while paused; Step or Resume.	停止中も編集可能。コマ送りか再開を選択。
+Control Ricco's crane and casino fruit machine.	リコのクレーンとカジノのスロットを設定。
+Controller inputs, movement values and technique displays.	コントローラー入力・移動情報・技の表示。
+Controller shortcuts grouped by action.	操作別にまとめたキー設定。
+Controls when FLUDD is removed in secret stages.	秘密コースでポンプを外す条件を設定。
+Controls when Mario's Shine shirt is visible.	シャインシャツの表示条件を設定。
+Controls when Mario's cap is visible.	帽子の表示条件を設定。
+Controls when Mario's helmet is visible.	ヘルメットの表示条件を設定。
+Controls when Mario's sunglasses are visible.	サングラスの表示条件を設定。
+Cosmetic stage, Shine and music changes.	ステージ・シャイン・音楽の見た目設定。
+Could not connect to Delfino Ghosts	Delfino Ghostsに接続できませんでした
+Could not find Delfino Ghosts; retry	サイトが見つかりません。再試行してください
+Could not start	開始できませんでした
+Create or join a room	部屋を作成・参加
+Create or join a room first	先に部屋を作成・参加してください
+Create or join a room, swap codes.	部屋を作成・参加し、コードを交換。
+Create room	部屋を作成
+Current Stageloader queue	現在のステージリスト
+Custom %u (%d)	カスタム%u (%d)
+Custom %u (empty)	カスタム%u (空き)
+Custom Text %d	カスタム文字%d
+Custom text 1	カスタム文字1
+Custom text 2	カスタム文字2
+Custom text 3	カスタム文字3
+DELFINO GHOSTS ACCOUNT	Delfino Ghosts連携
+DIFFERENT - symmetric	異なる - 対称NAT
+DISPLAYS AND STYLES	表示とスタイル
+Delete Segment %d Gold?	区間%dのベストを削除しますか？
+Delfino Ghosts response was not usable	サイトの応答を読み取れませんでした
+Delfino Ghosts temporarily unavailable	サイトを一時的に利用できません
+Disables Moonshine's quick stage warps.	Moonshineの高速ワープを無効に。
+Disconnect	切断
+Disconnect first	先に切断してください
+Disconnected	未接続
 susamune	Moonshine
 Moonshine	Moonshine 日本語版
 Gameplay	ゲーム
@@ -44,42 +733,33 @@ No	いいえ
 (unnamed)	（名称なし）
 (unavailable)	（利用不可）
 GENERAL	基本
-SKIPS & UNLOCKS	スキップ・解禁
-WORLD RULES	ワールド設定
-SAVE PROMPTS	保存確認
 LEVEL RULES	レベル設定
-PRACTICE TOOLS	練習ツール
-BOX GAMES	ボックスゲーム
 PRESENTATION	演出
 WORLD	ワールド
 DIAGNOSTICS	診断
-PRACTICE FEEDBACK	練習フィードバック
 DISPLAY	表示
-FREEZE EVENTS	フリーズ対象
-SECTION HISTORY	区間履歴
 STATE	ステート
 FEEDBACK	フィードバック
 PB PROFILE	PBプロファイル
 PB OPTIONS	PB設定
-INPUT DISPLAY	入力表示
 METADATA	メタデータ
 QFT	QFT
 
 # Generic controls and prompts (spacing matches rendered source strings).
-{A} Open    {B} Back	{A} 開く    {B} 戻る
-{A} Details    {B} Back	{A} 詳細    {B} 戻る
-{A} Select    {B} Back    {X} Subareas	{A} 選択    {B} 戻る    {X} サブエリア
-{A} Yes    {B} No	{A} はい    {B} いいえ
+{A} Open    {B} Back	{A} 開く {B} 戻る
+{A} Details    {B} Back	{A} 詳細 {B} 戻る
+{A} Select    {B} Back    {X} Subareas	{A} 選択 {B} 戻る {X} サブエリア
+{A} Yes    {B} No	{A} はい {B} いいえ
 {B} Back	{B} 戻る
 {B} Cancel	{B} キャンセル
-{A} Set bind    {B} Clear	{A} 設定    {B} 解除
-{L}{SLASH}{R} Tabs  {C} Move  {A} Select  {X} Shine  	{L}{SLASH}{R} タブ  {C} 移動  {A} 選択  {X} 登録  
-{L}{SLASH}{R} Tabs    {C} Move    {A} Select    	{L}{SLASH}{R} タブ    {C} 移動    {A} 選択    
+{A} Set bind    {B} Clear	{A} 設定 {B} 解除
+{L}{SLASH}{R} Tabs  {C} Move  {A} Select  {X} Shine  	{L}{SLASH}{R} タブ {C} 移動 {A} 選択 {X} 登録 
+{L}{SLASH}{R} Tabs    {C} Move    {A} Select    	{L}{SLASH}{R} タブ {C} 移動 {A} 選択 
  Close	 閉じる
 Added to Shined	お気に入りに追加
 Removed from Shined	お気に入りから削除
 Nothing Shined yet	お気に入りはありません
-Press X on a setting to add it here.	設定でXを押すと追加できます。
+Press X on a setting to add it here.	設定でXを押すと追加可能。
 
 # Setting names.
 Fast text	高速テキスト
@@ -107,7 +787,6 @@ Deathless blooper surfing	死なないイカサーフィン
 No shine get animation	シャイン取得演出なし
 Fruit never times out	永久フルーツ
 Disable Z Menu	Zメニュー無効
-Disable Susamune Warps	Moonshineワープ無効
 Mute background music	BGMミュート
 Episode names as IDs	ストーリー名をID表示
 Shine outfit	シャイン衣装
@@ -202,7 +881,7 @@ Don't ask	確認しない
 # Bind names and recorder help.
 Regrab last held object	最後に掴んだオブジェクトを再掴み
 Spawn Yoshi: green	ヨッシー出現：緑
-Spawn Yoshi: orange	ヨッシー出現：オレンジ
+Spawn Yoshi: orange	ヨッシー出現：橙
 Spawn Yoshi: purple	ヨッシー出現：紫
 Spawn Yoshi: pink	ヨッシー出現：桃
 Fast forward 4x	4倍速
@@ -225,7 +904,6 @@ press buttons...	ボタンを入力...
 Release a button to set, or {C} to cancel	ボタンを離して決定、{C}で取消
 
 # Task Edition identity.
-V2.0.3 - Ghosts of Delfino	V2.0.3 "ドルピック島のゴースト ～Task Edition～"
 
 # Input display and metadata editor.
 Input display	入力表示
@@ -295,22 +973,22 @@ All elements	全要素
 All characters	全文字
 Character %s	文字 %s
  (space)	 （空白）
-Position X:%u Y:%u   Size:%u pct	位置 X:%u Y:%u   サイズ:%u%%
+Position X:%u Y:%u   Size:%u pct	位置 X:%u Y:%u サイズ:%u%%
 Element HSL	要素HSL
 Text HSL	文字HSL
 Character HSL	文字HSL
-%s:%03u,%03u,%03u   Background HSL:%03u,%03u,%03u	%s:%03u,%03u,%03u   背景HSL:%03u,%03u,%03u
-%s: Mixed   Background HSL:%03u,%03u,%03u	%s: 混在   背景HSL:%03u,%03u,%03u
+%s:%03u,%03u,%03u   Background HSL:%03u,%03u,%03u	%s:%03u,%03u,%03u 背景HSL:%03u,%03u,%03u
+%s: Mixed   Background HSL:%03u,%03u,%03u	%s: 混在 背景HSL:%03u,%03u,%03u
 %s: Mixed	%s: 混在
 Mixed	混在
 %u pct	%u%%
-{C} U{SLASH}D Option   {C} L{SLASH}R Adjust   START: Next   {X}+START: Previous	{C} 上下:項目   {C} 左右:調整   START:次   {X}+START:前
-D-pad Move   L{SLASH}R Size	十字:移動   L{SLASH}R:サイズ
-{A} Keep  {B} Cancel  {Z} Reset	{A} 保存  {B} 取消  {Z} リセット
+{C} U{SLASH}D Option   {C} L{SLASH}R Adjust   START: Next   {X}+START: Previous	{C} 上下:項目 {C} 左右:調整 START:次 {X}+START:前
+D-pad Move   L{SLASH}R Size	十字:移動 L{SLASH}R:サイズ
+{A} Keep  {B} Cancel  {Z} Reset	{A} 保存 {B} 取消 {Z} リセット
 Keep these changes?	変更を保存しますか？
 Discard all changes?	変更を破棄しますか？
 Reset selected option?	選択項目をリセットしますか？
-{A} Confirm    {B} Go Back	{A} 決定    {B} 戻る
+{A} Confirm    {B} Go Back	{A} 決定 {B} 戻る
 HUD	HUD
 FLUDD water	ポンプの水
 Coin streak	コイン連続表示
@@ -330,7 +1008,6 @@ Word 3 text	テキスト3・内容
 Word 3 style	テキスト3・スタイル
 Word 3 visible	テキスト3・表示
 MOD MENU	MODメニュー
-Menu background	メニュー背景
 Achievement popup	実績ポップアップ
 System notifications	システム通知
 IL PB popup	IL PBポップアップ
@@ -363,15 +1040,14 @@ Custom text style	カスタムテキストスタイル
 Custom Text 1	カスタムテキスト1
 Custom Text 2	カスタムテキスト2
 Custom Text 3	カスタムテキスト3
-Custom text %d   %u{SLASH}%u	カスタムテキスト%d   %u{SLASH}%u
-D-pad Select   A Type   B Delete   X Space   Y Case   L{SLASH}R Page	十字:選択   A:入力   B:削除   X:空白   Y:大小   L{SLASH}R:ページ
-START: Keep   X+START: Cancel   Z: Clear	START:保存   X+START:取消   Z:消去
+Custom text %d   %u{SLASH}%u	カスタムテキスト%d %u{SLASH}%u
+D-pad Select   A Type   B Delete   X Space   Y Case   L{SLASH}R Page	十字:選択 A:入力 B:削除 X:空白 Y:大小 L{SLASH}R:ページ
 Keep this text?	このテキストを保存しますか？
 Discard text changes?	テキスト変更を破棄しますか？
 Clear this text?	このテキストを消去しますか？
 Recent ILs	最近のIL
 Stage layout changed - save again	配置が変わりました。再保存してください
-New PB!  1:23.456	PB更新！  1:23.456
+New PB!  1:23.456	PB更新！ 1:23.456
 
 # QFT, creation footer, resets, and settings persistence feedback.
 QFT timer	QFTタイマー
@@ -379,7 +1055,7 @@ QFT timer editor	QFTタイマーエディター
 QFT leading zero	QFT桁数追加
 TIME{SLASH}TEMPO label colour	TIME・TEMPOラベルの色
 Show TIME{SLASH}TEMPO label	TIME・TEMPOラベルを表示
-{A} Open{SLASH}Change   {C} L{SLASH}R Section   Saved on close	{A} 開く{SLASH}変更   {C} 左右:区間   閉じる時に保存
+{A} Open{SLASH}Change   {C} L{SLASH}R Section   Saved on close	{A} 開く{SLASH}変更 {C} 左右:区間 閉じる時に保存
 Factory reset	初期化
 Reset Records	記録をリセット
 Feedback display	通知表示
@@ -392,11 +1068,11 @@ Reset Records now?	今すぐ記録をリセットしますか？
 Reset settings, binds and layouts?	設定・キー・配置をリセットしますか？
 Reset settings now?	今すぐ設定をリセットしますか？
 PBs and settings stay.	PBと設定は残ります。
-PB achievements can return.	PB実績は再び解除できます。
+PB achievements can return.	PB実績は再び解除可能。
 This requires one more confirmation.	もう一度確認が必要です。
 PBs and Records stay.	PBと記録は残ります。
-{A} Continue    {B} Cancel	{A} 続ける    {B} キャンセル
-{A} Reset    {B} Cancel	{A} リセット    {B} キャンセル
+{A} Continue    {B} Cancel	{A} 続ける {B} キャンセル
+{A} Reset    {B} Cancel	{A} リセット {B} キャンセル
 Records reset	記録をリセットしました
 Saving settings...	設定を保存中...
 Wait for settings save	設定の保存を待ってください
@@ -451,8 +1127,8 @@ Name PB profile	PBプロファイル名
 (Custom profile)	（カスタムプロファイル）
 Delete PB?	PBを削除しますか？
 PB deleted	PBを削除しました
-{A} Toggle{SLASH}Edit  {X} Shine  {C} U{SLASH}D Select L{SLASH}R Section	{A} 切替{SLASH}編集  {X} 登録  {C} 上下:選択 左右:区間
-{A} Start  {X} Delete  {C} U{SLASH}D Select L{SLASH}R Section	{A} 開始  {X} 削除  {C} 上下:選択 左右:区間
+{A} Toggle{SLASH}Edit  {X} Shine  {C} U{SLASH}D Select L{SLASH}R Section	{A} 切替{SLASH}編集 {X} 登録 {C} 上下:選択 左右:区間
+{A} Start  {X} Delete  {C} U{SLASH}D Select L{SLASH}R Section	{A} 開始 {X} 削除 {C} 上下:選択 左右:区間
 Any percent	Any％
 120 Shines	シャイン120枚
 PB card save failed: %lu	PBカード保存に失敗：%lu
@@ -478,7 +1154,6 @@ Ghost deleted	ゴーストを削除しました
 Ghost exported to share folder	shareフォルダへ書き出しました
 Export filename already exists	同名の書出ファイルがあります
 Imported ghosts refreshed	取込ゴーストを更新しました
-12 imported ghosts shown; more found	取込ゴーストは12件まで表示
 Ghost changed; confirm save again	ゴーストが変わりました。再確認してください
 Stale ghost load ignored	古いゴースト読込を無視しました
 No ghost ready to save	保存できるゴーストがありません
@@ -496,7 +1171,6 @@ Ghost storage request rejected	ゴースト保存要求が拒否されました
 Ghost file is too large	ゴーストファイルが大きすぎます
 Ghost file is corrupt	ゴーストファイルが壊れています
 Ghost version is unsupported	未対応のゴースト版です
-Ghost profile quota reached	ゴースト上限に達しました
 Ghost slot was not found	ゴースト枠が見つかりません
 Ghost storage I/O error	ゴースト保存I/Oエラー
 Ghost catalog failed validation	ゴースト一覧の検証に失敗
@@ -513,62 +1187,52 @@ PB ghost save	PBゴースト保存
 Race target	レース相手
 PERSONAL	個人
 IMPORTED	取込
-Scan import folder	取込フォルダを検索
-drag & drop .smsghost	.smsghostを入れてください
 Not scanned	未検索
 Read-only	読取専用
 Rejected	拒否
 RACING	レース中
 GHOST 1	ゴースト1
 Auto target	自動選択
-Pinned ghost	固定ゴースト
 Selected ghost	選択中のゴースト
 Saved ghost	保存済みゴースト
 Watch %d loading	観戦%d 読込中
 Watching %d (%d/%d)	観戦%d (%d/%d)
 Imported %02d (pinned)	取込%02d（固定）
 Slot %02d (pinned)	枠%02d（固定）
-PERSONAL %d/45  %lu:%02lu / 10h	個人 %d/45  %lu:%02lu / 10h
-IMPORTED %d/12  %lu:%02lu  +%lu MORE	取込 %d/12  %lu:%02lu  他%lu
-IMPORTED %d/12  %lu:%02lu	取込 %d/12  %lu:%02lu
+PERSONAL %d/45  %lu:%02lu / 10h	個人 %d/45 %lu:%02lu / 10h
+IMPORTED %d/12  %lu:%02lu	取込 %d/12 %lu:%02lu
 %02d (unsafe)	%02d（危険）
 %02d (empty)	%02d（空き）
 What should this ghost do?	このゴーストで何をしますか？
-{A} Race   {Y} Watch   {X} Watch 2	{A} レース   {Y} 観戦   {X} 2体観戦
-Watch is visual-only for this loaded area	現在のエリアで観賞します（操作は再現しません）。
+{A} Race   {Y} Watch   {X} Watch 2	{A} レース {Y} 観戦 {X} 2体観戦
 Discard unsaved PB ghost?	未保存のPBゴーストを破棄しますか？
 The selected ghost action will destroy it.	この操作で未保存のゴーストが失われます。
-{A} Discard & continue    {B} Cancel	{A} 破棄して続行    {B} キャンセル
+{A} Discard & continue    {B} Cancel	{A} 破棄して続行 {B} キャンセル
 Loading visual ghost 2 of 2...	観戦ゴースト2/2を読込中...
 Loading visual ghost 1 of 2...	観戦ゴースト1/2を読込中...
 Loading visual ghost...	観戦ゴーストを読込中...
-Recording is paused while Watch prepares	観賞の準備中は録画を停止します。
+Recording is paused while Watch prepares	観賞の準備中は録画を停止。
 Delete imported file from SD?	SDの取込ファイルを削除しますか？
 Delete ghost from SD?	SDのゴーストを削除しますか？
 Save %s?	「%s」を保存？
 Personal slot %02d	個人枠 %02d
-Deleting ghost to free a slot...	空きを作るため削除中...
 Saving protected PB ghost...	保護PBゴーストを保存中...
-All personal ghost slots are full	個人ゴースト枠が満杯です
 Preparing protected PB save...	保護PBの保存を準備中...
 Slot %02d: %s	枠%02d：%s
-{C} Up/Down Choose  {X} Delete  {B} Back	{C} 上下:選択  {X} 削除  {B} 戻る
+{C} Up/Down Choose  {X} Delete  {B} Back	{C} 上下:選択 {X} 削除 {B} 戻る
 {B} Back to PB protection	{B} PB保護へ戻る
-{A} Choose ghost 2  {C} L{SLASH}R Section  {B} Back	{A} ゴースト2選択  {C} 左右:区間  {B} 戻る
-{A} Change  {C} L{SLASH}R Section  {Y} Rescan	{A} 変更  {C} 左右:区間  {Y} 再検索
-{A} Select  {C} L{SLASH}R Section  {X} Delete  {Z} Export	{A} 選択  {C} 左右:区間  {X} 削除  {Z} 書出
+{A} Choose ghost 2  {C} L{SLASH}R Section  {B} Back	{A} ゴースト2選択 {C} 左右:区間 {B} 戻る
+{A} Change  {C} L{SLASH}R Section  {Y} Rescan	{A} 変更 {C} 左右:区間 {Y} 再検索
+{A} Select  {C} L{SLASH}R Section  {X} Delete  {Z} Export	{A} 選択 {C} 左右:区間 {X} 削除 {Z} 書出
 Deleting ghost...	ゴーストを削除中...
 Saving ghost...	ゴーストを保存中...
 Scanning import folder...	取込フォルダを検索中...
 Refreshing ghosts...	ゴーストを更新中...
 Refreshing imports...	取込一覧を更新中...
 Ghost watch ended	ゴースト観戦を終了しました
-Choose a saved slot to delete first	削除する保存枠を選んでください
-Choose a writable saved ghost	書込可能なゴーストを選んでください
 Ghost row changed; choose again	一覧が変わりました。再選択してください
 Loading ghost to race...	レース用ゴーストを読込中...
 Ghost race target cleared	レース相手を解除しました
-Enable Ghost Display before Watch	観戦前にゴースト表示をオンにしてください
 Watch unavailable in this stage	このステージでは観戦できません
 Loading ghost 1 of 2...	ゴースト1/2を読込中...
 Loading ghost to watch...	観戦用ゴーストを読込中...
@@ -594,7 +1258,6 @@ Exporting .smsghost...	.smsghostを書出中...
 
 # Ghost recorder/observer messages.
 Ghost: segment capacity reached	ゴースト：区間上限です
-Ghost: 15 minute cap	ゴースト：15分上限です
 Ghost: sample capacity reached	ゴースト：記録上限です
 Ghost challenger ready: save or unpin	挑戦ゴースト準備完了：保存か解除
 Observer stopped: unexpected stage change	予期しない移動で観戦終了
@@ -620,7 +1283,6 @@ Savestate unavailable	ステートを利用できません
 Savestate is too large	ステートが大きすぎます
 Savestate saved	ステートを保存しました
 Can't load during stage loading	ロード中はステート読込できません
-No savestate yet	ステートがありません
 Savestate is from another build	別ビルドのステートです
 Savestate is from another region	別リージョンのステートです
 Savestate belongs to another area	別エリアのステートです
@@ -638,15 +1300,14 @@ Protect unsaved PB ghost?	未保存PBゴーストを保護しますか？
 Savestate load cannot preserve this recording.	ステート読込ではこの記録を保持できません。
 Save it now, or continue unsaved.	今すぐ保存するか未保存で続けます。
 {B} Use Ask instead; the PB stays protected	{B} 毎回確認へ変更（PBは保護）
-{A} Ghosts / Save    {B} Load & lose ghost	{A} ゴースト保存    {B} 読込して破棄
-{A} Ghosts / Save    {B} Continue unsaved	{A} ゴースト保存    {B} 未保存で続行
+{A} Ghosts / Save    {B} Load / lose ghost	{A} ゴースト保存 {B} 読込して破棄
+{A} Ghosts / Save    {B} Continue unsaved	{A} ゴースト保存 {B} 未保存で続行
 Warps disabled	ワープは無効です
 Could not open protected PB save	PB保護保存を開けません
 Save PB ghost before chart warp	ワープ前にPBゴーストを保存してください
 Course warp cancelled	コースワープを中止しました
 Restart queued	リスタートを予約しました
-Auto-save stopped; choose save or continue	自動保存を中止しました。保存するか続行してください
-Ghost slots full; choose save or continue	ゴースト枠が満杯です。保存するか続行してください
+Auto-save stopped; choose save or continue	自動保存を中止。保存するか続行してください
 
 # Warp-wheel destinations.
 Windmill	風車
@@ -715,7 +1376,6 @@ PIANTA	モンテ
 AIRSTRIP	エアポート
 CORONA	コロナ
 DELFINO	ドルピック
-ANY PERCENT	Any％
 Bianco	ビアンコ
 Ricco	リコ
 Gelato	マンマ
@@ -869,11 +1529,7 @@ Progress save error	記録の保存に失敗しました
 Saving progress...	記録を保存中...
 Progress not checkpointed	記録はまだ保存されていません
 Progress saved	記録を保存しました
-Achievements  >	実績  ＞
-Statistics overview  >	統計の概要  ＞
-Worlds  >	ワールド  ＞
 Region	リージョン
-Unlock popup & chime	解除ポップアップ・チャイム
 Achievements	実績
 UNLOCKED	解除済み
 LOCKED	未解除
@@ -1070,16 +1726,13 @@ Save 250 ghosts lifetime.	通算250体のゴーストを保存する。
 Save over 50 hours of ghosts lifetime.	ゴーストを通算50時間超保存する。
 
 # FOXTROT additions and approved Task Edition wording amendments.
-Disable 3rd Chomlet aggro	キャンキャン3体目無反応
 Yoshi{SLASH}nozzle save prompt	ヨッシー・ノズルでセーブテキストの表示
 Quick	クイック
 Runs	走行
 System	システム
-V2.3.0 Frame By Frame	V2.3.0 Frame By Frame
 Guide	使い方
 Frame advance	コマ送り
 Free camera	フリーカメラ
-Freecam	フリーカメラ
 Input replay	入力再生
 Savestates	ステート
 SD savestates	SDステート
@@ -1089,16 +1742,8 @@ State %u	ステート %u
 State %d	ステート %d
 State %d (empty)	ステート %d（空き）
 Save state	ステート保存
-Load state	ステート読込
-Save to SD	SDに保存
-Browse SD states	SDステート一覧
-Cycle save slot	保存先を切り替え
-Cycle load slot	読込元を切り替え
-Cycle state slots	ステート枠を切り替え
 Save slot	保存先
 Load slot	読込元
-Load selected state	選択したステートを読込
-Delete selected state	選択したステートを削除
 Rename	名前変更
 Import	取り込み
 Export	書き出し
@@ -1111,23 +1756,9 @@ Held	保持中
 Buffered	待機中
 Waiting	待機中
 Camera	カメラ
-Camera speed	カメラ速度
-Camera input	カメラ操作
 Mario input	マリオ操作
-Camera boost	カメラ加速
-Record input	入力を録画
-Play input	入力を再生
-Stop input	入力再生を停止
-Clear input	入力を消去
-Start recording	録画開始
-Stop recording	録画停止
-Start replay	再生開始
-Stop replay	再生停止
 Recording	録画中
-Replaying	再生中
 Both ghosts	両方のゴースト
-Both inputs	両方のゴースト
-Save new ghost	新しいゴーストを保存
 Personal page	自分のゴースト
 Imported page	取り込んだゴースト
 Layout editor	配置エディター
@@ -1141,11 +1772,7 @@ Underwater air colour	水中の空気メーターの色
 Recent IL results	最近のIL結果
 Mario appearance	マリオの見た目
 Mario colours	マリオの色
-Mario colors	マリオの色
 FLUDD colours	ポンプの色
-FLUDD colors	ポンプの色
-Water colours	水の色
-Water colors	水の色
 Shirt	シャツ
 Overalls	オーバーオール
 Gloves	手袋
@@ -1153,12 +1780,10 @@ Shoes	靴
 Sunglasses	サングラス
 Sunshine shirt	アロハシャツ
 Original	オリジナル
-All parts	全部位
 Appearance	見た目
 Colour	色
 Color	色
 Colours	色
-Horizontal gap	横の間隔
 Row gap	行の間隔
 Fields per row	1行の項目数
 Compact	詰める
@@ -1173,50 +1798,43 @@ MOVEMENT	アクション
 TIMER DISPLAY	タイマー表示
 DURATION	表示時間
 COINS AND OBJECTS	コインとオブジェクト
-FRAME AND CAMERA	コマ送りとカメラ
-SAVESTATES	ステート
 MENU	メニュー
 POSITION	位置
-WARPS AND RESTARTS	ワープとやり直し
-Your favourite settings in one quick list.	お気に入りの設定をまとめて表示します。
+Your favourite settings in one quick list.	お気に入りの設定をまとめて表示。
 Core gameplay rules, skips and unlocks.	ゲームの設定、スキップ、解放機能です。
-Timer visibility, splits and QFT freezes.	タイマー表示、区間タイム、QFTの停止を設定します。
-Repeatable boss, object and course outcomes.	ボスやオブジェクトのパターンを固定します。
-Movement feedback and practice overlays.	アクションの結果や練習用の情報を表示します。
-Mario, world and audio cosmetics.	マリオ、ステージ、音声の見た目や効果を変更します。
-Savestate behaviour and feedback.	ステートの動作と通知を設定します。
-Practice helpers, counters and menu rules.	練習補助、カウンター、メニューを設定します。
-Find and fix every setting that can stop an IL PB.	ILのPB登録を妨げる設定を確認できます。
-Changes this option for practice or presentation.	練習や表示に関する設定を変更します。
-Shows route splits during supported ILs.	対応するILで区間タイムを表示します。
-Show recorded inputs; Both ghosts compares both tracks in Watch2.	録画した入力を表示します。「両方」で2体を比較できます。
+Timer visibility, splits and QFT freezes.	タイマー表示、区間タイム、QFTの停止を設定。
+Repeatable boss, object and course outcomes.	ボスやオブジェクトのパターンを固定。
+Movement feedback and practice overlays.	アクションの結果や練習用の情報を表示。
+Mario, world and audio cosmetics.	マリオ、ステージ、音声の見た目や効果を変更。
+Savestate behaviour and feedback.	ステートの動作と通知を設定。
+Practice helpers, counters and menu rules.	練習補助、カウンター、メニューを設定。
+Find and fix every setting that can stop an IL PB.	ILのPB登録を妨げる設定を確認可能。
+Changes this option for practice or presentation.	練習や表示に関する設定を変更。
+Shows route splits during supported ILs.	対応するILで区間タイムを表示。
+Show recorded inputs; Both ghosts compares both tracks in Watch2.	記録入力を表示。「両方」で2体を比較。
 Shows or hides the selected ghost while racing or watching.	レース中や観賞中のゴースト表示を切り替えます。
-Changes how transparent the ghost looks in the stage.	ゴーストの透明度を変更します。
-Save your latest recording as a new personal ghost.	直前の録画を新しいゴーストとして保存します。
-Finds .smsghost files copied into the import folder.	取り込みフォルダーの.smsghostファイルを検索します。
-Moves, resizes and recolours the compact QFT display.	QFT表示の位置、大きさ、色を変更します。
-Full position, size, opacity and colour controls for the native timer.	タイマーの位置、大きさ、透明度、色を変更します。
-Recolours this meter independently; reset restores its retail colours.	このメーターの色を変更します。リセットで元に戻せます。
-Moves, resizes and recolours this practice overlay.	練習用表示の位置、大きさ、色を変更します。
-Shows a leading zero before single-digit QFT values.	QFTの1桁の値の前に0を表示します。
-Sets colours for the timer digits and separators.	タイマーの数字と区切り記号の色を変更します。
-Changes the colour streak behind the Sunshine timer.	タイマーの背景の色を変更します。
-Changes the TIME or TEMPO label colour.	TIME・TEMPOラベルの色を変更します。
+Changes how transparent the ghost looks in the stage.	ゴーストの透明度を変更。
+Save your latest recording as a new personal ghost.	直前の録画を新しいゴーストとして保存。
+Moves, resizes and recolours the compact QFT display.	QFT表示の位置、大きさ、色を変更。
+Full position, size, opacity and colour controls for the native timer.	タイマーの位置、大きさ、透明度、色を変更。
+Recolours this meter independently; reset restores its retail colours.	メーターの色を変更。リセットで元の色。
+Moves, resizes and recolours this practice overlay.	練習用表示の位置、大きさ、色を変更。
+Shows a leading zero before single-digit QFT values.	QFTの1桁の値の前に0を表示。
+Sets colours for the timer digits and separators.	タイマーの数字と区切り記号の色を変更。
+Changes the colour streak behind the Sunshine timer.	タイマーの背景の色を変更。
+Changes the TIME or TEMPO label colour.	TIME・TEMPOラベルの色を変更。
 Shows or hides the TIME or TEMPO label.	TIME・TEMPOラベルの表示を切り替えます。
-Changes this display's position, size and colours.	表示の位置、大きさ、色を変更します。
-Moves and styles the achievement popup.	実績通知の位置や見た目を変更します。
-Moves and styles Moonshine status messages.	Moonshine通知の位置や見た目を変更します。
-Moves and styles the IL PB popup.	ILのPB通知の位置や見た目を変更します。
-Changes this HUD element's layout or appearance.	HUDの配置や見た目を変更します。
+Changes this display's position, size and colours.	表示の位置、大きさ、色を変更。
+Moves and styles the achievement popup.	実績通知の位置や見た目を変更。
+Moves and styles Moonshine status messages.	Moonshine通知の位置や見た目を変更。
+Moves and styles the IL PB popup.	ILのPB通知の位置や見た目を変更。
+Changes this HUD element's layout or appearance.	HUDの配置や見た目を変更。
 New file in your personal library	自分のライブラリーに新規保存
 Japanese	日本語
 English	英語
 
 # FOXTROT practice and SD workflow.
-Input replay (experimental)	入力再生（試験機能）
-Pause the game and choose the inputs for each frame.	ゲームを止めて、1コマずつ入力を決められます。
-Move the camera with gameplay paused or running.	一時停止中も再開中もカメラを操作できます。
-Repeat your own inputs from a savestate. Saved ghosts are in Ghosts.	ステートから自分の入力を再生します。ゴーストは別メニューです。
+Move the camera with gameplay paused or running.	一時停止中も再開中もカメラを操作可能。
 Cancel armed pause	一時停止の予約を取消
 Resume gameplay	ゲームを再開
 Pause gameplay	ゲームを一時停止
@@ -1225,29 +1843,17 @@ Movement speed	移動速度
 Reverse sideways	左右移動を反転
 Recenter camera	カメラを元に戻す
 Reset view	元に戻す
-Record from savestate	ステートから入力を録画
-Replay recorded inputs	録画した入力を再生
-Stop recording or replay	録画・再生を停止
-%s   Recorded: %lu frames	%s   録画済み: %luコマ
-Game: %s   Camera: %s	ゲーム: %s   カメラ: %s
+%s   Recorded: %lu frames	%s 録画済み: %luコマ
+Game: %s   Camera: %s	ゲーム: %s カメラ: %s
 New bind: %s	新しい操作: %s
-Shortcut: %s   X: change bind	操作: %s   X: 割り当て変更
-Hold your new buttons, then release to save. C-stick cancels.	使うボタンを押してから離すと保存します。Cスティックで取消。
-Armed: will pause on Mario's first controllable frame. Pause cancels.	操作可能な最初のコマで停止します。もう一度押すと取消。
-Camera is ON: Mario input is OFF. Turn camera off to jump or spin.	カメラ操作中です。ジャンプやスピンにはカメラ操作をオフにします。
-Pause or resume. The timer stops while paused and the attempt is marked TAS.	一時停止・再開します。停止中はタイマーも止まり、TAS扱いになります。
-Hold your inputs and tap Step. Release A before pressing it for another jump.	入力を押しながら1コマ進めます。次のジャンプ前にAを離してください。
-On pauses live gameplay. Off leaves it paused; choose Resume when ready.	オンでゲームが停止します。オフにした後「ゲームを再開」で再開。
-Resume closes free camera in gameplay. Ghost Watch can keep its camera.	ゲームを再開するとカメラ操作を終了します。ゴースト観賞中は継続可能。
-C-stick left/right changes speed. Hold X while moving for a boost.	Cスティック左右で速度変更。移動中にXを押すと加速します。
-Reverse only main-stick sideways movement. C-stick looking stays unchanged.	メインスティックの左右移動だけを反転します。
-Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.	視点を戻します。メイン: 移動、C: 向き、L・R: 高さ。
-Save a state first. Record reloads it; play your sequence, then Stop.	先にステートを保存します。録画で読み直し、操作後に停止してください。
-Reloads the same state and repeats your inputs. B or Start cancels.	同じステートから入力を再生します。B・Startで取消。
-Stop keeps this session's recording. New savestates or scenes clear it.	停止後も入力は残ります。新しいステートや場面変更で消去されます。
-Choose a memory state, or save and browse SD states.	メモリーのステートを選ぶか、SDに保存して一覧から選べます。
+Shortcut: %s   X: change bind	操作: %s X: 割り当て変更
+Hold your new buttons, then release to save. C-stick cancels.	ボタンを押して離すと保存。Cで取消。
+C-stick left/right changes speed. Hold X while moving for a boost.	Cスティック左右で速度変更。移動中にXを押すと加速。
+Reverse only main-stick sideways movement. C-stick looking stays unchanged.	メインスティックの左右移動だけを反転。
+Restore the game's viewpoint. Main stick: move; C-stick: look; L/R: height.	視点を戻す。メイン：移動、C：向き、L・R：高さ
+Choose a memory state, or save and browse SD states.	メモリステートを選択。またはSDに保存・読込。
 State cleared	ステートを消去しました
-State changed or busy; try again	ステートが変更されたか処理中です。もう一度お試しください。
+State changed or busy; try again	ステート変更・処理中。再試行してください。
 Savestates unavailable	ステートを利用できません
 This state is empty	このステートは空です
 Clear state %lu?	ステート %luを消去しますか？
@@ -1257,15 +1863,15 @@ SD states	SDステート
 State %lu: %s	ステート %lu: %s
 State %lu	ステート %lu
 Saved	保存済み
-Save writes to this slot. Load keeps its own selection.	この枠に保存します。読込元は別に選べます。
-Choose a memory slot with A or C-stick; choose SD files on the SD page.	A・Cスティックでメモリー枠を選択。SDファイルはSD一覧で選びます。
-Remove the memory state in the Save to slot, after confirmation.	確認後に「保存先」のメモリーステートを消去します。
-Keep the game RNG with each state.	ステートと一緒にゲームの乱数状態を保存します。
-Show a message when saving or loading a state.	ステート保存・読込時に通知を表示します。
+Save writes to this slot. Load keeps its own selection.	この枠に保存。読込元は別に選べます。
+Choose a memory slot with A or C-stick; choose SD files on the SD page.	A・Cでメモリー枠を選択。SDファイルはSD一覧から。
+Remove the memory state in the Save to slot, after confirmation.	確認後に「保存先」のメモリーステートを消去。
+Keep the game RNG with each state.	ステートと一緒にゲームの乱数状態を保存。
+Show a message when saving or loading a state.	ステート保存・読込時に通知を表示。
 Save states to SD and bring them back after restarting.	SDに保存したステートは再起動後も読み込めます。
-Change the savestate message's position and appearance.	ステート通知の位置や見た目を変更します。
+Change the savestate message's position and appearance.	ステート通知の位置や見た目を変更。
 Finishing the SD transfer; please wait	SD転送を終了しています。お待ちください。
-Save slot changed; choose the file again	保存先が変わりました。ファイルを選び直してください。
+Save slot changed; choose the file again	保存先が変更済み。ファイルを再選択。
 SD states need Moonshine Launcher	SDステートにはMoonshine Launcherが必要です。
 Save a memory state first	先にメモリーへステートを保存してください。
 State %lu - area %u episode %u	ステート %lu - エリア %u エピソード %u
@@ -1280,10 +1886,10 @@ Rename SD state	SDステートの名前変更
 (enter a name)	（名前を入力）
 Delete this SD state?	このSDステートを削除しますか？
 Import into state %lu?	ステート %luへ取り込みますか？
-Removes this file from SD. Memory states stay saved.	SDのファイルを削除します。メモリーのステートは残ります。
-Replaces the Save to memory slot. The SD file stays saved.	「保存先」の枠を上書きします。SDファイルは残ります。
-Select that slot under Load from to use it.	使うには「読込元」でその枠を選んでください。
-Save: %s   Load: %s	保存先: %s   読込元: %s
+Removes this file from SD. Memory states stay saved.	SDファイルを削除。メモリステートは保持。
+Replaces the Save to memory slot. The SD file stays saved.	「保存先」の枠を上書き。SDファイルは保持。
+Select that slot under Load from to use it.	使うには「読込元」でその枠を選択。
+Save: %s   Load: %s	保存先: %s 読込元: %s
 Save memory state to SD	メモリーのステートをSDへ保存
 Name...	名前を付ける...
 Refresh / first page	更新・最初のページ
@@ -1292,8 +1898,8 @@ Load source	読込元
 SD file	SDファイル
 Save and Import write to this memory slot.	保存・取り込みはこのメモリー枠へ書き込みます。
 Choose a memory slot here, or press Y on an SD file.	メモリー枠を選ぶか、SDファイルでYを押してください。
-Name a new SD file from the Save to memory slot.	「保存先」のステートに名前を付けてSDへ保存します。
-Y chooses this file for your Load bind; A copies it to memory.	Yで読込元に選択。Aでメモリー枠にコピーします。
+Name a new SD file from the Save to memory slot.	「保存先」のステートに名前を付けてSDへ保存。
+Y chooses this file for your Load bind; A copies it to memory.	Yで読込元に選択。Aでメモリー枠にコピー。
 SD files stay saved after the console restarts.	SDファイルは本体を再起動しても残ります。
 State is busy; try again	ステートを処理中です。もう一度お試しください。
 
@@ -1387,9 +1993,9 @@ GAMEPLAY AND PRACTICE	ゲーム・練習
 TIMING AND HUD	計測・HUD
 LAYOUT AND CONTROLS	配置・操作
 Everyday speed and convenience options.	普段の練習を便利にする設定です。
-Skip downtime or unlock route requirements.	待ち時間を省略し、練習に必要な要素を解放します。
-Change how stages and their objects behave.	ステージやオブジェクトの動作を変更します。
-Speeds up dialogue and message boxes.	会話やメッセージの表示を速くします。
+Skip downtime or unlock route requirements.	待ち時間を省略し、練習に必要な要素を解放。
+Change how stages and their objects behave.	ステージやオブジェクトの動作を変更。
+Speeds up dialogue and message boxes.	会話やメッセージの表示を速く。
 Custom text	カスタム文字
 Save latest ghost	最新のゴーストを保存
 BROWSE	閲覧
@@ -1425,15 +2031,10 @@ Look sensitivity	視点移動の感度
 Hide all HUD	すべてのHUDを隠す
 Free camera sensitivity	フリーカメラの感度
 Hide HUD in free camera	フリーカメラ中はHUDを隠す
-Change how quickly the C-stick turns the camera, from 0.25x to 4x.	Cスティックの視点移動速度を0.25倍から4倍まで変更します。
-Hide game and Moonshine overlays while filming. You can still open this menu.	撮影中はゲームとMoonshineの表示を隠します。メニューは開けます。
+Change how quickly the C-stick turns the camera, from 0.25x to 4x.	Cの視点移動速度を0.25〜4倍に変更。
+Hide game and Moonshine overlays while filming. You can still open this menu.	撮影中は全HUDを非表示。メニューは利用可能。
 
 # RC1 TAS checkpoints.
-Record a TAS from a start state. Save checkpoints to try different inputs.	開始ステートからTASを記録します。途中のステートを保存して入力を試せます。
-Continue editing checkpoint	途中のステートから編集を続ける
-Keep your start state. Save other slots as checkpoints; loading rewinds the inputs too.	開始ステートを残し、別の枠に途中経過を保存します。読込で入力も巻き戻ります。
-Stop keeps the take. Export its start state and latest checkpoint to SD to keep both.	停止しても入力は残ります。開始と最新のステートをSDに保存してください。
-Continue a loaded TAS checkpoint. Gameplay stays paused until you Step or Resume.	読み込んだTASの編集を続けます。コマ送りか再開を選ぶまで停止します。
 
 # TAS project workflow.
 Pause / Resume	一時停止 / 再開
@@ -1443,13 +2044,12 @@ A: replace this state   B: keep it	A：置き換える　B：残す
 %lu frames	%luコマ
 Please wait until the current action finishes.	現在の操作が終わるまでお待ちください。
 Delete this TAS from SD?	このTASをSDから削除しますか？
-Its beginning and checkpoint files will be deleted.	開始地点と中間地点のファイルを削除します。
 A: delete SD project   B: keep. Memory checkpoints stay.	A：SDから削除　B：残す。メモリの中間地点は残ります。
 A: open   Start: rename   X: delete   B: back	A：開く　Start：名前変更　X：削除　B：戻る
 TAS renamed on SD.	SD上のTASの名前を変更しました。
-TAS deleted from SD. Memory checkpoints were kept.	SD上のTASを削除しました。メモリの中間地点は残っています。
+TAS deleted from SD. Memory checkpoints were kept.	SDのTASを削除。メモリの中間地点は保持。
 TAS projects	TAS管理
-New, edit, replay and save a TAS with its checkpoints.	TASの作成・編集・再生と、中間地点を含む保存ができます。
+New, edit, replay and save a TAS with its checkpoints.	TAS作成・編集・再生・中間地点を含む保存。
 New TAS	新しいTAS
 Continue	編集を続ける
 Replay	再生
@@ -1472,38 +2072,34 @@ In this TAS	このTASで使用中
 This TAS has unsaved edits.	このTASには未保存の編集があります。
 Save TAS and stay here	TASを保存してここに戻る
 Discard edits and continue	編集を破棄して続ける
-Other memory states stay unless you choose to replace one.	置き換えを選ばない限り、他のメモリステートは残ります。
-A: open the whole TAS   B: back	A：TASをまとめて開く　B：戻る
+Other memory states stay unless you choose to replace one.	置換を選ぶまで他のメモリステートは保持。
 A: choose action   B: back. Beginning is kept for Replay.	A：操作を選択　B：戻る。開始地点は再生用に残ります。
-Continue stays paused. Hold Mario inputs, then use Step or Resume.	編集再開後も停止します。入力を押してコマ送りか再開を選びます。
-New TAS captures your beginning automatically.	新しいTASは開始地点を自動で保存します。
+Continue stays paused. Hold Mario inputs, then use Step or Resume.	編集続行後も停止。入力を押してコマ送り・再開。
+New TAS captures your beginning automatically.	新しいTASは開始地点を自動で保存。
 Start a TAS when Mario can move in the level.	レベル内でマリオが動けるときにTASを始めてください。
-Checkpoint saved. Continue to edit, or Replay to watch.	中間地点を保存しました。編集を続けるか再生を選んでください。
-TAS saved to SD, with its beginning and checkpoints.	開始地点と中間地点を含むTASをSDに保存しました。
-TAS is paused here. Continue to edit, or Replay to watch.	この地点で停止しています。編集を続けるか再生を選んでください。
+TAS is paused here. Continue to edit, or Replay to watch.	この地点で停止中。編集続行か再生を選択。
 This checkpoint has not been saved yet.	この中間地点はまだ保存されていません。
-Choose a TAS project to open.	開くTASを選んでください。
-TAS action canceled. Memory states were not changed.	操作を中止しました。メモリステートは変更していません。
+Choose a TAS project to open.	開くTASを選択。
+TAS action canceled. Memory states were not changed.	操作中止。メモリステートは未変更。
 Not enough room; existing saved TAS files are safe.	空き容量が足りません。保存済みのTASは残っています。
-Use this TAS's game version, episode and settings.	このTASと同じゲーム版・エピソード・設定にしてください。
+Use this TAS's game version, episode and settings.	TASと同じゲーム版・エピソード・設定を使用。
 TAS files need the matching Moonshine launcher.	対応するMoonshineランチャーが必要です。
-Release A to begin. Gameplay will stay paused.	Aを離すと準備が完了します。ゲームは停止したままです。
-Please wait...	しばらくお待ちください。
+Release A to begin. Gameplay will stay paused.	Aを離すと準備が完了。ゲームは停止したままです。
 
 # TAS actions and checkpoint shortcuts.
 TAS PROJECTS	TAS管理
-Beginning was replaced; this TAS cannot be saved.	開始地点が置き換わったため、このTASは保存できません。
+Beginning was replaced; this TAS cannot be saved.	開始地点が置換済みのためTAS保存不可。
 Rename TAS project	TASの名前を変更
 %lu / %lu frames	%lu / %luコマ
 Replace %s?	%sを置き換えますか？
-This replaces the checkpoint with your current position.	現在の地点で中間地点を上書きします。
+This replaces the checkpoint with your current position.	現在の地点で中間地点を上書き。
 A: replace checkpoint   B: keep it	A：中間地点を置き換える　B：残す
 Refresh	一覧を更新
 Shortcut: %s   X: change   Z: clear	割当：%s　X：変更　Z：解除
-Hold new buttons, then release to save. C-stick cancels.	ボタンを押し、離すと割当を保存します。Cスティックで中止。
+Hold new buttons, then release to save. C-stick cancels.	ボタンを押し、離すと割当を保存。Cスティックで中止。
 TAS changed on SD; open it again.	SD上のTASが変更されました。開き直してください。
-TAS could not be opened or saved. Existing SD projects are safe.	TASの読込・保存に失敗しました。SDの既存TASは残っています。
-Choose a memory state to replace, or B to cancel.	置き換えるメモリステートを選んでください。Bで中止。
+TAS could not be opened or saved. Existing SD projects are safe.	TAS読込・保存失敗。SDの既存TASは保持。
+Choose a memory state to replace, or B to cancel.	置き換えるメモリステートを選択。Bで中止。
 TAS save version limit reached; use a new project.	保存回数の上限です。新しいTASを作ってください。
 Finishing TAS save...	TASの保存を完了しています…
 Saving TAS and checkpoints. Keep SD connected.	TASと中間地点を保存中です。SDを抜かないでください。
@@ -1511,21 +2107,20 @@ Opening the current TAS checkpoint...	TASの現在の中間地点を読み込み
 Opening TAS and checkpoints. Keep SD connected.	TASと中間地点を読込中です。SDを抜かないでください。
 Previous TAS changed; open the project again.	以前のTASが変更されました。開き直してください。
 Checkpoint	中間地点
-Continue or open this TAS before saving a checkpoint.	このTASの編集を再開してから中間地点を保存してください。
+Continue or open this TAS before saving a checkpoint.	TASの編集を続行してから中間保存。
 Replace this TAS checkpoint?	このTASの中間地点を置き換えますか？
 Checkpoint kept. Your TAS is paused.	中間地点を残しました。TASは停止しています。
-Checkpoint changed; choose Save Checkpoint again.	中間地点が変更されました。保存を選び直してください。
-Load one of this TAS's checkpoints first.	先にこのTASの中間地点を読み込んでください。
+Checkpoint changed; choose Save Checkpoint again.	中間地点が変更済み。保存を再選択。
 Open this TAS or load one of its checkpoints first.	先にこのTASを開くか、中間地点を読み込んでください。
-Enter a name and use the matching Moonshine launcher.	名前を入力し、対応するMoonshineランチャーを使用してください。
+Enter a name and use the matching Moonshine launcher.	名前を入力し、対応するMoonshineランチャーを使用。
 Reading TAS project...	TASを読み込み中…
 Finding saved TAS projects...	保存済みのTASを検索中…
 Renaming TAS project...	TASの名前を変更中…
 Deleting the SD project. Memory checkpoints stay.	SDのTASを削除中です。メモリの中間地点は残ります。
-Checkpoint could not be saved. Existing memory states are safe.	中間地点を保存できません。既存のメモリステートは残っています。
-Checkpoint saved. Your TAS is paused here.	中間地点を保存しました。TASはこの地点で停止しています。
-Checkpoint could not be loaded. Check the episode and settings.	中間地点を読めません。エピソードと設定を確認してください。
-TAS checkpoint could not resume. Check its gameplay settings.	TASを再開できません。ゲームプレイの設定を確認してください。
+Checkpoint could not be saved. Existing memory states are safe.	中間保存失敗。既存のメモリステートは保持。
+Checkpoint saved. Your TAS is paused here.	中間保存完了。TASはここで停止中。
+Checkpoint could not be loaded. Check the episode and settings.	中間読込失敗。エピソード・設定を確認。
+TAS checkpoint could not resume. Check its gameplay settings.	TAS再開失敗。ゲームプレイ設定を確認。
 TAS: go to Beginning	TAS：開始地点に戻る
 TAS: save Checkpoint 1	TAS：中間地点1を保存
 TAS: go to Checkpoint 1	TAS：中間地点1に戻る
@@ -1535,55 +2130,53 @@ TAS: continue	TAS：編集を続ける
 TAS: replay	TAS：再生
 Other area	別エリア
 Its recording and checkpoint files will be deleted.	入力記録と中間地点のファイルが削除されます。
-TAS recording, Beginning and checkpoints saved to SD.	入力記録・開始地点・中間地点をSDに保存しました。
-This checkpoint is in another area. Return there to load it.	中間地点は別のエリアです。そのエリアに戻って読み込んでください。
+TAS recording, Beginning and checkpoints saved to SD.	入力記録・開始地点・中間地点をSDに保存済み。
+This checkpoint is in another area. Return there to load it.	中間地点のエリアに戻って読み込んでください。
 Return to the area where this TAS begins, then Replay.	TASの開始エリアに戻ってから再生してください。
-TAS recording kept. Return to its beginning area to Replay.	入力記録を保持しました。開始エリアに戻ると再生できます。
+TAS recording kept. Return to its beginning area to Replay.	入力記録を保持。開始エリアに戻ると再生可能。
 # TAS editing and replay feedback.
 TAS banner	TASバナー
-Shows TAS progress below gameplay. Desync warnings stay visible.	TASの進行状況を画面下に表示します。ずれの警告は常に表示します。
-Replay warns if game state differs, and continues.	再生中に状態が異なった場合は警告し、そのまま再生を続けます。
+Shows TAS progress below gameplay. Desync warnings stay visible.	TAS進行状況を画面下に表示。ずれの警告は常時表示。
+Replay warns if game state differs, and continues.	再生中の状態ずれを警告し、再生を続行。
 TAS desync at frame %lu - playback continues	TASずれ：%luコマ目。再生を継続
-Replay stopped: next area or settings differed - take kept	再生停止：次のエリアか設定が違います。入力記録は残っています。
+Replay stopped: next area or settings differed - take kept	再生停止：次のエリア・設定が不一致。入力記録は保持。
 TAS playback finished - desync warning	TAS再生終了：ずれを検出
 Playback finished - desync warning	再生終了：ずれを検出
-Beginning loaded - Step or Resume to edit	開始地点を読込済み。コマ送りか再開で編集できます。
+Beginning loaded - Step or Resume to edit	開始地点を読込済み。コマ送りか再開で編集可能。
 TAS checkpoint loaded	TASの中間地点を読み込みました。
 TAS checkpoint loaded - recording continues	TASの中間地点を読込済み。記録を続けます。
-TAS editing resumed - Step or Resume when ready	TAS編集を再開しました。入力を決めてコマ送りか再開を選びます。
-Area timing differs - return to a checkpoint to edit	エリア移動のタイミングが違います。中間地点に戻ると編集できます。
-Checkpoint unavailable here after desync. Replay can continue.	ずれのため、この地点では中間地点を作れません。再生は続けられます。
+TAS editing resumed - Step or Resume when ready	TAS編集続行。入力を決めてコマ送り・再開。
+Area timing differs - return to a checkpoint to edit	エリア移動の時刻が不一致。中間地点に戻ると編集可能。
+Checkpoint unavailable here after desync. Replay can continue.	ずれのため中間保存不可。再生は続行可能。
 
 # V2.3.1 colour controls and live free camera.
 %u deg	%u度
-Original: retail colours   Custom: your HSL   Colour edits select Custom	Original: 元の色   Custom: HSL指定   色の編集でCustomに切り替え
-Original: shaded tint   Custom: flat colour   HSL works in both	Original: 陰影あり   Custom: 指定色   どちらもHSLで調整
-On pauses gameplay. Off restores the game camera without changing pause.	オンでゲームを停止。オフは視点だけを戻し、停止状態は変えません。
-Resume runs the game at normal speed and keeps free camera on.	フリーカメラを保ったまま、ゲームを通常速度で再開します。
+On pauses gameplay. Off restores the game camera without changing pause.	オンで停止。オフは視点を戻し、停止状態を保持。
+Resume runs the game at normal speed and keeps free camera on.	フリーカメラを保持し、通常速度でゲーム再開。
 
 # Optional camera movement and rotation easing.
 Camera smoothing	カメラの補間時間
-Ease moving and turning starts/stops. Off responds immediately.	移動と回転の開始・停止を滑らかにします。Offなら即座に反応します。
+Ease moving and turning starts/stops. Off responds immediately.	移動・回転の開始と停止を滑らかに。オフは即反応。
 
 # V2.3.2 named layouts and passive movement timing.
 Layout profiles	レイアウト保存
-Save and switch between five named layouts.	名前付きレイアウトを5つ保存・切替できます。
+Save and switch between five named layouts.	名前付きレイアウトを5つ保存・切替可能。
 Layout profile	レイアウト
 Layout %u	レイアウト%u
 Name layout profile	レイアウト名
 Replace this layout profile?	このレイアウトを置き換えますか？
 Enter a profile name first	先に名前を入力してください。
 Layout storage is busy or unavailable	保存処理中、または保存先が使えません。
-Choose a saved layout profile	保存済みレイアウトを選んでください。
+Choose a saved layout profile	保存済みレイアウトを選択。
 Profile storage is unavailable.	レイアウトの保存先が使えません。
 Reading or saving layout profiles...	レイアウトを読み書きしています。
-Five layouts per game version. Binds and practice rules stay unchanged.	ゲーム版ごとに5つ保存。ボタン設定と練習ルールは変えません。
-{A} Apply    {Y} Save current layout	{A} 適用    {Y} 現在の配置を保存
-Layout file is damaged; current layout kept	ファイルが壊れています。現在の配置を保持します。
-Profile changed; reopen Layout profiles	保存内容が変わりました。この画面を開き直してください。
+Five layouts per game version. Binds and practice rules stay unchanged.	各ゲーム版に5枠。ボタン・練習設定は保持。
+{A} Apply    {Y} Save current layout	{A} 適用 {Y} 現在の配置を保存
+Layout file is damaged; current layout kept	ファイルが壊れています。現在の配置を保持。
+Profile changed; reopen Layout profiles	保存内容が変更済み。画面を開き直してください。
 That layout profile is empty	このレイアウトは空です。
-Layout storage error; current layout kept	保存エラー。現在の配置を保持します。
-Layout profile saved	レイアウトを保存しました。
+Layout storage error; current layout kept	保存エラー。現在の配置を保持。
+Layout profile saved	レイアウトを保存済み。
 Layout profile applied	レイアウトを適用しました。
 GB skip timing	GBすり抜けタイミング
 Jump display	ジャンプ表示
@@ -1593,7 +2186,6 @@ On time	適切
 Check jump	ジャンプ要確認
 Landing	着地後
 Buttslide	おしりすべり
-Jump ready	ジャンプ可能
 
 # Runner-provided achievement title translations (September 13 proposal).
 Dock Knock	船揚げ
@@ -1676,6 +2268,75 @@ Bianco plant	ビアンコのパックン
 Ricco / Gelato plants	リコとマンマのパックン
 Pinna unlock	ピンナ開放
 Yoshi unlock	ヨッシー開放
-{A} Keep  {B} Back  {C} Select Plaza state	{A} 決定  {B} 戻る  {C} プラザの状態を選択
-{A} Start  {Z} Plaza state  {Y} Stats  {X} Delete	{A} 開始  {Z} プラザの状態  {Y} 統計  {X} 削除
-Show system notices. PB and achievement popups keep their own settings.	システム通知を表示。PBと実績の通知は個別に設定。
+{A} Keep  {B} Back  {C} Select Plaza state	{A} 決定 {B} 戻る {C} プラザの状態を選択
+{A} Start  {Z} Plaza state  {Y} Stats  {X} Delete	{A} 開始 {Z} プラザの状態 {Y} 統計 {X} 削除
+
+{A} Ready / Cancel ready    {B} Online setup	{A} 準備・取消 {B} 部屋へ
+IL chosen - everyone choose Ready below.	IL決定。全員が下の「準備完了」を選択。
+Ready - press A to cancel	準備完了・Aで取消
+Press A	Aを押す
+Choose an IL first	先にILを選択
+
+Menu colours	メニューの色
+Paper	紙
+Header	見出し
+Category strip	カテゴリ欄
+Sidebar	サイドバー
+Outer trim	外側の縁
+Inner trim	内側の縁
+Selected tab	選択中のタブ
+Selected row	選択中の項目
+Help text	説明文
+Values	数値
+Selected text	選択中の文字
+Moonshine title	Moonshineのタイトル
+Sidebar text	サイドバーの文字
+Book spine	本の背表紙
+Footer	下部の欄
+Movement direction	移動方向
+Speed gain / frame	速度の変化・フレーム
+Height above floor	地面からの高さ
+Current action	現在の動作
+Slope angle	傾斜角度
+Floor type	地面の種類
+Hover remaining	ホバー残り時間
+Position / camera	位置とカメラ
+Ground	地面
+Other metadata	その他の情報
+Layout / colours	配置と色
+Guidebook style	ガイドブックのスタイル
+Section colour	部分の色
+Scrub recording	TASをタイムラインから編集
+Gameplay speed	ゲームプレイの速度変更
+Slowdown preset	低速切替用の速度指定
+Sirena pineapple	シレナ入り口パイナップル
+Ghost path	ゴーストの軌跡表示
+Ghost camera	観戦時のカメラ表示
+Menu sounds	メニューの操作音
+Sunshine sounds when moving through menus and changing options.	MoonShineメニューの操作音を切り替えます。
+Original guidebook or your own colours, with a live preview.	Zメニューのような背景にするか、自分好みの背景に編集します。
+Decimal separator	小数点区切り記号
+Value gap	間隔
+Collision viewer	地形の当たり判定表示
+Collision legend	当たり判定の色・種類の表示
+Open menu search	メニュー検索機能
+Slowdown: toggle preset	低速切替
+I Have the High Ground!	高台を占めたぞ！
+Shadow Slayer	影の暗殺者
+Industrialist	実業家
+Savestate: save State 2	ステート：スロット2を保存
+Savestate: load State 2	ステート：スロット2を読込
+Savestate: save State 3	ステート：スロット3を保存
+Savestate: load State 3	ステート：スロット3を読込
+Plaza Beginnings	ドルピックタウンの始まり
+Plaza Specialist	ドルピックタウンのスペシャリスト
+Plaza Graduate	ドルピックタウンの院生
+Plaza Master	ドルピックタウンマスター
+%s Beginnings!	%sの始まり
+%s Specialist	%sのスペシャリスト
+%s Graduate	%sの院生
+%s Master	%sマスター
+Menu language	メニューの言語
+Switch between English and Japanese menus for this session.	プレイ中のメニューを英語と日本語で切り替えます。
+Hiragana	ひらがな
+Katakana	カタカナ

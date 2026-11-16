@@ -1,0 +1,27 @@
+Moonshine Memory Monitor r4 - private PAL/US reservation test
+
+This build tests 1.875 MiB of upper MEM2 plus a native 384 KiB ARAM allocation.
+It does not enable the new detailed ghost format or add a savestate slot.
+The existing savestate pool and disc cache retain their capacities.
+
+Boot the Memory Monitor app and select PAL (US is also included).
+Join the PC monitor with CB28-ZYEZ-ZFAW-L2. The dashboard is:
+http://127.0.0.1:8768/
+
+The test starts automatically when a stage is ready. It writes a known pattern
+and repeatedly checks the claimed areas. Wait for "Checks passing" before
+trying guidebook/HUD screens, warps and all three savestate slots. Use a few
+heavy scenes, then try returning to the title and entering gameplay again.
+No allocation-capture button is needed in this build.
+
+An unavailable grant or changed owner stops access; the monitor reports why.
+This pilot is restricted to the original Wii with the observed IOS58 revision
+and memory boundaries. Other configurations fail closed. The ARAM allocation
+leaves at least 32 KiB free and checks space for its native MEM1 descriptor.
+It is obtained through the game's allocator, not by overwriting a free gap.
+The launcher and mod must be updated together.
+
+The PC saves measurements locally. This remains a private diagnostic build,
+not a general release. Normal builds leave this test disabled. It contains
+no arbitrary-address remote read/write command. Host ownership/pattern tests
+and regional build checks do not establish real-console compatibility.

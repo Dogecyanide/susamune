@@ -65,6 +65,10 @@
 #define SUSAMUNE_ADDR_LIBC_RAND_SEED \
     SUSAMUNE_MEM1_ADDR(0x80408cf0u, 0x8040ce30u, 0x80404590u)
 
+// NPC pollution polling is staggered by a counter that survives stage changes.
+#define SUSAMUNE_ADDR_NPC_POLLUTION_PHASE \
+    SUSAMUNE_MEM1_ADDR(0x8040a4a0u, 0x8040e060u, 0x80405728u)
+
 // Root-heap object pointers. The pointer variables are static, while their
 // targets live outside the stage heap and must be captured separately.
 #define SUSAMUNE_ADDR_RUMBLE_MANAGER \

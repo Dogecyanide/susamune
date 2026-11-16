@@ -41,7 +41,7 @@ InvalidateRange2:
 	# Matches susamune/mod_boot.h. The kernel clears this on every entry.
 	lwz		%r4,	COLD_FLUSH_LEN@l(%r3)
 	mr		%r5,	%r4
-	clrlwi	%r4,	%r4,	1
+	clrlwi	%r4,	%r4,	3
 	cmpwi	%r4,	0
 	beq		InvalidateDone
 	mtctr	%r4
@@ -51,12 +51,26 @@ InvalidateCold:
 	icbi	%r0,	%r4
 	addi	%r4,	%r4,	0x20
 	bdnz	InvalidateCold
-	# Bit 31 requests the fixed presentation code span; no new mailbox words.
+	# Bit 30 selects the admitted upper span; mailbox ownership is unchanged.
 	cmpwi	%r5,	0
 	bge		InvalidateDone
+	andis.	%r6,	%r5,	0x2000
+	beq		StandardMenuCode
+	lis		%r4,	0x9349
+	ori		%r4,	%r4,	0x8000
+	li		%r5,	0x800
+	b		MenuCodeCount
+StandardMenuCode:
+	andis.	%r6,	%r5,	0x4000
+	beq		LegacyMenuCode
+	lis		%r4,	0x9340
+	li		%r5,	0x400
+	b		MenuCodeCount
+LegacyMenuCode:
 	lis		%r4,	0x91CF
 	ori		%r4,	%r4,	0x9000
 	li		%r5,	0x208
+MenuCodeCount:
 	mtctr	%r5
 InvalidateMenuCode:
 	dcbi	%r0,	%r4

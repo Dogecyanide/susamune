@@ -1,4 +1,6 @@
+#include "susamune/kana_text.h"
 #include "susamune/creation_extras.hxx"
+#include "susamune/menu_palette.hxx"
 #include "susamune/hud_editor_preview.hxx"
 #include "susamune/gradient_motion.hxx"
 #include "susamune/native_hud_precision.hxx"
@@ -83,7 +85,7 @@ constexpr char kMenuText[] =
     "Word 1 text\0Word 1 style\0Word 1 visible\0"
     "Word 2 text\0Word 2 style\0Word 2 visible\0"
     "Word 3 text\0Word 3 style\0Word 3 visible\0"
-    "MOD MENU\0Menu background\0Achievement popup\0"
+    "MOD MENU\0Menu colours\0Achievement popup\0"
     "System notifications\0IL PB popup\0Stage session counter\0Streak failure banner";
 
 u8 sHudBeforeWarning[CreationExtras::HUD_PANE_COUNT][2][3];
@@ -258,6 +260,29 @@ void formatPracticeDisplay(char *out, unsigned capacity, unsigned display,
 #undef practiceFormat
 }
 
+namespace {
+// Bit 7 keeps numeric/network identifiers on the Latin keyboard.
+int keyboardPages(u8 page) { return !(page & 0x80) && JapaneseUi::available() ? 5 : 2; }
+int keyboardCount(u8 page) { return (page & 0x7f) == 4 ? 27 : 32; }
+void keyboardGlyph(u8 page, bool upper, unsigned index, char *out) {
+    page &= 0x7f;
+    out[0] = out[1] = out[2] = 0;
+    if (index >= (unsigned)keyboardCount(page)) return;
+    if (page < 2) {
+        out[0] = (page ? gCreationSymbols : upper ? gCreationLettersUpper : gCreationLettersLower)[index];
+    } else {
+        const unsigned i = (page - 2) * 32 + index;
+        if (i < 83) {
+            out[0] = upper ? (char)0x83 : (char)0x82;
+            out[1] = upper ? (char)(0x40 + i + (i >= 63)) : (char)(0x9f + i);
+        } else {
+            static const u8 punctuation[] = {0x5b,0x41,0x42,0x45,0x75,0x76,0x48,0x49};
+            out[0] = (char)0x81; out[1] = punctuation[i - 83];
+        }
+    }
+}
+}
+
 void drawCreationKeyboard(Menu *menu, const char *title, const char *text,
                           u8 pageIndex, bool uppercase, u8 cursor) {
     MenuTheme::panel(menu, 70, 164, 500, 262, title);
@@ -266,68 +291,63 @@ void drawCreationKeyboard(Menu *menu, const char *title, const char *text,
         menu->fillBox(86, 201, 468, 24, Color(49, 110, 76, 255));
         menu->drawText(text, 98, 204, 14, 14, Color(255, 248, 209, 255));
     }
-    const char *page = pageIndex ? gCreationSymbols
-                       : uppercase ? gCreationLettersUpper
-                                   : gCreationLettersLower;
-    const int count = pageIndex ? (int)sizeof(gCreationSymbols) - 1 : 32;
-    for (int i = 0; i < count; i++) {
-        const int x = 112 + (i % 8) * 46;
-        const int y = 232 + (i / 8) * 37;
-        if (i == cursor)
-            MenuTheme::selection(menu, x - 9, y - 5, 32, 29);
-        char one[2] = {page[i], '\0'};
-        menu->drawText(one, x, y, 18, 18,
-                       i == cursor ? Color(255, 255, 255, 255)
-                                   : ink);
+    const u8 page = (pageIndex & 0x7f) % keyboardPages(pageIndex);
+    const int count = keyboardCount(page);
+    for (int i = 0; i < count; ++i) {
+        const int x = 112 + (i % 8) * 46, y = 232 + (i / 8) * 37;
+        if (i == cursor) MenuTheme::selection(menu, x - 9, y - 5, 32, 29);
+        char one[3]; keyboardGlyph(page, uppercase, i, one);
+        menu->drawText(one, x, y, 18, 18, i == cursor ? Color(255,255,255,255) : ink);
     }
-    menu->drawText("D-pad Select   A Type   B Delete   X Space   Y Case   L"
-                   SUSAMUNE_GLYPH_SLASH "R Page",
-                   86, 383, 10, 10, muted);
+    menu->drawText("D-pad Select   A Type   B Delete   X Space",86,379,10,10,muted);
+    char label[64];
+    snprintf(label,sizeof(label),"L" SUSAMUNE_GLYPH_SLASH "R: %s %u/%u   Y: %s",
+        JapaneseUi::text(page < 2 ? "English" : uppercase ? "Katakana" : "Hiragana"),
+        page < 2 ? page + 1 : page - 1, page < 2 ? 2u : 3u, page < 2 ? "a/A" : JapaneseUi::text(uppercase ? "Hiragana" : "Katakana"));
+    menu->drawText(label,86,392,10,10,muted);
     menu->drawText("START: Keep   " SUSAMUNE_GLYPH_X " " SUSAMUNE_GLYPH_AMP " START: Cancel   " SUSAMUNE_GLYPH_Z ": Clear",
-                   86, 407, 10, 10, ink);
+                   86,407,10,10,ink);
 }
 
 bool updateCreationKeyboardText(TMarioGamePad *pad, char *text, u8 &length,
                                 u8 capacity, u8 &pageIndex, bool &uppercase,
                                 u8 &cursor) {
-    return updateCreationKeyboardButtons(pad->mButtons.mRapidInput, text, length,
-                                         capacity, pageIndex, uppercase, cursor);
+    return updateCreationKeyboardButtons(pad->mButtons.mRapidInput,text,length,
+                                         capacity,pageIndex,uppercase,cursor);
 }
 
 bool updateCreationKeyboardButtons(u32 pressed, char *text, u8 &length,
                                    u8 capacity, u8 &pageIndex, bool &uppercase,
                                    u8 &cursor) {
     bool changed = false;
-    const int count = pageIndex ? (int)sizeof(gCreationSymbols) - 1 : 32;
-    if (pressed & TMarioGamePad::DPAD_LEFT)
-        cursor = (u8)((cursor + count - 1) % count);
-    else if (pressed & TMarioGamePad::DPAD_RIGHT)
-        cursor = (u8)((cursor + 1) % count);
-    else if (pressed & TMarioGamePad::DPAD_UP)
-        cursor = (u8)((cursor + count - 8) % count);
-    else if (pressed & TMarioGamePad::DPAD_DOWN)
-        cursor = (u8)((cursor + 8) % count);
+    const u8 mode = pageIndex & 0x80;
+    u8 page = (pageIndex & 0x7f) % keyboardPages(pageIndex);
+    int count = keyboardCount(page);
+    cursor %= count;
+    if (pressed & TMarioGamePad::DPAD_LEFT) cursor = (cursor + count - 1) % count;
+    else if (pressed & TMarioGamePad::DPAD_RIGHT) cursor = (cursor + 1) % count;
+    else if (pressed & TMarioGamePad::DPAD_UP) cursor = (cursor + count - 8) % count;
+    else if (pressed & TMarioGamePad::DPAD_DOWN) cursor = (cursor + 8) % count;
     if (pressed & (TMarioGamePad::L | TMarioGamePad::R)) {
-        pageIndex ^= 1;
+        const int pages = keyboardPages(pageIndex);
+        page = (page + ((pressed & TMarioGamePad::L) ? pages - 1 : 1)) % pages;
         cursor = 0;
     }
+    pageIndex = mode | page;
     if (pressed & TMarioGamePad::Y) uppercase = !uppercase;
     if ((pressed & TMarioGamePad::B) && length) {
-        text[--length] = '\0';
-        changed = true;
+        unsigned at = 0, last = 0;
+        while (at < length) { last = at; const unsigned code = MoonshineKanaCode(text + at,length - at); at += code >= 128 ? 2 : 1; }
+        length = last; text[length] = 0; changed = true;
     }
-    if ((pressed & TMarioGamePad::X) && length < capacity) {
-        text[length++] = ' ';
-        text[length] = '\0';
-        changed = true;
-    }
-    if ((pressed & TMarioGamePad::A) && length < capacity) {
-        const char *characters = pageIndex ? gCreationSymbols
-                                 : uppercase ? gCreationLettersUpper
-                                             : gCreationLettersLower;
-        text[length++] = characters[cursor];
-        text[length] = '\0';
-        changed = true;
+    char one[3] = {' ',0,0};
+    if (pressed & TMarioGamePad::A) keyboardGlyph(page,uppercase,cursor,one);
+    if ((pressed & (TMarioGamePad::X | TMarioGamePad::A)) && length <= capacity) {
+        const unsigned bytes = one[1] ? 2 : 1;
+        if (one[0] && bytes <= (unsigned)(capacity - length)) {
+            for (unsigned i = 0; i < bytes; ++i) text[length++] = one[i];
+            text[length] = 0; changed = true;
+        }
     }
     return changed;
 }
@@ -469,8 +489,9 @@ void CreationExtras::clampWord(int index) {
 void CreationExtras::adopt(const volatile SusamuneCreationCfg *src) {
     if (!src || src->magic != SUSAMUNE_CREATION_CFG_MAGIC ||
         src->version != SUSAMUNE_CREATION_CFG_VERSION) return;
-    mNativeGradient = (src->reservedAchievement0 & 0xf8) == 0xd0 &&
-        (src->reservedAchievement0 & 7) <= 5 ? src->reservedAchievement0 & 7 : 0;
+    const u8 gradient = src->reservedAchievement0 & 7;
+    mNativeGradient = (src->reservedAchievement0 & 0xf8) == 0xd0 && gradient <= 6
+        ? gradient == 6 ? 0x40 : gradient : 0;
     for (int i = 0; i < SUSAMUNE_CREATION_COLOR_COUNT; i++) {
         if (src->colorPresent & SUSAMUNE_CREATION_COLOR(i))
             for (int c = 0; c < 3; c++) mColors[i][c] = src->rgb[i][c];
@@ -594,7 +615,7 @@ void CreationExtras::stageInto(volatile SusamuneCreationCfg *dst) const {
            sizeof(mSavestateFeedbackRgb));
     dst->achievementStyleMagic =
         SUSAMUNE_CREATION_ACHIEVEMENT_STYLE_MAGIC;
-    dst->reservedAchievement0 = 0xd0 | mNativeGradient;
+    dst->reservedAchievement0 = 0xd0 | (mNativeGradient == 0x40 ? 6 : mNativeGradient);
     dst->achievementX = mAchievementBannerStyle.x;
     dst->achievementY = mAchievementBannerStyle.y;
     dst->achievementScale = mAchievementBannerStyle.scale;
@@ -958,11 +979,23 @@ void CreationExtras::beginColorEditor(int first, int count, const char *title,
     mColorStyle.y = first >= SUSAMUNE_CREATION_COIN_BG &&
         first <= SUSAMUNE_CREATION_LIFE_TEXT && first != SUSAMUNE_CREATION_RED_BG
             ? 50 : 0xffff;
+    if (first == SUSAMUNE_CREATION_MENU_BG) {
+        mEditMode = EDIT_MENU_PALETTE;
+        auto &palette = *MOONSHINE_MENU_PALETTE_LIVE;
+        if (!(palette.custom & (1u << MENU_PAPER)))
+            memcpy(palette.rgb[MENU_PAPER], menuBackground(), 3);
+        mEditor.begin(&mColorStyle, palette.rgb, mColorBackup, MENU_COLOUR_COUNT,
+                      MENU_COLOUR_COUNT, MenuPalette::names(), CreationEditor::CAP_TEXT_COLOR |
+                      CreationEditor::CAP_COLOR_MODE | CreationEditor::CAP_RGB_ENABLES_CUSTOM,
+                      &palette.custom);
+        mEditor.selectTarget(1);
+        mEditor.setOriginalColourSetting(SETTING_MENU_CUSTOM_BACKGROUND);
+        mColorStyle.y = 0;
+    } else {
     mEditor.begin(&mColorStyle, mColors + first, mColorBackup + first,
                   (u16)count, (u16)count, names ? names : title,
                   CreationEditor::CAP_TEXT_COLOR);
-    if (first == SUSAMUNE_CREATION_MENU_BG)
-        mEditor.setOriginalColourSetting(SETTING_MENU_CUSTOM_BACKGROUND);
+    }
 }
 
 bool CreationExtras::nativeTimerColorsEnabled() const {
@@ -998,6 +1031,7 @@ bool CreationExtras::nativeTimerGradient(const J2DPane *pane, u8 colors[2][3]) c
     for (unsigned i = 0; i < 13; ++i) {
         if (mHudPictures[11 + i] != pane) continue;
         const bool countdown = (i >= 6 && i < 10) || i == 12;
+        if (countdown && !vertical && !motion) return false;
         if (expanded && !countdown && !vertical) {
             // Palette storage stays six digits; only the visible span grows.
             // Separators lie halfway between their neighbouring digit colours.
@@ -1409,6 +1443,14 @@ void CreationExtras::updateEditor(TMarioGamePad *pad) {
         return;
     }
     if (!mEditor.editing()) return;
+    if (mEditMode == EDIT_MENU_PALETTE) {
+        mColorStyle.y = mEditor.target() == MENU_FOOTER + 1 ? 0xffff : 0;
+        const u8 result = mEditor.update(pad, mColorStyle, MoonshineMenuDefaults, MENU_COLOUR_COUNT);
+        if (result & CreationEditor::UPDATE_CHANGED) mDirty = true;
+        if (result & CreationEditor::UPDATE_CANCELLED) mDirty = mDirtyBeforeEdit;
+        if (!mEditor.editing()) mEditMode = EDIT_NONE;
+        return;
+    }
     if (mEditMode == EDIT_HEALTH) {
         const u8 result = mEditor.update(pad, mColorStyle, kHealthDefaults + mEditFirst);
         if (result & CreationEditor::UPDATE_CHANGED) {
@@ -1568,6 +1610,10 @@ __attribute__((section(".foxtrot.text"))) void CreationExtras::drawEditor(Menu *
         return;
     }
     if (!mEditor.editing()) return;
+    if (mEditMode == EDIT_MENU_PALETTE) {
+        mEditor.draw(menu, "Menu colours", "");
+        return;
+    }
     if (mEditMode == EDIT_FAILURE_BANNER) {
         drawFailureBanner(menu, "Noki 6 Full Reds", "Target missed - streak 0" SUSAMUNE_GLYPH_SLASH "3");
         mEditor.draw(menu, mEditTitle, "Target missed - streak 0" SUSAMUNE_GLYPH_SLASH "3");

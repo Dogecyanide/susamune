@@ -15,6 +15,8 @@ bool prepareSavestate();
 void onSavestateLoaded();
 void refreshPlayerAfterTakeover();
 bool available();
+// Body and water must share the online versus recorded-ghost visibility gate.
+bool displayEnabled(unsigned runner);
 bool submitted(bool secondary = false);
 bool emissionPoint(unsigned runner, unsigned nozzle, unsigned emitter, TVec3f &position);
 

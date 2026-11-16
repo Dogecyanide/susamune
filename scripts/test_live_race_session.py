@@ -1,6 +1,7 @@
 """Two actual session engines over a bounded fake datagram wire; no sockets."""
 import ctypes as C
 import os
+import random
 from pathlib import Path
 import subprocess
 import tempfile
@@ -130,6 +131,81 @@ class LiveRaceSessionTests(unittest.TestCase):
 
     def reliable(self, sender=0, kind=7, data=b'ready', round=4):
         return self.lib.reliable(sender, kind, data, len(data), round)
+
+    def test_handshake_flood_is_bounded_and_retries_recover(self):
+        self.assertEqual(self.lib.start(0), 1)
+        hello = self.packet(0)
+        self.lib.drop(0)
+        accepted = sum(bool(self.inject(0, 1, hello, 1)) for _ in range(1000))
+        self.assertEqual(accepted, 32)
+        self.assertEqual(self.lib.wireCount(), 1)
+        offer = self.packet(0)
+        self.lib.drop(0)
+        accepted = sum(bool(self.inject(1, 0, offer, 2)) for _ in range(1000))
+        self.assertEqual(accepted, 32)
+        self.assertEqual(self.lib.wireCount(), 1)
+        self.lib.drop(0)  # Lost first ACK is recovered after the flood subsides.
+        self.lib.tickNode(0, 252)
+        self.pump(260)
+        self.assertEqual((self.lib.get(0, 2), self.lib.get(1, 2)), (1, 1))
+
+    def test_bound_packet_budget_recovers_without_delaying_normal_movement(self):
+        self.connect(0xfffffff0)
+        self.assertEqual(self.lib.sendPose(0, 40, 0), 1)
+        packet = bytearray(self.packet(self.find(3, 0)))
+        self.lib.drop(self.find(3, 0))
+        accepted = 0
+        for seq in range(1, 1001):
+            packet[12:16] = seq.to_bytes(4, 'big')
+            accepted += bool(self.inject(1, 0, bytes(packet), 0xfffffff1))
+        self.assertLessEqual(accepted, 32)
+        self.assertGreater(accepted, 0)
+        for seq in range(1001, 2801):
+            packet[12:16] = seq.to_bytes(4, 'big')
+            now = (0xfffffff1 + (seq - 1000) * 33) & 0xffffffff
+            self.assertEqual(self.inject(1, 0, bytes(packet), now), 1)
+        self.assertEqual(self.lib.get(1, 6), accepted + 1800)
+
+    def test_unknown_endpoint_cannot_spend_peer_receive_budget(self):
+        self.connect()
+        self.lib.sendPose(0, 80, 0)
+        packet = self.packet(self.find(3, 0))
+        for _ in range(1000):
+            self.assertEqual(self.inject(1, 2, packet, 1), 0)
+        self.assertEqual(self.inject(1, 0, packet, 1), 1)
+
+    def test_replayed_control_does_not_keep_a_dead_connection_alive(self):
+        self.connect()
+        self.reliable()
+        packet = self.packet(self.find(7, 0))
+        self.pump(1)
+        for now in range(1000, 15001, 1000):
+            self.assertEqual(self.inject(1, 0, packet, now), 1)
+            while self.lib.wireCount():
+                self.lib.drop(0)
+        self.lib.tickNode(1, 15001)
+        self.assertEqual(self.lib.get(1, 1), 3)
+
+    def test_bounded_random_datagrams_leave_sessions_recoverable(self):
+        rng = random.Random(43)
+        self.connect()
+        self.lib.sendPose(0, 80, 0)
+        template = self.packet(self.find(3, 0))[:32]
+        self.lib.drop(self.find(3, 0))
+        for i in range(20000):
+            # Half retain a bound, valid envelope to reach payload admission.
+            data = rng.randbytes(rng.randrange(0, 273))
+            if i & 1:
+                data = bytearray(template + data[:224])
+                data[6] = rng.choice((3, 7, 8, 9, 11))
+                data[8:10] = (len(data) - 32).to_bytes(2, 'big')
+                data[12:16] = (0x70000000 + i).to_bytes(4, 'big')
+                data = bytes(data)
+            self.assertEqual(self.inject(1, 0, data, i // 20), 0)
+        self.assertEqual((self.lib.get(0, 2), self.lib.get(1, 2)), (1, 1))
+        self.assertEqual(self.lib.sendPose(0, 80, 0), 1)
+        self.pump(1100)
+        self.assertEqual(self.lib.get(1, 6), 1)
 
     def test_jp_pal_handshake_nonce_binding_names_ping_and_budget(self):
         self.connect()

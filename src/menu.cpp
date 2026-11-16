@@ -1,3 +1,10 @@
+#include "susamune/replay_camera.hxx"
+#include "susamune/ghost_recording.hxx"
+#include "susamune/ghost_world_runtime.hxx"
+#include "susamune/ghost_replay_test.hxx"
+#include "susamune/state_save_probe.hxx"
+#include "susamune/ghost_context.hxx"
+#include "susamune/storage_text.hxx"
 // =====================================================================
 // menu.cpp
 //
@@ -16,6 +23,7 @@
 #include "susamune/menu_search.hxx"
 #include "susamune/build_branding.hxx"
 #include "susamune/japanese_ui.hxx"
+#include "susamune/kana_text.h"
 #include <Dolphin/mem.h>
 #include "susamune/practice_session.hxx"
 #include "susamune/tas_project.hxx"
@@ -326,6 +334,7 @@ __attribute__((noinline)) void drawRowHighlight(Menu *menu, int x, int y, int w,
 
 __attribute__((noinline)) void drawSectionHeader(Menu *menu, int x, int y, int w,
                                                  const char *label) {
+    MenuTheme::rowBreak();
     menu->drawMenuText(label, x + 4, y + 3, 13, 13, cAccent());
     const int lineX = x + 14 + Menu::textWidth(label, 13);
     menu->fillMenuBox(lineX, y + 11, x + w - lineX - 8, 1, cRowDim());
@@ -892,7 +901,7 @@ private:
         }
         mNameBuffer[mNameLength] = '\0';
         mNameCursor = 0;
-        mNamePage = 0;
+        mNamePage = 0x80;
         mNameUpper = false;
         mEditingName = true;
     }
@@ -1132,6 +1141,7 @@ public:
     }
 
     bool beginProtectedPBSave(Menu *menu, u32 token) override {
+        if (GhostRecording::ownsSession() && !GhostRecording::selectForSave(token)) return false;
         char name[SUSAMUNE_GHOST_NAME_SIZE];
         u32 identity = 0;
         if (token == 0 || !Ghost::hasUnsavedPBToken(token) ||
@@ -1157,6 +1167,111 @@ public:
     }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
+        if (mChoice == CHOICE_WEB_WORLDS || mChoice == CHOICE_WEB_LEVELS) {
+            const u16 pressed=mPromptInput.update();
+            const u32 nav=menu->navigationInput(pad);
+            const int first=webGroupStart(mWebGroup);
+            const int next=ILing::jumpMenuGroup(first,1);
+            const int count=mChoice==CHOICE_WEB_WORLDS?webGroupCount()+1:
+                (next?next:ILing::count())-first;
+            if(nav&TMarioGamePad::CSTICK_UP)mSel=wrap(mSel-1,count);
+            if(nav&TMarioGamePad::CSTICK_DOWN)mSel=wrap(mSel+1,count);
+            if(pressed&JUTGamePad::B) {
+                if(mChoice==CHOICE_WEB_LEVELS){mChoice=CHOICE_WEB_WORLDS;mSel=mWebGroup+1;}
+                else {mChoice=mWebBack;mSel=0;}
+            } else if(pressed&JUTGamePad::A) {
+                if(mChoice==CHOICE_WEB_WORLDS && mSel) {
+                    mWebGroup=mSel-1;mChoice=CHOICE_WEB_LEVELS;mSel=0;
+                } else {
+                    const int entry=mChoice==CHOICE_WEB_WORLDS?-1:ILing::menuEntryAt(first+mSel);
+                    if(GhostStorage::browseOnline(false,entry)){mChoice=CHOICE_ONLINE_GHOSTS;mSel=0;}
+                    else menu->toast(storageStatus());
+                }
+            }
+            return;
+        }
+        if(mChoice==CHOICE_WEB_DESCRIPTION) {
+            auto &draft=GhostStorage::uploadDraft();
+            const u16 pressed=mPromptInput.update();
+            if(pressed&JUTGamePad::START) {
+                if(JUTGamePad::mPadStatus[0].mButton&JUTGamePad::X)draft.upload=draft.backup;
+                draft.length=strlen(draft.upload.description);
+                mChoice=CHOICE_WEB_UPLOAD;mSel=1;
+                mPromptInput.begin(JUTGamePad::A|JUTGamePad::B);return;
+            }
+            if(pressed&JUTGamePad::Z){draft.length=0;draft.upload.description[0]=0;}
+            else updateCreationKeyboardButtons(pressed,draft.upload.description,draft.length,
+                GHOST_SERVICE_DESCRIPTION_MAX,draft.page,draft.uppercase,draft.cursor);
+            return;
+        }
+        if(mChoice==CHOICE_WEB_ACCOUNT || mChoice==CHOICE_WEB_UPLOAD) {
+            const u16 pressed=mPromptInput.update();
+            const auto *account=GhostStorage::accountInfo();
+            if(pressed&JUTGamePad::B){
+                if(GhostStorage::busy())GhostStorage::closeOnline();
+                if(mChoice==CHOICE_WEB_UPLOAD) {
+                    mChoice=CHOICE_EXPORT; mSel=mPrimaryRef.selection;
+                    mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Y | JUTGamePad::Z);
+                } else {mChoice=mAccountBack;mSel=0;}
+                return;
+            }
+            if(GhostStorage::busy())return;
+            if(mChoice==CHOICE_WEB_UPLOAD) {
+                const u32 nav=menu->navigationInput(pad);
+                if(nav&(TMarioGamePad::CSTICK_UP|TMarioGamePad::CSTICK_DOWN))mSel^=1;
+                if(pressed&JUTGamePad::A) {
+                    if(mSel==1) {
+                        auto &draft=GhostStorage::uploadDraft();draft.backup=draft.upload;
+                        mChoice=CHOICE_WEB_DESCRIPTION;mPromptInput.begin(0xffff);
+                    } else if(account->linked) {GhostStorage::uploadOnline(mPrimaryRef.identity);menu->toast(storageStatus());}
+                    else {mAccountBack=CHOICE_WEB_UPLOAD;mChoice=CHOICE_WEB_ACCOUNT;GhostStorage::accountAction(GHOST_ACCOUNT_STATUS);}
+                }
+            } else {
+                const u32 nav=menu->navigationInput(pad);
+                if(nav&TMarioGamePad::CSTICK_UP)mSel=wrap(mSel-1,3);
+                if(nav&TMarioGamePad::CSTICK_DOWN)mSel=wrap(mSel+1,3);
+                if(pressed&JUTGamePad::A){GhostStorage::accountAction(mSel==0?GHOST_ACCOUNT_LINK:mSel==1?GHOST_ACCOUNT_POLL:GHOST_ACCOUNT_UNLINK);menu->toast(storageStatus());}
+            }
+            return;
+        }
+        if (mChoice == CHOICE_GET_GHOSTS || mChoice == CHOICE_ONLINE_GHOSTS) {
+            const u16 pressed = mPromptInput.update();
+            const u32 nav = menu->navigationInput(pad);
+            if (pressed & JUTGamePad::B) {
+                if (mChoice == CHOICE_ONLINE_GHOSTS) GhostStorage::closeOnline();
+                mChoice = CHOICE_NONE; mSel = IMPORT_SCAN_SELECTION; mPromptInput.clear();
+                return;
+            }
+            const GhostServicePage *page = GhostStorage::onlinePage();
+            const int count = mChoice == CHOICE_GET_GHOSTS ? 3 : page ? page->count : 0;
+            if (count) {
+                if (nav & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, count);
+                if (nav & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, count);
+            }
+            if (mChoice == CHOICE_GET_GHOSTS && (pressed & JUTGamePad::A)) {
+                if (mSel == 0) {
+                    beginWebPicker();
+                } else if(mSel==2) {
+                    mAccountBack=CHOICE_GET_GHOSTS;mChoice=CHOICE_WEB_ACCOUNT;mSel=0;
+                    GhostStorage::accountAction(GHOST_ACCOUNT_STATUS);
+                } else {
+                    const bool started = GhostStorage::scanImports();
+                    menu->toast(started ? "Scanning import folder..." : storageStatus());
+                    mChoice = CHOICE_NONE; mSel = IMPORT_SCAN_SELECTION; mPromptInput.clear();
+                }
+            } else if (mChoice == CHOICE_ONLINE_GHOSTS && !GhostStorage::busy()) {
+                if ((pressed & JUTGamePad::A) && count) {
+                    GhostStorage::downloadOnline(mSel); menu->toast(storageStatus());
+                } else if (pressed & JUTGamePad::Y) {
+                    beginWebPicker();
+                } else if (pressed & JUTGamePad::L) {
+                    GhostStorage::browseOnline(); mSel = 0;
+                } else if ((pressed & JUTGamePad::R) && page && page->next[0]) {
+                    GhostStorage::browseOnline(true); mSel = 0;
+                }
+            }
+            return;
+        }
         if (mChoice == CHOICE_WATCH_CONTROLS) {
             const u16 pressed = mPromptInput.update();
             const u32 nav = menu->navigationInput(pad);
@@ -1285,10 +1400,10 @@ public:
         }
         const u32 rapid = menu->navigationInput(pad);
         if (rapid & TMarioGamePad::CSTICK_UP) {
-            do { mSel = wrap(mSel - 1, SELECTION_COUNT); }
+            do { mSel = nextLibrarySelection(mSel, -1); }
             while (GhostVisualMenu::hiddenSelection(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_DOWN) {
-            do { mSel = wrap(mSel + 1, SELECTION_COUNT); }
+            do { mSel = nextLibrarySelection(mSel, 1); }
             while (GhostVisualMenu::hiddenSelection(mSel));
         } else if (rapid & TMarioGamePad::CSTICK_LEFT) {
             if (onPageRow()) changePage(menu, -1); else jumpSection(-1);
@@ -1315,7 +1430,9 @@ public:
             share(menu);
         } else if (rapid & TMarioGamePad::X) {
             if (mSel == TARGET_ROW) {
-                if (GhostStorage::busy()) {
+                if (GhostWorldRuntime::active()) {
+                    Ghost::stopObserver(); menu->toast("Replay stopped");
+                } else if (GhostStorage::busy()) {
                     menu->toast(storageStatus());
                 } else if (Ghost::observerActive()) {
                     Ghost::stopObserver();
@@ -1345,6 +1462,52 @@ public:
     }
 
     void draw(Menu *menu, int x, int y, int w, int h) override {
+        if(mChoice==CHOICE_WEB_DESCRIPTION) {
+            const auto &draft=GhostStorage::uploadDraft();
+            const char *text=draft.upload.description;
+            while (draft.upload.description + draft.length - text > 40)
+                text += MoonshineKanaCode(text, 2) >= 128 ? 2 : 1;
+            drawCreationKeyboard(menu,"Ghost description",text,draft.page,draft.uppercase,draft.cursor);
+            char count[32];snprintf(count,sizeof(count),"%u / 240",draft.length);
+            menu->drawText(count,460,174,12,14,cValue());return;
+        }
+        if(mChoice==CHOICE_WEB_ACCOUNT || mChoice==CHOICE_WEB_UPLOAD) {
+            const auto *account=GhostStorage::accountInfo();
+            drawSectionHeader(menu,x,y,w,mChoice==CHOICE_WEB_UPLOAD?"UPLOAD GHOST":"DELFINO GHOSTS ACCOUNT");
+            if(mChoice==CHOICE_WEB_UPLOAD) {
+                char name[48];if(!copyRefName(mPrimaryRef,name,sizeof(name)))strcpy(name,"Saved ghost");
+                drawValueRow(menu,x,y+ROW_H,w,"Saved ghost",name,false,false,true);
+                drawValueRow(menu,x,y+2*ROW_H,w,"Account",account->linked?account->user:"Not linked",false,false,true);
+                drawValueRow(menu,x,y+4*ROW_H,w,account->linked?"Publish this ghost":"Link account first","",mSel==0,false,true);
+                drawValueRow(menu,x,y+5*ROW_H,w,"Add description",GhostStorage::uploadDraft().length?"Edit":"Optional",mSel==1,false,true);
+                menu->drawMenuText("Published ghosts are visible to everyone.",x+8,y+3*ROW_H,12,14,cRowDim());
+            } else {
+                drawValueRow(menu,x,y+ROW_H,w,"Account",account->linked?account->user:"Not linked",false,false,true);
+                drawValueRow(menu,x,y+2*ROW_H,w,"Link account",account->pending?account->code:"",mSel==0,false,true);
+                drawValueRow(menu,x,y+3*ROW_H,w,"Check link","",mSel==1,false,true);
+                drawValueRow(menu,x,y+4*ROW_H,w,"Unlink this Wii","",mSel==2,false,true);
+                menu->drawMenuText("On your phone or PC, visit:",x+8,y+5*ROW_H,12,14,cRowDim());
+                menu->drawMenuText("zeldocto.github.io/delfino-ghosts/link",x+8,y+6*ROW_H,12,14,cValue());
+                if(account->pending)menu->drawMenuText(account->code,x+8,y+7*ROW_H,20,22,cValue());
+            }
+            drawHelpLine(menu,x,y,w,h,storageStatus());return;
+        }
+        if(mChoice==CHOICE_WEB_WORLDS || mChoice==CHOICE_WEB_LEVELS) {
+            const int first=webGroupStart(mWebGroup),next=ILing::jumpMenuGroup(first,1);
+            const int count=mChoice==CHOICE_WEB_WORLDS?webGroupCount()+1:(next?next:ILing::count())-first;
+            drawSectionHeader(menu,x,y,w,mChoice==CHOICE_WEB_WORLDS?"Delfino Ghosts":ILing::menuGroupName(first));
+            const int listY=y+ROW_H,listH=h-ROW_H-HELP_H,rows=listH/ROW_H;
+            const int start=listScrollStart(mSel,count,rows),end=start+rows<count?start+rows:count;
+            for(int i=start;i<end;++i) {
+                const char *label=mChoice==CHOICE_WEB_WORLDS?
+                    (i?ILing::menuGroupName(webGroupStart(i-1)):"All levels"):
+                    ILing::label(ILing::menuEntryAt(first+i));
+                drawValueRow(menu,x,listY+(i-start)*ROW_H,w,label,"",mSel==i,false,true);
+            }
+            drawScrollHints(menu,x,listY,w,listH,start,end,count);
+            drawHelpLine(menu,x,y,w,h,"Choose where the ghost starts. Other objectives from that scene may appear too.");
+            return;
+        }
         if (mChoice == CHOICE_WATCH_CONTROLS) {
             drawValueRow(menu, x, y, w, "Watch timeline", "Open", mSel == 0, false, true);
             drawValueRow(menu, x, y + ROW_H, w, "Take over here", "Play as Mario", mSel == 1, false, true);
@@ -1356,6 +1519,42 @@ public:
         }
         if (mChoice == CHOICE_TIMELINE) {
             GhostScrub::draw(menu, x, y, w, h);
+            return;
+        }
+        if (mChoice == CHOICE_GET_GHOSTS) {
+            drawSectionHeader(menu, x, y, w, "GET GHOSTS");
+            drawValueRow(menu, x, y + ROW_H, w, "Delfino Ghosts", "Browse", mSel == 0, false, true);
+            drawValueRow(menu, x, y + 2 * ROW_H, w, "Scan SD imports", "Scan", mSel == 1, false, true);
+            drawValueRow(menu,x,y+3*ROW_H,w,"Your account","Link / unlink",mSel==2,false,true);
+            drawHelpLine(menu, x, y, w, h, mSel == 0 ?
+                "Download compatible ghosts directly from the community. No account needed." :
+                mSel==1?"Find .smsghost files copied into your SD import folder.":"Link once to publish your saved ghosts from this Wii.");
+            return;
+        }
+        if (mChoice == CHOICE_ONLINE_GHOSTS) {
+            const GhostServicePage *page = GhostStorage::onlinePage();
+            const int level=page?(int)(page->reserved>>24)-1:-1;
+            drawSectionHeader(menu,x,y,w,level>=0 && level<ILing::count()?ILing::label(level):"Delfino Ghosts");
+            if (page) for (u32 i = 0; i < page->count; ++i) {
+                char title[32], author[40], time[24];
+                const auto &entry = page->entries[i];
+                const bool clip = entry.resultQf == SUSAMUNE_GHOST_RESULT_QF_NONE;
+                const u32 qf = clip ? entry.durationQf : entry.resultQf;
+                // Result QF is absolute; a clip's duration is not a finished-run time.
+                // Each 120,000 QFs is exactly 1,001 seconds; split before multiplying.
+                const u32 partMillis = ((qf % 120000u) * 1001u) / 120u;
+                const u32 seconds = (qf / 120000u) * 1001u + partMillis / 1000u;
+                snprintf(time, sizeof(time), "%lu:%02lu.%03lu",
+                    seconds / 60u, seconds % 60u, partMillis % 1000u);
+                snprintf(title, sizeof(title), "%.28s", entry.title);
+                snprintf(author, sizeof(author), "by %.25s%s", entry.author, clip ? " (clip)" : "");
+                const int rowY = y + ROW_H + static_cast<int>(i) * (ROW_H + 16);
+                drawValueRow(menu, x, rowY, w, title, time, mSel == static_cast<int>(i), false, true);
+                menu->drawMenuText(author, x + 16, rowY + ROW_H - 2, 12, 14, cRowDim());
+            }
+            drawHelpLine(menu, x, y, w, h - 18, GhostStorage::statusText());
+            menu->drawMenuText(SUSAMUNE_GLYPH_A " Download  " SUSAMUNE_GLYPH_R " Next  "
+                SUSAMUNE_GLYPH_L " First  " SUSAMUNE_GLYPH_Y " Level  " SUSAMUNE_GLYPH_B " Back", x + 8, y + h - 12, 12, 14, cRowDim());
             return;
         }
         if (mChoice == CHOICE_VISUALS) {
@@ -1374,7 +1573,7 @@ public:
             drawWatchLoading(menu, x, y, w);
             return;
         }
-        if (mChoice == CHOICE_ACTION) {
+        if (mChoice == CHOICE_ACTION || mChoice == CHOICE_EXPORT) {
             drawActionChoice(menu, x, y, w);
             return;
         }
@@ -1389,7 +1588,9 @@ public:
 
         const int listH = h - ROW_H - HELP_H;
         const int maxRows = listH / ROW_H;
-        const int selectedRow = GhostVisualMenu::compactRow(selectionRow(mSel));
+        const int getRow = GhostVisualMenu::compactRow(IMPORT_SCAN_DISPLAY);
+        int selectedRow = GhostVisualMenu::compactRow(selectionRow(mSel));
+        selectedRow = selectedRow == getRow ? 1 : selectedRow >= 1 && selectedRow < getRow ? selectedRow + 1 : selectedRow;
         const int displayCount = DISPLAY_ROW_COUNT - 3;
         const int start = listScrollStart(selectedRow, displayCount,
                                           maxRows);
@@ -1398,7 +1599,8 @@ public:
 
         int ry = y;
         for (int visible = start; visible < end; visible++, ry += ROW_H) {
-            const int row = GhostVisualMenu::expandedRow(visible);
+            const int ordered = visible == 1 ? getRow : visible > 1 && visible <= getRow ? visible - 1 : visible;
+            const int row = GhostVisualMenu::expandedRow(ordered);
             if (row == 0) {
                 drawSectionHeader(menu, x, ry, w, "GHOST LIBRARY");
             } else if (row == 1) {
@@ -1465,7 +1667,7 @@ public:
                 drawSectionHeader(menu, x, ry, w, summary);
             } else if (row == IMPORT_SCAN_DISPLAY) {
                 drawValueRow(menu, x, ry, w, rowName(IMPORT_SCAN_SELECTION),
-                             "drag and drop .smsghost",
+                             "Open",
                              mSel == IMPORT_SCAN_SELECTION, false, true);
             } else {
                 int index;
@@ -1487,7 +1689,9 @@ public:
                                 mSel == APPEARANCE_ROW ||
                                 mSel == AUTO_TARGET_ROW ||
                                 mSel == PB_SAVE_ROW || mSel == INPUTS_ROW;
-        const char *footer = mSel == TARGET_ROW && Ghost::observerActive()
+        const char *footer = mSel == TARGET_ROW && GhostWorldRuntime::active()
+            ? SUSAMUNE_GLYPH_A " Stop replay    " SUSAMUNE_GLYPH_X " Stop replay"
+            : mSel == TARGET_ROW && Ghost::observerActive()
             ? SUSAMUNE_GLYPH_A " Watch / Take over    " SUSAMUNE_GLYPH_X " Stop Watch"
             : mChoice == CHOICE_SECOND
             ? SUSAMUNE_GLYPH_A " Choose ghost 2  " SUSAMUNE_GLYPH_C
@@ -1521,12 +1725,14 @@ private:
             return "Chooses when a newly accepted PB ghost is saved to the SD.";
         if (mSel == PROFILE_ROW)
             return "Selects which IL profile supplies PBs and ghost names.";
+        if (mSel == TARGET_ROW && GhostWorldRuntime::active())
+            return "Full-world replay. A or X stops it; B + Start also stops during gameplay.";
         if (mSel == TARGET_ROW)
             return Ghost::observerActive()
                 ? "Pause, scrub and compare Watch. X stops watching."
                 : "Shows the pinned race ghost; press A or X to clear it.";
         if (mSel == IMPORT_SCAN_SELECTION)
-            return "Finds .smsghost files copied into the import folder.";
+            return "Browse Delfino Ghosts online, or scan .smsghost files copied onto your SD.";
         if (isPersonalSlot())
             return "A saved ghost. Select to Race or Watch; use Personal page to browse more.";
         if (isImportedSlot())
@@ -1541,7 +1747,24 @@ private:
         CHOICE_VISUALS,
         CHOICE_TIMELINE,
         CHOICE_WATCH_CONTROLS,
+        CHOICE_GET_GHOSTS, CHOICE_ONLINE_GHOSTS,
+        CHOICE_WEB_WORLDS, CHOICE_WEB_LEVELS,
+        CHOICE_WEB_ACCOUNT, CHOICE_WEB_UPLOAD, CHOICE_WEB_DESCRIPTION, CHOICE_EXPORT,
     };
+
+    void beginActionChoice() {
+        mChoice = CHOICE_ACTION;
+        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X |
+                           JUTGamePad::Y | JUTGamePad::Z);
+    }
+
+    static int webGroupStart(int group) {
+        int first=0;while(group-->0)first=ILing::jumpMenuGroup(first,1);return first;
+    }
+    static int webGroupCount() {
+        int count=0,first=0;do{++count;first=ILing::jumpMenuGroup(first,1);}while(first);return count;
+    }
+    void beginWebPicker() {mWebBack=mChoice;mWebGroup=0;mChoice=CHOICE_WEB_WORLDS;mSel=0;}
 
     enum Launch : u8 {
         LAUNCH_IDLE,
@@ -1609,9 +1832,9 @@ private:
 
     static const char *rowName(int selection) {
         if (selection == DISPLAY_ROW) return GhostVisualMenu::entryLabel("Ghost display");
-        if (selection == TARGET_ROW) return Ghost::observerActive() ? "Watch / Take over" : "Race target";
+        if (selection == TARGET_ROW) return GhostWorldRuntime::active() ? "Stop replay" : Ghost::observerActive() ? "Watch / Take over" : "Race target";
         if (selection == SAVE_NEW_SELECTION) return "Save latest ghost";
-        if (selection == IMPORT_SCAN_SELECTION) return "Scan import folder";
+        if (selection == IMPORT_SCAN_SELECTION) return "Get ghosts";
         if (selection == PERSONAL_PAGE_SELECTION) return "Personal page";
         if (selection == IMPORTED_PAGE_SELECTION) return "Imported page";
         static const char names[] MENU_OWNED_RODATA("ghosts_rows") = "Ghost display\0Ghost opacity\0Ghost appearance\0Auto race target\0PB ghost save\0PB profile\0\0Ghost inputs";
@@ -1633,6 +1856,11 @@ private:
     }
     static int slotDisplayRow(int first, int slot) {
         return first + slot + slot / RANGE_SIZE + 1;
+    }
+    static int nextLibrarySelection(int selection, int direction) {
+        int ordered = selection == IMPORT_SCAN_SELECTION ? 0 : selection < IMPORT_SCAN_SELECTION ? selection + 1 : selection;
+        ordered = wrap(ordered + direction, SELECTION_COUNT);
+        return ordered == 0 ? IMPORT_SCAN_SELECTION : ordered <= IMPORT_SCAN_SELECTION ? ordered - 1 : ordered;
     }
     static int selectionRow(int selection) {
         if (selection < PERSONAL_PAGE_SELECTION) return selection + 1;
@@ -1723,6 +1951,7 @@ private:
     }
 
     void clearProtectedPBSave() {
+        if (GhostRecording::ownsSession()) GhostRecording::selectForSave(0);
         mProtectedPBToken = 0;
         mConfirmSave = false;
         mSaveIdentity = 0;
@@ -1897,10 +2126,8 @@ private:
             mPBName[0] = '\0';
             mPromptInput.clear();
             if (returnToChoice) {
-                mChoice = CHOICE_ACTION;
                 mSel = mPrimaryRef.selection;
-                mPromptInput.begin(JUTGamePad::A | JUTGamePad::B |
-                                   JUTGamePad::X | JUTGamePad::Y);
+                beginActionChoice();
             }
             gBinds.suppressUntilRelease();
             return;
@@ -1952,14 +2179,19 @@ private:
 
     bool finishWatch(Menu *menu, int count) {
         if (!Ghost::startObserver()) {
-            cancelLaunch(menu, "Ghost routes cannot be watched together");
+            const char *reason = count == 2 ? "Ghost routes cannot be watched together" : "Replay could not start";
+#if MOONSHINE_GHOST_TRACE
+            if (count == 1 && GhostWorldRuntime::startError() == 6)
+                reason = "Remove the GameCube memory card for this replay test";
+#endif
+            cancelLaunch(menu, reason);
             return false;
         }
         mLaunch = LAUNCH_IDLE;
         mPromptInput.clear();
         menu->hide();
-        menu->toast(count == 2
-            ? "Warping to 2-ghost watch - B/Start exits"
+        menu->toast(GhostWorldRuntime::active() ? "Loading replay - B + Start stops"
+            : count == 2 ? "Warping to 2-ghost watch - B/Start exits"
             : "Warping to ghost watch - B/Start exits");
         return true;
     }
@@ -2006,12 +2238,46 @@ private:
         return true;
     }
 
+    void beginExportChoice(Menu *menu) {
+        if (!GhostStorage::identityValid(mPrimaryRef.identity) ||
+            mPrimaryRef.identity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE) {
+            menu->toast("Select a personal ghost to export"); return;
+        }
+        mChoice = CHOICE_EXPORT;
+        mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Y | JUTGamePad::Z);
+    }
+
+    void updateExportChoice(Menu *menu) {
+        const u16 pressed = mPromptInput.update();
+        if (pressed & JUTGamePad::B) {
+            mChoice = CHOICE_NONE; mSel = mPrimaryRef.selection; mPromptInput.clear(); return;
+        }
+        if (!(pressed & (JUTGamePad::A | JUTGamePad::Y))) return;
+        if (GhostStorage::busy()) { menu->toast(storageStatus()); return; }
+        if (!refStillValid(mPrimaryRef)) {
+            mChoice = CHOICE_NONE; mSel = mPrimaryRef.selection; mPromptInput.clear();
+            menu->toast("Ghost row changed; refresh"); return;
+        }
+        if (pressed & JUTGamePad::A) {
+            const bool started = GhostStorage::exportShare(mPrimaryRef.identity);
+            mChoice = CHOICE_NONE; mSel = mPrimaryRef.selection; mPromptInput.clear();
+            menu->toast(started ? "Exporting .smsghost..." : storageStatus());
+        } else if (GhostStorage::beginUploadDraft()) {
+            mChoice = CHOICE_WEB_UPLOAD; mSel = 0;
+            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Y);
+            GhostStorage::accountAction(GHOST_ACCOUNT_STATUS);
+        } else menu->toast(storageStatus());
+    }
+
     void updateChoice(Menu *menu, TMarioGamePad *pad) {
+        if (mChoice == CHOICE_EXPORT) { updateExportChoice(menu); return; }
         if (mChoice == CHOICE_ACTION) {
             const u16 pressed = mPromptInput.update();
             if (pressed & JUTGamePad::B) {
                 mChoice = CHOICE_NONE;
                 mPromptInput.clear();
+            } else if(pressed&JUTGamePad::Z) {
+                beginExportChoice(menu);
             } else if (pressed & JUTGamePad::A) {
                 beginPBAction(menu, PB_ACTION_RACE);
             } else if (pressed & JUTGamePad::Y) {
@@ -2037,10 +2303,8 @@ private:
         }
         const u16 pressed = mPromptInput.update();
         if (pressed & JUTGamePad::B) {
-            mChoice = CHOICE_ACTION;
             mSel = mPrimaryRef.selection;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B |
-                               JUTGamePad::X | JUTGamePad::Y);
+            beginActionChoice();
             return;
         }
         if (pressed & JUTGamePad::A) {
@@ -2057,6 +2321,10 @@ private:
 
     void beginNewSave(Menu *menu) {
         if (GhostStorage::busy()) { menu->toast(storageStatus()); return; }
+        if (GhostRecording::ownsSession()) {
+            GhostRecording::selectForSave(0);
+            if (GhostRecording::capturing()) Ghost::prepareStreamDeparture();
+        }
         if (!Ghost::copySaveableName(mSaveName, sizeof(mSaveName), &mSaveIdentity)) {
             menu->toast("No ghost recording to save");
             return;
@@ -2073,6 +2341,9 @@ private:
     }
 
     void activate(Menu *menu) {
+        if (mSel == TARGET_ROW && GhostWorldRuntime::active()) {
+            Ghost::stopObserver(); menu->toast("Replay stopped"); return;
+        }
         if (onPageRow()) { changePage(menu, 1); return; }
         if (mSel == SAVE_NEW_SELECTION || isEmptySaveRow()) {
             beginNewSave(menu);
@@ -2128,9 +2399,8 @@ private:
             return;
         }
         if (mSel == IMPORT_SCAN_SELECTION) {
-            const bool started = GhostStorage::scanImports();
-            menu->toast(started ? "Scanning import folder..."
-                                : storageStatus());
+            mChoice = CHOICE_GET_GHOSTS; mSel = 0;
+            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::Y | JUTGamePad::R);
             return;
         }
 
@@ -2164,9 +2434,7 @@ private:
                 menu->toast("Imported ghost changed; rescan");
                 return;
             }
-            mChoice = CHOICE_ACTION;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B |
-                               JUTGamePad::X | JUTGamePad::Y);
+            beginActionChoice();
             return;
         }
         if (present) {
@@ -2174,9 +2442,7 @@ private:
                 menu->toast("Ghost row changed; refresh");
                 return;
             }
-            mChoice = CHOICE_ACTION;
-            mPromptInput.begin(JUTGamePad::A | JUTGamePad::B |
-                               JUTGamePad::X | JUTGamePad::Y);
+            beginActionChoice();
             return;
         }
         beginNewSave(menu);
@@ -2208,13 +2474,17 @@ private:
             menu->toast("Select a saved ghost to export");
             return;
         }
-        const bool started = GhostStorage::exportShare(index);
-        menu->toast(started ? "Exporting .smsghost..." : storageStatus());
+        if (!captureRef(mSel, &mPrimaryRef)) {
+            menu->toast("Ghost row changed; refresh"); return;
+        }
+        beginExportChoice(menu);
     }
 
     static void targetValue(char *out, u32 size) {
         Ghost::PlaybackInfo info;
-        if (Ghost::observerActive()) {
+        if (GhostWorldRuntime::active()) {
+            snprintf(out, size, "Full-world replay");
+        } else if (Ghost::observerActive()) {
             const int count = Ghost::observerGhostCount();
             if (Ghost::observerLoading()) {
                 snprintf(out, size, "Watch %d loading", count);
@@ -2354,11 +2624,12 @@ private:
             strncpy(name, "Selected ghost", sizeof(name));
             name[sizeof(name) - 1] = '\0';
         }
-        const char *title = "What should this ghost do?";
-        const char *actions =
-            SUSAMUNE_GLYPH_A " Race   " SUSAMUNE_GLYPH_Y " Watch   "
-            SUSAMUNE_GLYPH_X " Watch 2";
-        const char *note = "Watch is visual-only for this loaded area";
+        const bool exporting = mChoice == CHOICE_EXPORT;
+        const char *title = exporting ? "Export ghost" : "What should this ghost do?";
+        const char *actions = exporting
+            ? SUSAMUNE_GLYPH_A STORAGE_TEXT(" Save to SD", " PC export help")
+            : SUSAMUNE_GLYPH_A " Race   " SUSAMUNE_GLYPH_Y " Watch   " SUSAMUNE_GLYPH_X " Watch 2";
+        const char *note = exporting ? SUSAMUNE_GLYPH_Y " Upload to Delfino Ghosts" : SUSAMUNE_GLYPH_Z " Export";
         const char *cancel = SUSAMUNE_GLYPH_B " Cancel";
         menu->fillMenuBox(x, y + 24, w, 150,
                       JUtility::TColor(18, 32, 46, 245));
@@ -2366,7 +2637,10 @@ private:
         drawSelectedText(menu, title, x + (w - Menu::textWidth(title, ROW_SZ)) / 2, y + 42);
         drawRowValueText(menu, name, x + (w - Menu::textWidth(name, ROW_SZ)) / 2, y + 68);
         drawSelectedText(menu, actions, x + (w - Menu::textWidth(actions, ROW_SZ)) / 2, y + 100);
-        drawDimFooterText(menu, note, x + (w - Menu::textWidth(note, FOOT_SZ)) / 2, y + 128);
+        if (exporting)
+            drawSelectedText(menu, note, x + (w - Menu::textWidth(note, ROW_SZ)) / 2, y + 128);
+        else
+            drawDimFooterText(menu, note, x + (w - Menu::textWidth(note, FOOT_SZ)) / 2, y + 128);
         drawFooterText(menu, cancel, x + (w - Menu::textWidth(cancel, FOOT_SZ)) / 2, y + 150);
     }
 
@@ -2460,6 +2734,9 @@ private:
     u32 mSaveIdentity;
     char mSaveName[SUSAMUNE_GHOST_NAME_SIZE];
     Choice mChoice;
+    Choice mWebBack;
+    Choice mAccountBack;
+    u8 mWebGroup;
     Launch mLaunch;
     PBAction mPBAction;
     u32 mPBToken;
@@ -3118,6 +3395,7 @@ public:
         int ry = y;
         for (int i = start; i < end; i++, ry += ROW_H) {
             const bool selected = i == mSel;
+            MenuTheme::listRow(menu, x, ry - 4, w, selected);
             if (selected) {
                 drawRowHighlight(menu, x, ry, w, ROW_H);
                 menu->drawMenuText(">", x - 2, ry, ROW_SZ, ROW_SZ, cAccent());
@@ -3167,6 +3445,7 @@ public:
         int ry = y;
         for (int i = start; i < end; i++, ry += ROW_H) {
             const bool selected = i == mArea;
+            MenuTheme::listRow(menu, x, ry - 4, w, selected);
             if (selected) drawRowHighlight(menu, x, ry, w, ROW_H);
             menu->drawMenuText(Warp::kStageNames[i], x + 4, ry, ROW_SZ, ROW_SZ,
                            selected ? cRowSel() : cRow());
@@ -3537,7 +3816,7 @@ const char *settingHelp(SettingId id) {
     case SETTING_INFINITE_JUICE: return "Prevents Yoshi's juice meter from draining.";
     case SETTING_FREE_PAUSE: return "Allows pausing during normally locked moments.";
     case SETTING_EXIT_AREA_EVERYWHERE: return "Allows Exit Area wherever pausing is available.";
-    case SETTING_FMV_SKIPS: return "Skips supported pre-rendered movies.";
+    case SETTING_FMV_SKIPS: return "Skip supported FMVs, with optional secret-entry FLUDD theft. Secret FLUDD rules stay the same.";
     case SETTING_INTRO_SKIP: return "Skips the boot logos on the next launch.";
     case SETTING_UNLOCK_YOSHI: return "Makes Yoshi available without story progression.";
     case SETTING_UNLOCK_NOZZLES: return "Makes Rocket and Turbo boxes available.";
@@ -3632,7 +3911,7 @@ enum Item {
 };
 static_assert(COUNT <= 4 * 7, "display favourites need another dedicated bank");
 static_assert(SETTING_DISPLAY_FAVORITES_3 == SETTING_DISPLAY_FAVORITES_0 + 3 &&
-              MetadataDisplay::FIELD_COUNT == 11,
+              MetadataDisplay::FIELD_SPIN == 10,
               "display favourite wire mapping changed");
 static SettingId bank(unsigned item) { return (SettingId)(SETTING_DISPLAY_FAVORITES_0 + item / 7); }
 bool favorite(unsigned item) {
@@ -4334,7 +4613,9 @@ public:
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool back() override {
         if (!mPage) return false;
-        if (mPage > PAGE_COUNT) {
+        if (mPage >= 19 && mPage <= PAGE_COUNT) {
+            mSel=ROW_METADATA_FIRST+2+mPage-19; mPage=4;
+        } else if (mPage > PAGE_COUNT) {
             mSel = mPage - PAGE_COUNT - 1;
             mPage = 0;
         } else {
@@ -4382,7 +4663,7 @@ public:
         if (rapid & TMarioGamePad::CSTICK_UP) moveSelection(-1);
         else if (rapid & TMarioGamePad::CSTICK_DOWN) moveSelection(+1);
         if (mSel >= ROW_METADATA_FIRST && mSel < ROW_METADATA_END &&
-            metadataRow(mSel) >= 5 + MetadataDisplay::FIELD_COUNT) {
+            metadataRow(mSel) >= 16 && metadataRow(mSel) <= 20) {
             if (rapid & TMarioGamePad::CSTICK_LEFT) activate(-1);
             else if (rapid & TMarioGamePad::CSTICK_RIGHT) activate(+1);
         }
@@ -4475,7 +4756,7 @@ private:
         ROW_GHOST_INPUTS = ROW_INPUT_END,
         ROW_METADATA_HEADER,
         ROW_METADATA_FIRST,
-        ROW_METADATA_END = ROW_METADATA_FIRST + MetadataDisplay::menuRowCount(),
+        ROW_METADATA_END = ROW_METADATA_FIRST + 35,
         ROW_EXTRAS_FIRST = ROW_METADATA_END,
         ROW_HEALTH_EDITOR = ROW_EXTRAS_FIRST + 8,
         ROW_AIR_EDITOR,
@@ -4502,12 +4783,12 @@ private:
         ROW_RECENT_IL_VISIBLE,
         ROW_RECENT_IL_EDITOR,
         ROW_COUNT,
-        PAGE_COUNT = 18,
+        PAGE_COUNT = 24,
         GROUP_COUNT = 4,
     };
 
     static const char *groupName(int group) {
-        static const char names[] = "Timers\0Inputs & movement\0HUD & messages\0Custom text";
+        static const char names[] = "Timers\0Inputs / movement\0HUD / messages\0Custom text";
         return PackedText::at(names, group);
     }
     static const char *groupHelp(int group) {
@@ -4524,6 +4805,7 @@ private:
         return pages[first[group] + item];
     }
     static int pageGroup(int page) {
+        if(page>=18)return 1;
         if (page < 2 || page == 17) return 0;
         if (page == 2 || page == 3 || (page >= 8 && page <= 13)) return 1;
         return page == 4 || (page >= 14 && page <= 16) ? 2 : 3;
@@ -4532,10 +4814,14 @@ private:
         static const char names[] = "QFT timer\0Sunshine timer\0Input display\0Movement metadata\0"
             "Health and HUD colours\0Custom text 1\0Custom text 2\0Custom text 3\0"
             "Wallkick display\0GB timing\0Jump display\0Buttslide display\0Rollout display\0"
-            "Dust display\0Savestate messages\0Recent ILs\0Menu and notifications\0Finish breakdown";
+            "Dust display\0Savestate messages\0Recent ILs\0Menu and notifications\0Finish breakdown\0Movement\0Position / camera\0Ground\0FLUDD\0Other metadata\0Layout / colours";
         return PackedText::at(names, page);
     }
     int pageFirst() const {
+        if(mPage>=19 && mPage<=24) {
+            static const u8 first[]={8,14,19,22,24,27};
+            return ROW_METADATA_FIRST+first[mPage-19];
+        }
         // The pinned layout reserves seven bytes for each page table.
         if (mPage >= 8) {
             if (mPage == 8) return ROW_EXTRAS_FIRST + 17;
@@ -4547,6 +4833,11 @@ private:
         return first[mPage - 1];
     }
     int pageEnd() const {
+        if(mPage==4)return ROW_METADATA_FIRST+8;
+        if(mPage>=19 && mPage<=24) {
+            static const u8 counts[]={6,5,3,2,3,8};
+            return pageFirst()+counts[mPage-19];
+        }
         if (mPage >= 8) {
             if (mPage == 8) return ROW_EXTRAS_FIRST + 20;
             if (mPage <= 16) return pageFirst() + 2;
@@ -4561,6 +4852,9 @@ private:
     }
 
     void activate(int dir) {
+        if(mPage==4 && mSel>=ROW_METADATA_FIRST+2 && mSel<ROW_METADATA_FIRST+8) {
+            mPage=19+mSel-ROW_METADATA_FIRST-2;mSel=pageFirst();return;
+        }
         const int setting = rowSetting(mSel);
         if (setting >= 0) { gSettings.cycle((SettingId)setting, dir); return; }
         if (mSel == ROW_FINISH_BREAKDOWN_EDITOR) {
@@ -4608,6 +4902,7 @@ private:
     }
 
     const char *rowName(int row) const {
+        if(row>=ROW_METADATA_FIRST+2 && row<ROW_METADATA_FIRST+8)return pageName(18+row-ROW_METADATA_FIRST-2);
         const int setting = rowSetting(row);
         if (setting >= 0) return Settings::name((SettingId)setting);
         if (row == ROW_FINISH_BREAKDOWN_EDITOR) return "Finish breakdown editor";
@@ -4640,6 +4935,7 @@ private:
     }
 
     const char *rowValue(int row) const {
+        if(row>=ROW_METADATA_FIRST+2 && row<ROW_METADATA_FIRST+8)return "Open";
         const int setting = rowSetting(row);
         if (setting >= 0) return gSettings.valueLabel((SettingId)setting);
         if (row == ROW_FINISH_BREAKDOWN_EDITOR || row == ROW_QFT_EDITOR || row == ROW_SUNSHINE_TIMER_EDITOR ||
@@ -4661,6 +4957,7 @@ private:
     }
 
     const char *rowHelp(int row) const {
+        if(row>=ROW_METADATA_FIRST+2 && row<ROW_METADATA_FIRST+8)return "Choose the values to show, or adjust the shared layout.";
         if (row == ROW_SUNSHINE_TIMER_SEPARATOR)
             return "Colon or dot before fractions. Minutes stay colon; native race timers keep their format.";
         if (rowSetting(row) >= 0) return "Change visibility here; edit this display on the same page. X adds it to Shined.";
@@ -4697,23 +4994,31 @@ private:
         }
         if (row >= ROW_METADATA_FIRST && row < ROW_METADATA_END) {
             const int local = metadataRow(row);
+            if(local==21)return "Direction of horizontal velocity, in degrees. Stationary shows --.";
+            if(local==22)return "Change in horizontal speed over one normal game frame. Holds and loads reset it.";
+            if(local==23)return "Vertical distance to the floor directly below Mario, in game units.";
+            if(local==24)return "Mario's action name, or its exact ID for an unlisted action.";
+            if(local==25)return "Floor tilt in degrees: flat ground is zero.";
+            if(local==26)return "Floor category and exact collision type ID.";
+            if(local==27)return "Water remaining as a percentage of the nozzle's full tank.";
+            if(local==28)return "Hover budget remaining in quarter-frames (QF), from the nozzle itself.";
             if (local == 0) return "Shows the metadata overlay when Moonshine starts.";
             if (local == 1) return "Chooses short, long or custom field labels.";
-            if (local >= 2 && local < 2 + MetadataDisplay::FIELD_COUNT)
+            if (local >= 2 && local < 2 + 11)
                 return "Shows or hides this value in the metadata overlay.";
-            if (local == 2 + MetadataDisplay::FIELD_COUNT)
+            if (local == 2 + 11)
                 return "Stacks metadata vertically or arranges fields across rows.";
-            if (local == 3 + MetadataDisplay::FIELD_COUNT)
+            if (local == 3 + 11)
                 return "Moves, resizes and recolours the metadata overlay.";
-            if (local == 5 + MetadataDisplay::FIELD_COUNT)
+            if (local == 5 + 11)
                 return "Space between horizontal fields.";
-            if (local == 6 + MetadataDisplay::FIELD_COUNT)
+            if (local == 6 + 11)
                 return "C-stick left/right adjusts the space between metadata rows.";
-            if (local == 7 + MetadataDisplay::FIELD_COUNT)
+            if (local == 7 + 11)
                 return "C-stick left/right sets fields per row; Auto wraps at the screen edge.";
-            if (local == 8 + MetadataDisplay::FIELD_COUNT)
+            if (local == 8 + 11)
                 return "Compact follows the value width; Stable keeps space after it for larger values.";
-            if (local == 9 + MetadataDisplay::FIELD_COUNT)
+            if (local == 9 + 11)
                 return "Space between each label and its value.";
             return "Restores the metadata overlay's default layout.";
         }
@@ -4789,8 +5094,13 @@ private:
     static int metadataRow(int row) {
         const int local = row - ROW_METADATA_FIRST;
         static const u8 order[] = {
-            0, 14, 13, 20, 16, 19, 17, 18, 1, 2, 3,
-            4, 5, 6, 7, 8, 9, 10, 11, 12, 15
+            0,14,255,255,255,255,255,255,
+            6,7,21,22,24,12,
+            2,3,4,5,9,
+            23,25,26,
+            27,28,
+            8,10,11,
+            13,20,16,19,17,18,1,15
         };
         return order[local];
     }
@@ -4890,7 +5200,7 @@ public:
         mClearSlot(0), mClearGeneration(0), mArchiveId(0),
         mArchiveCrc(0), mArchiveSize(0) { mArchiveName[0] = 0; focus(); }
     const char *title() const override { return "Savestates"; }
-    const char *summary() const override { return "Choose a memory state, or save and browse SD states."; }
+    const char *summary() const override { return STORAGE_TEXT("Choose a memory state, or save and browse SD states.", "Choose a memory state, or save and browse files."); }
     void focus() override { mInput.begin(SUSAMUNE_BIND_BUTTON_MASK); }
     bool grabsInput() const override { return mSD || mConfirmClear || gCreationExtras.editing(); }
     bool fullScreen() const override { return grabsInput(); }
@@ -4935,6 +5245,13 @@ public:
             return;
         }
         if (!(pressed & JUTGamePad::A)) return;
+#if SUSAMUNE_SAVE_PROBE
+        if (mSel==ROW_PROBE) {
+            if (!StateSaveProbe::select(static_cast<StateSaveProbe::Mode>((StateSaveProbe::mode()+1)%3)))
+                menu->toast("Stop trace/replay and wait for state I/O");
+            return;
+        }
+#endif
         if (mSel == ROW_SAVE || mSel == ROW_LOAD) {
             changeState(menu, 1, mSel == ROW_LOAD);
         } else if (mSel == ROW_CLEAR) {
@@ -4974,7 +5291,7 @@ public:
         }
         char save[24], load[32];
         formatSources(save, sizeof(save), load, sizeof(load));
-        const char *labels[] = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", "SD states"};
+        const char *labels[] = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", STORAGE_TEXT("SD states", "Files")};
         const char *values[] = {save, load, "Clear", gSettings.valueLabel(SETTING_SAVE_RNG_STATE),
             gSettings.valueLabel(SETTING_SAVESTATE_FEEDBACK), gSettings.valueLabel(SETTING_SAVESTATE_ERRORS), "Edit", "Open"};
         const int listH = h - HELP_H - ROW_H;
@@ -4983,6 +5300,9 @@ public:
         for (int row = start; row < end; ++row) {
             const bool starred = (row == ROW_RNG || row == ROW_FEEDBACK || row == ROW_ERRORS || row == ROW_FAST) &&
                 gSettings.favorite(row == ROW_FAST ? SETTING_EXPERIMENTAL_RAM_LOAD : row == ROW_RNG ? SETTING_SAVE_RNG_STATE : row == ROW_ERRORS ? SETTING_SAVESTATE_ERRORS : SETTING_SAVESTATE_FEEDBACK);
+#if SUSAMUNE_SAVE_PROBE
+            if(row==ROW_PROBE){drawValueRow(menu,x,y+(row-start)*ROW_H,w,"Save timing probe",StateSaveProbe::label(),row==mSel,false,false);continue;}
+#endif
             drawValueRow(menu, x, y + (row - start) * ROW_H, w,
                 row == ROW_FAST ? kFastRamLoadLabel : labels[row],
                 row == ROW_FAST ? gSettings.valueLabel(SETTING_EXPERIMENTAL_RAM_LOAD) : values[row], row == mSel, starred, false);
@@ -4997,29 +5317,40 @@ public:
                 gSavestateMgr && gSavestateMgr->saveSlot() == slot ? cAccent() : cRow());
         }
         const char *help = mSel == ROW_SAVE ? "Save writes to this slot. Load keeps its own selection."
-            : mSel == ROW_LOAD ? "Choose a memory slot with A or C-stick; choose SD files on the SD page."
+            : mSel == ROW_LOAD ? STORAGE_TEXT("Choose a memory slot with A or C-stick; choose SD files on the SD page.", "A or C-stick: choose a memory slot. Files: browse saved states.")
             : mSel == ROW_CLEAR ? "Remove the memory state in the Save to slot, after confirmation."
             : mSel == ROW_RNG ? "Keep the game RNG with each state."
             : mSel == ROW_FEEDBACK ? "Show a message when saving or loading a state."
             : mSel == ROW_ERRORS ? "Show errors when a state cannot be saved or loaded."
-            : mSel == ROW_SD ? "Save states to SD and bring them back after restarting."
+            : mSel == ROW_SD ? STORAGE_TEXT("Save states to SD and bring them back after restarting.", "Save states to files and reopen them after restarting.")
             : "Change the savestate message's position and appearance.";
+#if SUSAMUNE_SAVE_PROBE
+        char probeText[128];
+        if(mSel==ROW_PROBE){StateSaveProbe::summary(probeText,sizeof(probeText));help=probeText;}
+#endif
         drawHelpLine(menu, x, y, w, h, experimentalStateHelp(mSel == ROW_FAST, help));
     }
 private:
-    enum { ROW_SAVE, ROW_LOAD, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_ERRORS, ROW_EDITOR, ROW_SD, ROW_FAST, ROW_COUNT };
+    enum { ROW_SAVE, ROW_LOAD, ROW_CLEAR, ROW_RNG, ROW_FEEDBACK, ROW_ERRORS, ROW_EDITOR, ROW_SD, ROW_FAST,
+#if SUSAMUNE_SAVE_PROBE
+        ROW_PROBE,
+#endif
+        ROW_COUNT };
     enum { SD_SAVE_SLOT, SD_LOAD_SLOT, SD_SAVE, SD_REFRESH, SD_NEXT, SD_FILES };
     enum { NAME_NONE, NAME_SAVE, NAME_RENAME };
     void formatSources(char *save, u32 saveSize, char *load, u32 loadSize) const {
         if (!gSavestateMgr) { strcpy(save, "Unavailable"); strcpy(load, "Unavailable"); return; }
         snprintf(save, saveSize, "State %lu", gSavestateMgr->saveSlot() + 1);
         if (gSavestateMgr->loadSourceIsSD())
-            snprintf(load, loadSize, "SD: %.23s", gSavestateMgr->selectedSDName());
+            snprintf(load, loadSize, STORAGE_TEXT("SD: %.23s", "File: %.21s"), gSavestateMgr->selectedSDName());
         else snprintf(load, loadSize, "State %lu", gSavestateMgr->loadSlot() + 1);
     }
     static const char *rowName(int row, bool sd = false) {
-        static const char *const main[] MENU_OWNED_RODATA("savestates_rows") = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", "SD states"};
-        static const char disk[] MENU_OWNED_RODATA("savestates_sd_rows") = "Save to\0Load from\0Save memory state to SD\0Refresh / first page\0Next page";
+        static const char *const main[] MENU_OWNED_RODATA("savestates_rows") = {"Save to", "Load from", "Clear save slot", "Save RNG state", "Savestate feedback", "Error messages", "Feedback display", STORAGE_TEXT("SD states", "Files")};
+        static const char disk[] MENU_OWNED_RODATA("savestates_sd_rows") = STORAGE_TEXT("Save to\0Load from\0Save memory state to SD\0Refresh / first page\0Next page", "Save to\0Load from\0Save memory state to file\0Refresh / first page\0Next page");
+#if SUSAMUNE_SAVE_PROBE
+        if(!sd && row==ROW_PROBE)return "Save timing probe";
+#endif
         return sd ? PackedText::at(disk, row) : row == ROW_FAST ? kFastRamLoadLabel : main[row];
     }
     u32 sdCount() const {
@@ -5031,7 +5362,7 @@ private:
         if (SavestateManager::diskBusy()) {
             if (mMetadataPending) return;
             if ((pressed & (JUTGamePad::A | JUTGamePad::B)) && gSavestateMgr) {
-                if (!gSavestateMgr->cancelSD()) menu->toast("Finishing the SD transfer; please wait");
+                if (!gSavestateMgr->cancelSD()) menu->toast(STORAGE_TEXT("Finishing the SD transfer; please wait", "Finishing the file transfer; please wait"));
                 focus();
             }
             return;
@@ -5071,7 +5402,7 @@ private:
             changeState(menu, 1, mSDsel == SD_LOAD_SLOT); return;
         }
         if (!gSavestateMgr || !gSavestateMgr->sdAvailable()) {
-            menu->toast("SD states need Moonshine Launcher"); return;
+            menu->toast(STORAGE_TEXT("SD states need Moonshine Launcher", "Set Slot B to GCI Folder in Dolphin")); return;
         }
         if (mSDsel == SD_SAVE) {
             mClearSlot = gSavestateMgr->saveSlot();
@@ -5086,7 +5417,7 @@ private:
         } else if (mSDsel == SD_REFRESH || mSDsel == SD_NEXT) {
             const bool next = mSDsel == SD_NEXT;
             if (next && (!gSavestateMgr->sdCatalogReady() || !gSavestateMgr->sdCatalog().more)) {
-                menu->toast("No more SD states"); return;
+                menu->toast(STORAGE_TEXT("No more SD states", "No more saved states")); return;
             }
             const u32 after = next ? gSavestateMgr->sdCatalog().nextId : 0;
             if (!gSavestateMgr->refreshSD(after)) menu->toast(gSavestateMgr->sdStatus());
@@ -5156,29 +5487,28 @@ private:
     void drawSD(Menu *menu) {
         const int x = 80, y = 72, w = 480, h = 336;
         menu->fillMenuBox(0, 0, 640, 480, cBackdrop());
-        menu->fillMenuBox(x, y, w, h, cPanel());
-        menu->drawMenuText("SD savestates", x + 16, y + 16, 18, 18, cTitle());
+        MenuTheme::panel(menu, x, y, w, h, STORAGE_TEXT("SD savestates", "Saved states"), MenuThemeAssets::TabPad);
         if (SavestateManager::diskBusy()) {
             menu->drawMenuText(gSavestateMgr ? gSavestateMgr->sdStatus() : "Working...",
                 x + 16, y + 76, 14, 14, cRowSel());
-            drawSmallRowText(menu, "Keep the SD card connected until this finishes.", x + 16, y + 106);
-            drawSmallFooterText(menu, mMetadataPending ? "Finishing the SD update..."
+            drawSmallRowText(menu, STORAGE_TEXT("Keep the SD card connected until this finishes.", "Keep Dolphin open until this finishes."), x + 16, y + 106);
+            drawSmallFooterText(menu, mMetadataPending ? STORAGE_TEXT("Finishing the SD update...", "Finishing the file update...")
                 : SUSAMUNE_GLYPH_A " / " SUSAMUNE_GLYPH_B " Cancel transfer", x + 16, y + h - 26);
             return;
         }
         if (mNameMode != NAME_NONE) {
-            drawCreationKeyboard(menu, mNameMode == NAME_SAVE ? "Name SD state" : "Rename SD state",
+            drawCreationKeyboard(menu, mNameMode == NAME_SAVE ? STORAGE_TEXT("Name SD state", "Name saved state") : STORAGE_TEXT("Rename SD state", "Rename saved state"),
                 mArchiveName[0] ? mArchiveName : "(enter a name)", mNamePage, mNameUpper, mNameCursor);
             return;
         }
         if (mConfirmLoad || mConfirmDelete) {
             char question[48];
-            if (mConfirmDelete) strcpy(question, "Delete this SD state?");
+            if (mConfirmDelete) strcpy(question, STORAGE_TEXT("Delete this SD state?", "Delete this saved state?"));
             else snprintf(question, sizeof(question), "Import into state %lu?", mClearSlot + 1);
             menu->drawMenuText(question, x + 16, y + 66, 16, 16, cRowSel());
             menu->drawMenuText(mArchiveName, x + 16, y + 100, 12, 12, cAccent());
-            drawSmallRowText(menu, mConfirmDelete ? "Removes this file from SD. Memory states stay saved."
-                : "Replaces the Save to memory slot. The SD file stays saved.", x + 16, y + 138);
+            drawSmallRowText(menu, mConfirmDelete ? STORAGE_TEXT("Removes this file from SD. Memory states stay saved.", "Deletes the file. Memory states stay saved.")
+                : STORAGE_TEXT("Replaces the Save to memory slot. The SD file stays saved.", "Replaces the Save to slot. The file stays saved."), x + 16, y + 138);
             if (!mConfirmDelete) drawSmallRowText(menu, "Select that slot under Load from to use it.", x + 16, y + 164);
             drawSmallFooterText(menu, mConfirmDelete ? SUSAMUNE_GLYPH_A " Delete    " SUSAMUNE_GLYPH_B " Cancel"
                 : SUSAMUNE_GLYPH_A " Import    " SUSAMUNE_GLYPH_B " Cancel", x + 16, y + h - 26);
@@ -5205,7 +5535,7 @@ private:
                 const SusamuneStateCatalogEntry &entry = gSavestateMgr->sdCatalog().entries[row - SD_FILES];
                 snprintf(name, sizeof(name), "%.31s", entry.name);
                 strcpy(value, gSavestateMgr->loadSourceIsSD() && gSavestateMgr->selectedSDId() == entry.id
-                    ? "Load source" : "SD file");
+                    ? "Load source" : STORAGE_TEXT("SD file", "File"));
             }
             drawValueRow(menu, x + 12, listY + (row - start) * ROW_H, w - 24,
                 name, value, row == mSDsel, false, false);
@@ -5213,10 +5543,10 @@ private:
         drawScrollHints(menu, x + 12, listY, w - 24, listH, start, end, rows);
         drawSmallFooterText(menu, gSavestateMgr ? gSavestateMgr->sdStatus() : "Savestates unavailable", x + 16, y + h - 72);
         const char *help = mSDsel == SD_SAVE_SLOT ? "Save and Import write to this memory slot."
-            : mSDsel == SD_LOAD_SLOT ? "Choose a memory slot here, or press Y on an SD file."
-            : mSDsel == SD_SAVE ? "Name a new SD file from the Save to memory slot."
+            : mSDsel == SD_LOAD_SLOT ? STORAGE_TEXT("Choose a memory slot here, or press Y on an SD file.", "Choose a memory slot here, or press Y on a file.")
+            : mSDsel == SD_SAVE ? STORAGE_TEXT("Name a new SD file from the Save to memory slot.", "Name a new file from the Save to memory slot.")
             : mSDsel >= SD_FILES ? "Y chooses this file for your Load bind; A copies it to memory."
-            : "SD files stay saved after the console restarts.";
+            : STORAGE_TEXT("SD files stay saved after the console restarts.", "Files stay saved after Dolphin restarts.");
         drawSmallRowText(menu, help, x + 16, y + h - 50);
         menu->drawMenuText(mSDsel >= SD_FILES
             ? SUSAMUNE_GLYPH_A " Import  " SUSAMUNE_GLYPH_Y " Load from  " SUSAMUNE_GLYPH_X " Delete  Start Rename  " SUSAMUNE_GLYPH_B " Back"
@@ -5863,7 +6193,7 @@ private:
         }
         mTextLength = (u8)strlen(mText);
         mTextCursor = 0;
-        mTextPage = 1;
+        mTextPage = 0x81;
         mTextUpper = false;
         mTextInput.begin(keyboardMask());
         mEditor = editor;
@@ -6099,6 +6429,8 @@ public:
         return false;
     }
 
+    void appendChild(MenuTab *target) {if(mCount<MAX_CHILDREN)mChildren[mCount++]=target;}
+
     void openChild(MenuTab *target) {
         for (u32 i = 0; i < mCount; ++i) if (mChildren[i] == target) {
             mPage = mSel = i; focus(); return;
@@ -6156,6 +6488,8 @@ public:
         MenuTab *child = current();
         if (!child) {
             const char *help = mChildren[mSel]->summary();
+            const bool chapter = mSectionStyle == SECTIONS_NONE;
+            if (chapter) { drawSectionHeader(menu, x, y, w, title()); y += ROW_H; h -= ROW_H; }
             const int listH = help ? h - HELP_H : h;
             int rows = mCount;
             int selectedRow = mSel;
@@ -6287,7 +6621,7 @@ static_assert(sizeof(NestedMenuTab) <= 64,
 class PracticeControlsTab final : public MenuTab {
     friend class Menu;
 public:
-    PracticeControlsTab() : mSel(0), mBinding(false) { focus(); }
+    PracticeControlsTab() : mSel(0), mBinding(false), mPath(false) { focus(); }
     const char *title() const override {
         return "Free camera";
     }
@@ -6297,9 +6631,22 @@ public:
     void focus() override { mInput.begin(JUTGamePad::A | JUTGamePad::X); }
     bool grabsInput() const override { return mBinding || gBinds.recording(); }
     bool suppressesBinds() const override { return true; }
-    bool favoriteHint() const override { return mSel >= 2 && mSel <= 6; }
+    bool favoriteHint() const override { return !mPath && mSel >= 2 && mSel <= 6; }
+    bool back() override { if (!mPath) return false; mPath = false; mSel = 8; focus(); return true; }
     void update(Menu *menu, TMarioGamePad *pad) override {
         const u32 nav = menu->navigationInput(pad);
+        if (mPath) {
+            if (nav & TMarioGamePad::CSTICK_UP) mSel = wrap(mSel - 1, 9);
+            if (nav & TMarioGamePad::CSTICK_DOWN) mSel = wrap(mSel + 1, 9);
+            const u16 pressed = mInput.update();
+            const bool valueRow = mSel == 2 || mSel == 5 || mSel == 6 || mSel == 7;
+            const int direction = nav & TMarioGamePad::CSTICK_LEFT ? -1 : 1;
+            if ((pressed & JUTGamePad::A) || (valueRow && (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT)))) {
+                if (PracticeSession::cameraPathAction(mSel, direction)) menu->hide();
+                if (!valueRow) menu->toast(PracticeSession::status());
+            }
+            return;
+        }
         if (mBinding || gBinds.recording()) {
             if (nav & (TMarioGamePad::CSTICK_LEFT | TMarioGamePad::CSTICK_RIGHT |
                        TMarioGamePad::CSTICK_UP | TMarioGamePad::CSTICK_DOWN))
@@ -6336,34 +6683,38 @@ public:
         }
         bool close = false;
         switch (mSel) {
-        case 0: close = PracticeSession::requestFreeCameraToggle(); break;
+        case 0: close = ReplayCamera::toggle(); break;
         case 1: close = PracticeSession::requestPauseToggle(true); break;
-        case 7: PracticeSession::recenterCamera(); break;
+        case 7: PracticeSession::cameraPathAction(9); PracticeSession::recenterCamera(); break;
+        case 8: mPath = true; mSel = 0; focus(); return;
         }
         if (close) menu->hide();
         menu->toast(PracticeSession::status());
     }
     void draw(Menu *menu, int x, int y, int w, int h) override {
-        const char *cameraValues[] = {PracticeSession::freeCamera() ? "On" : "Off", "",
+        const char *cameraValues[] = {(PracticeSession::freeCamera() || ReplayCamera::active()) ? "On" : "Off", "",
             gSettings.valueLabel(SETTING_FREE_CAMERA_SPEED),
             gSettings.valueLabel(SETTING_FREE_CAMERA_STRAFE_REVERSE),
             gSettings.valueLabel(SETTING_FREE_CAMERA_SENSITIVITY),
             gSettings.valueLabel(SETTING_FREE_CAMERA_HIDE_HUD),
-            gSettings.valueLabel(SETTING_FREE_CAMERA_SMOOTHING), "Reset view"};
+            gSettings.valueLabel(SETTING_FREE_CAMERA_SMOOTHING), "Reset view", "Edit"};
         const char *const *values = cameraValues;
         char status[80];
             snprintf(status, sizeof(status), "Game: %s   Camera: %s",
                 PracticeSession::holdingLoad() ? "Held" : PracticeSession::pausePending() ? "Armed" :
                 (PracticeSession::manualPaused() || PracticeSession::nativePaused()) ? "Paused" : "Live",
-                PracticeSession::freeCamera() ? "On" : "Off");
-        menu->drawMenuText(status, x + 4, y, 14, 14, cValue());
+                (PracticeSession::freeCamera() || ReplayCamera::active()) ? "On" : "Off");
+        menu->drawMenuText(mPath ? "CAMERA PATH" : status, x + 4, y, 14, 14, cValue());
         const int listY = y + ROW_H;
         const int listH = h - HELP_H - 2 * ROW_H;
         const int start = listScrollStart(mSel, rowCount(), listH / ROW_H);
         const int end = clampi(start + listH / ROW_H, 0, rowCount());
-        for (int i = start; i < end; ++i)
-            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, rowName(i), values[i], i == mSel,
-                i >= 2 && i <= 6 && gSettings.favorite(cameraSetting(i)), true);
+        for (int i = start; i < end; ++i) {
+            char pathValue[24];
+            if (mPath) PracticeSession::cameraPathValue(i, pathValue, sizeof(pathValue));
+            drawValueRow(menu, x, listY + (i - start) * ROW_H, w, mPath ? pathRowName(i) : rowName(i), mPath ? pathValue : values[i], i == mSel,
+                !mPath && i >= 2 && i <= 6 && gSettings.favorite(cameraSetting(i)), true);
+        }
         drawScrollHints(menu, x, listY, w, listH, start, end, rowCount());
         const BindId bind = selectedBind();
         if (bind != BIND_COUNT) {
@@ -6373,10 +6724,15 @@ public:
             menu->drawMenuText(line, x + 4, listY + listH, 13, 13, cValue());
         }
         drawHelpLine(menu, x, y, w, h, gBinds.recording() ?
-            "Hold your new buttons, then release to save. C-stick cancels." : help());
+            "Hold your new buttons, then release to save. C-stick cancels." : mPath ? pathHelp(mSel) : mSel == 8 ? "Save camera views and play a timed path between them." : help());
     }
 private:
+    static const char *pathRowName(int row) {
+        static const char labels[] MENU_OWNED_RODATA("camera_path_rows") = "Add keyframe\0Play path\0Selected keyframe\0Go to keyframe\0Replace keyframe\0Travel time\0Easing\0Loop\0Delete keyframe";
+        return PackedText::at(labels, row);
+    }
     static const char *rowName(int row) {
+        if (row == 8) return "Camera path";
         if (row == 1) return PracticeSession::pausePending() ? "Cancel armed pause" :
             (PracticeSession::manualPaused() || (PracticeSession::freeCamera() && PracticeSession::nativePaused())) ? "Resume gameplay" : "Pause gameplay";
         static const char names[] MENU_OWNED_RODATA("practice_controls_rows") = "Free camera\0\0Movement speed\0Reverse sideways\0Look sensitivity\0Hide all HUD\0Camera smoothing\0Recenter camera";
@@ -6388,11 +6744,25 @@ private:
             SETTING_FREE_CAMERA_HIDE_HUD, SETTING_FREE_CAMERA_SMOOTHING};
         return ids[row - 2];
     }
-    int rowCount() const { return 8; }
+    int rowCount() const { return 9; }
     BindId selectedBind() const {
+        if (mPath || mSel == 8) return BIND_COUNT;
         static const BindId camera[] = {BIND_FREE_CAMERA, BIND_PRACTICE_PAUSE, BIND_COUNT,
             BIND_COUNT, BIND_COUNT, BIND_COUNT, BIND_COUNT, BIND_COUNT};
         return camera[mSel];
+    }
+    static const char *pathHelp(int row) {
+        static const char texts[] MENU_OWNED_RODATA("camera_path_help") =
+            "Save a view, move, then add another. Cleared on leaving the area.\0"
+            "Play from the first view. Opening the menu holds playback.\0"
+            "C-stick left/right: choose a keyframe.\0"
+            "Visit the selected view.\0"
+            "Replace with the current view.\0"
+            "Arrival time. First applies only when looping.\0"
+            "Smooth: ease in/out. Linear: steady pace.\0"
+            "Return to the first view and repeat.\0"
+            "Remove the selected view.";
+        return PackedText::at(texts, row);
     }
     const char *help() const {
         if (mSel == 0) return "On pauses gameplay. Off restores the game camera without changing pause.";
@@ -6406,6 +6776,7 @@ private:
     }
     u8 mSel;
     bool mBinding;
+    bool mPath;
     RawPromptInput mInput;
 };
 static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
@@ -6413,6 +6784,44 @@ static_assert(sizeof(PracticeControlsTab) <= 64, "practice menu storage");
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
 #include "tas_menu.inc"
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+
+#if MOONSHINE_GHOST_TRACE
+class ReplayTestTab final : public MenuTab {
+public:
+    ReplayTestTab():mSel(0){}
+    const char *title() const override {return "MSGT replay test";}
+    const char *summary() const override {return "Record an IL and watch the whole world play it back.";}
+    void focus() override {mInput.begin(JUTGamePad::A);}
+    void update(Menu *menu,TMarioGamePad *pad) override {
+        const unsigned nav=menu->navigationInput(pad);
+        if(nav&TMarioGamePad::CSTICK_UP)mSel=wrap(mSel-1,kRows);
+        if(nav&TMarioGamePad::CSTICK_DOWN)mSel=wrap(mSel+1,kRows);
+        if((mInput.update()&JUTGamePad::A)&&GhostReplayTest::action(mSel))menu->hide();
+    }
+    void draw(Menu *menu,int x,int y,int w,int h) override {
+        static const char rows[] MENU_OWNED_RODATA("replay_test_rows")=
+#if defined(SUSAMUNE_VERSION_PAL)
+            "Record this IL\0Stop and save capture\0Watch latest capture\0Watch Bianco 3 Secret sample\0Watch Manta sample\0Watch Pianta 6 sample\0Stop replay";
+#else
+            "Record this IL\0Stop and save capture\0Watch latest capture\0Watch Sirena 4 sample (JP)\0Watch Noki 4 sample (JP)\0Stop replay";
+#endif
+        const int listH=h-HELP_H-ROW_H;
+        const int first=listScrollStart(mSel,kRows,listH/ROW_H),last=clampi(first+listH/ROW_H,0,kRows);
+        for(int row=first;row<last;++row)
+            drawValueRow(menu,x,y+(row-first)*ROW_H,w,PackedText::at(rows,row),"",row==mSel,false,true);
+        drawScrollHints(menu,x,y,w,listH,first,last,kRows);
+        menu->drawMenuText(GhostReplayTest::recordLabel(),x+4,y+listH,12,12,cValue());
+        drawHelpLine(menu,x,y,w,h,GhostReplayTest::status());
+    }
+private:
+#if defined(SUSAMUNE_VERSION_PAL)
+    static constexpr int kRows=7;
+#else
+    static constexpr int kRows=6;
+#endif
+    int mSel;RawPromptInput mInput;
+};
+#endif
 
 class GuideTab final : public MenuTab {
     friend class Menu;
@@ -6449,7 +6858,7 @@ private:
              "Hide all HUD removes overlays for filming.", "Resume keeps the free camera running."},
             {"TAS PROJECTS", "Practice: TAS projects, then New TAS.", "The beginning is captured automatically.",
              "Continue edits while paused; Step or Resume.", "Checkpoints save places to return to.",
-             "Save TAS keeps everything together on SD.", "Open TAS keeps the full saved recording.", "Replay warns if game state differs, and continues."},
+             STORAGE_TEXT("Save TAS keeps everything together on SD.", "Save TAS keeps everything together in files."), "Open TAS keeps the full saved recording.", "Replay warns if game state differs, and continues."},
             {"TAS PRACTICE", "The timer stops while frame advance is paused.",
              "Each Step advances the game and timer together.", "Move the stick yourself for each frame of a spin.",
              "Release and press A again for a fresh jump.", "Assisted ghosts are marked TAS; pauses are cut.",
@@ -6631,6 +7040,9 @@ struct __attribute__((aligned(8))) MenuRuntime {
 #endif
     u8 soundDisplay[16] __attribute__((aligned(8)));
     MenuSearch::State search;
+#if MOONSHINE_GHOST_TRACE
+    u8 replayTest[sizeof(ReplayTestTab)] __attribute__((aligned(8)));
+#endif
 };
 
 MenuRuntime &sMenuRuntime = *reinterpret_cast<MenuRuntime *>(
@@ -7004,6 +7416,7 @@ __attribute__((noinline)) static void drawValueRow(
 __attribute__((noinline)) static void drawValueRowColored(
     Menu *menu, int x, int y, int w, const char *name, const char *value,
     bool selected, bool starred, bool arrow, Color valueColor) {
+    MenuTheme::listRow(menu, x, y - (ROW_H - ROW_SZ) / 2, w, selected);
     if (selected) drawRowHighlight(menu, x, y, w, ROW_H);
     if (selected && arrow)
         menu->drawMenuText(">", x - 2, y, ROW_SZ, ROW_SZ, cAccent());
@@ -7196,6 +7609,9 @@ void Menu::update(TMarioGamePad *pad) {
     }
 
     if (gBinds.wasPressedRaw(BIND_MENU_TOGGLE)) {
+#if TIMEWARP_LIVE_RACING
+        if (!mShown && LiveRace::status().active && WarpWheel::requestOnlineMenu()) return;
+#endif
         mShown = !mShown;
         if (mShown) mTabs[mCurTab]->focus();
         // Closing with edits pending writes them back to the SD card. Gated on
@@ -7264,6 +7680,9 @@ void menuInit() {
     gMenu = new (sMenuBuf) Menu();
     // Not in the constructor: its frozen input precedes timer-facing helpers.
     sMenuRuntime.search = {};
+#if MOONSHINE_GHOST_TRACE
+    reinterpret_cast<NestedMenuTab*>(sMenuRuntime.systemHub)->appendChild(new (sMenuRuntime.replayTest) ReplayTestTab());
+#endif
 #if TIMEWARP_LIVE_RACING
     static_assert(Menu::kMaxTabs >= 10, "online tab exceeds debug menu capacity");
     gMenu->mTabs[gMenu->mNumTabs++] = new (sMenuRuntime.online) OnlineTab();
@@ -7277,3 +7696,13 @@ void menuInit() {
 #include "menu_sounds.inc"
 #include "menu_search.inc"
 #include "menu_theme.inc"
+
+void Menu::drawReplayMarker(J2DOrthoGraph *ortho,bool sourceTas) {
+    J2DOrthoGraph *previous=mOrtho;mOrtho=ortho;
+    const char *label=sourceTas?"REPLAY - TAS":"REPLAY";
+    const int text=Menu::textWidth(label,13),width=text+16,x=(640-width)/2;
+    fillBox(x,414,width,23,JUtility::TColor(241,199,81,255));
+    fillBox(x+1,415,width-2,21,JUtility::TColor(24,67,54,255));
+    drawText(label,(640-text)/2,419,13,13,JUtility::TColor(255,247,213,255));
+    mOrtho=previous;
+}

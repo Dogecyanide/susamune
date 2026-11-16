@@ -1,0 +1,11 @@
+Moonshine PR47
+
+Ghosts > Ghost options > Extra replay data is a session-only opt-in for new recordings.
+Leave it Off for website uploads until Delfino Ghosts supports V10. Normal V9 remains the default.
+New details include pre-stage RNG, stage movement/director age, exact last-movement-tick camera yaw per input, gameplay settings and gap/restore/endpoint provenance. This does not record complete action/velocity state or guarantee deterministic replay.
+
+Z on a personal saved ghost opens Export: A saves to SD, Y opens the upload draft, B cancels. Dolphin offers PC export help for the local choice. Imported/unsafe files retain their restrictions.
+Native timer presets now reach the third decimal digit; original outlines and in-game two-decimal timers are retained.
+
+The full app must be installed, including boot.dol. Regional build and protected-timer checks pass; focused host tests and private standard-Dolphin checks cover recording, RAM restore, native file save/load/Watch and the new UI. Wii hardware and four-player retesting remain user acceptance.
+No personal data, account tokens or custom launcher themes are included.

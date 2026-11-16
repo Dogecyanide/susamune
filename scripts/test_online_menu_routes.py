@@ -25,7 +25,7 @@ class OnlineMenuRouteTests(unittest.TestCase):
             "OnlineTab() :", "void openAfterRound()", "void focus() override", "bool back() override",
             "void update(Menu *menu, TMarioGamePad *pad) override", "bool visible(", "int rowAt(",
             "int visibleCount(", "bool normalize(", "void moveSelection(", "void openPage(",
-            "void openSearchRow(", "static bool draftTurn(", "bool apply(", "bool enterCode(", "void beginEdit("))
+            "void openSearchRow(", "static bool draftTurn(", "static bool draftReady(", "bool apply(", "bool enterCode(", "void beginEdit("))
         raw = (ROOT / "include/susamune/raw_prompt_input.hxx").read_text()
         raw = raw[raw.index("class RawPromptInput"):raw.index("#endif")]
         fields = source[source.index("    LiveRace::Options mDraft;"):source.index("\n};", source.index("    LiveRace::Options mDraft;"))]
@@ -72,6 +72,7 @@ bool configure(const Options &o){++hits[CONFIGURE];opts=o;return true;}
 bool host(){++hits[HOST];current.active=current.hosting=true;current.setupEditable=false;return true;}
 bool join(){++hits[JOIN];current.active=true;current.hosting=false;current.setupEditable=false;return true;}
 bool holdingStart(){return false;}
+bool endRace(){current.canEndRace=false;return true;}
 bool forfeit(){++hits[FORFEIT_CALL];current.canForfeit=false;return true;}
 bool ready(){++hits[READY];current.localReady=!current.localReady;return true;}
 bool newMatch(){++hits[NEW_MATCH];if(!current.hosting||!current.setupEditable)return false;
@@ -87,6 +88,7 @@ const char *guestName(unsigned slot){return connectedGuest==(int)slot?"Guest":nu
 bool kickGuest(unsigned slot){++hits[11];lastGuestSlot=slot;connectedGuest=-1;return true;}
 }
 namespace LiveGhost {bool shown;bool inputsShown(){return shown;}void setInputsShown(bool v){shown=v;++hits[INPUTS];}}
+namespace LiveContacts {void forget(unsigned){}bool copy(unsigned,char*){return false;}}
 namespace LiveP2P {enum{CODE_CHARS=14,DISPLAY_CHARS=19};char symbol(int at){return 'A'+at;}}
 namespace LiveStun {bool start(unsigned){++hits[NAT];return true;}}
 namespace StageLoader {int queueCount(){return 3;}bool loadBuiltinPlaylist(int){return true;}bool loadCustomPlaylist(int){return true;}}
@@ -121,6 +123,7 @@ extern "C" __declspec(dllexport) void statusBits(unsigned bits) {
     auto &s=LiveRace::current;
     s.active=bits&1;s.connected=bits&2;s.hosting=bits&4;s.matchDone=bits&8;
     s.freeRoam=bits&16;s.drafting=bits&32;s.setupEditable=bits&64;s.racing=bits&128;s.canForfeit=s.racing;
+    s.canEndRace=s.active&&s.hosting&&!s.matchDone&&!s.freeRoam;
     s.localCode[0]=s.active?'L':0;
 }
 extern "C" __declspec(dllexport) void optionsBits(unsigned bits) {
@@ -147,6 +150,7 @@ extern "C" __declspec(dllexport) unsigned state() {return tab->mSel|(tab->mMode<
 extern "C" __declspec(dllexport) unsigned calls(int action){return hits[action];}
 extern "C" __declspec(dllexport) void search(int row){tab->openSearchRow(row);}
 extern "C" __declspec(dllexport) void afterRound(){tab->openAfterRound();}
+extern "C" __declspec(dllexport) void draftChosen(){LiveRace::current.drafting=false;LiveRace::current.draft.phase=LiveDraft::IL_MATCH;LiveRace::group.phase=LiveGroupRules::Ready;}
 extern "C" __declspec(dllexport) int back(){return tab->back();}
 extern "C" __declspec(dllexport) unsigned codeLength(){return tab->mLength;}
 extern "C" __declspec(dllexport) unsigned hideScore(){return LiveRace::preferences.hideScore;}
@@ -194,6 +198,21 @@ extern "C" __declspec(dllexport) unsigned guestSlot(){return lastGuestSlot;}
         self.lib.statusBits(1 | 2 | 4 | 16 | 64)
         self.assertEqual(self.rows_on(1), [r["MODE_ROW"], r["SETUP_ROW"]])
         self.assertNotIn(r["READY_ROW"], self.rows_on(0))
+
+    def test_draft_readies_and_cancels_without_leaving_the_list(self):
+        for opts in (1, 17):
+            with self.subTest(options=opts):
+                self.lib.reset(39, opts)
+                self.lib.afterRound()
+                mode = self.state()[1]
+                self.lib.draftChosen()
+                self.press()
+                self.assertEqual(self.lib.calls(2), 1)
+                self.assertEqual(self.lib.calls(8), 0)
+                self.assertEqual(self.state()[1], mode)
+                self.press()
+                self.assertEqual(self.lib.calls(2), 2)
+                self.assertEqual(self.state()[1], mode)
 
     def test_every_action_is_reachable_once_and_navigation_wraps(self):
         reached = set()
@@ -269,10 +288,10 @@ extern "C" __declspec(dllexport) unsigned guestSlot(){return lastGuestSlot;}
         self.press()
         self.press()
         self.assertEqual(self.lib.codeLength(), 1)
-        self.press(0x400)  # X deletes; B always returns home.
+        self.press(0x200)  # B backspaces; X returns home.
         self.assertEqual(self.lib.codeLength(), 0)
         self.press()
-        self.press(0x200)
+        self.press(0x400)
         self.assertEqual(self.state()[:2], (0, 0))
         self.assertEqual(self.lib.codeLength(), 1)
         self.assertIn(self.rows["FRIEND_ROW"], self.rows_on(0))

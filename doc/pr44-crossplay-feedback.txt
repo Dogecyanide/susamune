@@ -1,0 +1,20 @@
+PR44 crossplay feedback - 26 October 2026
+
+User-reported Wii/Dolphin session, approximately 30 minutes:
+- Movement smooth and responsive; no growing delay reported.
+- Area warps, reuniting and the save screen worked.
+- Secrets World Tour completed; Fast Any% tested through Gelato.
+- IL draft readiness and custom Mario colours worked.
+- Screenshot supplied from the Wii perspective.
+- A deliberate connection interruption was not tested.
+- This report does not establish four-player or every host direction coverage.
+
+One issue: ordinary pause was rejected as an unsafe race warp state.
+The next build admits a fully open retail pause menu, using the existing
+pause departure cleanup. Appearing/disappearing menus, async loading,
+active fades, pending departures and CARD writes remain blocked.
+Focused gate and departure lifecycle checks cover the change; the fixed
+binary still requires user testing.
+
+Wii log connection_489da1f2_00.log: two transport epochs, no socket send/receive errors; 12 reported local drops total, normally 15 pose updates/sec, no sustained queue growth. One unreadable aligned 64 KiB span is excluded. User reports deliberate disconnections to end a race; do not infer the damaged block has the same cause.
+Next build adds host End race: whole set/playlist cancellation, keeps room, no winner, reliable delivery/reconnect retry. Protocol 8 requires matching next-build clients.

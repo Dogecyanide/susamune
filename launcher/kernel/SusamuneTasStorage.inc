@@ -406,7 +406,7 @@ static void TasService(void)
             if (retained) continue;
             Paths(id);
             // Publication already succeeded; leftover cleanup must not undo it.
-            f_unlink_char(Path);
+            StateGhostUnlink(Path, TasId, id);
             return;
         }
         Finish(SUSAMUNE_STATE_OK); return;
@@ -416,7 +416,11 @@ static void TasService(void)
             const u32 copy = TasRemoveIndex / 4, part = TasRemoveIndex % 4;
             ++TasRemoveIndex;
             if (!TasValid[copy] || !TasPartId(&TasCopies[copy], part)) return;
-            Paths(TasPartId(&TasCopies[copy], part));
+            const u32 id = TasPartId(&TasCopies[copy], part);
+            Paths(id);
+            result = StateGhostUnlink(Path, TasId, id);
+            if (result != FR_OK && !TasMissing(result)) Finish(SUSAMUNE_STATE_IO_ERROR);
+            return;
         } else if (TasRemoveIndex < 12) {
             const u32 index = TasRemoveIndex++ - 8;
             _sprintf(Path, index < 2 ? "%s/project.%c" : "%s/project.%c.tmp", Directory, 'a' + (index & 1));

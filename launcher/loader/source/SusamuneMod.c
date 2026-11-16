@@ -130,3 +130,14 @@ void SusamuneLoadMod(u32 gameID)
 	gprintf("Susamune: staged " SUSAMUNE_MOD_FILE_FMT " (%u bytes)\r\n",
 		region, read);
 }
+
+const char *SusamuneDiscRevisionWarning(u32 gameID, u8 revision)
+{
+	if (gameID == 0x474D534Au && revision == 1)
+		return "This is JP Version 1.1.\nIt is not compatible with Moonshine.\nPlease use JP Version 1.0.";
+#if MOONSHINE_MEMORY_MONITOR_ONLY
+    if (gameID == 0x474D534Au)
+        return "This memory test supports PAL and US.\nPlease select one of those versions.";
+#endif
+	return NULL;
+}

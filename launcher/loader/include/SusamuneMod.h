@@ -9,5 +9,6 @@
  * for. Requires the FAT devices to still be mounted, i.e. before CloseDevices().
  */
 void SusamuneLoadMod(u32 gameID);
+const char *SusamuneDiscRevisionWarning(u32 gameID, u8 revision);
 
 #endif

@@ -24,6 +24,12 @@ static inline unsigned int SusamuneModV4Base(unsigned int game) {
 static inline unsigned int SusamuneModV4Stage(unsigned int flags) {
     return flags ? SUSAMUNE_MOD_DOLPHIN_STAGING_PPC_BASE : SUSAMUNE_MEM2_MODBIN_PPC_BASE;
 }
+static inline unsigned int SusamuneModV4MenuCapacity(unsigned int flags,unsigned int target) {
+    if(target==(flags?SUSAMUNE_MENU_CODE_DOLPHIN_PPC_BASE:SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE))return SUSAMUNE_MENU_CODE_SIZE;
+    if(target==(flags?SUSAMUNE_TRACE_MENU_CODE_DOLPHIN_PPC_BASE:SUSAMUNE_TRACE_MENU_CODE_CONSOLE_PPC_BASE))return SUSAMUNE_TRACE_MENU_CODE_SIZE;
+    if(target==(flags?SUSAMUNE_UPPER_MENU_CODE_DOLPHIN_PPC_BASE:SUSAMUNE_UPPER_MENU_CODE_CONSOLE_PPC_BASE))return SUSAMUNE_UPPER_MENU_CODE_SIZE;
+    return 0;
+}
 static inline unsigned int SusamuneModV4Align(unsigned int value) {
     return (value + 31u) & ~31u;
 }
@@ -117,16 +123,19 @@ static inline int SusamuneModV4Lz4Words(const unsigned char *bytes, unsigned int
 static inline int SusamuneModV4QuickWords(const unsigned char *bytes, unsigned int packed,
                                    unsigned char *out, unsigned int raw) {
     unsigned int i;
-    if (packed < 8 || SusamuneModQuickWord(bytes) != 0x4D534C34u ||
-        SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_BLOCK) return 0;
+    if (packed < 8 || (SusamuneModQuickWord(bytes) != 0x4D534C34u &&
+        SusamuneModQuickWord(bytes) != 0x4D534C35u) ||
+        (SusamuneModQuickWord(bytes) == 0x4D534C35u && (raw & 3u)) ||
+        (SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_BLOCK &&
+         SusamuneModQuickWord(bytes + 4) != SUSAMUNE_MOD_QUICK_LARGE_BLOCK)) return 0;
+    const unsigned int block = SusamuneModQuickWord(bytes + 4);
     unsigned int input = 8, output = 0;
     while (output < raw) {
         if (packed - input < 8) return 0;
         const unsigned int count = SusamuneModQuickWord(bytes + input);
         const unsigned int word = SusamuneModQuickWord(bytes + input + 4);
         const unsigned int length = word & 0x7fffffffu;
-        const unsigned int expected = raw - output < SUSAMUNE_MOD_QUICK_BLOCK ?
-            raw - output : SUSAMUNE_MOD_QUICK_BLOCK;
+        const unsigned int expected = raw - output < block ? raw - output : block;
         input += 8;
         if (count != expected || (count & 3u) || !length || length > packed - input) return 0;
         if (word & 0x80000000u) {
@@ -138,7 +147,15 @@ static inline int SusamuneModV4QuickWords(const unsigned char *bytes, unsigned i
         input += length;
         output += count;
     }
-    return input == packed;
+    if (input != packed) return 0;
+    if (SusamuneModQuickWord(bytes) == 0x4D534C35u) {
+        for (i = 0; i < raw; i += 4) {
+            unsigned int word = SusamuneModV4Load(out + i);
+            if ((word & 0xfc000003u) == 0x48000001u)
+                SusamuneModV4Store(out + i, (word & 0xfc000003u) | ((word - i) & 0x03fffffcu));
+        }
+    }
+    return 1;
 }
 
 /* sourceVma is the canonical PPC mapping, even when called through ARM's
@@ -160,7 +177,8 @@ static inline int SusamuneModV4Validate(const void *source, unsigned int fileSiz
         SusamuneModQuickWord(p + 8) != game || SusamuneModQuickWord(p + 12) != base ||
         SusamuneModQuickWord(p + 24) != SUSAMUNE_ARENA_RESERVE_SIZE ||
         SusamuneModQuickWord(p + 28) > SUSAMUNE_MOD_BLOB_MAX_SIZE ||
-        SusamuneModQuickWord(p + 44) != flags || !SusamuneModV4Zero(p + 48, 16) ||
+        SusamuneModQuickWord(p + 44) != flags || !SusamuneModV4Zero(p + 52, 12) ||
+        (SusamuneModQuickWord(p + 48) && (flags || SusamuneModQuickWord(p + 48)!=NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID)) ||
         (sections < 2 || sections > 4) || (code & 31u) ||
         code < sections * 32u || code > fileSize - 64u ||
         count > (fileSize - 64u - code) / 8u) return SUSAMUNE_MOD_V4_INVALID;
@@ -188,8 +206,8 @@ static inline int SusamuneModV4Validate(const void *source, unsigned int fileSiz
                 init != memory || init != stored ||
                 target != sourceVma + 64u + offset) return SUSAMUNE_MOD_V4_INVALID;
         } else if (index == 3) {
-            if (target != (flags ? SUSAMUNE_MENU_CODE_DOLPHIN_PPC_BASE : SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE) ||
-                !init || (init & 31u) || memory != init || memory > SUSAMUNE_MENU_CODE_SIZE ||
+            if (!SusamuneModV4MenuCapacity(flags,target) ||
+                !init || (init & 31u) || memory != init || memory > SusamuneModV4MenuCapacity(flags,target) ||
                 kind != SUSAMUNE_MOD_V4_PACKED) return SUSAMUNE_MOD_V4_INVALID;
         } else {
             const unsigned int cap = index ? SUSAMUNE_MOD_UPPER_SIZE : SUSAMUNE_MOD_MEM1_WORKING_CAP_SIZE;
@@ -234,8 +252,8 @@ static inline int SusamuneModV4InstallMapped(const void *source, unsigned int fi
     if (status != SUSAMUNE_MOD_V4_OK) return status;
     const unsigned char *p = (const unsigned char *)source;
     const unsigned int extra = SusamuneModQuickWord(p + 32) == 4;
-    if (extra && (!menu || menuBytes != SUSAMUNE_MENU_CODE_SIZE ||
-        menuVma != (flags ? SUSAMUNE_MENU_CODE_DOLPHIN_PPC_BASE : SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE) ||
+    if (extra && (!menu || !menuBytes || menuBytes != SusamuneModV4MenuCapacity(flags,menuVma) ||
+        menuVma != SusamuneModQuickWord(p+64u+3u*32u) ||
         ((SusamuneModQuickAddress)menu & 31u) || !SusamuneModQuickRange(menu, menuBytes) ||
         SusamuneModV4Overlap(source, fileSize, menu, menuBytes) ||
         SusamuneModV4Overlap(mem1, mem1Bytes, menu, menuBytes))) return SUSAMUNE_MOD_V4_INVALID;

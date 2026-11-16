@@ -1,0 +1,30 @@
+Moonshine Memory Monitor — private PAL/US test build
+
+Start this app, use PAL or US, then Online > Join room and enter the code shown
+on the PC monitor. The PC is the host; you do not need to enter the Wii code
+on the PC. Play, warp and use the existing three savestates normally. Leave
+the online room to stop sending telemetry. No fourth slot is added here.
+
+The monitor logs audio-bank and archive ARAM usage, stage/root/system/audio
+MEM1 heaps, physical savestate-block usage, each slot's compressed stream
+size, and ghost pose/input payload bytes. Three small reliable messages per
+cycle reuse the ordinary connection. No commands to read arbitrary addresses
+or write game memory are implemented. The diagnostic code is OFF in normal
+builds. Unknown or inconsistent pools are marked unavailable, not free.
+
+Peaks are sampled observations, not proof that short-lived allocations never
+exceeded them. MEM1 heaps are nested: do not sum them. Savestate streams can
+share blocks; their individual sizes do not sum to physical occupancy. Ghost
+figures exclude model, camera/context and other reserved tail storage. Fixed
+MEM2 reservations remain documented separately; no new memory is claimed.
+
+The PC web page listens only on localhost. UDP is bound to the selected LAN
+address and accepts only the configured Wii IP and the existing room/session
+protocol. Logs stay on the PC. Joining this diagnostic peer uses an ordinary
+two-player connection, so leave it before joining another online room.
+
+The launcher includes the JP 1.1 incompatibility warning. This diagnostic
+package also refuses JP 1.0 because its instrumentation does not fit that
+build's current code budget. PAL/US game timing, memory reservations, ghost
+formats and savestate capacities are unchanged. Live Wii verification is
+pending; host scanner, protocol, retransmission and loopback log tests passed.

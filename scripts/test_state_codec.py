@@ -289,6 +289,45 @@ extern "C" __declspec(dllexport) int counterBoundary(unsigned int start,int leng
         self.work = Guarded(self.lib.workspace())
         self.assertLessEqual(self.work.size, 0x50000)
 
+    def test_restore_can_discard_obsolete_sidecars_without_changing_neighbours(self):
+        raw=bytes(range(251))*2500
+        first,last=QUICK_BLOCK,QUICK_BLOCK+7
+        middle=len(raw)-first-last
+        marker=C.c_void_p(-1).value
+        for quick in (False,True):
+            measured,_=self.pack(self.source(raw),quick=quick)
+            packed,encoded=self.pack(self.source(raw),[measured.compressed],quick=quick)
+            for method in ('unpack','unpackVerified','unpackDirect'):
+                left,right=Guarded(first),Guarded(last)
+                out=(Span*4)(Span(left.ptr,first),Span(marker,middle//2),Span(marker,middle-middle//2),Span(right.ptr,last))
+                source=self.source(encoded,[1,7,len(encoded)-1]);policy=DirectPolicy()
+                args=[self.work.ptr,self.work.size,source,len(source),out,4,len(raw),packed.adler]
+                if method=='unpackDirect':args.append(C.byref(policy))
+                self.assertEqual(getattr(self.lib,method)(*args),SUCCESS)
+                self.assertEqual(left.data(),raw[:first]);self.assertEqual(right.data(),raw[-last:])
+                self.assertTrue(left.guards() and right.guards() and self.work.guards())
+                if method=='unpackDirect':self.assertLessEqual(policy.copied_bytes,first+last)
+
+    def test_corrupt_discarded_sidecar_still_rejects_before_restoring_game_bytes(self):
+        raw=bytearray(b'game'+bytes(200000)+b'tail');changed=bytearray(raw);changed[100000]=1
+        left,right=Guarded(4),Guarded(4);out=(Span*3)(Span(left.ptr,4),Span(C.c_void_p(-1).value,200000),Span(right.ptr,4))
+        for quick in (False,True):
+            measured,_=self.pack(self.source(bytes(changed)),quick=quick)
+            packed,encoded=self.pack(self.source(bytes(changed)),[measured.compressed],quick=quick)
+            source=self.source(encoded)
+            self.assertEqual(self.lib.unpack(self.work.ptr,self.work.size,source,1,out,3,len(raw),zlib.adler32(raw)),CORRUPT)
+            self.assertEqual(left.data()+right.data(),bytes([0xa7])*8)
+            self.assertTrue(left.guards() and right.guards())
+
+    def test_discard_marker_is_restore_only_and_null_destination_stays_invalid(self):
+        raw=b'state';source=self.source(raw);result=Result()
+        out=(Span*1)(Span(C.c_void_p(-1).value,100))
+        self.lib.packMany(self.work.ptr,self.work.size,source,1,out,1,C.byref(result))
+        self.assertEqual(result.status,INVALID)
+        packed=self.source(zlib.compress(raw));out=(Span*1)(Span(None,len(raw)))
+        self.assertEqual(self.lib.unpack(self.work.ptr,self.work.size,packed,1,out,1,len(raw),zlib.adler32(raw)),INVALID)
+        self.assertTrue(self.work.guards())
+
     def test_packed_adler_matches_independent_checksum_at_lane_and_modulo_bounds(self):
         rng = random.Random(0x41444C52)
         lengths = [*range(130), 255, 256, 5551, 5552, 5553, 5554,

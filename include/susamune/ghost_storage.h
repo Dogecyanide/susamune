@@ -8,7 +8,7 @@
 // side owns a separate cache line; the request payload stays immutable until
 // ackSeq catches requestSeq.
 #define SUSAMUNE_GHOST_STORAGE_MAGIC        0x53475354u  // 'SGST'
-#define SUSAMUNE_GHOST_STORAGE_VERSION      5u
+#define SUSAMUNE_GHOST_STORAGE_VERSION      9u
 #define SUSAMUNE_GHOST_STORAGE_HEADER_SIZE \
     SUSAMUNE_GHOST_TRANSFER_MAILBOX_HEADER_SIZE
 #define SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE \
@@ -29,6 +29,7 @@
 // zeroed; payloadChecksum covers the canonical file byte-for-byte.
 #define SUSAMUNE_GHOST_ENVELOPE_MAGIC     0x5347454Eu  // 'SGEN'
 #define SUSAMUNE_GHOST_ENVELOPE_VERSION   2u
+#define SUSAMUNE_GHOST_ENVELOPE_VERSION_STREAMED 3u
 #define SUSAMUNE_GHOST_ENVELOPE_SIZE      64u
 #define SUSAMUNE_GHOST_ENVELOPE_TOMBSTONE 0x00000001u
 
@@ -56,6 +57,10 @@ struct SusamuneGhostStorageEnvelope {
 #define SUSAMUNE_GHOST_CMD_LIST   4u
 #define SUSAMUNE_GHOST_CMD_EXPORT 5u
 #define SUSAMUNE_GHOST_CMD_IMPORT_SCAN 6u
+#define SUSAMUNE_GHOST_CMD_WEB_LIST 7u
+#define SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD 8u
+#define SUSAMUNE_GHOST_CMD_WEB_UPLOAD 9u
+#define SUSAMUNE_GHOST_CMD_WEB_ACCOUNT 10u
 // Page navigation may reuse checked metadata; explicit refreshes always scan.
 // Optional protocol-5 request hint, valid only with CMD_LIST.
 #define SUSAMUNE_GHOST_REQUEST_CACHED_LIST 0x00000001u
@@ -91,6 +96,7 @@ struct SusamuneGhostStorageEnvelope {
 #define SUSAMUNE_GHOST_SLOT_PRESENT 0x0001u
 #define SUSAMUNE_GHOST_SLOT_UNSAFE  0x0002u
 #define SUSAMUNE_GHOST_SLOT_IMPORTED 0x0004u
+#define SUSAMUNE_GHOST_SLOT_STREAMED 0x0008u
 
 struct SusamuneGhostStorageRequest {
     unsigned int requestMagic;

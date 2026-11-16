@@ -18,6 +18,7 @@ extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++
 #define memset32 memset
 #define dbgprintf(...) ((void)0)
 #define NIN_MEM2_DISC_CACHE_SIZE 0x300000u
+#define NIN_MEM2_DI_SCRATCH_SIZE 0x80000u
 #define CACHE_MAX 0x400u
 #define CACHE_SIZE NIN_MEM2_DISC_CACHE_SIZE
 #define CACHE_START (memory+32)
@@ -33,11 +34,27 @@ extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++
 #define FA_READ 1
 #define FA_OPEN_EXISTING 0
 #define FR_OK 0
-alignas(32) static u8 memory[CACHE_SIZE+64],scratch[0x80000+64];
+alignas(32) static u8 memory[CACHE_SIZE+64],scratch[0x80000+64],extraMemory[0x180000+128];
+#ifdef TEST_EXTRA_CACHE
+#if TEST_EXTRA_CACHE == 2
+#define NIN_MEM2_DISC_CACHE_EXTRA_BANKS(X) X(extraMemory+32,0x100000u) X(CACHE_START,32u)
+#else
+#define NIN_MEM2_DISC_CACHE_EXTRA_BANKS(X) X(extraMemory+32,0x100000u) X(extraMemory+0x100060,0x80000u)
+#endif
+#define NIN_MEM2_DISC_CACHE_EXTRA_LAYOUT_ID 0x123u
+#define NIN_MEM2_DISC_CACHE_EXTRA_OWNERS_RETIRED 1
+#endif
+#include "ISOCacheBanks.h"
+static ISOCacheBanks CacheBanks;
+static u32 ExtraCacheAdmitted;
+static bool cacheProof=true;static u32 reportedExtra,reportedBanks;
+static int ISOExtraCacheProofValid(u32,u32){return cacheProof;}
+static void ISOExtraCacheReport(u32 bytes,u32 banks){reportedExtra=bytes;reportedBanks=banks;}
+static bool wiiVCInternal;
 static u8*const DI_READ_BUFFER=scratch+32;
 static const u32 DI_READ_BUFFER_LENGTH=0x80000;
 static u32 GetDIBufferLimit(){return DI_READ_BUFFER_LENGTH;}
-static u32 ISOFileOpen=1,CacheInited,TempCacheCount,CacheEntryCount,DataCacheOffset;
+static u32 ISOFileOpen=1,CacheInited,TempCacheCount,CacheEntryCount;
 static u8*DCCache=CACHE_START;
 static u32 DCacheLimit=CACHE_SIZE,TRIGame,BI2region;
 static u64 ISOShift64,LastOffset64;
@@ -58,7 +75,8 @@ static void mdelay(u32){}
 static void Shutdown(){++shutdowns;}
 static void BootStatusError(int status,int error){bootStatus=status;bootError=error;}
 static u32 ConfigGetConfig(u32 flag){return ncfg->Config&flag;}
-static u32 ConfigGetGameID(){return 0x474D5350u;}
+static u32 gameID=0x474D5350u;
+static u32 ConfigGetGameID(){return gameID;}
 static void ConfigSetMemcardBlocks(u32){++configWrites;}
 static u32 GCNCard_GetTotalSize(){return memCard[0].size+memCard[1].size;}
 static u32 reads,bytesRead,lastReadSize,lastReturned,overruns,lastDestination;
@@ -70,7 +88,10 @@ static void ISOReadDirect(void*dst,u32 length,u64 offset){
  u8*out=(u8*)dst;
  bool inCache=out>=CACHE_START&&out<=CACHE_START+CACHE_SIZE&&length<=(u32)(CACHE_START+CACHE_SIZE-out);
  bool inScratch=out==DI_READ_BUFFER&&length<=DI_READ_BUFFER_LENGTH;
- if(!inCache&&!inScratch){++overruns;return;}
+ bool inExtra=(out>=extraMemory+32&&out<=extraMemory+0x100020&&length<=(u32)(extraMemory+0x100020-out)) ||
+ (out>=extraMemory+0x100060&&out<=extraMemory+0x180060&&length<=(u32)(extraMemory+0x180060-out));
+ if(inExtra)lastDestination=0x10000000u+(u32)(out-extraMemory);
+ if(!inCache&&!inScratch&&!inExtra){++overruns;return;}
  for(u32 i=0;i<length;++i)out[i]=sample(offset+i);
  LastOffset64=offset+length;
 }
@@ -79,14 +100,31 @@ static void ISOReadDirect(void*dst,u32 length,u64 offset){
 EXPORTS=r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(u32 cardBytes,u32 cached){
- memset(memory,0xA5,sizeof(memory));memset(scratch,0xB6,sizeof(scratch));
+ memset(memory,0xA5,sizeof(memory));memset(scratch,0xB6,sizeof(scratch));memset(extraMemory,0xC7,sizeof(extraMemory));
  memset(DC,0,sizeof(DC));memset(memCard,0,sizeof(memCard));
- ISOFileOpen=1;CacheInited=TempCacheCount=CacheEntryCount=DataCacheOffset=0;
- DCCache=CACHE_START;DCacheLimit=CACHE_SIZE;LastOffset64=~0ull;ISOShift64=0;
+ cacheProof=true;reportedExtra=reportedBanks=0;
+ ISOFileOpen=1;CacheInited=TempCacheCount=CacheEntryCount=0;ExtraCacheAdmitted=0;wiiVCInternal=false;
+ DCCache=CACHE_START;DCacheLimit=CACHE_SIZE;LastOffset64=~0ull;ISOShift64=0;gameID=0x474D5350u;
  reads=bytesRead=lastReadSize=lastReturned=overruns=0;TRIGame=0;
  memCard[0].size=cardBytes;config.Config=1;
  cardReads=cardCloses=shutdowns=configWrites=0;bootStatus=bootError=0;
  if(cached)ISOSetupCache();
+}
+API void proof(u32 value){cacheProof=value!=0;}
+API u32 extraBytes(){return reportedExtra;}
+API u32 admit(u32 layout){return ISOAdmitExtraCache(layout);}
+API void setup(){ISOSetupCache();}
+API void platform(u32 triforce,u32 wiiVC){TRIGame=triforce;wiiVCInternal=wiiVC!=0;}
+API void game(u32 id){gameID=id;}
+API u32 bankCount(){return CacheBanks.count;}
+API u32 invalidBank(u32 which){ISOCacheBanks b={};
+ ISOCacheAddBank(&b,memory+32,0x100000);
+ if(which==0)return ISOCacheAddBank(&b,memory+33,32);
+ if(which==1)return ISOCacheAddBank(&b,memory+32,0);
+ if(which==2)return ISOCacheAddBank(&b,memory+32,33);
+ if(which==3)return ISOCacheAddBank(&b,memory+64,0x100000);
+ if(which==4)return ISOCacheAddBank(&b,(u8*)((ISOCacheAddress)-32),32);
+ return 9;
 }
 API void shift(u64 value){ISOShift64=value;}
 API void sequential(u32 value){LastOffset64=ISOShift64+value;}
@@ -97,7 +135,8 @@ API u32 readAt(u32 offset,u32 length){
  return 1;
 }
 API u32 guards(){for(u32 i=0;i<32;++i){
- if(memory[i]!=0xA5||memory[32+CACHE_SIZE+i]!=0xA5||scratch[i]!=0xB6||scratch[32+DI_READ_BUFFER_LENGTH+i]!=0xB6)return 0;}
+ if(memory[i]!=0xA5||memory[32+CACHE_SIZE+i]!=0xA5||scratch[i]!=0xB6||scratch[32+DI_READ_BUFFER_LENGTH+i]!=0xB6 ||
+ extraMemory[i]!=0xC7||extraMemory[0x100020+i]!=0xC7||extraMemory[0x100040+i]!=0xC7||extraMemory[0x180060+i]!=0xC7)return 0;}
  return 1;}
 API int card(u32 slot,u32 size){openingSlot=slot;cardSizes[slot]=size;return GCNCard_Load(slot);}
 API u32 get(u32 key){switch(key){case 0:return reads;case 1:return bytesRead;case 2:return lastReturned;
@@ -119,14 +158,15 @@ class LauncherIsoCacheTests(unittest.TestCase):
         source=FIXTURE
         for path,name in (('GCNCard.c','static void GCNCard_InitCtx('),
                           ('GCNCard.c','int GCNCard_Load('),
+                          ('ISO.c','int ISOAdmitExtraCache('),('ISO.c','static void ISOSetupCacheBanks('),
                           ('ISO.c','void ISOSetupCache()'),('ISO.c','const u8 *ISORead(')):
             source+=function_source(ROOT/'launcher/kernel'/path,name)
         path=Path(cls.temp.name)/'iso.cpp'
-        path.write_text(source+EXPORTS)
+        path.write_text(source+EXPORTS,encoding='utf-8')
         library=path.with_suffix('.dll')
         subprocess.run([str(compiler),'--target=x86_64-pc-windows-msvc','-shared','-O2',
                         '-nostdlib','-fno-builtin','-fuse-ld=lld','-Wl,/noentry',
-                        str(path),'-o',str(library)],check=True)
+                        '-I'+str(ROOT/'launcher/kernel'), *getattr(cls,'compile_flags',[]), str(path),'-o',str(library)],check=True)
         cls.lib=C.CDLL(str(library))
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
         cls.lib.get.restype=C.c_uint
@@ -295,6 +335,105 @@ class LauncherIsoCacheTests(unittest.TestCase):
         self.assertEqual(self.lib.get(5),1)
         self.assertEqual(self.lib.get(13),0)
         self.assertEqual(self.lib.guards(),1)
+
+
+class ExtraCacheTests(LauncherIsoCacheTests):
+    compile_flags=['-DTEST_EXTRA_CACHE=1']
+
+    def enabled(self, card=0):
+        self.lib.reset(card,0)
+        self.assertEqual(self.lib.admit(0x123),1)
+        self.lib.setup()
+
+    def test_extra_banks_require_exact_boot_layout_and_reject_live_changes(self):
+        self.lib.reset(0,0)
+        for layout in (0,1,0x122,0x124,0xffffffff):self.assertEqual(self.lib.admit(layout),0)
+        self.lib.setup();self.assertEqual(self.lib.bankCount(),1)
+        self.assertEqual(self.lib.admit(0x123),0)
+        self.enabled();self.assertEqual(self.lib.bankCount(),3)
+        self.assertEqual(self.lib.admit(0x123),0)
+        self.lib.reset(0,1);self.assertEqual(self.lib.bankCount(),1)
+
+    def test_missing_loader_ownership_proof_keeps_the_original_cache(self):
+        self.lib.reset(0,0);self.lib.proof(0)
+        self.assertEqual(self.lib.admit(0x123),0)
+        self.lib.setup();self.assertEqual(self.lib.bankCount(),1)
+        self.assertEqual(self.lib.extraBytes(),0)
+
+    def test_non_moonshine_platform_owners_refuse_extra_admission(self):
+        for triforce,vc in ((1,0),(0,1),(1,1)):
+            self.lib.reset(0,0);self.lib.platform(triforce,vc)
+            self.assertEqual(self.lib.admit(0x123),0)
+            self.lib.setup();self.assertEqual(self.lib.bankCount(),1)
+
+    def test_extra_banks_require_a_supported_sunshine_disc(self):
+        for game,accepted in ((0x474D534A,1),(0x474D5345,1),(0x474D5350,1),(0x474D534B,0),(0,0)):
+            self.lib.reset(0,0);self.lib.game(game)
+            self.assertEqual(self.lib.admit(0x123),accepted)
+
+    def test_bank_admission_rejects_alias_alignment_empty_and_wrapping_ranges(self):
+        for kind in range(5):self.assertEqual(self.lib.invalidBank(kind),0)
+
+    def test_extra_capacity_retains_hot_reads_after_base_bank_fills(self):
+        self.enabled()
+        for off in (0x100000,0x300000,0x500000,0x700000):self.read(off,0x100000)
+        self.read(0x900000,0x80000)
+        self.assertEqual(self.lib.get(17),0x10100060)
+        before=self.lib.get(0)
+        for off in (0x100000,0x300000,0x500000,0x700000):self.read(off,0x100000)
+        self.read(0x900000,0x80000)
+        self.assertEqual(self.lib.get(0),before)
+        self.read(0xB00000,32)
+        before=self.lib.get(0)
+        self.read(0x700000,0x100000);self.read(0x900000,0x80000)
+        self.assertEqual(self.lib.get(0),before)
+
+    def test_card_exhaustion_preserves_card_and_uses_only_extra_banks(self):
+        self.enabled(0x300000)
+        self.assertEqual(self.lib.bankCount(),2)
+        self.read(0x100000,0x100000);self.assertEqual(self.lib.get(17),0x10000020)
+        self.read(0x300000,0x80000);self.assertEqual(self.lib.get(17),0x10100060)
+        self.assertEqual(self.lib.guards(),1)
+        self.lib.reset(0,0)
+        self.assertEqual(self.lib.card(0,0x400000),-5)
+
+    def test_total_capacity_never_permits_a_fill_across_bank_boundaries(self):
+        self.enabled(0x280000)
+        self.read(0x100000,0x180000)
+        self.assertEqual(self.lib.get(2),0x80000)
+        self.assertEqual(self.lib.get(14),0)
+        for off in range(0x200000,0xA00000,0x20000):self.read(off+17,0x1ffff)
+        self.assertEqual(self.lib.guards(),1)
+
+    def test_readahead_remains_bounded_when_changing_disjoint_banks(self):
+        self.enabled(0x280000)
+        self.read(0x100000,0x80000-1)
+        self.lib.sequential(0x200001)
+        self.read(0x200001,32)
+        self.assertEqual(self.lib.get(17),0x10000020)
+        self.assertLessEqual(self.lib.get(3),0x10000+511)
+        before=self.lib.get(0);self.read(0x200021,32)
+        self.assertEqual(self.lib.get(0),before)
+
+    def test_randomized_reads_preserve_all_disjoint_bank_guards(self):
+        rng=random.Random(1212);self.enabled(0x200000)
+        for _ in range(500):
+            self.read(rng.randrange(0x800000),rng.choice((1,33,543,0x8000,0x100000,0x100001)))
+
+
+class InvalidExtraCacheTests(unittest.TestCase):
+    compile_flags=['-DTEST_EXTRA_CACHE=2']
+    setUpClass=classmethod(LauncherIsoCacheTests.setUpClass.__func__)
+    read=LauncherIsoCacheTests.read
+
+    def test_one_bad_row_rejects_every_extra_bank_and_preserves_card_reservation(self):
+        self.lib.reset(0x200000,0)
+        self.assertEqual(self.lib.admit(0x123),1)
+        self.lib.setup();self.assertEqual(self.lib.bankCount(),1)
+        self.assertEqual(self.lib.get(4),0x100000)
+        for offset in (0x100000,0x300000,0x500000):
+            self.read(offset,0x100000)
+            self.assertEqual(self.lib.get(17),0x200000)
 
 
 if __name__=='__main__':unittest.main()

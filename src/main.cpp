@@ -1,3 +1,16 @@
+#include "susamune/loading_trace.hxx"
+#include "susamune/replay_camera.hxx"
+#include "susamune/ghost_recording_native.hxx"
+#include "susamune/pachinko_spin.hxx"
+#include "susamune/king_boo_entry.hxx"
+#include "susamune/replay_session.hxx"
+#include "susamune/ghost_fludd.hxx"
+#include "susamune/ghost_replay_test.hxx"
+#include "susamune/ghost_recording.hxx"
+#include "susamune/ghost_world_runtime.hxx"
+#include "susamune/ghost_memory.hxx"
+#include "susamune/ghost_trace.hxx"
+#include "susamune/ghost_trace_observation.h"
 #include "Dolphin/GX_types.h"
 #include "Dolphin/OS.h"
 #include "Dolphin/mem.h"
@@ -36,6 +49,9 @@
 #include "susamune/finish_breakdown.hxx"
 #include "susamune/ghost.hxx"
 #include "susamune/ghost_camera.hxx"
+#include "susamune/ghost_stage_context.hxx"
+#include "susamune/ghost_context.hxx"
+#include "susamune/ghost_simulation.hxx"
 #if TIMEWARP_LIVE_RACING
 #include "susamune/live_race.hxx"
 #include "susamune/live_transport.hxx"
@@ -143,6 +159,8 @@ extern "C" void* getArenaLo() {
 // zeroed BSS for the whole boot sequence.
 extern "C" void onAppInit(TApplication* app) {
     app->initialize();
+    PachinkoSpin::init();
+    KingBooEntry::init();
     CrashReport::init();
     gSettings.init();
     MenuThemeAssets::service();
@@ -152,12 +170,15 @@ extern "C" void onAppInit(TApplication* app) {
     riccoFruitControlInit();
     gQFTTimer.init();
     Ghost::init();
+    GhostMemory::init();
+    GhostTrace::init();
     GhostCamera::init();
     CollisionViewer::init();
     GhostModel::init();
     gAttemptCounter.init();
     Records::init();
     RecordsPersistence::init();
+    GhostStageContext::init();
     ILing::init();
     StageLoader::init();
 #if TIMEWARP_LIVE_RACING
@@ -194,11 +215,13 @@ extern "C" void onAppInit(TApplication* app) {
 }
 
 extern "C" u8 onUpdateGameMode(TMarDirector* director) {
-    if (SavestateManager::diskBusy()) return director->mCurState;
+    if (SavestateManager::diskBusy()) { GhostTrace::noteHold(MS_HOLD_DISK); return director->mCurState; }
     if (StageLoader::holdGameModeBeforeUpdate(director)) {
+        GhostTrace::noteHold(MS_HOLD_STAGELOADER);
         return director->mCurState;
     }
     if (WarpWheel::holdGameModeBeforeUpdate(director)) {
+        GhostTrace::noteHold(MS_HOLD_WHEEL);
         return director->mCurState;
     }
 
@@ -272,7 +295,9 @@ extern "C" void onSetup(TMarDirector* director) {
     ILing::beforeStageSetup();
     rngControlBeforeStageSetup();
     riccoFruitControlBeforeStageSetup();
+    LoadingTrace::mark(MS_LOAD_OBJECTS_BEGIN);
     director->setupObjects();
+    LoadingTrace::mark(MS_LOAD_OBJECTS_END);
     FinishBreakdown::onStageSetup();
     CrashReport::note(SUSAMUNE_CRASH_EVENT_SETUP_RETURN,
                       static_cast<u32>(director->mAreaID) << 8 |
@@ -338,8 +363,14 @@ extern "C" void onSetup(TMarDirector* director) {
 
 
 extern "C" s32 onUpdate(JDrama::TDirector* director) {
+    GhostReplayTest::update();
+    GhostRecordingNative::poll();
+    GhostWorldRuntime::beforeFrame();
+    GhostContext::beginFrame();
+    GhostSimulation::beginFrame();
     GhostCamera::restore();
     GhostCamera::beginFrame();
+    ReplayCamera::update();
     CollisionViewer::beginFrame();
     CrashReport::observeContext(gpApplication.mContext);
     // Retail soft reset returns through APP_STATE_DONE (4), also used by
@@ -355,6 +386,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         StageLoader::active()) {
         StageLoader::cancel();
     }
+    if (resetContext && !wasResetContext) GhostRecording::automaticDeparture(~0u);
     wasResetContext = resetContext;
     static bool recordsStageContext = false;
     TMarDirector *const stageDirector = RetailInput::stageDirector();
@@ -384,8 +416,9 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
 #endif
     if (gSavestateMgr) gSavestateMgr->updateDisk();
     else StateStorage::update();
+    GhostMemory::update();
     TasProject::update();
-    bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+    bool stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy() || GhostRecording::checkpointLoadPending();
     if (!stateDiskBusy && StateWorkLease::quiet() && GhostStorage::quiet())
         MenuThemeAssets::prepare();
 #if TIMEWARP_LIVE_RACING
@@ -426,10 +459,18 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         PracticeSession::applyGameplaySpeed();
         featuresApply();
         Ghost::beforeDirect();
-        const s32 state = director->direct();
-        PracticeSession::afterDirect(state, true);
+        GhostWorldRuntime::observeFrame();
+        GhostTrace::frame(reinterpret_cast<unsigned *>(MS_TRACE_BUFFER1_PPC + MS_TRACE_BUFFER_BYTES), 1024);
+        GhostTrace::directInput(false, false);
+        const bool advanced=GhostWorldRuntime::beforeDirect(false,false,0xffffffffu);
+        s32 state=0;
+        if(advanced){GhostFludd::beginFrame();state=director->direct();}
+        PracticeSession::afterDirect(state, advanced);
         PracticeSession::seekAfterDirect();
         Ghost::update();
+        if (state > TApplication::CONTEXT_DIRECT_MAIN_LOOP &&
+            state != TApplication::CONTEXT_DIRECT_STAGE && state != TApplication::CONTEXT_DIRECT_MOVIE)
+            GhostRecording::automaticDeparture(~0u);
         return state;
     }
     const bool creationEditing = FinishBreakdown::editing() || gQftDisplay.editing() ||
@@ -485,7 +526,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
                 WarpWheel::suppressClassicInstantUntilRelease();
             }
         } else if (pausePressed) PracticeSession::requestPauseToggle();
-        if (gBinds.wasPressed(BIND_FREE_CAMERA)) PracticeSession::requestFreeCameraToggle();
+        if (gBinds.wasPressed(BIND_FREE_CAMERA)) ReplayCamera::toggle();
         if (gBinds.wasPressed(BIND_PRACTICE_RECORD)) PracticeSession::requestRecord();
         if (gBinds.wasPressed(BIND_PRACTICE_REPLAY)) PracticeSession::requestPlayback();
         if (gBinds.wasPressed(BIND_PRACTICE_STOP)) PracticeSession::requestStop();
@@ -503,7 +544,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         }
     }
     // A shortcut can queue a state operation or open its confirmation now.
-    stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy();
+    stateDiskBusy = SavestateManager::diskBusy() || TasProject::busy() || GhostRecording::checkpointLoadPending();
     menuOwnsRetailPad = menuOwnsRetailPad || (gMenu && gMenu->shown());
     practiceModal = practiceModal || stateDiskBusy || menuOwnsRetailPad;
     SlowdownBind::update(!practiceModal && !seekOwnsInput && !practiceStepConsumed &&
@@ -512,9 +553,12 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     PracticeSession::beforeDirect(practiceModal);
     PracticeSession::seekBeforeDirect();
     PracticeSession::applyGameplaySpeed();
+    const unsigned replayControls = GhostWorldRuntime::controls();
     gQFTTimer.beginFrame();
+    GhostWorldRuntime::observeFrame();
+    GhostTrace::frame(reinterpret_cast<unsigned *>(MS_TRACE_BUFFER1_PPC + MS_TRACE_BUFFER_BYTES), 1024);
     FinishBreakdown::sample();
-    if (PracticeSession::freezeRequested()) gQFTTimer.beginPracticePause();
+    if (PracticeSession::freezeRequested() || (replayControls & 4u)) gQFTTimer.beginPracticePause();
     SplitStats::beginFrame();
     gQFTTimer.update();
     NativeHudPrecision::capture(PracticeSession::freezeRequested());
@@ -543,7 +587,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
                         ((stageDirector->mCurState == TMarDirector::STATE_NORMAL &&
                           (onlineStartHold || menuOwnsRetailPad || WarpWheel::shown() ||
                            sessionModalBeforeDirect || PracticeSession::freezeRequested() ||
-                           Ghost::observerPaused() || stateDiskBusy)) ||
+                           Ghost::observerPaused() || stateDiskBusy || (replayControls & 1u))) ||
                          (stateDiskBusy && SavestateManager::saveDialogOpen()));
     // A direct SD load may start from a save box. Keep that box from advancing
     // into the next area while its state is read, then return to its exact
@@ -567,12 +611,20 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     SplitEvents::beginFrame();
     TMarioGamePad *const retailPad = gpApplication.mGamePads[0];
     RetailPadInputSnapshot retailInput;
-    const bool suppressPad = menuOwnsRetailPad || stateDiskBusy ||
+    const bool suppressPad = (replayControls & 2u) || menuOwnsRetailPad || stateDiskBusy ||
         wheelOwnsInputBeforeDirect || WarpWheel::shown() || WarpWheel::promptPending() ||
         (PracticeSession::freeCamera() && !PracticeSession::resumingNativePause());
     if (suppressPad && retailPad)
         suppressRetailPad(retailPad, retailInput);
-    int state = director->direct();
+    GhostTrace::directInput(freeze, suppressPad,
+        (menuOwnsRetailPad ? MS_HOLD_MENU : 0u) | (stateDiskBusy ? MS_HOLD_DISK : 0u) |
+        (WarpWheel::shown() ? MS_HOLD_WHEEL : 0u) |
+        ((sessionModalBeforeDirect || PracticeSession::freezeRequested()) ? MS_HOLD_PRACTICE : 0u) |
+        (Ghost::observerPaused() ? MS_HOLD_WATCH : 0u) | (onlineStartHold ? MS_HOLD_ONLINE : 0u) |
+        ((replayControls & 1u) ? MS_HOLD_REPLAY : 0u), heldDirectorState);
+    const bool advanced=GhostWorldRuntime::beforeDirect(freeze,suppressPad,heldDirectorState);
+    int state=0;
+    if(advanced){GhostFludd::beginFrame();state=director->direct();}
     if (suppressPad && retailPad)
         restoreRetailPad(retailPad, retailInput);
     if (freeze) {
@@ -580,7 +632,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
         state = 0;
     }
     PracticeSession::endFrozenDirector();
-    PracticeSession::afterDirect(state, !freeze && !menuOwnsRetailPad && !stateDiskBusy);
+    PracticeSession::afterDirect(state, advanced && !freeze && !menuOwnsRetailPad && !stateDiskBusy);
     PracticeSession::seekAfterDirect();
     Ghost::afterDirect(state);
     WallkickDisplay::afterDirect(marioActive);
@@ -593,8 +645,13 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     } else {
         state = LevelWarp::onDirected(state);
     }
-    if (state > TApplication::CONTEXT_DIRECT_MAIN_LOOP)
+    if (state > TApplication::CONTEXT_DIRECT_MAIN_LOOP) {
+        LoadingTrace::mark(MS_LOAD_COMMIT,(unsigned(gpApplication.mNextScene.mAreaID)<<8)|gpApplication.mNextScene.mEpisodeID);
+        ILing::onDeparture();
         FinishBreakdown::onDeparture();
+        if (state == TApplication::CONTEXT_DIRECT_STAGE)
+            GhostWorldRuntime::prepareStartDeparture();
+    }
 
     // Exit Area is identified inside direct(). Delay the one pre-direct
     // bind-driven overlay toggle so its confirming A cannot leak into it.
@@ -609,7 +666,7 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
     gQFTTimer.update();
     SplitEvents::update();
     FinishBreakdown::sample();
-    const bool observerFrame = Ghost::observerStatsSuppressed();
+    const bool observerFrame = Ghost::observerStatsSuppressed() || ReplaySession::blocksResults();
     Ghost::update();
     if (PracticeSession::assisted()) Ghost::invalidateForAssist();
     SusamunePracticeInput consumedInput;
@@ -624,6 +681,15 @@ extern "C" s32 onUpdate(JDrama::TDirector* director) {
                                   sessionResultAfterDirect ||
                                   StageLoader::resultOwnsInput();
     GhostStorage::update();
+    const auto directorState = stageDirector->mCurState;
+    if (state > TApplication::CONTEXT_DIRECT_MAIN_LOOP || directorState == TMarDirector::STATE_DEATH ||
+        directorState == TMarDirector::STATE_STAGE_EXIT || directorState == TMarDirector::STATE_STAGE_EXIT_2) {
+        const bool keepCourse = directorState != TMarDirector::STATE_DEATH &&
+            (state <= TApplication::CONTEXT_DIRECT_MAIN_LOOP ||
+             state == TApplication::CONTEXT_DIRECT_STAGE || state == TApplication::CONTEXT_DIRECT_MOVIE);
+        const auto &next = gpApplication.mNextScene;
+        GhostRecording::automaticDeparture(keepCourse ? (unsigned(next.mAreaID)<<8)|next.mEpisodeID : ~0u);
+    }
     RecordsPersistence::update();
     if (observerFrame || !creationEditing)
         gAttemptCounter.update(observerFrame);
@@ -662,13 +728,14 @@ extern "C" void afterDraw() {
     // immediately afterward: director, fader, audio, and the current frame's
     // GPU work are all complete, while the next game frame has not begun.
     THPPlayerDrawDone();
+    GhostWorldRuntime::afterWorldDraw();
     if (!Ghost::observerStatsSuppressed()) GhostCamera::restore();
     TMarDirector *const stageDirector = RetailInput::stageDirector();
     if (stageDirector && stageDirector->_260 && gSavestateMgr && !gQftDisplay.editing() && !gInputDisplay.editing() &&
         !gMetadataDisplay.editing() && !gCreationExtras.editing() && !MarioColors::editing() && !FluddColors::editing() &&
         !StageLoader::resultOwnsInput() && !Ghost::observerStatsSuppressed())
         gSavestateMgr->processPendingLoad();
-    PracticeSession::afterDraw();
+    PracticeSession::afterDrawWithGhosts();
     PracticeSession::seekAfterDraw();
     TasProject::afterDraw();
     // gpPollution is stale until the async setup thread reaches onSetup.
@@ -679,6 +746,7 @@ extern "C" void afterDraw() {
 
     if (!stageDirector || !stageDirector->_260) {
         GhostCamera::restore();
+        ReplaySession::draw(gMenu);
         return;
     }
 
@@ -700,6 +768,7 @@ extern "C" void afterDraw() {
             if (WarpWheel::shown() || WarpWheel::promptPending())
                 WarpWheel::draw();
             GhostCamera::restore();
+            ReplaySession::draw(gMenu);
             return;
         }
         GameplayPolish::draw(gMenu);
@@ -731,4 +800,5 @@ extern "C" void afterDraw() {
             WarpWheel::draw();
     }
     GhostCamera::restore();
+    ReplaySession::draw(gMenu);
 }

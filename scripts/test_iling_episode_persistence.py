@@ -34,6 +34,11 @@ class EpisodePersistenceTests(unittest.TestCase):
 #include "susamune/failure_banner_style.h"
 #include "susamune/layout_profile.h"
 #include "susamune/gradient_options.h"
+#include "susamune/menu_palette.h"
+const unsigned char MoonshineMenuDefaults[MENU_COLOUR_COUNT][3]=MOONSHINE_MENU_DEFAULT_VALUES;
+static MoonshineMenuPalette menuPalette;
+#undef MOONSHINE_MENU_PALETTE_PHYS_PTR
+#define MOONSHINE_MENU_PALETTE_PHYS_PTR (&menuPalette)
 typedef unsigned char u8;typedef unsigned short u16;typedef unsigned u32;typedef int s32;
 typedef unsigned UINT;typedef unsigned FSIZE_t;
 #define API extern "C" __declspec(dllexport)
@@ -60,6 +65,9 @@ static SusamuneCfg &cfg=cfgStorage.value;
 static SusamuneFinishBreakdownCfg breakdown;
 #undef SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR
 #define SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR (&breakdown)
+static SusamuneOnlineContacts contactsFixture;
+#undef SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR
+#define SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR (&contactsFixture)
 static SusamuneOnlineNameCfg onlineName;
 #undef SUSAMUNE_ONLINE_NAME_PHYS_PTR
 #define SUSAMUNE_ONLINE_NAME_PHYS_PTR (&onlineName)
@@ -104,15 +112,16 @@ unsigned DeviceForName(const char*){return 0;}void RemountDevice(unsigned){}
         code += kernel[kernel.index("#define SUSAMUNE_SETTING_KEY"):kernel.index("// Same, for the running disc") ]
         code += function(kernel, "FindSettingKey")
         for name in re.findall(r"\b(Apply\w+)\(", function(kernel, "ParseIni")):
-            if name not in ("ApplyILEpisodeKey", "ApplyPracticeDisplayStyleKey", "ApplyWallkickStyleKey", "ApplyFailureBannerStyleKey", "ApplyFinishBreakdownKey", "ApplyOnlineNameKey"):
+            if name not in ("ApplyILEpisodeKey", "ApplyPracticeDisplayStyleKey", "ApplyWallkickStyleKey", "ApplyFailureBannerStyleKey", "ApplyFinishBreakdownKey", "ApplyMenuColourKey", "ApplyOnlineNameKey"):
                 code += f"template<class... T>void {name}(T...){{}}\n"
         code += kernel[kernel.index("enum IniSection {"):kernel.index("static enum IniSection ClassifySection")]
         code += kernel[kernel.index("#define IL_EPISODE_KEY"):kernel.index("static void ApplyILEpisodeKey")]
+        palette_keys=kernel[kernel.index("static const char *const MenuColourKeys"):];code+=palette_keys[:palette_keys.index("};")+2]
         keys = kernel[kernel.index("static const char *const CreationColorKeys"):]
         code += keys[:keys.index("};") + 2]
         code += kernel[kernel.index("static const char *const PracticeDisplayKeys"):kernel.index("static u8 ApplyPracticeDisplayStyleKey")]
         for name in ("BuildSectionName", "IsSpace", "Trim", "ParseU8", "ParseU16", "ParseQftU8", "ParseQftRgb", "ClassifySection",
-                     "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "OnlineNameValid", "ParseOnlineList", "ApplyOnlineKey", "ApplyOnlineNameKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
+                     "ApplyMenuColourKey", "ApplyILEpisodeKey", "ApplyWallkickStyleKey", "ApplyMovementOverlayStyleKey", "ApplyFinishBreakdownKey", "OnlineNameValid", "ParseOnlineList", "ApplyOnlineContactKey", "ApplyOnlineKey", "ApplyOnlineNameKey", "ApplyPracticeDisplayStyleKey", "InheritPracticeDisplayStyles", "ApplyFailureBannerStyleKey",
                      "ParseIni", "Emit", "EmitStr", "EmitILEpisodes", "EmitMovementOverlayStyle", "EmitPracticeDisplayStyles", "EmitFailureBannerStyle", "EmitFinishBreakdown", "EmitOnline"):
             code += function(kernel, name)
         for name in ("EmitNativeTimerStyle", "EmitMarioColors", "EmitFluddColors"):
@@ -143,8 +152,9 @@ API void selectRegion(const char*region){
  BuildSectionName(CreationSection,SUSAMUNE_INI_SECTION_CREATION,region);
  resetEpisodeChoices();stageEpisodes(&episodes);memset(&cfg,0,sizeof(cfg));
  SusamunePracticeDisplayStyleInit(&practiceStyles);
- SusamuneFinishBreakdownInit(&breakdown);
+ MoonshineMenuPaletteInit(&menuPalette);SusamuneFinishBreakdownInit(&breakdown);
  memset(&onlineName,0,sizeof(onlineName));onlineName.magic=SUSAMUNE_ONLINE_NAME_MAGIC;
+ memset(&contactsFixture,0,sizeof(contactsFixture));contactsFixture.magic=SUSAMUNE_ONLINE_CONTACTS_MAGIC;
  cfg.wallkickStyle.magic=SUSAMUNE_WALLKICK_STYLE_MAGIC;cfg.wallkickStyle.version=SUSAMUNE_WALLKICK_STYLE_VERSION;
  cfg.flags|=SUSAMUNE_CFG_FLAG_SETTINGS_TAIL;
  cfg.count=SETTING_KEY_COUNT;for(unsigned i=0;i<SUSAMUNE_CFG_TOTAL_SETTINGS;i++)SusamuneCfgSetSetting(&cfg,i,SUSAMUNE_CFG_UNSET);
@@ -156,6 +166,7 @@ API unsigned getSetting(unsigned index){return SusamuneCfgGetSetting(&cfg,index)
 API void settingCount(unsigned count){cfg.count=count;}
 API void getEpisodes(SusamuneILEpisodesCfg*out){*out=episodes;}
 API const void*styles(){return &practiceStyles;}
+API void menuColours(MoonshineMenuPalette*out){*out=menuPalette;}
 API void finishBreakdown(SusamuneFinishBreakdownCfg*out){*out=breakdown;}
 API SusamuneOnlineNameCfg*onlineNameBlock(){return &onlineName;}
 API const void*unrelated(){return &cfg.movementStyle;}

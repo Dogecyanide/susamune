@@ -1,0 +1,14 @@
+R10 - Launcher input responsiveness, 2026-10-30
+
+Removed the shared input lock that let a held direction block a fresh A/B/Start
+press. Each button now has an independent press edge. Held-state queries remain
+available for navigation/autoboot, but do not consume or lock other buttons.
+A held A does not auto-confirm the next page. Direction repeat uses elapsed time:
+first repeat after300ms, then85ms intervals; slow frames produce one step, not a
+catch-up burst. Controller polling, video waits and game input are unchanged.
+
+Built with the real launcher toolchain. Seven production-query/repeat tests cover
+navigation+confirm/cancel, held-confirm page transitions, rapid taps, pure held
+queries,30/50/60Hz polling, slow frames and timer wrap. Hardware feel still needs
+your check. This package keeps the r9 compression backend and Wii-tested r8
+regional mods. No .msgt playback or new capture fields are included.

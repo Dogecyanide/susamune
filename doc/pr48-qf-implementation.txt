@@ -1,0 +1,25 @@
+In progress: one ten-minute detailed recorder, not yet enabled/shipped.
+
+Primary ownership: verified original Wii IOS58 6176 boundary, explicit loader
+proof plus fresh kernel capability, with live PPC BAT admission. Unknown IOS
+or vWii configurations are rejected until separately verified. Existing state
+pool/cache reservations and MEM1 arena do not change.
+
+Upper range 0x93400000..0x935E0000: reserve 32 KiB for a CPU-only codec module
+(to avoid enlarging JP's full mod container), split the remaining bytes equally.
+Native resource-ARAM tail: request 384 KiB from the actual JKRAramHeap tail after
+both HUD/guidebook archive blocks exist; never write into an allocator's free
+space without owning its block. Split the allocated tail equally. Dolphin uses
+verified separate fake-MEM2 gaps at 0x71C20000 and 0x71F00000.
+
+Per QF: ten lossless controller bytes, exact signed camera yaw, camera mode plus
+controller-processing provenance = 13 bytes. Per accepted input frame: source
+frame serial u32 and tick count u16. A per-frame delta mask can reduce repeated
+bytes, with raw fallback bounded by 6*36000+13*71929+32 = 1,151,109 bytes/track.
+Each proposed bank holds 1,163,264 bytes after the 32 KiB code carveout.
+
+Current frame cache and ownership bookkeeping reuse the fixed physical record
+bank tail. Legacy frame/pose/camera/context data retains its current semantics.
+V11 SGQF extension, codecs, storage transactions, saved-state spans and website
+contract remain implementation work. Do not claim completion or enable V11
+until those paths and hardware ownership are validated.

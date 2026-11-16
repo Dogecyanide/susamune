@@ -59,7 +59,7 @@ struct TFlagManager {
 } flags;
 TFlagManager *TFlagManager::smInstance=&flags;
 struct Vec { float x,y,z; };
-struct TBaseNPC { const void *mDummyConnectActor; Vec mTranslation; const char *mKeyName; };
+struct TBaseNPC { const void *mDummyConnectActor; Vec mTranslation; const char *mKeyName; u32 mObjectID; };
 struct THitActor {};
 struct TSpineEnemy { u8 mHealth; };
 struct TMapObjBase { u16 mState; };
@@ -160,6 +160,7 @@ __declspec(dllexport) void counts(int goldBefore,int goldAfter,int ballBefore,in
  sPreBalloons=ballBefore;flags.Type6Flag.mBJRBalloonCount=ballAfter;updateCountEvents();
 }
 __declspec(dllexport) void plant(int before,int after) { noteGatekeeper(0,0,0,(u8)before,(u8)after); }
+__declspec(dllexport) void talkType(unsigned type) {TBaseNPC npc={0,{0,0,0},0,type};noteTalk(&npc);}
 __declspec(dllexport) void talk(int actor,const char *name) {
  u32 type=actor;TBaseNPC npc={&type,{0,0,0},name};noteTalk(&npc);
 }
@@ -340,6 +341,14 @@ __declspec(dllexport) void shine(int id,int actualShine) {
             for before,after in ((3,3),(2,3),(3,2),(2,2),(2,1),(1,0),(1,0)):
                 self.lib.plant(before,after)
             self.assertEqual(self.events(),list(range(first,first+3)),route)
+
+    def test_plaza_shadow_uses_peach_rescue_dialogue_once(self):
+        self.reset('DELFINO_SHADOW_MARIO',1,1)
+        self.lib.talkType(0x0400000a);self.assertEqual(self.events(),[])
+        self.lib.talkType(0x04000018);self.lib.talkType(0x04000018);self.assertEqual(self.events(),[0])
+    def test_peach_does_not_split_other_routes_or_plaza_scenarios(self):
+        for route,area,episode in [('DELFINO_SHADOW_MARIO',1,2),('DELFINO_SHADOW_MARIO',2,1),('BIANCO_7',2,6)]:
+            self.reset(route,area,episode);self.lib.talkType(0x04000018);self.assertEqual(self.events(),[])
 
     def test_shadow_mario_only_splits_talking_to_connected_actor(self):
         for route,first in (('DELFINO_SHADOW_MARIO',0),('BIANCO_7',0),('SIRENA_7',1)):

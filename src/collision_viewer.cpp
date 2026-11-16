@@ -32,7 +32,10 @@ const u32 kCollisionColors[] = {0x3078ffff, 0x60c8ffff, 0x3030bfff,
 constexpr u32 kTriangleCapacity = 131072;
 constexpr u32 kRetainedWords = kTriangleCapacity / 32 -
     SUSAMUNE_COLLISION_BITS_SIZE / sizeof(u32);
-u32 sActiveTriangles[kRetainedWords];
+// CPU bitset stays with the physical bank; record/playback swaps own only payloads.
+u32 (&sActiveTriangles)[kRetainedWords] = *reinterpret_cast<u32 (*)[kRetainedWords]>(SUSAMUNE_COLLISION_PRIMARY_PPC_BASE);
+static_assert(sizeof(sActiveTriangles) == SUSAMUNE_COLLISION_PRIMARY_SIZE,
+              "primary collision bitset allocation changed");
 u16 sFloorType, sFloorFlags;
 s16 sFloorValue;
 bool sFloorValid, sLimit, sDrawn;

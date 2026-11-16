@@ -12,14 +12,14 @@ class TMarioGamePad;
 struct MetadataDisplayLiveCfg {
     u16 x;
     u16 y;
-    u16 fieldMask;
+    u32 fieldMask;
     u8  startVisible;
     u8  scale;
     u8  labelMode;
     u8  backgroundAlpha;
 };
 
-static_assert(sizeof(MetadataDisplayLiveCfg) == 10, "metadata live config layout changed");
+static_assert(sizeof(MetadataDisplayLiveCfg) == 12, "metadata live config layout changed");
 
 class MetadataDisplay {
 public:
@@ -35,6 +35,8 @@ public:
         FIELD_INVINC,
         FIELD_GOOP,
         FIELD_SPIN,
+        FIELD_DIRECTION, FIELD_GAIN, FIELD_HEIGHT, FIELD_ACTION,
+        FIELD_SLOPE, FIELD_FLOOR, FIELD_WATER, FIELD_HOVER,
         FIELD_COUNT
     };
 
@@ -49,7 +51,7 @@ public:
     bool dirty() const { return mDirty; }
     void clearDirty() { mDirty = false; }
 
-    static constexpr int menuRowCount() { return FIELD_COUNT + 10; }
+    static constexpr int menuRowCount() { return 29; }
     static const char *menuRowName(int row);
     const char        *menuRowValue(int row) const;
     void               adjustMenuRow(int row, int dir);

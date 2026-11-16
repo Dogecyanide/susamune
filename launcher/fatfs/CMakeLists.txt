@@ -5,6 +5,7 @@ add_library(fatfs-${FATFS_ARCH} STATIC ff.c ff_utf8.c option/ccsbcs.c)
 target_include_directories(fatfs-${FATFS_ARCH} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(FATFS_ARCH STREQUAL "arm")
+    target_compile_definitions(fatfs-arm PRIVATE MOONSHINE_FATFS_FORWARD_ALLOC_HINT=1)
     target_compile_options(fatfs-arm PRIVATE
         -mbig-endian -O3 -std=gnu89 -g -Wall
         -mcpu=arm926ej-s -msoft-float -mfloat-abi=soft

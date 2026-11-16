@@ -1,0 +1,75 @@
+PR66 loading cache and immediate resets (private test, 2026-11-03)
+
+Wii baseline
+Original: reset 1.334 s; Hotel 1.635 s; Casino 1.167 s; Secret 0.600 s.
+PR65: reset 3.503 s; Hotel 1.735 s; Casino 1.301 s; Secret 0.734 s.
+The user timed Hotel, Casino and Secret identically: +0.100/+0.134/+0.134 s.
+Only reset is not directly comparable: PR65 was timed from its first black
+frame, whereas the older build cut immediately. Do not quote +2.169 s as a
+controlled reset regression, or compare Dolphin wall times to these Wii times.
+
+Changes
+Explicit wheel/IL/reset departures cut to full black after retail initializes
+its exit state. Native state finalization, CARD-busy checks and the recording
+acknowledgement barrier remain. Natural door/shine transitions are unchanged.
+A private JP test withheld the new recording header acknowledgement for 1.5 s:
+the fader was fully black, the old scene remained until acknowledgement, and
+the saved file reloaded identically and replayed to completion (291 frames).
+
+Completed draft retirement reuses its acknowledged header identity. The ARM
+backend still rereads the actual file, scans durable references, checks the
+reference generation and rechecks the identity before unlinking. Unknown or
+unfinished sources use the previous lookup path. This saves one metadata
+round trip; it does not prove that file retirement caused the entire delay.
+
+Cache ownership
+The original 3 MiB bank remains at physical 11000000..11300000. Five separate
+banks add exactly 2,084,864 bytes (1.5 MiB plus the conditional 500 KiB):
+  13030000..13100000  832 KiB
+  13162000..131BE000  368 KiB
+  131C4000..13200000  240 KiB
+  132D0000..132F0000  128 KiB
+  13300000..13375000  468 KiB
+Total cache: 5,230,592 bytes, about 4.99 MiB. No existing mod/recording/state
+reservation moves or shrinks. The old pose/input buffers are still live; these
+new banks do not depend on retiring those callers.
+
+Fixed-owner audit: PAD/control/HID and reload stubs stay below 13030000;
+IPL fonts occupy 13100000..13150000; OSReport uses 13160000..13160020;
+PRS/ARAM hook scratch stays in 131C0000..131C4000; the conservative legacy FST
+reservation starts at 13200000; audio is 13280000..132B3000; BT configuration
+and USB handoff are kept within 132C0000..132D0000; BTPad/overrides remain at
+132F0000; patch scratch starts at 133F1000. Kernel code/data/stacks remain
+below 13000000. Loader USB arena allocations are excluded by the final arena
+bounds, not assumed absent. Audio, HID, USB and BT source limits were inspected.
+The linked libogc sbrk implementation was also disassembled: MEM2 growth
+checks Arena2Hi and updates Arena2Lo. The proof therefore excludes allocations
+made through ordinary malloc as well as the dedicated USB high-arena heap.
+
+A 64-byte loader proof at PPC 93003280 has its own cache lines; the following
+32-byte ARM status at 930032C0 is separately owned. The loader clears both on
+entry. After its last allocation/thread shutdown, it checks the existing
+Wii/IOS58/64-MiB proof, same boot nonce/game, current arena low <=93030000 and
+high >=93380000 (<=933E0000), plus the known IPC boundary. Only after all these
+checks does it flush/invalidate the five ranges and publish their release.
+The supported platform is deliberately narrow; an unproved platform keeps
+its original cache. No memory is granted from a zero-pattern observation.
+
+The V4 mod header word at +48 carries layout CAC1. New readers still accept
+old zero headers, reject other values and require zero for Dolphin. Header
+CRC covers this word. The launcher admits the extra banks only after checked
+mod installation, matching layout, matching final boot proof, ISO mode and
+supported game identity. Older launchers require updating with this package.
+Admission is cleared on ISO reopen/close. Cache allocations never cross banks.
+ARM status words: magic, layout, extra admitted bytes, bank count, then zero.
+
+Validation and limits
+Host tests exercise all five actual bank sizes with independent guard bytes,
+random reads, fills/wraps, stale/malformed ownership proofs and incompatible
+mod headers. The 8,978-request retained PAL lifecycle trace required 1,819
+backend reads/88,451,380 bytes before, and 1,794/87,109,844 with the extra banks.
+This is a modest work reduction, not a measured Wii speedup. Its cold boot
+trace is unchanged. Smaller-fill experiments traded some gains for overhead
+and are not enabled. Sirena 4 still needs a like-for-like Wii comparison.
+All 96 protected timer symbols remain fixed in each regional build. MSGT
+format, replay checks and recording buffers are unchanged by this work.

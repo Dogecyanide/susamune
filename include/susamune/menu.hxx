@@ -32,6 +32,7 @@ public:
     void updateWithSounds(TMarioGamePad *pad);
     void draw(J2DOrthoGraph *ortho);
     void drawGuidebook(J2DOrthoGraph *ortho);
+    void drawReplayMarker(J2DOrthoGraph *ortho, bool sourceTas);
 
     // Drawn after every other overlay so assisted footage cannot hide it.
 

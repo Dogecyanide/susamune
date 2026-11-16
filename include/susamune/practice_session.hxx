@@ -9,6 +9,8 @@
 class Menu;
 
 namespace PracticeSession {
+// Native pre-read values used by the same pause/injection history path.
+bool replayModeHistory(unsigned short &flags,short &stickTimer,int &disabledFrames);
 
 enum { kSavestateSpanCount = 3 };
 struct SavestateData {
@@ -51,6 +53,7 @@ bool ownsGameplayInput();
 void afterDirect(s32 appState, bool retailAdvanced);
 // Service replay loads only after the existing GX completion barrier.
 void afterDraw();
+void afterDrawWithGhosts();
 void onSavestateSaved(u32 slot, u32 generation);
 void onSavestateCleared(u32 slot, u32 generation);
 void onSavestateLoaded();
@@ -89,6 +92,9 @@ bool resumingNativePause();
 // An armed hold survives loading and waits for Mario's controls to return.
 bool pausePending();
 bool freeCamera();
+void cameraPathUpdate();
+bool cameraPathAction(int row, int direction = 1);
+void cameraPathValue(int row, char *out, unsigned size);
 bool hideHud();
 bool recording();
 bool replaying();

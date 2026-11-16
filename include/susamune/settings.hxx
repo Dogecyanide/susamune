@@ -105,6 +105,7 @@ public:
     u8   get(SettingId id) const { return mValues[id]; }
     bool getBool(SettingId id) const { return mValues[id] != 0; }
     void set(SettingId id, u8 value);
+    bool setTransient(SettingId id, u8 value);
 
     // Advance a setting's value by dir (+1 / -1), wrapping. Toggles a bool,
     // steps a choice. Used by the menu for both A-press and left/right.

@@ -1,0 +1,3 @@
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING && MOONSHINE_LWIP_NATIVE_CORE
+#include "../vendor/lwip/src/core/ipv4/ip4.c"
+#endif

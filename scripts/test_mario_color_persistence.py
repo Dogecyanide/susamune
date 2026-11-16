@@ -45,6 +45,11 @@ class MarioColorPersistenceTests(unittest.TestCase):
 #define IS_EMULATOR 1
 #include "susamune/susamune_cfg.h"
 #include "susamune/hoverless.h"
+#include "susamune/menu_palette.h"
+const unsigned char MoonshineMenuDefaults[MENU_COLOUR_COUNT][3]=MOONSHINE_MENU_DEFAULT_VALUES;
+static MoonshineMenuPalette menuPalette;
+#undef MOONSHINE_MENU_PALETTE_STAGE
+#define MOONSHINE_MENU_PALETTE_STAGE (&menuPalette)
 typedef unsigned char u8;typedef signed char s8;typedef unsigned short u16;
 typedef unsigned int u32;typedef int s32;
 #define API extern "C" __declspec(dllexport)
@@ -112,7 +117,7 @@ int CARDClose(CARDFileInfo*){return 0;}
         for name in ("stagedFinishBreakdown", "initBlank", "migrateLegacyPBs", "validPBValue", "migrateProfilesV1",
                      "migrateRecordCfg", "initMarioColors", "publishMarioColors", "initFluddColors", "publishFluddColors", "initILEpisodes", "publishILEpisodes", "initHoverless", "publishHoverless", "publishPracticeDisplays", "checksum",
                      "valid", "validV1", "validV2", "validV3", "validV4", "validV5", "validV6",
-                     "validV7", "validV8", "validV9", "validV10", "validV11", "validV12", "validV13", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
+                     "validV7", "validV8", "validV9", "validV10", "validV11", "validV12", "validV13", "validV14", "migrateRecordV6", "migrateRecordV7", "newer", "initState",
                      "writeRecordLocked", "loadRecords", "lock", "commit"):
             code += function(emulator, name)
         for name in ("ParseU16", "ParseQftU8", "ParseQftRgb", "InitMarioColorsDefaults",
@@ -150,8 +155,8 @@ API int migrate(){
 }
 void makeRecord(Record*r,unsigned version,unsigned generation,unsigned enabled){
  memset(r,0,sizeof(*r));r->magic=kRecordMagic;r->version=version;
- r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:version==9?kRecordPayloadSizeV9:version==10?kRecordPayloadSizeV10:version==11?kRecordPayloadSizeV11:version==12?kRecordPayloadSizeV12:version==13?kRecordPayloadSizeV13:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
- SusamuneFinishBreakdownInit(&r->finishBreakdown);initHoverless(&r->hoverless);initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);initILEpisodes(&r->ilEpisodes);SusamunePracticeDisplayStyleInit(&r->practiceDisplays);r->marioColors.enabled=enabled;
+ r->payloadSize=version==7?kCfgSizeV7:version==8?kRecordPayloadSizeV8:version==9?kRecordPayloadSizeV9:version==10?kRecordPayloadSizeV10:version==11?kRecordPayloadSizeV11:version==12?kRecordPayloadSizeV12:version==13?kRecordPayloadSizeV13:version==14?kRecordPayloadSizeV14:kRecordPayloadSize;r->generation=generation;r->gameVersion=1;
+ MoonshineMenuPaletteInit(&r->menuPalette);SusamuneFinishBreakdownInit(&r->finishBreakdown);initHoverless(&r->hoverless);initBlank(&r->cfg);initMarioColors(&r->marioColors);initFluddColors(&r->fluddColors);initILEpisodes(&r->ilEpisodes);SusamunePracticeDisplayStyleInit(&r->practiceDisplays);r->marioColors.enabled=enabled;
  if(version<10)r->cfg.flags&=~SUSAMUNE_CFG_FLAG_IL_EPISODES;
  if(version<11)r->cfg.flags&=~SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE;
  r->marioColors.rgb[4][1]=91;r->cfg.values[12]=37;r->cfg.nativeTimerStyle.scale=123;
@@ -182,7 +187,7 @@ API int cardCommit(){
  if(ticket!=1||!copyBeforeUnlock||state.mutex.held||mutexErrors)return 2;
  if(state.fluddColors.enabled!=0x301||state.fluddColors.rgb[9][2]!=83)return 9;
  if(writeRecordLocked()!=0||!valid(&card[0])||card[0].marioColors.enabled!=0x65||card[0].marioColors.rgb[6][2]!=17)return 3;
- if(card[0].version!=14||card[0].payloadSize!=sizeof(SusamuneCfg)+352+sizeof(SusamuneHoverlessFile)||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
+ if(card[0].version!=15||card[0].payloadSize!=sizeof(SusamuneCfg)+416+sizeof(SusamuneHoverlessFile)||card[0].fluddColors.enabled!=0x301||card[0].fluddColors.rgb[9][2]!=83)return 4;
  if(!lock())return 5;liveColors.enabled=2;commit();writeFails=true;
  if(writeRecordLocked()!=CARD_ERROR_IOERROR||state.activeRecord!=0||state.generation!=1||!valid(&card[0]))return 6;
  writeFails=false;if(writeRecordLocked()!=0||state.activeRecord!=1||!valid(&card[1])||card[1].marioColors.enabled!=2)return 7;
@@ -211,7 +216,7 @@ API int cardEpisodes(int legacy){
  for(unsigned i=0;i<21;i++)if(liveEpisodes.episodes[i]!=(legacy?0:(i%8)+1))return 7;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_IL_EPISODES))return 8;
  if(!lock())return 9;for(unsigned i=0;i<21;i++)liveEpisodes.episodes[i]=8-(i%8);commit();
- if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=14)return 10;
+ if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=15)return 10;
  for(unsigned i=0;i<21;i++)if(card[0].ilEpisodes.episodes[i]!=8-(i%8))return 11;
  card[0].ilEpisodes.episodes[19]^=1;if(valid(&card[0]))return 12;
  return mutexErrors?13:0;
@@ -249,15 +254,15 @@ API int cardPracticeDisplays(unsigned version){
   expected=card[1].practiceDisplays;}
  card[1].checksum=checksum(&card[1]);
  if(sizeof(Record)!=8192||__builtin_offsetof(Record,practiceDisplays)!=32+kRecordPayloadSizeV10)return 1;
- if((version==10&&!validV10(&card[1]))||(version==11&&!validV11(&card[1]))||(version==12&&!validV12(&card[1]))||(version==13&&!validV13(&card[1]))||(version==14&&!valid(&card[1])))return 2;
+ if((version==10&&!validV10(&card[1]))||(version==11&&!validV11(&card[1]))||(version==12&&!validV12(&card[1]))||(version==13&&!validV13(&card[1]))||(version==14&&!validV14(&card[1]))||(version==15&&!valid(&card[1])))return 2;
  static Record scratch;if(loadRecords(0,&scratch)!=0)return 3;publishPracticeDisplays();
- if(state.generation!=21||state.initialSave!=(version<14)||mutexErrors)return 4;
+ if(state.generation!=21||state.initialSave!=(version<15)||mutexErrors)return 4;
  for(unsigned i=0;i<128;++i)if(((u8*)&livePracticeDisplays)[i]!=((u8*)&expected)[i])return 5;
  if(!(state.cfg.flags&SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE)||state.cfg.values[12]!=37)return 6;
  if(version>=10&&state.ilEpisodes.magic!=SUSAMUNE_IL_EPISODE_MAGIC)return 7;
  if(!lock())return 8;livePracticeDisplays.entries[1].textA=91;commit();expected.entries[1].textA=91;
  for(unsigned i=0;i<128;++i)if(((u8*)&state.practiceDisplays)[i]!=((u8*)&expected)[i])return 9;
- if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=14||card[0].generation!=22)return 10;
+ if(writeRecordLocked()!=0||!valid(&card[0])||card[0].version!=15||card[0].generation!=22)return 10;
  initState();if(loadRecords(0,&scratch)!=0)return 11;publishPracticeDisplays();
  if(state.initialSave||state.generation!=22)return 12;
  for(unsigned i=0;i<128;++i)if(((u8*)&livePracticeDisplays)[i]!=((u8*)&expected)[i])return 13;
@@ -277,9 +282,9 @@ API int cardFinishBreakdown(unsigned version,unsigned corrupt){
  card[1].checksum=checksum(&card[1]);if(corrupt){card[1].finishBreakdown.rgb[1][0]^=1;if(version<14)card[1].checksum=checksum(&card[1]);}
  static Record scratch;if(loadRecords(0,&scratch)!=0)return 1;publishPracticeDisplays();
  if(mutexErrors||state.cfg.values[12]!=37||!(state.cfg.flags&SUSAMUNE_FINISH_BREAKDOWN_FLAG))return 2;
- if(corrupt&&version==14){if(state.generation!=30||liveBreakdown.x!=611)return 3;}
+ if(corrupt&&version>=14){if(state.generation!=30||liveBreakdown.x!=611)return 3;}
  else if(version<14){if(state.generation!=31||!state.initialSave||liveBreakdown.x!=22||liveBreakdown.rows!=111||liveBreakdown.halfSeconds!=40)return 4;}
- else if(state.generation!=31||state.initialSave||liveBreakdown.x!=512||liveBreakdown.padding!=255||liveBreakdown.rows!=65||liveBreakdown.halfSeconds!=0||liveBreakdown.rgb[2][1]!=13)return 5;
+ else if(state.generation!=31||state.initialSave!=(version<15)||liveBreakdown.x!=512||liveBreakdown.padding!=255||liveBreakdown.rows!=65||liveBreakdown.halfSeconds!=0||liveBreakdown.rgb[2][1]!=13)return 5;
  if(version==13&&state.hoverless.values[5]!=789)return 6;
  if(!lock())return 7;liveBreakdown.x=620;liveBreakdown.halfSeconds=120;liveBreakdown.rows=0;commit();
  liveBreakdown.x=15;if(stagedFinishBreakdown().x!=620)return 8;
@@ -287,6 +292,24 @@ API int cardFinishBreakdown(unsigned version,unsigned corrupt){
  writeFails=false;if(writeRecordLocked()!=0)return 10;
  initState();if(loadRecords(0,&scratch)!=0)return 11;publishPracticeDisplays();
  return liveBreakdown.x==620&&liveBreakdown.rows==0&&liveBreakdown.halfSeconds==120&&!state.initialSave?0:12;
+}
+API int cardMenuPalette(unsigned version,unsigned damaged){
+ mutexErrors=flushes=0;checkCommit=false;writeFails=false;fileExists=true;initState();
+ makeRecord(&card[0],kRecordVersion,30,3);makeRecord(&card[1],version,31,5);
+ card[1].menuPalette.custom=0x8101;card[1].menuPalette.rgb[15][2]=19;
+ card[1].cfg.metadataStyle.reserved0[5]=173;card[1].cfg.metadataStyle.present|=SUSAMUNE_METADATA_STYLE_EXTRA_FIELDS;
+ if(damaged)card[1].menuPalette.reserved[2]=1;
+ card[1].checksum=checksum(&card[1]);
+ static Record scratch;if(loadRecords(0,&scratch)!=0||state.generation!=31)return 1;
+ if(state.cfg.metadataStyle.reserved0[5]!=173||state.initialSave!=(version<15))return 2;
+ if(!MoonshineMenuPaletteValid(&menuPalette))return 3;
+ if(version<15||damaged){if(menuPalette.custom)return 4;}
+ else if(menuPalette.custom!=0x8101||menuPalette.rgb[15][2]!=19)return 5;
+ menuPalette.custom=0xFFFF;menuPalette.rgb[8][0]=221;
+ if(!lock())return 6;commit();if(writeRecordLocked()!=0)return 7;
+ initState();if(loadRecords(0,&scratch)!=0||state.initialSave)return 8;
+ if(menuPalette.custom!=0xFFFF||menuPalette.rgb[8][0]!=221)return 9;
+ return 0;
 }
 API int cardFinishBreakdownRows(unsigned rows){
  mutexErrors=0;checkCommit=false;writeFails=false;fileExists=true;initState();

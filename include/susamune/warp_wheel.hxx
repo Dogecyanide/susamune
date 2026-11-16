@@ -24,6 +24,7 @@ namespace LevelWarp {
 
 // Online readiness must not overtake a queued departure or CARD operation.
 bool readyForOnlineRace();
+bool readyForStorageMaintenance(u8 heldDirectorState);
 
 struct Dest {
     enum { POST_CORONA = 0x80 };
@@ -89,9 +90,12 @@ u8 guardExitArea(u8 nextState);
 // Start an IL immediately when safe, or hide the menu and hold it behind the
 // shared unsaved-PB confirmation. False means warps are disabled.
 bool requestILStart(int entry);
+bool requestOnlineILStart(int entry, u8 episode);
+bool requestOnlineMenu();
 // A user-picked IL cancels an unfinished session, but an earned result, final
 // report and its protected-PB policy resolve first.
 bool requestExplicitILStart(int entry);
+bool requestReplayStart(const LevelWarp::Dest &source, const LevelWarp::Dest &destination);
 // Savestate restores destroy volatile ghost state. The request opens the same
 // PB confirmation when needed; an approved load is returned exactly once.
 bool requestSavestateLoad();

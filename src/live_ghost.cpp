@@ -1,3 +1,5 @@
+#include "susamune/mem2_map.h"
+#include "Dolphin/mem.h"
 #include "susamune/live_ghost.hxx"
 #include "susamune/live_race.hxx"
 
@@ -44,8 +46,9 @@ struct State {
     char name[17];
 };
 #pragma clang section bss=""
-State s;
-State sExtra[Channels - 1];
+State &s = *reinterpret_cast<State *>(SUSAMUNE_LIVE_GHOSTS_PPC_BASE);
+State (&sExtra)[Channels - 1] = *reinterpret_cast<State (*)[Channels - 1]>(SUSAMUNE_LIVE_GHOSTS_PPC_BASE + sizeof(State));
+static_assert(Channels * sizeof(State) <= SUSAMUNE_LIVE_GHOSTS_SIZE, "live ghost scalar storage");
 unsigned sChannel;
 State &currentState() { return sChannel ? sExtra[sChannel - 1] : s; }
 struct Channel {
@@ -107,6 +110,11 @@ Ghost::VisualState interpolate(const Sample &a, const Sample &b, u32 time) {
     }
     return p;
 }
+}
+
+void init() {
+    memset(&s, 0, sizeof(s)); memset(sExtra, 0, sizeof(sExtra)); sChannel = 0;
+    resetAll();
 }
 
 void reset() {

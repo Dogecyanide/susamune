@@ -57,6 +57,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SusamuneTheme.h"
 #include "SusamuneThemeFiles.h"
 #include "MoonshineData.h"
+#include "MoonshineMem2Audit.h"
+#include "MoonshineGhostMemory.h"
 #include "SusamuneText.h"
 #include "susamune/mem2_map.h"
 
@@ -1117,7 +1119,14 @@ static bool PreloadLauncherTheme(void)
 		return false;
 	// A cold USB device may need patched IOS; retry later without a boot delay.
 	if (MountDeviceWithTimeout(dev, 0) != NULL)
-		loaded = SusamuneThemeLoad(GetRootDevice(), &background);
+    {
+        if (SusamuneMusicLoad(GetRootDevice()))
+        {
+            SusamuneMusicInit();
+            SusamuneMusicStart();
+        }
+        loaded = SusamuneThemeLoad(GetRootDevice(), &background);
+    }
 	// Keep the decoded texture, but never carry storage handles across IOS.
 	UnmountDevice(dev);
 	return loaded;
@@ -1128,11 +1137,13 @@ static bool PreloadLauncherTheme(void)
  * @param CurDICMD	[in] DI command. (0 == disc image, DIP_CMD_NORMAL == GameCube disc, DIP_CMD_DVDR == DVD-R)
  * @param ISOShift	[out,opt] ISO Shift. (34-bit rshifted byte offset)
  * @param BI2region	[out,opt] bi2.bin region code.
+ * @param discRevision [out] Selected disc header revision.
  * @return 0 on success; non-zero on error.
  */
-static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2region)
+static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2region, u8 *discRevision)
 {
 	char GamePath[260];
+	*discRevision = 0xff;
 
 	// Re-read the disc header to get the full ID6.
 	u8 *MultiHdr = memalign(32, 0x800);
@@ -1250,6 +1261,21 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 			// CISO+MultiGame is not supported, so read the
 			// BI2.bin region code if requested and then return.
 			int ret = 0;
+			/* Revision belongs to the embedded disc, not the CISO header. */
+			if (wiiVCInternal) {
+				WDVD_FST_LSeek(0x8000);
+				read = WDVD_FST_Read(wdvdTmpBuf, sizeof(patchID));
+				memcpy(patchID, wdvdTmpBuf, sizeof(patchID));
+			} else {
+				read = 0;
+				if (f_lseek(&f, 0x8000) != FR_OK ||
+					f_read(&f, patchID, sizeof(patchID), &read) != FR_OK) read = 0;
+			}
+			if (read != sizeof(patchID)) ret = 2;
+			else {
+				*discRevision = patchID[7];
+				memcpy(&ncfg->GameID, patchID, 4);
+			}
 			if (ISOShift)
 				*ISOShift = 0;
 			if (BI2region)
@@ -1333,7 +1359,14 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 		}
 		
 		// For patch.txt
-		f_read(&f, patchID, 0x6, &read);
+		fres = f_read(&f, patchID, sizeof(patchID), &read);
+		if (fres != FR_OK || read != sizeof(patchID)) {
+			f_close(&f);
+			free(MultiHdr);
+			return 5;
+		}
+		*discRevision = patchID[7];
+		memcpy(&ncfg->GameID, patchID, 4);
 		
 		f_lseek(&f, 0x20);
 		f_read(&f, playlog_name, 0x2A, &read);
@@ -1354,6 +1387,8 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 
 	if (!IsMultiGameDisc((const char*)MultiHdr))
 	{
+		*discRevision = MultiHdr[7];
+		memcpy(&ncfg->GameID, MultiHdr, 4);
 		// Not a multi-game disc.
 		if (!CurDICMD)
 		{
@@ -1489,7 +1524,7 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 				break;
 		}
 
-		if( FPAD_Down(1) )
+		if( (FPAD_Down(1)) )
 		{
 			if(DownHeld == 0 || DownHeld > 10)
 			{
@@ -1504,7 +1539,7 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 			DownHeld = 0;
 		}
 
-		if( FPAD_Up(1) )
+		if( (FPAD_Up(1)) )
 		{
 			if(UpHeld == 0 || UpHeld > 10)
 			{
@@ -1553,6 +1588,7 @@ static u32 CheckForMultiGameAndRegion(u32 CurDICMD, u32 *ISOShift, u32 *BI2regio
 
 	// Save the Game ID.
 	memcpy(&ncfg->GameID, gi[PosX].ID, 4);
+	*discRevision = gi[PosX].Revision;
 	return 0;
 }
 
@@ -1571,6 +1607,7 @@ int main(int argc, char **argv)
 	DCInvalidateRange(loader_stub, 0x1800);
 	memcpy(loader_stub, (void*)0x80001800, 0x1800);
 	RAMInit();
+	MoonshineGhostMemoryInvalidate();
 	// Command-line configuration is gone: susamune.ini is the only place
 	// launcher settings live, and a second way to set them was a second
 	// source of truth. argv[0] is still read further down for launch_dir,
@@ -1623,6 +1660,7 @@ int main(int argc, char **argv)
 
 	UseSD = (strncmp(launch_dir, "usb:", 4) != 0);
 	bool themeLoaded = PreloadLauncherTheme();
+	MoonshineMem2AuditCapture(0);
 	ShowMessageScreen("Starting Moonshine...");
 	s32 fd;
 
@@ -1683,6 +1721,7 @@ int main(int argc, char **argv)
 		__ES_Close();
 		fd = IOS_Open( dev_es, 0 );
 
+		SusamuneMusicPause(true);
 		raw_irq_handler_t irq_handler = BeforeIOSReload();
 		IOS_IoctlvAsync( fd, 0x25, 0, 0, &IOCTL_Buf, NULL, NULL );
 		sleep(1); //wait this time at least
@@ -1698,6 +1737,8 @@ int main(int argc, char **argv)
 	//	IOS_ReloadIOS(58);
 	//}
 
+	SusamuneMusicPause(true);
+	MoonshineMem2AuditCapture(1);
 	// Preparing Nintendont Kernel...
 	ShowMessageScreen("Preparing Nintendont Kernel...");
 
@@ -1750,6 +1791,8 @@ int main(int argc, char **argv)
 
 	gprintf("Nintendont at your service!\r\n%s\r\n", NIN_BUILD_STRING);
 	KernelLoaded = 1;
+	SusamuneMusicPause(false);
+	SusamuneMusicService();
 
 	// Checking for storage devices...
 	ShowMessageScreen("Checking storage devices...");
@@ -1982,7 +2025,8 @@ int main(int argc, char **argv)
 	// Get multi-game and region code information.
 	u32 ISOShift = 0;	// NOTE: This is a 34-bit shifted offset.
 	u32 BI2region = 0;	// bi2.bin region code [TODO: Validate?]
-	int ret = CheckForMultiGameAndRegion(CurDICMD, &ISOShift, &BI2region);
+	u8 discRevision;
+	int ret = CheckForMultiGameAndRegion(CurDICMD, &ISOShift, &BI2region, &discRevision);
 	if (ret != 0) {
 		ClearScreen();
 		PrintInfo();
@@ -2044,6 +2088,11 @@ int main(int argc, char **argv)
 
 		// Return to the loader.
 		ExitToLoader(1);
+	}
+
+	{
+		const char *warning = SusamuneDiscRevisionWarning(ncfg->GameID, discRevision);
+		if (warning) ShowMessageScreenAndWaitForPower(warning);
 	}
 
 	// Save the ISO shift value for multi-game discs.
@@ -2151,6 +2200,7 @@ int main(int argc, char **argv)
 		__SYS_UnlockSram(1); // 1 -> write changes
 		while(!__SYS_SyncSram());
 	}
+
 
 	WPAD_Disconnect(0);
 	WPAD_Disconnect(1);
@@ -2314,6 +2364,9 @@ int main(int argc, char **argv)
 		f_close(&CodeFD);
 	}*/
 
+	MoonshineGhostMemoryPublish(ncfg->GameID);
+	MoonshineMem2AuditCapture(2);
+	MoonshineMem2AuditWrite(GetRootDevice());
 	//sync changes
 	CloseDevices();
 
@@ -2677,6 +2730,7 @@ int main(int argc, char **argv)
 	__exception_closeall();
 	__lwp_thread_closeall();
 
+	MoonshineCacheMemoryPublish(ncfg->GameID);
 	DVDStartCache(); //waits for kernel start
 	DCInvalidateRange((void*)0x90000000, 0x1000000);
 	memset((void*)(void*)0x90000000, 0, 0x1000000); //clear ARAM

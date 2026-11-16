@@ -64,6 +64,9 @@ void DIUnregister(void);
 void DIFinishAsync(void);
 u32 DIReadThread(void *arg);
 bool DiscCheckAsync( void );
+/* Includes cache hits; separate from the physical USB keepalive timer. */
+extern u32 DILastReadTick;
+extern bool DI_IRQ;
 void DiscReadSync(u32 Buffer, u32 Offset, u32 Length, u32 Mode);
 void DISetDIMMVersion( u32 Version );
 bool DIChangeDisc( u32 DiscNumber );

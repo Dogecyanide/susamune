@@ -94,8 +94,18 @@ def verify_application(iso, build, patch, region, temporary_iso):
     manifest, cold, symbols, protected, evidence = verify_build(build, region)
     receipt = read_json(patch.with_suffix(".bps.json"))
     checked_patch(patch.read_bytes(), receipt, region, evidence)
-    retail, _, _, _, disc_info = read_disc(iso, region)
-    changed, payloads, dol_size, _ = plan_dol(retail, manifest, cold, symbols, protected, dolphin_ghost_assets.extract(iso))
+    retail, _, extents, _, disc_info = read_disc(iso, region)
+    japanese = receipt.get("japanese_ui", {})
+    if receipt.get("ui_language", "en") == "ja":
+        from gen_japanese_ui import build as build_japanese
+        from timewarp_emulator_export import language_operations
+        japanese_data = bytes(build_japanese(dolphin=True)[0])
+        _, expected_japanese = language_operations([], extents, region, "ja", japanese_data)
+        if japanese != expected_japanese: raise ValueError("Japanese asset receipt differs")
+    elif japanese: raise ValueError("Unexpected Japanese asset in English export")
+    from build_dolphin_https import checked_image
+    native, _ = checked_image(build / "dolphin-native")
+    changed, payloads, dol_size, _ = plan_dol(retail, manifest, cold, symbols, protected, dolphin_ghost_assets.extract(iso), native)
     expected = bytearray(retail + bytes(dol_size - len(retail)))
     for offset, data in [*changed.items(), *payloads]:
         expected[offset:offset + len(data)] = data
@@ -114,8 +124,17 @@ def verify_application(iso, build, patch, region, temporary_iso):
             target.seek(relocated)
             if target.read(dol_size) != expected:
                 raise ValueError("Applied DOL differs from the verified production plan")
-            for begin, end in ((0, 0x420), (0x424, relocated),
-                               (relocated + dol_size, receipt["iso_size"])):
+            exclusions = [(0x420,0x424), (relocated,relocated+dol_size)]
+            if japanese:
+                target.seek(japanese["offset"])
+                if target.read(japanese["bytes"]) != japanese_data:
+                    raise ValueError("Applied Japanese asset differs")
+                exclusions.append((japanese["offset"],japanese["offset"]+japanese["bytes"]))
+            ranges, cursor = [], 0
+            for begin,end in sorted(exclusions):
+                ranges.append((cursor,begin));cursor=end
+            ranges.append((cursor,receipt["iso_size"]))
+            for begin, end in ranges:
                 source.seek(begin)
                 target.seek(begin)
                 remaining = end - begin

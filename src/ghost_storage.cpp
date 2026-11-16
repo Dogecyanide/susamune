@@ -1,3 +1,7 @@
+#include "susamune/ghost_recording_native.hxx"
+#include "susamune/ghost_recording.hxx"
+#include "susamune/ghost_trace_share.hxx"
+#include "susamune/ghost_trace_flat.hxx"
 #include "susamune/ghost_storage.hxx"
 
 #include "Dolphin/OS.h"
@@ -11,6 +15,12 @@
 #include "susamune/records_persistence.hxx"
 #include "susamune/transfer_lease.hxx"
 #include "susamune/transfer_layout.h"
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+#include "susamune/dolphin_ghost_web.hxx"
+#include "susamune/dolphin_ghost_library.hxx"
+#include "susamune/dolphin_ghost_account.hxx"
+#include "susamune/dolphin_http.hxx"
+#endif
 
 namespace GhostStorage {
 namespace {
@@ -63,6 +73,7 @@ enum LoadDestination {
     LOAD_DESTINATION_RACE,
     LOAD_DESTINATION_OBSERVER_PRIMARY,
     LOAD_DESTINATION_OBSERVER_SECONDARY,
+    LOAD_DESTINATION_EXPORT,
 };
 
 SusamuneGhostCatalogPage *const sPages =
@@ -79,6 +90,9 @@ u8 sPendingLoadDestination, sProfile;
 Identity sPendingIdentity, sLoadedIdentity;
 bool sLoadedValid, sAvailable, sReady[2], sRefreshQueued[2], sCachedRefresh[2];
 bool sImportScanQueued, sTimedOut;
+bool sWebOpen, sWebReady;
+GhostServiceAccountInfo sWebAccount;
+static_assert(sizeof(GhostServicePage) <= kCatalogBytes, "Online page exceeds imported cache");
 
 #if !IS_EMULATOR
 const char *statusForCode(s32 status);
@@ -168,6 +182,11 @@ void submitTransfer() {
 }
 #endif
 
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+void *transferPayload() { return reinterpret_cast<void *>(SUSAMUNE_DOLPHIN_GHOST_FILE_TRANSFER_PPC_BASE); }
+bool claimTransfer() { return sAvailable && !busy() && DolphinGhostLibrary::ready(); }
+#endif
+
 void notify(const char *status) {
     sStatus = status;
     if (gMenu) gMenu->toast(status);
@@ -202,7 +221,30 @@ void observeProfile() {
     sCachedRefresh[0] = false;
 }
 
+__attribute__((noinline)) const char *webStatus(s32 status) {
+    volatile s32 code = status;
+    if (code == GHOST_SERVICE_NETWORK) return "Could not connect to Delfino Ghosts";
+    if (code == GHOST_SERVICE_TLS) return "Secure connection failed; check system date";
+    if (code == GHOST_SERVICE_CLOCK) return "Set the system date before connecting";
+    if (code == GHOST_SERVICE_RANDOM) return IS_EMULATOR?"Run Dolphin data setup before connecting":"Wii secure connection unavailable";
+    if (code == GHOST_SERVICE_RESPONSE) return "Delfino Ghosts response was not usable";
+    if (code == GHOST_SERVICE_HASH) return "Download changed; refresh and retry";
+    if (code == GHOST_SERVICE_CANCELLED) return "Download cancelled";
+    if (code == GHOST_SERVICE_TIMEOUT) return "Connection timed out; try again";
+    if (code == GHOST_SERVICE_STARTUP) return "Network not ready; check connection";
+    if (code == GHOST_SERVICE_DNS) return "Could not find Delfino Ghosts; retry";
+    if (code == GHOST_SERVICE_RATE_LIMIT) return "Service busy; please wait before retrying";
+    if (code == GHOST_SERVICE_UNAVAILABLE) return "Delfino Ghosts temporarily unavailable";
+    if (code == GHOST_SERVICE_SORT_UNSUPPORTED) return "Level sorting is not available yet";
+    if (code == GHOST_SERVICE_LINK_REQUIRED) return "Link your Delfino Ghosts account first";
+    if (code == GHOST_SERVICE_LINK_EXPIRED) return "Link expired; request a new code";
+    if (code == GHOST_SERVICE_UPLOAD_REJECTED) return "Upload refused; check ghost or account limits";
+    if (code == GHOST_SERVICE_ACCOUNT_LIMIT) return "Account full; manage uploads on the website";
+    return kProtocol;
+}
+
 const char *statusForCode(s32 status) {
+    if (status <= GHOST_SERVICE_NETWORK && status >= GHOST_SERVICE_ACCOUNT_LIMIT) return webStatus(status);
     switch (status) {
     case SUSAMUNE_GHOST_STATUS_OK: return kReady;
     case SUSAMUNE_GHOST_STATUS_INVALID_REQUEST: return kInvalidRequest;
@@ -220,21 +262,6 @@ const char *statusForCode(s32 status) {
     }
 }
 
-bool safeText(const char *text, u32 capacity, u32 length, bool required) {
-    if (length > capacity || (required && length == 0)) return false;
-    for (u32 i = 0; i < length; i++) {
-        const u8 value = static_cast<u8>(text[i]);
-        if (value < SUSAMUNE_GHOST_TEXT_MIN ||
-            value > SUSAMUNE_GHOST_TEXT_MAX || value == '/' || value == '\\') {
-            return false;
-        }
-    }
-    for (u32 i = length; i < capacity; i++) {
-        if (text[i] != 0) return false;
-    }
-    return true;
-}
-
 #if defined(SUSAMUNE_VERSION_JP)
 const u32 kGameId = SUSAMUNE_GHOST_GAME_ID_JP;
 const u8 kRegion = SUSAMUNE_GHOST_REGION_JP;
@@ -248,153 +275,17 @@ const u8 kRegion = SUSAMUNE_GHOST_REGION_PAL;
 #error "Unknown game version"
 #endif
 
-bool gameRegionPairIsValid(u32 gameId, u8 region) {
-    return (gameId == SUSAMUNE_GHOST_GAME_ID_JP &&
-            region == SUSAMUNE_GHOST_REGION_JP) ||
-           (gameId == SUSAMUNE_GHOST_GAME_ID_US &&
-            region == SUSAMUNE_GHOST_REGION_US) ||
-           (gameId == SUSAMUNE_GHOST_GAME_ID_PAL &&
-            region == SUSAMUNE_GHOST_REGION_PAL);
-}
-
-bool portableRouteIsValid(u8 area, u8 episode, u8 parentArea,
-                          u8 routeFlags, s32 routeVariant) {
-    u8 expectedParent;
-    switch (area) {
-#define PORTABLE_ROUTE_CASE(routeArea, parent) \
-    case routeArea: expectedParent = parent; break;
-        SUSAMUNE_GHOST_PORTABLE_ROUTE_LIST(PORTABLE_ROUTE_CASE)
-#undef PORTABLE_ROUTE_CASE
-    default: return false;
-    }
-    if (episode > SUSAMUNE_GHOST_ROUTE_EPISODE_MAX ||
-        routeVariant < SUSAMUNE_GHOST_ROUTE_VARIANT_NONE ||
-        routeVariant > SUSAMUNE_GHOST_ROUTE_VARIANT_MAX ||
-        parentArea != expectedParent) {
-        return false;
-    }
-    if (expectedParent == SUSAMUNE_GHOST_ROUTE_PARENT_NONE) {
-        return routeFlags == 0;
-    }
-    return (routeFlags & SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE) != 0 &&
-           (routeFlags & ~(SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE |
-                           SUSAMUNE_GHOST_ROUTE_PARENT_START)) == 0;
-}
-
-void makeUnsafe(SusamuneGhostSlotInfo *out, u32 generation) {
-    memset(out, 0, sizeof(*out));
-    out->generation = generation;
-    out->flags = SUSAMUNE_GHOST_SLOT_UNSAFE;
-    out->status = SUSAMUNE_GHOST_STATUS_INVALID_FILE;
-}
+#include "susamune/ghost_catalog_validation.inc"
 
 // Keep catalog validation tables outside the fixed update input.
 __attribute__((noinline))
 bool sanitizeSlot(const SusamuneGhostSlotInfo &raw,
                   SusamuneGhostSlotInfo *out, bool imported) {
-    if (!out) return false;
-    memset(out, 0, sizeof(*out));
-
-    const u16 knownFlags = SUSAMUNE_GHOST_SLOT_PRESENT |
-        SUSAMUNE_GHOST_SLOT_UNSAFE | SUSAMUNE_GHOST_SLOT_IMPORTED;
-    if ((raw.flags & ~knownFlags) != 0 || raw.reserved[0] != 0) {
-        makeUnsafe(out, raw.generation);
-        return false;
-    }
-    if ((raw.flags & SUSAMUNE_GHOST_SLOT_UNSAFE) != 0) {
-        if (imported &&
-            (raw.flags & (SUSAMUNE_GHOST_SLOT_PRESENT |
-                          SUSAMUNE_GHOST_SLOT_IMPORTED)) !=
-                (SUSAMUNE_GHOST_SLOT_PRESENT |
-                 SUSAMUNE_GHOST_SLOT_IMPORTED)) {
-            makeUnsafe(out, raw.generation);
-            return false;
-        }
-        makeUnsafe(out, raw.generation);
-        if (imported) {
-            out->flags |= SUSAMUNE_GHOST_SLOT_PRESENT |
-                          SUSAMUNE_GHOST_SLOT_IMPORTED;
-        }
-        out->status = SUSAMUNE_GHOST_STATUS_SLOT_UNSAFE;
-        return true;
-    }
-    if ((raw.flags & SUSAMUNE_GHOST_SLOT_PRESENT) == 0) {
-        return (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) == 0;
-    }
-
-    const bool hasParent =
-        raw.routeParentArea != SUSAMUNE_GHOST_ROUTE_PARENT_NONE;
-    const bool internal =
-        (raw.routeFlags & SUSAMUNE_GHOST_ROUTE_INTERNAL_SCENE) != 0;
-    const bool parentStart =
-        (raw.routeFlags & SUSAMUNE_GHOST_ROUTE_PARENT_START) != 0;
-    const u32 expectedCanonicalSize = SUSAMUNE_GHOST_V4_SAMPLE_DATA_OFFSET +
-        raw.sampleCount * SUSAMUNE_GHOST_POSE_SAMPLE_SIZE;
-    const bool canonicalV3 =
-        raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V3 &&
-        raw.requiredFeatures ==
-            SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V3 &&
-        raw.sampleCodec == SUSAMUNE_GHOST_CODEC_RAW;
-    const bool canonicalV4 =
-        raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V4 &&
-        raw.requiredFeatures ==
-            SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V4 &&
-        raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
-    const bool canonicalTeaching =
-        ((raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V5 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V5) ||
-         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V6 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V6) ||
-         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V7 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V7) ||
-         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V8 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V8) ||
-         (raw.canonicalVersion == SUSAMUNE_GHOST_FILE_VERSION_V9 &&
-          raw.requiredFeatures == SUSAMUNE_GHOST_SUPPORTED_REQUIRED_FEATURES_V9)) &&
-        raw.sampleCodec == SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS;
-    const bool foreign = raw.gameId != kGameId;
-    const bool namespaceSane = imported
-        ? (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) != 0 &&
-              gameRegionPairIsValid(raw.gameId, raw.region) &&
-              (!foreign || portableRouteIsValid(
-                  raw.routeArea, raw.routeEpisode, raw.routeParentArea,
-                  raw.routeFlags, raw.routeVariant))
-        : (raw.flags & SUSAMUNE_GHOST_SLOT_IMPORTED) == 0 &&
-              raw.gameId == kGameId && raw.region == kRegion;
-    const bool sane = raw.status == 0 &&
-        namespaceSane &&
-        raw.discRevision == SUSAMUNE_GHOST_DISC_REVISION &&
-        (canonicalV3 || canonicalV4 || canonicalTeaching) &&
-        raw.recordingMode == SUSAMUNE_GHOST_RECORDING_POSE_QF &&
-        raw.sampleIntervalQf == SUSAMUNE_GHOST_TRANSFORM_INTERVAL_QF &&
-        raw.sampleCount >= SUSAMUNE_GHOST_MIN_SAMPLE_COUNT &&
-        raw.sampleCount <= SusamuneGhostPoseLimit(raw.canonicalVersion) &&
-        raw.durationQf > 0 &&
-        raw.durationQf <= SusamuneGhostDurationLimit(raw.canonicalVersion) &&
-        (canonicalTeaching ? raw.payloadSize >= expectedCanonicalSize +
-                                          SUSAMUNE_GHOST_TEACHING_HEADER_SIZE +
-            (raw.canonicalVersion >= SUSAMUNE_GHOST_FILE_VERSION_V8
-                ? SUSAMUNE_GHOST_CAMERA_HEADER_SIZE : 0)
-                     : raw.payloadSize == expectedCanonicalSize) &&
-        raw.payloadSize <= SUSAMUNE_GHOST_MAX_FILE_SIZE &&
-        (raw.resultQf == SUSAMUNE_GHOST_RESULT_QF_NONE ||
-         raw.resultQf <= SUSAMUNE_GHOST_QF_MAX) &&
-        raw.routeArea <= SUSAMUNE_GHOST_ROUTE_AREA_MAX &&
-        raw.routeEpisode <= SUSAMUNE_GHOST_ROUTE_EPISODE_MAX &&
-        (!hasParent ||
-         raw.routeParentArea <= SUSAMUNE_GHOST_ROUTE_AREA_MAX) &&
-        (raw.routeFlags & ~SUSAMUNE_GHOST_ROUTE_FLAGS_V1) == 0 &&
-        internal == hasParent && (!parentStart || hasParent) &&
-        raw.routeVariant >= SUSAMUNE_GHOST_ROUTE_VARIANT_NONE &&
-        raw.routeVariant <= SUSAMUNE_GHOST_ROUTE_VARIANT_MAX &&
-        safeText(raw.author, sizeof(raw.author), raw.authorLength, false) &&
-        safeText(raw.name, sizeof(raw.name), raw.nameLength, true);
-    if (!sane) {
-        makeUnsafe(out, raw.generation);
-        return false;
-    }
-    memcpy(out, &raw, sizeof(*out));
-    return true;
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+    return DolphinGhostWeb::sanitizeSlot(raw,out,imported);
+#else
+    return validateCatalogSlot(raw,out,imported,kGameId,kRegion);
+#endif
 }
 
 bool validLeaf(const char *leaf) {
@@ -425,14 +316,16 @@ bool zeroBytes(const void *data, u32 size) {
 }
 
 bool adoptCatalog(const SusamuneGhostStorageResponse &response) {
-#if IS_EMULATOR
+#if IS_EMULATOR && !TIMEWARP_LIVE_RACING
     (void)response;
     return false;
 #else
     const bool imported = response.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
     SusamuneGhostCatalogPage *page = &sPages[imported];
     clearCatalog(imported);
+#if !IS_EMULATOR
     DCInvalidateRange(transferPayload(), kCatalogBytes);
+#endif
     memcpy(page, transferPayload(), kCatalogBytes);
     const u64 totalDuration = (static_cast<u64>(page->totalDurationQfHi) << 32) |
                               page->totalDurationQfLo;
@@ -498,6 +391,10 @@ bool responseShapeIsValid(const SusamuneGhostStorageResponse &response,
     if (response.status != SUSAMUNE_GHOST_STATUS_OK)
         return response.payloadSize == 0 && response.slotCount == 0;
     if (!(response.flags & SUSAMUNE_GHOST_RESPONSE_READY)) return false;
+    if (command == SUSAMUNE_GHOST_CMD_WEB_LIST)
+        return response.payloadSize == sizeof(GhostServicePage) && !response.slotCount && !response.slot;
+    if(command==SUSAMUNE_GHOST_CMD_WEB_ACCOUNT)
+        return response.payloadSize==sizeof(GhostServiceAccountInfo) && !response.slotCount && response.slot==sPendingSlot;
     if (command == SUSAMUNE_GHOST_CMD_LIST ||
         command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN)
         return response.payloadSize == kCatalogBytes &&
@@ -548,9 +445,24 @@ void beginRequest(u16 command, u16 profile, u32 slot, u32 payloadSize,
 }
 #endif
 
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+void beginRequest(u16 command,u16 profile,u32 slot,u32 payloadSize,u32 recordToken,
+                  const char *status,u32 durationQf=0,u32 generation=0,u32 flags=0) {
+    SusamuneGhostStorageRequest request={};
+    if(++sSequence==0)++sSequence;
+    request.requestMagic=SUSAMUNE_GHOST_STORAGE_MAGIC;request.protocolVersion=SUSAMUNE_GHOST_STORAGE_VERSION;
+    request.command=command;request.requestSeq=sSequence;request.profile=profile;request.slot=slot;
+    request.payloadSize=payloadSize;request.flags=flags;request.expectedGeneration=generation;
+    if(!(command>=SUSAMUNE_GHOST_CMD_WEB_UPLOAD?DolphinGhostAccount::begin(request):DolphinGhostLibrary::begin(request))){notify(kBusy);return;}
+    sPendingCommand=command;sPendingSequence=sSequence;sPendingRecordToken=recordToken;
+    sPendingDurationQf=durationQf;sPendingProfile=profile;sPendingSlot=slot;
+    sPendingEpoch=sEpoch;sWaitFrames=0;sTimedOut=false;sStatus=status;
+}
+#endif
+
 bool beginRefresh(bool imported, u16 command = SUSAMUNE_GHOST_CMD_LIST,
                   bool cached = false) {
-#if !IS_EMULATOR
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
     if (!claimTransfer()) return false;
     clearCatalog(imported);
     beginRequest(command, imported ? SUSAMUNE_GHOST_IMPORTED_PROFILE : sProfile,
@@ -584,12 +496,12 @@ __attribute__((noinline)) bool requestImportedRefresh(u16 command) {
     return true;
 }
 
-void queueNamespaceRefresh(u16 profile) {
+void queueNamespaceRefresh(u16 profile, bool cached = false) {
     const bool imported = profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
     if (!imported && profile != sProfile) return;
     clearCatalog(imported);
     sRefreshQueued[imported] = sAvailable;
-    sCachedRefresh[imported] = false;
+    sCachedRefresh[imported] = cached;
 }
 
 bool observerLoadDestination(u8 destination) {
@@ -625,16 +537,53 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
         return;
     }
     if (response.status != SUSAMUNE_GHOST_STATUS_OK) {
+        if (command == SUSAMUNE_GHOST_CMD_SAVE) GhostRecording::publicationResult(sPendingSequence, false);
+        if(response.status==GHOST_SERVICE_LINK_REQUIRED || response.status==GHOST_SERVICE_LINK_EXPIRED)sWebAccount.linked=0;
         cancelFailedObserverLoad(loadDestination);
         const char *status = command == SUSAMUNE_GHOST_CMD_EXPORT &&
             response.status == SUSAMUNE_GHOST_STATUS_SLOT_OCCUPIED
                 ? kExportExists : statusForCode(response.status);
         if (command == SUSAMUNE_GHOST_CMD_LIST) sStatus = status;
         else notify(status);
-        if (command != SUSAMUNE_GHOST_CMD_LIST)
+        if (command != SUSAMUNE_GHOST_CMD_LIST && !sWebOpen)
             queueNamespaceRefresh(requestProfile);
         return;
     }
+    if (command == SUSAMUNE_GHOST_CMD_WEB_LIST) {
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
+        if (sWebOpen) {
+#if !IS_EMULATOR
+            DCInvalidateRange(transferPayload(), sizeof(GhostServicePage));
+#endif
+            const auto *page = static_cast<const GhostServicePage *>(transferPayload());
+            if (page->magic != GHOST_SERVICE_PAGE_MAGIC || page->count > GHOST_SERVICE_PAGE_COUNT ||
+                page->next[sizeof(page->next)-1]) { notify(kProtocol); return; }
+            memcpy(&sPages[1], page, sizeof(*page));
+            sWebReady = true;
+            sStatus = page->count ? "Select a ghost to download" : "No compatible ghosts found";
+        }
+#endif
+        return;
+    }
+    if (command == SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD) {
+        notify("Downloaded - available in Imported ghosts");
+        if (!sWebOpen) queueNamespaceRefresh(SUSAMUNE_GHOST_IMPORTED_PROFILE);
+        return;
+    }
+    if(command==SUSAMUNE_GHOST_CMD_WEB_ACCOUNT) {
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
+#if !IS_EMULATOR
+        DCInvalidateRange(transferPayload(),sizeof(sWebAccount));
+#endif
+        const auto *info=static_cast<const GhostServiceAccountInfo*>(transferPayload());
+        if(info->magic!=GHOST_SERVICE_ACCOUNT_MAGIC || info->linked>1 || info->pending>1 ||
+            info->code[sizeof(info->code)-1] || info->user[sizeof(info->user)-1]){notify(kProtocol);return;}
+        sWebAccount=*info;
+        sStatus=info->linked?"Account linked - ready to upload":info->pending?"Approve the code, then choose Check link":"Choose Link account to upload ghosts";
+#endif
+        return;
+    }
+    if(command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD) {notify("Ghost published on Delfino Ghosts");return;}
     if (command == SUSAMUNE_GHOST_CMD_LIST ||
         command == SUSAMUNE_GHOST_CMD_IMPORT_SCAN) {
         const bool imported = requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
@@ -651,11 +600,12 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
         return;
     }
     if (command == SUSAMUNE_GHOST_CMD_SAVE) {
+        GhostRecording::publicationResult(sPendingSequence, true);
         Records::onGhostSaved(durationQf);
         RecordsPersistence::checkpoint();
         Ghost::releaseSavedRecording(recordToken);
         notify(kSaved);
-        queueNamespaceRefresh(requestProfile);
+        queueNamespaceRefresh(requestProfile, true);
         return;
     }
     if (command == SUSAMUNE_GHOST_CMD_DELETE) {
@@ -679,9 +629,21 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
             queueNamespaceRefresh(requestProfile);
             return;
         }
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
 #if !IS_EMULATOR
         DCInvalidateRange(transferPayload(), response.payloadSize);
-        const bool accepted = loadDestination == LOAD_DESTINATION_RACE
+#endif
+        const bool streamed = (sPendingIdentity.flags & SUSAMUNE_GHOST_SLOT_STREAMED) != 0;
+        if(loadDestination==LOAD_DESTINATION_EXPORT) {
+            notify(streamed&&GhostTraceShare::begin(transferPayload(),response.payloadSize)
+                ? "Exporting MSGT recording..." : kExportFailed);
+            return;
+        }
+        const bool accepted = streamed
+            ? GhostRecording::loadManifest(transferPayload(), response.payloadSize,
+                loadDestination != LOAD_DESTINATION_RACE,
+                loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY)
+            : loadDestination == LOAD_DESTINATION_RACE
             ? Ghost::importPlayback(transferPayload(),
                                     response.payloadSize,
                                     requestProfile == SUSAMUNE_GHOST_IMPORTED_PROFILE)
@@ -689,7 +651,7 @@ void completeRequest(const SusamuneGhostStorageResponse &response) {
                   response.payloadSize, loadDestination == LOAD_DESTINATION_OBSERVER_SECONDARY);
         if (!accepted) {
             cancelFailedObserverLoad(loadDestination);
-            notify(kImportFailed);
+            notify(streamed ? kImportFailed : "MSGT recording required");
             queueNamespaceRefresh(requestProfile);
             return;
         }
@@ -725,11 +687,30 @@ void pollResponse() {
         return;
     }
     if (sWaitFrames != 0xffffffffu) sWaitFrames++;
-    if (!sTimedOut && sWaitFrames > kTimeoutFrames) {
+    const bool web = sPendingCommand >= SUSAMUNE_GHOST_CMD_WEB_LIST;
+    if(web && (response.flags&SUSAMUNE_GHOST_RESPONSE_BUSY)) {
+        sStatus=response.generation==GHOST_WEB_STARTUP?"Starting Wii network...":
+            response.generation==GHOST_WEB_DNS?"Finding Delfino Ghosts...":
+            response.generation==GHOST_WEB_TCP?"Connecting to Delfino Ghosts...":
+            response.generation==GHOST_WEB_TLS?"Securing connection...":
+            response.generation==GHOST_WEB_VALIDATE?"Checking ghost data...":
+            sPendingCommand==SUSAMUNE_GHOST_CMD_WEB_UPLOAD?"Uploading ghost...":"Receiving ghost data...";
+    }
+    if (!web && !sTimedOut && sWaitFrames > kTimeoutFrames) {
         sTimedOut = true;
         cancelFailedObserverLoad(sPendingLoadDestination);
         notify(kTimeout);
     }
+}
+#endif
+
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+void pollResponse() {
+    SusamuneGhostStorageResponse response;bool done;
+    if(sPendingCommand>=SUSAMUNE_GHOST_CMD_WEB_UPLOAD){
+        DolphinGhostAccount::update();done=DolphinGhostAccount::take(&response);
+    }else{DolphinGhostLibrary::update();done=DolphinGhostLibrary::take(&response);}
+    if(done)completeRequest(response);
 }
 #endif
 
@@ -796,16 +777,21 @@ __attribute__((noinline)) bool requestIdentity(const Identity &identity,
         return false;
     }
     const bool imported = identity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
-    if (imported && command == SUSAMUNE_GHOST_CMD_EXPORT) {
+    if (imported && (command == SUSAMUNE_GHOST_CMD_EXPORT || command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD)) {
         sStatus = kInvalidRequest;
         return false;
     }
-#if !IS_EMULATOR
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
     if (!claimTransfer()) { sStatus = kBusy; return false; }
-    const u32 payloadSize = imported ? sizeof(identity.leaf) : 0;
+    const bool upload=command==SUSAMUNE_GHOST_CMD_WEB_UPLOAD;
+    const u32 payloadSize = imported ? sizeof(identity.leaf) : upload ? sizeof(GhostServiceUpload) : 0;
     if (imported) {
         memcpy(transferPayload(), identity.leaf, payloadSize);
         DCFlushRange(transferPayload(), payloadSize);
+    }
+    if(upload) {
+        memcpy(transferPayload(),&uploadDraft().upload,payloadSize);
+        DCFlushRange(transferPayload(),payloadSize);
     }
     sPendingIdentity = identity;
     sPendingLoadDestination = destination;
@@ -857,6 +843,7 @@ void init() {
     sReady[0] = sReady[1] = sRefreshQueued[0] = sRefreshQueued[1] = false;
     sCachedRefresh[0] = sCachedRefresh[1] = false;
     sLoadedValid = sAvailable = sImportScanQueued = sTimedOut = false;
+    sWebOpen = sWebReady = false;
     sStatus = IS_EMULATOR ? kDolphinUnavailable : kUnavailable;
 #if !IS_EMULATOR
     if (transferReady()) {
@@ -866,7 +853,139 @@ void init() {
 #endif
 }
 
+const GhostServicePage *onlinePage() {
+    return sWebOpen && sWebReady ? reinterpret_cast<const GhostServicePage *>(&sPages[1]) : nullptr;
+}
+
+bool browseOnline(bool nextPage, int level) {
+#if !IS_EMULATOR
+    if (!requestIdle()) return false;
+    if (!sSharedBackend) { sStatus = "Update Moonshine launcher for online ghosts"; return false; }
+    GhostServiceQuery query = {};
+    const auto *current = onlinePage();
+    query.filter=current ? current->reserved >> 8 : 0;
+    if(level != -2) {
+        if(level < -1 || level >= ILing::count())return false;
+        query.filter=level<0?0:ILing::ghostBrowseFilter(level);nextPage=false;
+    }
+    if (nextPage) {
+        const auto *page = onlinePage();
+        if (!page || !page->next[0]) return false;
+        memcpy(query.cursor, page->next, sizeof(query.cursor));
+    }
+    if (!claimTransfer()) { sStatus = kBusy; return false; }
+    if(!sWebOpen){clearCatalog(true);sWebReady=false;}
+    sWebOpen = true; sRefreshQueued[1] = sImportScanQueued = false;
+    memcpy(transferPayload(), &query, sizeof(query));
+    DCFlushRange(transferPayload(), sizeof(query));
+    beginRequest(SUSAMUNE_GHOST_CMD_WEB_LIST, SUSAMUNE_GHOST_IMPORTED_PROFILE, 0,
+        sizeof(query), 0, "Connecting to Delfino Ghosts...");
+    return true;
+#elif TIMEWARP_LIVE_RACING
+    if(busy()) { sStatus=kBusy; return false; }
+    GhostServiceQuery query={};const auto *current=onlinePage();
+    query.filter=current?current->reserved>>8:0;
+    if(level!=-2){
+        if(level < -1 || level>=ILing::count())return false;
+        query.filter=level<0?0:ILing::ghostBrowseFilter(level);nextPage=false;
+    }
+    if(nextPage){if(!current || !current->next[0])return false;memcpy(query.cursor,current->next,sizeof(query.cursor));}
+    if(!DolphinGhostWeb::begin(query)){sStatus=kBusy;return false;}
+    if(!sWebOpen){clearCatalog(true);sWebReady=false;}
+    sWebOpen=true;sPendingCommand=SUSAMUNE_GHOST_CMD_WEB_LIST;
+    sStatus="Connecting to Delfino Ghosts...";return true;
+#else
+    (void)nextPage; (void)level; sStatus = "Visit Delfino Ghosts on your PC"; return false;
+#endif
+}
+
+bool downloadOnline(int row) {
+#if !IS_EMULATOR
+    const auto *page = onlinePage();
+    if (!page || row < 0 || static_cast<u32>(row) >= page->count || !requestIdle()) return false;
+    if (!claimTransfer()) { sStatus = kBusy; return false; }
+    memcpy(transferPayload(), &page->entries[row], sizeof(GhostServiceEntry));
+    DCFlushRange(transferPayload(), sizeof(GhostServiceEntry));
+    beginRequest(SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD, SUSAMUNE_GHOST_IMPORTED_PROFILE, 0,
+        sizeof(GhostServiceEntry), 0, "Downloading ghost...");
+    return true;
+#elif TIMEWARP_LIVE_RACING
+    const auto *page=onlinePage();
+    if(!page || row<0 || static_cast<u32>(row)>=page->count || busy())return false;
+    if(!DolphinGhostWeb::download(page->entries[row])){sStatus=kBusy;return false;}
+    sPendingCommand=SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD;sStatus="Downloading ghost...";return true;
+#else
+    (void)row; return false;
+#endif
+}
+const GhostServiceAccountInfo *accountInfo(){return &sWebAccount;}
+bool accountAction(unsigned action) {
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
+    if(action>GHOST_ACCOUNT_UNLINK || !requestIdle())return false;
+#if !IS_EMULATOR
+    if(!sSharedBackend){sStatus="Update Moonshine launcher for online ghosts";return false;}
+#endif
+    if(!claimTransfer()){sStatus=kBusy;return false;}
+    sRefreshQueued[0]=sRefreshQueued[1]=sImportScanQueued=false;
+    beginRequest(SUSAMUNE_GHOST_CMD_WEB_ACCOUNT,SUSAMUNE_GHOST_IMPORTED_PROFILE,action,0,0,"Checking account...");
+    return true;
+#else
+    (void)action;sStatus="Visit Delfino Ghosts on your PC";return false;
+#endif
+}
+bool uploadOnline(const Identity &identity) {
+    return requestIdentity(identity,SUSAMUNE_GHOST_CMD_WEB_UPLOAD,"Preparing upload...");
+}
+UploadDraft &uploadDraft() {
+    // Upload and imported browsing are mutually exclusive modal pages.
+    static_assert(sizeof(UploadDraft)<=sizeof(sPages[1]),"upload draft exceeds catalog cache");
+    return *reinterpret_cast<UploadDraft *>(&sPages[1]);
+}
+bool beginUploadDraft() {
+    if(busy())return false;
+    sRefreshQueued[0]=sRefreshQueued[1]=sImportScanQueued=false;
+    sReady[1]=sWebReady=sWebOpen=false;
+    memset(&uploadDraft(),0,sizeof(UploadDraft));
+    return true;
+}
+
+void closeOnline() {
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+    if(sPendingCommand<SUSAMUNE_GHOST_CMD_WEB_UPLOAD)DolphinGhostWeb::close();
+#endif
+    sWebOpen = sWebReady = false;
+    clearCatalog(true); sRefreshQueued[1] = sAvailable; sImportScanQueued = true;
+#if !IS_EMULATOR
+    if (sTransferPhase == TRANSFER_REMOTE &&
+        sPendingCommand >= SUSAMUNE_GHOST_CMD_WEB_LIST)
+        TransferLease::cancel(sTransferToken);
+#endif
+}
+
 void update() {
+    GhostRecording::poll();
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+    if(!sAvailable && DolphinGhostLibrary::ready()){sAvailable=true;sRefreshQueued[0]=sRefreshQueued[1]=true;sImportScanQueued=true;}
+    if(sPendingCommand==SUSAMUNE_GHOST_CMD_WEB_LIST || sPendingCommand==SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD){
+        const bool downloading=sPendingCommand==SUSAMUNE_GHOST_CMD_WEB_DOWNLOAD;
+        DolphinGhostWeb::update();
+        auto *page=reinterpret_cast<GhostServicePage *>(&sPages[1]);
+        const int result=DolphinGhostWeb::take(page);
+        if(result==1){
+            const unsigned phase=DolphinGhostWeb::phase();
+            sStatus=phase==GHOST_WEB_VALIDATE?"Saving downloaded ghost...":
+                phase==GHOST_WEB_DNS?"Finding Delfino Ghosts...":
+                phase==GHOST_WEB_TCP?"Connecting to Delfino Ghosts...":
+                phase==GHOST_WEB_TLS?"Securing connection...":"Starting network...";
+        }else{
+            sPendingCommand=SUSAMUNE_GHOST_CMD_NONE;
+            if(sWebOpen && downloading){sStatus=result?statusForCode(result):"Downloaded - available in Imported ghosts";}
+            else if(sWebOpen){sWebReady=!result;sStatus=result?webStatus(result):
+                page->count?"Select a ghost to download":"No compatible ghosts found";}
+        }
+        return;
+    }
+#endif
 #if !IS_EMULATOR
     if (!transferReady()) return;
     if (sTransferPhase == TRANSFER_CONSUME || sTransferPhase == TRANSFER_RELEASE) {
@@ -876,6 +995,10 @@ void update() {
     if (sTransferPhase == TRANSFER_LOCAL || sTransferPhase == TRANSFER_READING) return;
     submitTransfer();
 #endif
+    const GhostTraceShare::Result exporting=GhostTraceShare::poll();
+    if(exporting==GhostTraceShare::RUNNING){sStatus="Exporting MSGT recording...";return;}
+    if(exporting==GhostTraceShare::SAVED){notify(kExportedShare);return;}
+    if(exporting==GhostTraceShare::FAILED){notify(kExportFailed);return;}
     observeProfile();
     observeLoadedPlayback();
     if (sPendingCommand != SUSAMUNE_GHOST_CMD_NONE) {
@@ -884,12 +1007,19 @@ void update() {
             !Ghost::observerPreparing() && sPendingEpoch == sEpoch) {
             if (++sEpoch == 0) sEpoch++;
         }
-#if !IS_EMULATOR
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
         pollResponse();
 #endif
         return;
     }
+    unsigned queuedToken=0;
+    if (GhostRecording::takeQueuedSave(sProfile, queuedToken)) {
+        if (!saveNew(queuedToken)) notify(sStatus);
+        return;
+    }
+    if (GhostRecording::queuedSave()) { sStatus=kSaving;return; }
     for (int imported = 0; imported < 2; imported++) {
+        if (imported && sWebOpen) continue;
         if (!sRefreshQueued[imported]) continue;
         const u16 command = imported && sImportScanQueued
             ? SUSAMUNE_GHOST_CMD_IMPORT_SCAN : SUSAMUNE_GHOST_CMD_LIST;
@@ -944,7 +1074,7 @@ bool scanImports() { return requestImportedRefresh(SUSAMUNE_GHOST_CMD_IMPORT_SCA
 bool identityValid(const Identity &identity) {
     const bool imported = identity.profile == SUSAMUNE_GHOST_IMPORTED_PROFILE;
     const u16 knownFlags = SUSAMUNE_GHOST_SLOT_PRESENT |
-        SUSAMUNE_GHOST_SLOT_UNSAFE | SUSAMUNE_GHOST_SLOT_IMPORTED;
+        SUSAMUNE_GHOST_SLOT_UNSAFE | SUSAMUNE_GHOST_SLOT_IMPORTED | SUSAMUNE_GHOST_SLOT_STREAMED;
     if (identity.id == SUSAMUNE_GHOST_SLOT_AUTO ||
         identity.region >= SUSAMUNE_GHOST_REGION_COUNT ||
         (identity.flags & ~knownFlags) != 0 ||
@@ -1003,8 +1133,11 @@ bool isLoaded(const Identity &identity) {
 bool saveNew(u32 expectedSelectionToken) {
     observeProfile();
     if (!requestIdle()) return false;
+    if (GhostRecording::ownsSession() && !GhostRecording::selectForSave(expectedSelectionToken)) {
+        sStatus = kSaveChanged; return false;
+    }
     if (!Ghost::hasSaveableTrack()) { sStatus = kNoRecording; return false; }
-#if !IS_EMULATOR
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
     if (expectedSelectionToken) {
         char currentName[SUSAMUNE_GHOST_NAME_SIZE];
         u32 currentToken = 0;
@@ -1014,24 +1147,49 @@ bool saveNew(u32 expectedSelectionToken) {
             return false;
         }
     }
+    if (GhostRecording::ownsSession() && GhostRecording::selectionPending()) {
+        char name[48];unsigned token=0;
+        if (!GhostRecording::copySelection(name,sizeof(name),&token) ||
+            !GhostRecording::queueSave(token,sProfile)) { sStatus=kSaveChanged;return false; }
+        sStatus=kSaving;return true;
+    }
     if (!claimTransfer()) { sStatus = kBusy; return false; }
     u32 size = 0, recordToken = 0;
-    if (!Ghost::exportLatest(transferPayload(),
+    unsigned streamSelection=0,streamOwner=0;
+    bool prepared;
+    if (GhostRecording::ownsSession()) {
+        prepared=GhostRecording::exportManifest(transferPayload(),sProfile,ILing::pbProfileName(ILing::pbProfile()),&streamOwner,&streamSelection);
+        size=MS_RECORDING_MANIFEST_BYTES;recordToken=streamOwner;
+    } else prepared=Ghost::exportLatest(transferPayload(),
             SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE, sProfile, ILing::pbProfileName(ILing::pbProfile()),
-            &size, &recordToken) || size < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
+            &size, &recordToken);
+    if (!prepared || size < SUSAMUNE_GHOST_FILE_HEADER_SIZE ||
             size > SUSAMUNE_GHOST_MAX_FILE_SIZE) {
         sStatus = kExportFailed;
+#if !IS_EMULATOR
         if (sTransferPhase == TRANSFER_LOCAL) {
             sTransferPhase = TRANSFER_RELEASE;
             finishTransfer();
         }
+#endif
         return false;
     }
     DCFlushRange(transferPayload(), size);
     const SusamuneGhostFileHeader *header = reinterpret_cast<const SusamuneGhostFileHeader *>(
         transferPayload());
+    u32 sequence=sSequence+1;if(!sequence)++sequence;
+    if (streamSelection && !GhostRecording::publicationStarted(streamSelection,sequence)) {
+        sStatus=kSaveChanged;
+#if !IS_EMULATOR
+        if (sTransferPhase==TRANSFER_LOCAL){sTransferPhase=TRANSFER_RELEASE;finishTransfer();}
+#endif
+        return false;
+    }
     beginRequest(SUSAMUNE_GHOST_CMD_SAVE, sProfile, SUSAMUNE_GHOST_SLOT_AUTO,
                  size, recordToken, kSaving, header->durationQf);
+    if (streamSelection && (sPendingCommand!=SUSAMUNE_GHOST_CMD_SAVE || sPendingSequence!=sequence)) {
+        GhostRecording::publicationResult(sequence,false);return false;
+    }
     return true;
 #else
     (void)expectedSelectionToken;
@@ -1056,7 +1214,16 @@ bool remove(const Identity &identity) {
     return requestIdentity(identity, SUSAMUNE_GHOST_CMD_DELETE, kDeleting);
 }
 bool exportShare(const Identity &identity) {
+#if IS_EMULATOR
+    (void)identity;
+    sStatus = "Close Dolphin; use manage_data.py export-ghost";
+    return false;
+#else
+    if(identity.profile==SUSAMUNE_GHOST_IMPORTED_PROFILE){sStatus=kInvalidRequest;return false;}
+    if(identity.flags&SUSAMUNE_GHOST_SLOT_STREAMED)
+        return requestIdentity(identity,SUSAMUNE_GHOST_CMD_LOAD,"Preparing MSGT export...",LOAD_DESTINATION_EXPORT);
     return requestIdentity(identity, SUSAMUNE_GHOST_CMD_EXPORT, kExportingShare);
+#endif
 }
 bool load(int slot) { return loadTrack(false, slot, LOAD_DESTINATION_RACE); }
 bool loadObserver(int slot, bool secondary) {
@@ -1067,8 +1234,11 @@ bool remove(int slot) {
     return requestPersonalCommand(slot, SUSAMUNE_GHOST_CMD_DELETE, kDeleting);
 }
 bool exportShare(int slot) {
-    return requestPersonalCommand(slot, SUSAMUNE_GHOST_CMD_EXPORT, kExportingShare);
+    Identity identity;
+    if (!copyIdentity(false, slot, &identity)) { sStatus = kCatalogNeeded; return false; }
+    return exportShare(identity);
 }
+
 bool importShare(int slot) { (void)slot; return scanImports(); }
 bool loadImported(int slot) { return loadTrack(true, slot, LOAD_DESTINATION_RACE); }
 bool loadImportedObserver(int slot, bool secondary) {
@@ -1081,6 +1251,7 @@ bool removeImported(int slot) {
     return remove(identity);
 }
 bool busy() {
+    if (GhostRecordingNative::watchWaiting() || GhostRecordingNative::fileBusy() || GhostRecording::queuedSave() || GhostTraceShare::busy() || GhostTraceFlat::active()) return true;
 #if !IS_EMULATOR
     if (sTransferPhase != TRANSFER_NONE || sTransferFailed) return true;
 #endif

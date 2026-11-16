@@ -59,6 +59,8 @@ struct CPolarSubCamera {s16 mAngleYaw;} camera;
 static CPolarSubCamera *gpCamera=&camera;
 static s16 retailHistory[60];
 namespace Ghost {bool observerActive(){return observer;}}
+namespace GhostFludd {bool hoverEmitted(){return false;}}
+static unsigned sActivePbProfile;enum{SUSAMUNE_HOVERLESS_PROFILE=1};
 bool mem1(const void *ptr,u32){return ptr!=nullptr;}
 s16 matan(float z,float x) {
     // Retail matan(z,x), not libc atan2(y,x); these octants are exact.
@@ -82,7 +84,7 @@ namespace SplitStats {void invalidateAttempt(){}}
 namespace Eligibility {
 static bool sRunning,sAwaitingStageSetup,sRecordsEligible;
 static u8 sRejectionCause,sAssistReasons;
-enum {REJECT_PRACTICE};
+enum {REJECT_PRACTICE,REJECT_HOVER};
 u8 liveRejectionCause(){return REJECT_PRACTICE;}
 ''' + il_functions + r'''
 void update() {
@@ -211,6 +213,22 @@ extern "C" __declspec(dllexport) unsigned state(unsigned index) {
             self.dll.reset(value)
             self.assertFalse(any(self.tick() for _ in range(120)))
             self.assertEqual(self.dll.state(5), 0)
+
+    def test_off_preserves_buttons_triggers_and_retail_stick_history(self):
+        for value in (0, 100):
+            self.dll.reset(value)
+            self.dll.nativeAngle(2468)
+            for frame in range(120):
+                buttons = (frame * 37) & 0x1fff
+                trigger = (frame * 11) & 255
+                self.dll.sample(buttons, trigger, 0)
+                self.dll.stick(frame % 128, -(frame % 128), frame * 47)
+                self.assertFalse(self.tick(buttons=buttons, pressed=buttons, trigger=trigger, raised=trigger))
+                self.assertEqual(self.dll.state(2), buttons)
+                self.assertEqual(self.dll.state(3), trigger)
+                self.assertEqual(self.dll.historyValue(-1), 1)
+                self.assertEqual(self.dll.historyValue(0), 2468)
+            for field in (4, 5, 6, 7): self.assertEqual(self.dll.state(field), 0)
 
     def test_other_owners_and_transitions_clear_queued_input(self):
         for guard in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 2048, 4096):
@@ -430,6 +448,8 @@ extern "C" __declspec(dllexport) unsigned state(unsigned index) {
             self.assertIn("PracticeSession::prepareGameplaySpeed();\n" +
                           ("        " if argument == "false" else "    ") +
                           "PracticeSession::beforeDirect(" + argument + ");\n" +
+                          ("        " if argument == "false" else "    ") +
+                          "PracticeSession::seekBeforeDirect();\n" +
                           ("        " if argument == "false" else "    ") +
                           "PracticeSession::applyGameplaySpeed();", main)
         production = ROOT / "src/practice_session.cpp"

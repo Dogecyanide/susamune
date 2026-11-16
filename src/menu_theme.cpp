@@ -1,4 +1,5 @@
 #include "susamune/menu_theme.hxx"
+#include "susamune/menu_palette.hxx"
 #include "susamune/menu_theme_assets.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/build_branding.hxx"
@@ -15,13 +16,16 @@ J2DOrthoGraph *sOrtho;
 bool sPage;
 bool sDarkPaper;
 s16 sSelectedX, sSelectedY, sSelectedH;
+s16 sRowX, sRowTop, sRowWidth;
+bool sRowSelected;
 u16 sPatternFrame;
 u32 sLastTick;
 
 const u8 *paperColour() {
     static const u8 original[] = {230, 230, 190};
-    return gSettings.get(SETTING_MENU_CUSTOM_BACKGROUND)
-        ? gCreationExtras.menuBackground() : original;
+    if (!gSettings.get(SETTING_MENU_CUSTOM_BACKGROUND)) return original;
+    const auto &palette = *MOONSHINE_MENU_PALETTE_LIVE;
+    return (palette.custom & (1u << MENU_PAPER)) ? palette.rgb[MENU_PAPER] : gCreationExtras.menuBackground();
 }
 
 unsigned pose(unsigned interval) {
@@ -35,18 +39,26 @@ bool rgb(Color c, int r, int g, int b) {
 Color ink(Color c) {
     switch ((u32(c.r) << 16) | (u32(c.g) << 8) | c.b) {
     case 0xFFFFFF: case 0xEEF2FC: case 0xE6EEFA: case 0xDCE6F0: case 0xEBF0FF:
-        return sDarkPaper ? Color(255, 249, 219, c.a) : Color(65, 48, 25, c.a);
+        return MenuPalette::colour(MENU_TEXT, sDarkPaper ? Color(255, 249, 219, c.a) : Color(65, 48, 25, c.a));
     case 0xC8CEDC: case 0xC8D2E1: case 0xBED2E1:
-        return sDarkPaper ? Color(233, 225, 194, c.a) : Color(84, 64, 32, c.a);
+        return MenuPalette::colour(MENU_TEXT, sDarkPaper ? Color(233, 225, 194, c.a) : Color(84, 64, 32, c.a));
     case 0x788296: case 0xBECDE1: case 0xBECDDC:
     case 0x687288:
-        return sDarkPaper ? Color(207, 205, 178, c.a) : Color(108, 88, 48, c.a);
+        return MenuPalette::colour(MENU_MUTED_TEXT, sDarkPaper ? Color(207, 205, 178, c.a) : Color(108, 88, 48, c.a));
     case 0x5AAAFF: case 0xFFE164: case 0x78DC96:
-        return sDarkPaper ? Color(153, 235, 181, c.a) : Color(36, 107, 78, c.a);
+        return MenuPalette::colour(MENU_VALUE_TEXT, sDarkPaper ? Color(153, 235, 181, c.a) : Color(36, 107, 78, c.a));
     }
     if (c.r > 200 && c.g < 130 && c.b < 130)
         return sDarkPaper ? Color(255, 152, 139, c.a) : Color(158, 42, 35, c.a);
     return c;
+}
+
+Color spine(Color original) {
+    const Color custom = MenuPalette::colour(MENU_SPINE, Color(143,85,40,255));
+    if (rgb(custom,143,85,40)) return original;
+    const int light = (int(original.r) + original.g + original.b - 268) / 3;
+    auto channel = [light](int v) -> u8 { v += light; return v < 0 ? 0 : v > 255 ? 255 : v; };
+    return Color(channel(custom.r),channel(custom.g),channel(custom.b),original.a);
 }
 
 void vertex(s16 x, s16 y, u32 color, float u, float v) {
@@ -60,7 +72,7 @@ void vertex(s16 x, s16 y, u32 color, float u, float v) {
 namespace MenuTheme {
 void image(const ResTIMG *t, int x, int y, int w, int h, u8 alpha, ImageMode mode) {
     if (!t || !sOrtho || w <= 0 || h <= 0) return;
-    const bool paper = mode == PaperTile;
+    const bool paper = mode == PaperTile || mode == HeaderTile;
     const bool right = mode == PointRight;
     if (!paper) {
         const int tw = right ? t->mHeight : t->mWidth;
@@ -101,6 +113,9 @@ void image(const ResTIMG *t, int x, int y, int w, int h, u8 alpha, ImageMode mod
     if (paper) {
         // guide_1.blo remaps this opaque I4 tile through its parchment colours.
         const u8 *rgb = paperColour();
+        const Color header = MenuPalette::colour(MENU_HEADER, Color(rgb[0],rgb[1],rgb[2],255));
+        const u8 headerRgb[] = {header.r,header.g,header.b};
+        if (mode == HeaderTile) rgb = headerRgb;
         GXColor low = {0, 0, 0, 0};
         u8 *channels = &low.r;
         for (int i = 0; i < 3; ++i)
@@ -119,20 +134,38 @@ void image(const ResTIMG *t, int x, int y, int w, int h, u8 alpha, ImageMode mod
     GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
     GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
     GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-    const u32 rgba = 0xFFFFFF00u | alpha;
+    const Color tint=mode==TitleInk?MenuPalette::colour(MENU_TITLE_TEXT,ink(Color(90,170,255,alpha))):mode==SidebarInk?MenuPalette::colour(MENU_SIDEBAR_TEXT,Color(255,255,255,alpha)):Color(255,255,255,alpha);
+    const u32 rgba=(u32(tint.r)<<24)|(u32(tint.g)<<16)|(u32(tint.b)<<8)|alpha;
     const float u = paper ? float(w) / t->mWidth : 1.0f;
     const float v = paper ? float(h) / t->mHeight : 1.0f;
     const int lean = mode == LeanLeft ? -2 : mode == LeanRight ? 2 : 0;
-    vertex(x, y + lean, rgba, 0, right ? 1.0f : 0.0f);
-    vertex(x + w, y - lean, rgba, right ? 0.0f : u, 0);
-    vertex(x + w, y + h - lean, rgba, u, right ? 0.0f : v);
-    vertex(x, y + h + lean, rgba, right ? 1.0f : 0.0f, v);
+    const float leftU = mode == Mirror ? u : 0.0f;
+    const float rightU = mode == Mirror ? 0.0f : u;
+    vertex(x, y + lean, rgba, leftU, right ? 1.0f : 0.0f);
+    vertex(x + w, y - lean, rgba, right ? 0.0f : rightU, 0);
+    vertex(x + w, y + h - lean, rgba, rightU, right ? 0.0f : v);
+    vertex(x, y + h + lean, rgba, right ? 1.0f : leftU, v);
+}
+
+void rowBreak() { sRowWidth = 0; }
+
+void listRow(Menu *menu, int x, int top, int width, bool selected) {
+    // Wait for the next row so descriptions remain above their separator.
+    if (sRowWidth == width && sRowX == x && top > sRowTop &&
+        top - sRowTop <= 56 && !sRowSelected && !selected) {
+        Color rule = textColor(true); rule.a = 45;
+        menu->fillBox(x + 12, top, width - 24, 1, rule);
+    }
+    sRowX = x; sRowTop = top; sRowWidth = width; sRowSelected = selected;
 }
 
 void page(bool active) {
     sPage = active;
     sSelectedH = 0;
+    rowBreak();
 }
+
+Color paperColor() { const u8 *rgb = paperColour(); return Color(rgb[0], rgb[1], rgb[2], 255); }
 
 Color footerColor() { return ink(Color(104, 114, 136, 255)); }
 
@@ -142,31 +175,40 @@ void hand(int x, int y, int w, int h) {
     image(MenuThemeAssets::get(MenuThemeAssets::Hand, pose(45)), x, y, w, h, 255, PointRight);
 }
 
-void selection(Menu *menu, int x, int y, int w, int h, bool showHand) {
-    const Color colours[] = {Color(187, 133, 37, 255), Color(255, 236, 162, 255), Color(49, 110, 76, 255)};
+__attribute__((noinline)) void selectionFrame(Menu *menu, int x, int y, int w, int h,
+                                             Color fill, u8 trimAlpha, u8 lightAlpha) {
+    const Color colours[] = {
+        MenuPalette::colour(MENU_TRIM, Color(187, 133, 37, trimAlpha)),
+        MenuPalette::colour(MENU_TRIM_LIGHT, Color(255, 236, 162, lightAlpha)), fill};
     for (int i = 0; i < 3; ++i) {
         const s16 l = x + i, r = x + w - i, t = y + i, b = y + h - i;
         const s16 points[] = {(s16)(l+3),t,(s16)(r-3),t,r,(s16)(t+3),r,(s16)(b-3),
                              (s16)(r-3),b,(s16)(l+3),b,l,(s16)(b-3),l,(s16)(t+3)};
         menu->fillPoly(points, 8, colours[i]);
     }
+}
+
+void selection(Menu *menu, int x, int y, int w, int h, bool showHand) {
+    selectionFrame(menu, x, y, w, h,
+        MenuPalette::colour(MENU_SELECTED_TAB, Color(49, 110, 76, 255)), 255, 255);
     if (showHand) hand(x + 3, y + 4, 23, 22);
 }
 
 void panel(Menu *menu, int x, int y, int w, int h, const char *title,
            MenuThemeAssets::Asset icon) {
+    rowBreak();
     const u8 *background = paperColour();
     menu->fillBox(x + 4, y + 4, w, h, Color(29, 65, 50, 180));
-    menu->fillBox(x, y, w, h, Color(187, 133, 37, 255));
+    menu->fillBox(x, y, w, h, MenuPalette::colour(MENU_TRIM, Color(187, 133, 37, 255)));
     menu->fillBox(x + 2, y + 2, w - 4, h - 4, Color(background[0], background[1], background[2], 255));
     image(MenuThemeAssets::get(MenuThemeAssets::Paper), x + 3, y + 3, w - 6, h - 6, 255, PaperTile);
     if (!title) return;
-    menu->fillBox(x + 3, y + 3, w - 6, 28, Color(49, 110, 76, 255));
+    menu->fillBox(x + 3, y + 3, w - 6, 28, MenuPalette::colour(MENU_SELECTED_TAB, Color(49, 110, 76, 255)));
     const unsigned alternate = pose(90);
     image(MenuThemeAssets::get(icon, alternate), x + 11, y + 6, 24, 22, 255,
           alternate && (icon == MenuThemeAssets::TabGhost || icon == MenuThemeAssets::TabGlasses) ? LeanLeft : Fit);
-    menu->drawText(title, x + 45, y + 8, 16, 16, Color(255, 248, 209, 255));
-    menu->fillBox(x + 3, y + h - 23, w - 6, 20, Color(77, 139, 91, 47));
+    menu->drawText(title, x + 45, y + 8, 16, 16, MenuPalette::colour(MENU_SELECTED_TEXT, Color(255, 248, 209, 255)));
+    menu->fillBox(x + 3, y + h - 23, w - 6, 20, MenuPalette::colour(MENU_FOOTER, Color(77, 139, 91, 47)));
 }
 
 }
@@ -176,7 +218,8 @@ void Menu::drawMenuText(const char *text, int x, int y, int sx, int sy, Color co
         if (sSelectedH && y >= sSelectedY && y < sSelectedY + sSelectedH &&
             x < sSelectedX + 22 && text[0] == '>' && !text[1])
             return;
-        color = ink(color);
+        color = sSelectedH && y >= sSelectedY && y < sSelectedY + sSelectedH
+            ? MenuPalette::colour(MENU_SELECTED_TEXT,Color(255,248,209,color.a)) : ink(color);
         const int height = sy;
         while (sx > 11 && x + Menu::textWidth(text, sx) > 594) {
             --sx;
@@ -190,25 +233,13 @@ void Menu::drawMenuText(const char *text, int x, int y, int sx, int sy, Color co
 void Menu::fillMenuBox(int x, int y, int w, int h, Color color) {
     if (sPage) {
         if (rgb(color, 90, 170, 255) && color.a == 60) {
-            color = Color(236, 189, 69, 130);
+            color = MenuPalette::colour(MENU_HIGHLIGHT, Color(49, 110, 76, 255));
             if (w >= 100 && h >= 18 && h <= 40) {
                 sSelectedX = x; sSelectedY = y;
                 sSelectedH = h;
-                for (int inset = 0; inset < 3; ++inset) {
-                    const int left = x + inset, right = x + w - inset;
-                    const int top = y + inset, bottom = y + h - inset;
-                    const s16 trim[] = {
-                        (s16)(left + 3), (s16)top, (s16)(right - 3), (s16)top,
-                        (s16)right, (s16)(top + 3), (s16)right, (s16)(bottom - 3),
-                        (s16)(right - 3), (s16)bottom, (s16)(left + 3), (s16)bottom,
-                        (s16)left, (s16)(bottom - 3), (s16)left, (s16)(top + 3)
-                    };
-                    fillPoly(trim, 8, inset == 0 ? Color(187, 133, 37, 230) :
-                        inset == 1 ? Color(255, 236, 162, 240) : color);
-                }
+                MenuTheme::selectionFrame(this, x, y, w, h, color, 230, 240);
                 // The rotated fingertip sits above the sprite's centre.
-                MenuTheme::image(MenuThemeAssets::get(MenuThemeAssets::Hand, pose(45)),
-                                 x - 23, y + 6, 28, 26, 255, MenuTheme::PointRight);
+                MenuTheme::hand(x - 23, y + 6, 28, 26);
                 return;
             }
         } else if (color.a >= 220 && color.r < 80 && color.g < 80 && color.b < 100) {
@@ -235,7 +266,7 @@ void begin(J2DOrthoGraph *ortho) {
     if (TMarDirector *director = RetailInput::stageDirector()) {
         const u32 elapsed = director->unk5C - sLastTick;
         sLastTick = director->unk5C;
-        if (elapsed <= 8) sPatternFrame = (sPatternFrame + elapsed) % 541;
+        if (elapsed <= 8) sPatternFrame = (sPatternFrame + elapsed) % 720;
     }
     MenuThemeAssets::service();
 }
@@ -252,50 +283,55 @@ void frame(Menu *menu, J2DOrthoGraph *ortho, bool sidebar) {
     menu->fillBox(24, 18, 588, 412, Color(background[0], background[1], background[2], 255));
     image(MenuThemeAssets::get(MenuThemeAssets::Paper), 24, 18, 588, 412,
           255, PaperTile);
+    image(MenuThemeAssets::get(MenuThemeAssets::Paper), 24, 18, 588, 56, 255, HeaderTile);
     const s16 binding[] = {3,19, 8,13, 21,13, 26,18, 26,434, 21,441, 8,441, 3,433};
-    menu->fillPoly(binding, 8, Color(83, 47, 26, 255));
-    menu->fillBox(6, 20, 17, 413, Color(143, 85, 40, 255));
-    menu->fillBox(9, 16, 10, 421, Color(191, 133, 65, 255));
-    menu->fillBox(10, 18, 3, 417, Color(222, 173, 96, 255));
-    menu->fillBox(22, 20, 3, 413, Color(105, 63, 33, 255));
+    menu->fillPoly(binding, 8, spine(Color(83, 47, 26, 255)));
+    menu->fillBox(6, 20, 17, 413, spine(Color(143, 85, 40, 255)));
+    menu->fillBox(9, 16, 10, 421, spine(Color(191, 133, 65, 255)));
+    menu->fillBox(10, 18, 3, 417, spine(Color(222, 173, 96, 255)));
+    menu->fillBox(22, 20, 3, 413, spine(Color(105, 63, 33, 255)));
     for (int i = 0; i < 5; ++i) {
         const s16 y = 66 + i * 66;
         const s16 grain[] = {16,y, 18,(s16)(y+16), 16,(s16)(y+40),
                              15,(s16)(y+49), 16,(s16)(y+18), 15,y};
-        menu->fillPoly(grain, 6, Color(133, 82, 39, 180));
+        menu->fillPoly(grain, 6, spine(Color(133, 82, 39, 180)));
     }
     for (int y = 40; y <= 410; y += 370) {
-        menu->fillBox(5, y, 20, 9, Color(82, 48, 27, 255));
-        menu->fillBox(6, y + 1, 18, 6, Color(205, 159, 69, 255));
-        menu->fillBox(9, y + 1, 5, 2, Color(255, 221, 136, 255));
+        menu->fillBox(5, y, 20, 9, spine(Color(82, 48, 27, 255)));
+        menu->fillBox(6, y + 1, 18, 6, spine(Color(205, 159, 69, 255)));
+        menu->fillBox(9, y + 1, 5, 2, spine(Color(255, 221, 136, 255)));
     }
     menu->fillBox(26, 18, 3, 414, Color(80, 53, 31, 75));
-    menu->fillBox(24, 75, 588, 60, Color(77, 139, 91, 47));
-    menu->fillBox(24, 74, 588, 1, Color(164, 131, 64, 255));
-    menu->fillBox(24, 135, 588, 1, Color(164, 131, 64, 255));
+    menu->fillBox(24, 75, 588, 60, MenuPalette::colour(MENU_CATEGORIES, Color(77, 139, 91, 47)));
+    menu->fillBox(24, 74, 588, 1, MenuPalette::colour(MENU_TRIM, Color(164, 131, 64, 255)));
+    menu->fillBox(24, 135, 588, 1, MenuPalette::colour(MENU_TRIM, Color(164, 131, 64, 255)));
     image(MenuThemeAssets::get(MenuThemeAssets::Shine), 38, 25, 39, 39, 255,
           pose(90) ? LeanLeft : LeanRight);
-    menu->drawText("MOONSHINE", 88, 28, 24, 24, ink(Color(90, 170, 255, 255)));
+    if(const ResTIMG *heading=MenuThemeAssets::get(MenuThemeAssets::MoonshineTitle))
+        image(heading,88,32,192,24,255,TitleInk);
+    else menu->drawText("MOONSHINE",88,28,24,24,MenuPalette::colour(MENU_TITLE_TEXT,ink(Color(90,170,255,255))));
     menu->drawText(BuildBranding::version(nullptr), 90, 56, 12, 12,
                    footerColor());
     image(MenuThemeAssets::get(MenuThemeAssets::Palm, pose(90)), 551, 22, 45, 48);
     if (sidebar) {
-        menu->fillBox(24, 136, 124, 266, Color(61, 135, 113, 255));
+        menu->fillBox(24, 136, 124, 266, MenuPalette::colour(MENU_SIDEBAR, Color(61, 135, 113, 255)));
         menu->fillBox(148, 136, 2, 266, Color(145, 140, 79, 255));
         if (const ResTIMG *postcard = MenuThemeAssets::get(MenuThemeAssets::Postcard))
             image(postcard, 31, 178, 110, 110 * postcard->mHeight / postcard->mWidth);
         if (const ResTIMG *title = MenuThemeAssets::get(MenuThemeAssets::WorldTitle)) {
             const int height = 110 * title->mHeight / title->mWidth;
-            image(title, 31, 156 - height / 2, 110, height);
+            image(title, 31, 156 - height / 2, 110, height, 255, SidebarInk);
         } else for (unsigned line = 0; line < 2; ++line) {
             const char *title = MenuThemeAssets::worldTitle(line);
             menu->drawText(title, 86 - Menu::textWidth(title, 16) / 2,
-                           141 + line * 17, 16, 16, Color(255, 249, 219, 255));
+                           141 + line * 17, 16, 16, MenuPalette::colour(MENU_SIDEBAR_TEXT, Color(255, 249, 219, 255)));
         }
         image(MenuThemeAssets::get(MenuThemeAssets::Fish, pose(90)), 42, 334, 37, 48);
         image(MenuThemeAssets::get(MenuThemeAssets::Boat, pose(90)), 87, 339, 48, 36);
     }
-    menu->fillBox(24, 402, 588, 1, Color(164, 131, 64, 255));
+    if (gSettings.get(SETTING_MENU_CUSTOM_BACKGROUND) && (MOONSHINE_MENU_PALETTE_LIVE->custom & (1u << MENU_FOOTER)))
+        menu->fillBox(24,403,588,27,MenuPalette::colour(MENU_FOOTER,Color(77,139,91,255)));
+    menu->fillBox(24, 402, 588, 1, MenuPalette::colour(MENU_TRIM, Color(164, 131, 64, 255)));
 }
 
 void shoulder(Menu *menu, bool right) {
@@ -319,8 +355,8 @@ void category(Menu *menu, const char *name, int index, int x, int width, bool se
                 (s16)(right - 5), (s16)bottom, (s16)(left + 5), (s16)bottom,
                 (s16)left, (s16)(bottom - 5), (s16)left, (s16)(top + 5)
             };
-            menu->fillPoly(border, 8, inset == 0 ? Color(213, 145, 31, 255) :
-                inset == 1 ? Color(255, 237, 153, 255) : Color(49, 110, 76, 255));
+            menu->fillPoly(border, 8, inset == 0 ? MenuPalette::colour(MENU_TRIM, Color(213, 145, 31, 255)) :
+                inset == 1 ? MenuPalette::colour(MENU_TRIM_LIGHT, Color(255, 237, 153, 255)) : MenuPalette::colour(MENU_SELECTED_TAB, Color(49, 110, 76, 255)));
         }
     }
     const Asset asset = icons[index >= 0 && index < 8 ? index : 0];
@@ -328,9 +364,10 @@ void category(Menu *menu, const char *name, int index, int x, int width, bool se
     const bool lean = asset == TabGhost || asset == TabGlasses || asset == TabMario;
     const int start = x + (width - 46 - Menu::textWidth(name, 20)) / 2;
     image(get(asset, asset == TabMario ? 0 : frame), start, 86, 38, 38,
-          selected ? 255 : 210, lean && frame ? LeanLeft : Fit);
+          selected ? 255 : 210, selected && asset == TabPianta &&
+          ((sPatternFrame / 90) & 3) == 2 ? Mirror : lean && frame ? LeanLeft : Fit);
     menu->drawText(name, start + 46, 95, 20, 20,
-                   selected ? Color(255, 248, 209, 255) : ink(Color(255, 255, 255, 255)));
+                   selected ? MenuPalette::colour(MENU_SELECTED_TEXT, Color(255, 248, 209, 255)) : ink(Color(255, 255, 255, 255)));
 }
 }
 

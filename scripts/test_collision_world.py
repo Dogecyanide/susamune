@@ -176,6 +176,7 @@ API void highPool(unsigned flags){
  TransferLease::ready=!(flags&4);
 }
 API void admission(int ready){TransferLease::ready=ready;}
+API unsigned primaryBase(){return SUSAMUNE_COLLISION_PRIMARY_PPC_BASE;}
 API unsigned retainedBytes(){return sizeof(CollisionViewer::sActiveTriangles);}
 API unsigned spillBase(){return SUSAMUNE_COLLISION_BITS_PPC_BASE;}
 API unsigned spillBytes(){return SUSAMUNE_COLLISION_BITS_SIZE;}
@@ -205,7 +206,7 @@ API unsigned outcode(float x,float y,float z,float w){return SusamuneCollisionOu
         kernel.VirtualAlloc.argtypes=[C.c_void_p,C.c_size_t,C.c_ulong,C.c_ulong]
         kernel.VirtualAlloc.restype=C.c_void_p
         kernel.VirtualFree.argtypes=[C.c_void_p,C.c_size_t,C.c_ulong]
-        for address,size in ((0x80000000,0x1700000),(0x91cf0000,0x20000),(0xcc000000,0x10000)):
+        for address,size in ((0x80000000,0x1700000),(0x917f0000,0x10000),(0x91cf0000,0x20000),(0xcc000000,0x10000)):
             p=kernel.VirtualAlloc(address,size,0x3000,4)
             if p != address: raise RuntimeError("fixture memory unavailable")
             cls.addClassCleanup(lambda a=p:kernel.VirtualFree(a,0,0x8000))
@@ -308,12 +309,18 @@ API unsigned outcode(float x,float y,float z,float w){return SusamuneCollisionOu
         base=self.dll.spillBase() & 0xffffffff
         size=self.dll.spillBytes()
         self.assertEqual((base,size,self.dll.retainedBytes()),(0x91cfd100,7936,8448))
+        primary=self.dll.primaryBase() & 0xffffffff
+        primary_size=self.dll.retainedBytes()
+        self.assertEqual(primary,0x917fb3e0)
+        C.memset(primary-32,0x5a,primary_size+64)
         C.memset(base-32,0xa7,size+64)
         self.dll.highPool(1)
         self.assertEqual(self.dll.run(),0x20003)
         self.assertEqual(self.dll.color(2),0xffe63cff)
         self.assertEqual(C.string_at(base-32,32),bytes([0xa7])*32)
         self.assertEqual(C.string_at(base+size,32),bytes([0xa7])*32)
+        self.assertEqual(C.string_at(primary-32,32),bytes([0x5a])*32)
+        self.assertEqual(C.string_at(primary+primary_size,32),bytes([0x5a])*32)
         self.dll.highPool(2)
         self.assertEqual(self.dll.run(),0)
         self.assertEqual(C.string_at(base,size),bytes(size))

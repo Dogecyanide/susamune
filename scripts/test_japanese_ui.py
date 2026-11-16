@@ -11,7 +11,7 @@ from unittest.mock import patch
 import zlib
 
 from gen_japanese_ui import (build, catalogue, expand, font_glyph, supplemental_glyphs,
-                             yay0, TOKENS, JA_TOKENS, MAX_SIZE)
+                             yay0, text_pool, pack_glyph, unpack_glyph, TOKENS, JA_TOKENS, MAX_SIZE)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +28,24 @@ def function(source, signature):
 
 
 class JapaneseUiTests(unittest.TestCase):
+    def test_dolphin_file_labels_replace_console_labels_without_extra_allocation(self):
+        from gen_japanese_ui import hashes
+        binary,report=build(dolphin=True)
+        self.assertLessEqual(len(binary),MAX_SIZE)
+        normal=dict(catalogue(ROOT/'data/japanese_ui.tsv'))
+        dolphin=dict(catalogue(ROOT/'data/japanese_ui.tsv',dolphin=True))
+        self.assertEqual(len(normal),len(dolphin))
+        self.assertIn(hashes(b'SD savestates'),normal)
+        self.assertNotIn(hashes(b'SD savestates'),dolphin)
+        self.assertIn(hashes(b'Saved states'),dolphin)
+
+    def test_text_pool_shares_suffixes_without_changing_text(self):
+        values=[s.encode('cp932') for s in ('設定を保存','保存','を保存','設定','')]
+        pool,offsets=text_pool(values)
+        self.assertLess(len(pool),sum(len(v)+1 for v in values))
+        self.assertEqual((pool,offsets),text_pool(reversed(values)))
+        for value in values:
+            self.assertEqual(bytes(pool[offsets[value]:]).split(b'\0',1)[0],value)
     @classmethod
     def setUpClass(cls):
         cls.asset, cls.report = build()
@@ -37,7 +55,7 @@ class JapaneseUiTests(unittest.TestCase):
         harness = '''
 #include "susamune/japanese_ui.h"
 typedef unsigned char u8; typedef unsigned short u16; typedef unsigned int u32;
-static const u8 *sAsset, *sProbeAsset; static bool sChecked;
+static const u8 *sAsset, *sProbeAsset; static bool sChecked, sEnglish;
 static u16 sCacheIds[64]; static u8 sCache[64][128];
 static unsigned int sNext, barriers, flushes, invalidations;
 #define IS_EMULATOR 0
@@ -49,15 +67,17 @@ static void GXInvalidateTexAll() {++invalidations;}
 extern "C" void *memset(void *p,int v,__SIZE_TYPE__ n) {volatile u8 *b=(volatile u8*)p;while(n--)*b++=v;return p;}
 '''
         for signature in ('bool ready()', 'unsigned int word(', 'unsigned int nextCode(', 'int glyph(',
-                          'int units(', 'u8 *image(', 'const char *text(', 'const char *fitLine('):
+                          'int units(', 'u8 *image(', 'const char *translated(', 'const char *text(', 'bool available()', 'bool enabled()', 'void toggle()', 'const char *fitLine('):
             harness += function(source, signature)+'\n'
         harness += '''
 extern "C" {
 __declspec(dllexport) int valid(const u8 *p,unsigned int n) {return SusamuneJpUiValid(p,n);}
 __declspec(dllexport) void reset(const u8 *p,unsigned int n) {
- sAsset=nullptr;sProbeAsset=p;sChecked=false;ready();sNext=barriers=flushes=invalidations=0;
+ sAsset=nullptr;sProbeAsset=p;sChecked=false;sEnglish=false;ready();sNext=barriers=flushes=invalidations=0;
  for(unsigned int i=0;i<64;++i)sCacheIds[i]=0;
 }
+__declspec(dllexport) void switchLanguage() {toggle();}
+__declspec(dllexport) const char *rawLookup(const char *p) {return translated(p);}
 __declspec(dllexport) const char *lookup(const char *p) {return text(p);}
 __declspec(dllexport) int measure(const char *p) {return units(p);}
 __declspec(dllexport) const char *line(const char *p,char *out,unsigned int n,int max,int size) {return fitLine(p,out,n,max,size);}
@@ -74,6 +94,7 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         cls.lib.valid.argtypes = [C.c_void_p,C.c_uint]
         cls.lib.reset.argtypes = [C.c_void_p,C.c_uint]
         cls.lib.lookup.argtypes = [C.c_char_p]; cls.lib.lookup.restype = C.c_char_p
+        cls.lib.rawLookup.argtypes = [C.c_char_p]; cls.lib.rawLookup.restype = C.c_char_p
         cls.lib.measure.argtypes = [C.c_char_p]; cls.lib.measure.restype = C.c_int
         cls.lib.line.argtypes = [C.c_char_p,C.c_void_p,C.c_uint,C.c_int,C.c_int]
         cls.lib.line.restype = C.c_void_p
@@ -90,11 +111,28 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
     def setUp(self):
         self.lib.reset(self.buffer,len(self.asset))
 
+    def test_menu_switch_preserves_japanese_search_and_glyphs(self):
+        jp = self.lib.lookup(b"Savestates")
+        self.assertNotEqual(jp, b"Savestates")
+        self.lib.switchLanguage()
+        self.assertEqual(self.lib.lookup(b"Savestates"), b"Savestates")
+        self.assertEqual(self.lib.rawLookup(b"Savestates"), jp)
+        self.assertGreater(self.lib.measure("かなカナ".encode('cp932')), 0)
+        self.lib.switchLanguage()
+        self.assertEqual(self.lib.lookup(b"Savestates"), jp)
+
     def test_asset_bounded_and_reproducible(self):
         self.assertEqual(self.asset,build()[0])
         self.assertLessEqual(len(self.asset),MAX_SIZE)
         self.assertEqual(len(self.asset)%32,0)
         self.assertTrue(self.lib.valid(self.buffer,len(self.asset)))
+
+    def test_all_keyboard_characters_have_glyphs(self):
+        offset, count = struct.unpack_from('>II', self.asset, 32)
+        codes = {struct.unpack_from('>H', self.asset, offset + 4*i)[0] for i in range(count)}
+        characters = ''.join(map(chr, range(0x3041,0x3094))) + ''.join(map(chr,range(0x30a1,0x30f4))) + 'ー、。・「」？！'
+        for character in characters:
+            self.assertIn(int.from_bytes(character.encode('cp932'),'big'),codes,character)
 
     def test_entire_catalogue_roundtrips_through_production_lookup(self):
         for line in (ROOT/'data/japanese_ui.tsv').read_text(encoding='utf-8').splitlines():
@@ -104,7 +142,7 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
 
     def test_achievement_supplement_changes_only_the_missing_glyph(self):
         supplement = supplemental_glyphs()
-        self.assertEqual(set(supplement), {0x7DBA})
+        self.assertEqual(set(supplement), {0x7DBA, 0x6A59})
         source_codes = json.loads((ROOT/'data/fonts/droid-japanese-codepoints.json').read_text())
         source_map = {code: i for i, code in reversed(list(enumerate(source_codes)))}
         source_map[0x7E] = source_map[0x203E]
@@ -114,7 +152,8 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         glyph_offset, count, pixel_offset = struct.unpack_from('>III', self.asset, 32)
         found = False
         for index in range(count):
-            code, width, reserved = struct.unpack_from('>HBB', self.asset, glyph_offset+4*index)
+            code, width, length = struct.unpack_from('>HBB', self.asset, glyph_offset+4*index)
+            offset=struct.unpack_from('>H',self.asset,glyph_offset+count*4+index*2)[0]
             resolved = aliases.get(code, code)
             character = ord(resolved.to_bytes(1 if resolved < 256 else 2, 'big').decode('cp932'))
             if character in supplement:
@@ -122,8 +161,9 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
                 found = True
             else:
                 expected_width, expected_image = font_glyph(font, source_map[character])
-            self.assertEqual((width, reserved), (expected_width, 0), hex(code))
-            self.assertEqual(self.asset[pixel_offset+index*64:pixel_offset+(index+1)*64],
+            self.assertEqual(width, expected_width, hex(code))
+            tree_offset=struct.unpack_from('>I',self.asset,56)[0]
+            self.assertEqual(unpack_glyph(self.asset[pixel_offset+offset:pixel_offset+offset+length],self.asset[tree_offset:pixel_offset]),
                              expected_image, hex(code))
         self.assertTrue(found)
         self.assertEqual(self.lib.lookup(b'Clean Sweep'), '綺麗な射線'.encode('cp932'))
@@ -196,7 +236,9 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
     def test_texture_cache_matches_every_packed_glyph_with_one_barrier_per_wrap(self):
         header=struct.unpack_from('>16I',self.asset)
         for i in range(header[9]):
-            raw=self.asset[header[10]+i*64:header[10]+(i+1)*64]
+            _,_,length=struct.unpack_from('>HBB',self.asset,header[8]+i*4)
+            offset=struct.unpack_from('>H',self.asset,header[13]+i*2)[0]
+            raw=unpack_glyph(self.asset[header[10]+offset:header[10]+offset+length],self.asset[header[14]:header[10]])
             coverage=(0,7,12,15)
             expected=bytes(v for b in raw for v in ((coverage[b>>6]<<4)|coverage[b>>4&3],(coverage[b>>2&3]<<4)|coverage[b&3]))
             self.assertEqual(C.string_at(self.lib.getImage(i),128),expected)
@@ -204,6 +246,24 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         self.assertEqual(self.lib.counts(0),(header[9]-1)//64)
         self.assertEqual(self.lib.counts(1),header[9])
         self.assertEqual(self.lib.counts(2),header[9])
+
+    def test_rejects_cyclic_tree_and_truncated_glyph_after_valid_crc(self):
+        header = struct.unpack_from('>16I', self.asset)
+        mutations = [(header[14], b'\0\0'),
+                     (header[14], struct.pack('>H', header[15])),
+                     (header[14], b'\x81\0')]
+        for i in range(header[9]):
+            row = header[8] + i * 4
+            if 1 < self.asset[row + 3] < 64:
+                mutations.append((row + 3, bytes([self.asset[row + 3] - 1])))
+                break
+        self.assertEqual(len(mutations), 4)
+        for offset, replacement in mutations:
+            bad = bytearray(self.asset)
+            bad[offset:offset + len(replacement)] = replacement
+            struct.pack_into('>I', bad, 12, 0)
+            struct.pack_into('>I', bad, 12, zlib.crc32(bad))
+            self.assertFalse(self.lib.valid(C.create_string_buffer(bytes(bad)), len(bad)))
 
     def test_measurement_uses_font_widths_and_rejects_unknown_or_truncated_codes(self):
         self.assertGreater(self.lib.measure('日本語'.encode('cp932')),0)
@@ -294,10 +354,10 @@ __declspec(dllexport) unsigned int counts(unsigned int which) {return which==0?b
         labels += re.findall(r'\{"([^"\\]+)",', pages)
         labels += ['Quick','Practice','Runs','Records','Ghosts','Display','System',
                    'ILs','Stage Loader','PB Safety','Layout editor','Button binds',
-                   'Moonshine guide','Frame advance','Free camera','Input replay (experimental)',
+                   'Moonshine guide','Frame advance','Free camera','Input replay',
                    'Timers','Controller inputs','Metadata','Native HUD colours','Custom text',
                    'Practice feedback','Menu and notifications','Save latest ghost',
-                   'Achievements  >','Statistics overview  >','Worlds  >']
+                   'Achievements','Statistics overview','Worlds']
         for label in labels:
             with self.subTest(label=label):
                 translated=self.lib.lookup(label.encode())

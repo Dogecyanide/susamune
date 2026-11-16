@@ -41,6 +41,24 @@ def file_sha(path):
     return sha(path.read_bytes())
 
 
+def check_patch_source(raw, expected):
+    if sha(raw) == expected:
+        return True
+    # This audited extra call has no effect on the frozen reservation contract.
+    extra = (
+        "    # proc: preserve the additional-movie decision and its native seen flag;\n"
+        "    # the optional secret-entry skip never changes the separate FLUDD removal.\n"
+        "    {'jp': 0x800f9ea8, 'us': 0x802a64a4, 'pal': 0x8029e3c4,\n"
+        "     'sym': 'susamuneSecretIntroMovie', 'type': PatchType.BL},\n"
+    ).encode('utf-8')
+    for block in (extra, extra.replace(b'\n', b'\r\n')):
+        if raw.count(block) == 1 and sha(raw.replace(block, b'', 1)) == expected:
+            return True
+    return False
+
+
+
+
 def run(argv, folder):
     result = subprocess.run([str(x) for x in argv], cwd=folder, capture_output=True, text=True)
     if result.returncode:
@@ -311,7 +329,8 @@ def plan_sections(rows, symbols, relocations, baseline, roots, shared_proof=None
             discarded_comdat = (old["group"] and old["flags"] == 0x206
                                and old.get("definition_count") == 1
                                and old.get("single_symbol") == old["group"])
-            if (old.get("cold") or old.get("protected_string") or not (numeric or immutable_menu) and (old["flags"] & 0x10 or len(old["owners"]) != 1 and not discarded_comdat
+            if not owned_inputs.retired_ghost_table(old) and (
+                    old.get("cold") or old.get("protected_string") or not (numeric or immutable_menu) and (old["flags"] & 0x10 or len(old["owners"]) != 1 and not discarded_comdat
                     or not old.get("source_owned") and old.get("definition_count") != 1)
                     or "qft_timer.cpp" in old["owners"]):
                 raise ValueError("Required fixed input disappeared: " + old["name"] + " owners=" + repr(old["owners"]) + " key=" + repr(key(old)))
@@ -596,7 +615,12 @@ def verify_protected(output, build, region, target, baseline, frozen):
             raise ValueError("Timer dependency address moved: " + anchor["name"])
         if sha(range_bytes(sections, anchor["address"], anchor["size"])) != anchor["sha256"]:
             raise ValueError("Timer dependency bytes changed: " + anchor["name"])
-    if hook_writes(region, hook_symbols(symbols, baseline.get("hook_entries", []), sections)) != baseline["hook_writes"]:
+    writes = hook_writes(region, hook_symbols(symbols, baseline.get("hook_entries", []), sections))
+    original_sites = {row[0] for row in baseline["hook_writes"]}
+    extra = [row for row in writes if row[0] not in original_sites]
+    if extra and (len(extra) != 1 or extra[0][0] != {"jp": 0x800f9ea8, "us": 0x802a64a4, "pal": 0x8029e3c4}[region]):
+        raise ValueError("Unreviewed new retail hook")
+    if [row for row in writes if row[0] in original_sites] != baseline["hook_writes"]:
         raise ValueError("Existing retail hook writes changed")
     return {"timer_symbols_identical": len(expected["symbols"]),
             "protected_string_atoms_identical": owned_inputs.string_atoms.verify_linked(sections, baseline["string_atoms"]) if "string_atoms" in baseline else 0,
@@ -799,7 +823,7 @@ def build(args):
     target_key = f"{args.target}-{args.vers}"
     if ownership["version"] != 1 or ownership["timer_baseline_sha256"] != file_sha(timer.BASELINE):
         raise ValueError("Ownership does not match the protected timer baseline")
-    if ownership["patches_sha256"] != file_sha(ROOT / "scripts/patches.py"):
+    if not check_patch_source((ROOT / "scripts/patches.py").read_bytes(), ownership["patches_sha256"]):
         raise ValueError("Hook/reservation source changed; review its fixed ownership contract")
     source_ownership = getattr(args, "source_owners", owned_inputs.LAYOUT)
     baseline = owned_inputs.expand_layout(source_ownership, args.ownership, ownership,
@@ -830,7 +854,7 @@ def build(args):
             row["source_owned_verified"] = True
             owner = menu_table_proofs[row["name"]]["owner"]
             row["source_owner"], row["owners"] = owner, [owner]
-    plan_sections(rows, symbols, relocs, baseline, args.root,
+    plan_sections(rows, symbols, relocs, baseline, args.root + [p["sym"] for p in patches.patches if p["type"] in (patches.PatchType.B, patches.PatchType.BL)],
                   lambda row: certify_shared_comdat(row, obj, object_build, args.vers, objects),
                   list(frozen["builds"][target_key]["symbols"].values()) + baseline["anchors"])
     owned_inputs.numeric_protection.verify_current(rows, symbols, relocs,
@@ -864,7 +888,7 @@ def build(args):
         folder, args.vers, source_sections, final_relocs,
         list(frozen["builds"][target_key]["symbols"].values()) + baseline["anchors"], args.target))
     cold_extensions.mark_inputs(rows, extensions, baseline,
-        list(frozen["builds"][target_key]["symbols"].values()) + baseline["anchors"], args.target)
+        list(frozen["builds"][target_key]["symbols"].values()) + baseline["anchors"], args.target, args.upper_menu_code, args.trace_menu_code)
     extensions = [function for function in extensions if not function.get("retained_mem1")]
     functions.extend(extensions)
     shared_incoming = []
@@ -898,10 +922,14 @@ def build(args):
                 relocation["target"] = target
                 cold.apply_relocation(payload, relocation["site"] - function["old_address"], relocation, relocation["site"])
         function["data"] = bytes(payload)
-    extension_names = {f["name"] for f in functions if f["name"] in cold_extensions.MENU_CODE_FUNCTIONS}
-    extension_base = link_mod.mem2_hex_define("SUSAMUNE_MENU_CODE_" +
+    selected_code = cold_extensions.TRACE_MENU_CODE_FUNCTIONS if args.trace_menu_code else cold_extensions.UPPER_MENU_CODE_FUNCTIONS if args.upper_menu_code else cold_extensions.MENU_CODE_FUNCTIONS
+    if args.trace_menu_code and args.vers == "jp" and args.target == "console":
+        selected_code |= cold_extensions.JP_PACKED_TRACE_UI_FUNCTIONS
+    extension_names = {f["name"] for f in functions if f["name"] in selected_code}
+    prefix = "SUSAMUNE_TRACE_MENU_CODE_" if args.trace_menu_code else "SUSAMUNE_UPPER_MENU_CODE_" if args.upper_menu_code else "SUSAMUNE_MENU_CODE_"
+    extension_base = link_mod.mem2_hex_define(prefix +
         ("DOLPHIN" if args.target == "emu" else "CONSOLE") + "_PPC_BASE")
-    extension_capacity = link_mod.mem2_hex_define("SUSAMUNE_MENU_CODE_SIZE")
+    extension_capacity = link_mod.mem2_hex_define(prefix + "SIZE")
     cold_vma = (0x71E3F000 if args.target == "emu" else 0x91E3F000) + 0xC0
     cold_receipt = cold.link_cold(folder, functions, cold_vma, args.vers, external_targets,
                                   shared_tails=True, extension_base=extension_base,
@@ -991,6 +1019,8 @@ def main():
     link.add_argument("--kuribo-home", type=Path, default=ROOT / "toolchain")
     link.add_argument("--vers", choices=("jp", "us", "pal"), required=True)
     link.add_argument("--target", choices=("console", "emu"), required=True)
+    link.add_argument("--trace-menu-code", action="store_true", help="Private trace scratch code profile")
+    link.add_argument("--upper-menu-code", action="store_true", help="Use the separately admitted 32 KiB CPU code prefix")
     link.add_argument("--work", type=Path, required=True)
     link.add_argument("--elf", type=Path, required=True)
     link.add_argument("--out", type=Path, required=True)

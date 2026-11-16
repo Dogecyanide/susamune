@@ -1,0 +1,33 @@
+PR41 display ownership and persistence
+
+menu_palette.h defines the 64-byte shared wire layout and 16 RGB roles. Its
+custom mask is a genuine 16-bit mask: 65535 means every role, not missing data.
+The staging/live copies occupy existing free config space at +0x7800/+0x7840;
+no MEM2 or game heap reservation grows. menu_palette.cpp owns UI adoption and
+sampling; settings.cpp publishes on save; ARM SusamuneCfg.c parses/writes
+creation-region keys. Global Original guidebook bypasses custom roles without
+erasing them. Creation's normal backup/restore supports Cancel.
+Dolphin CARD record v15 appends this block, preserving the old v14 payload and
+8192-byte record size. Legacy/corrupt palettes become defaults.
+
+Metadata keeps its 256-byte legacy wire layout. The eight new enable bits live
+in metadata style reserved0[5], gated by presence bit 15. The live field mask
+is 32 bits. Old eleven IDs and menu row numbers are retained; new rows append.
+Do not reorder persisted IDs or change the original style payload size.
+metadata_values.cpp only reads Mario state. It never writes gameplay state.
+Direction is atan2(speed.x,speed.z), speed gain is horizontal magnitude delta
+across four QFs, height is y-floorBelow, slope comes from the floor normal,
+water uses the nozzle's capacity, and hover uses the existing trigger countdown.
+A repeated draw cannot advance speed-gain sampling; discontinuous ticks reset
+it. Transition checks reset the sample before any stage pointers are read.
+
+The Japanese catalogue retains exact pixels and strings with byte-overlap
+sharing in its Huffman glyph pool. Thirty-three obsolete translation keys were
+removed after checking current source and all three decompressed linked code,
+menu and cold payloads. Do not remove live translations merely to meet capacity.
+New glyph/font edits must pass test_japanese_ui.py's decoder round trips.
+
+Focused checks: test_menu_palette.py, test_metadata_values.py,
+test_metadata_layout.py, test_creation_menu_routes.py,
+test_menu_search_enumeration.py, test_launcher_music_lifecycle.py,
+test_live_race_match.py and test_live_group.py.

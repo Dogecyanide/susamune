@@ -10,6 +10,9 @@ namespace PatternSelector {
 // sup39's original code; zero or an unavailable branch means random.
 void update(bool allowInput = true);
 void draw(Menu *menu);
+void copyPatterns(unsigned char out[3]);
+// Trusted temporary choices; the replay settings decoder validates file values.
+void setPatternsTransient(const unsigned char values[3]);
 
 }  // namespace PatternSelector
 

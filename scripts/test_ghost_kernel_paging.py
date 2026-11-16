@@ -90,9 +90,10 @@ class GhostKernelPagingTests(unittest.TestCase):
         (path / 'ghost_kernel_fixture.h').write_text(
             getattr(cls, 'fixture_transform', lambda text: text)(fixture))
         source = (ROOT / "launcher/kernel/SusamuneGhost.c").read_text()
+        source = source.replace('#include "GhostCanonical.inc"', (ROOT / "launcher/kernel/GhostCanonical.inc").read_text())
         source = re.sub(r'^#include .*$', '', source, flags=re.M)
         (path / "kernel.c").write_text(
-            '#include "ghost_kernel_fixture.h"\n' + source + EXPORTS +
+            '#include "ghost_kernel_fixture.h"\n#include "susamune/ghost_recording_manifest.h"\n' + source + EXPORTS +
             getattr(cls, "bridge_source", ""))
         result = subprocess.run([
             str(compiler), "--target=x86_64-pc-windows-msvc", "-shared", "-O1",
@@ -135,7 +136,7 @@ class GhostKernelPagingTests(unittest.TestCase):
         self.passes = self.dll.run(1000000)
         self.assertGreaterEqual(self.passes, 0, "state machine stalled or exceeded its per-pass I/O budget")
         result = struct.unpack("<IHHIiIIIHH", ctypes.string_at(self.dll.response(), 32))
-        self.assertEqual(result[1], 5)
+        self.assertEqual(result[1], 9)
         self.assertEqual(result[2] & 2, 0)
         if result[4] != 0:
             self.assertEqual((result[5], result[8]), (0, 0))
@@ -412,7 +413,7 @@ class GhostKernelPagingTests(unittest.TestCase):
         self.assertGreater(self.dll.reads(), 0)
         self.assertEqual(self.request(1, AUTO, payload=ghost)["status"], 0)
         self.assertEqual(self.page(cached=True)[1], 3)
-        self.assertGreater(self.dll.reads(), 0)
+        self.assertEqual(self.dll.reads(), 0, "verified append extends the completed cache")
         self.assertEqual(self.request(3, 1, generation=1)["status"], 0)
         self.assertEqual(self.page(cached=True)[1], 2)
         self.assertGreater(self.dll.reads(), 0)

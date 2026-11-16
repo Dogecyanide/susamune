@@ -1,0 +1,53 @@
+Moonshine 3.0.0 Timewarp - Prototype 40
+
+Online Mario colours
+Choose Mario as the online opponent model to see each player's confirmed
+custom body colours. Palettes are sent when joining, after reconnecting and
+when colours change. Turning a colour off restores its normal appearance.
+Piantissimo and Shadow Mario retain their own appearances. This does not add
+the separate sunglasses/Aloha accessories to the existing Mario ghost model.
+Use PR40 on all participants for colour sharing.
+
+Match and menu fixes
+Brief connection losses preserve the current match, results and draft rather
+than cancelling it. A pending finish is resent on reconnection. An unchanged
+draft turn does not reopen the menu just because the connection returned.
+The selected-stage draft screen now includes Ready / Cancel ready.
+Menu face and shoulder buttons use physical press edges; holding B/L/R should
+not repeat navigation, while directional scrolling still repeats normally.
+
+Delfino Ghosts
+Publish Ghost now has Add description. Use the on-screen keyboard; Start
+keeps the text and X+Start cancels the edit. The optional description supports
+up to 240 printable ASCII characters. Imported ghosts remain ineligible for
+publication. Existing account links and download behaviour are retained.
+
+Japanese edition
+The Japanese package adds 690 translated strings, taking the asset to 2,298
+entries. The compressed font and text retain the existing fixed reservation.
+This is an expanded translation, not a claim that every dynamic string or
+user-created name is translated.
+
+Development checks
+Three- and four-player simulations cover palette changes, reconnects, packet
+loss, rematches and invalid senders. Actual JP Dolphin rendering showed three
+distinct custom Mario palettes with FLUDD; disabling one left the others
+intact. Description keep/cancel, Japanese font rendering and held/tapped
+category navigation were also exercised in-game. These are separate from
+real Wii/Wii crossplay and four-player hardware acceptance.
+The slowdown review and focused tests found no input/physics writes with
+slowdown Off or at 100%; no inactive slowdown gameplay fix was necessary.
+
+Please test
+1. Use different Mario colours on each console, change them while connected,
+   then reconnect and confirm the same colours return.
+2. Briefly interrupt a connection during draft and racing: the match should
+   survive, and reconnecting should not bring the menu back over gameplay.
+3. Ready up from the draft screen, and check one tap/hold of B, L and R.
+4. Add a description to your own saved ghost and publish it to Delfino Ghosts.
+5. Continue the outstanding four-player hardware test, including attachments
+   and area changes. Keep connection logs if anything fails.
+
+The shared ZIPs contain no personal theme, account token or private data.
+Existing memory reservations, savestate capacity and protected timer code
+remain unchanged.

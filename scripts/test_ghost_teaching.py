@@ -195,11 +195,10 @@ class TeachingTests(unittest.TestCase):
         kernel = (ROOT / "launcher/kernel/SusamuneGhost.c").read_text()
         globals_ = kernel[kernel.index("static const u8 *ValidationBytes;"):
                           kernel.index("static int GhostCloseFile(")]
-        functions = kernel[kernel.index("static u16 ReadBe16("):
-                           kernel.index("static bool GenerationIsNewer(")]
-        # Keep canonical decoding/validation, excluding envelope serialization and I/O.
-        functions = functions[:functions.index("static void WriteBe16(")] + functions[
-            functions.index("static bool BytesAreZero("):]
+        shared = (ROOT / "launcher/kernel/GhostCanonical.inc").read_text()
+        functions = shared[:shared.index("static u8 SanitizeText(")]
+        functions += kernel[kernel.index("static u32 ReadBe24("):kernel.index("static void WriteBe16(")]
+        functions += kernel[kernel.index("static bool ValidateV3SegmentTable("):kernel.index("static bool GenerationIsNewer(")]
         shim = '''#include "susamune/ghost_storage.h"
 #include "susamune/ghost_camera.h"
  typedef unsigned char u8; typedef unsigned short u16;

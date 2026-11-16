@@ -289,7 +289,7 @@ class StateStorageClientTests(unittest.TestCase):
         path = Path(cls.temp.name)
         source = (ROOT / 'src/state_storage.cpp').read_text()
         source = re.sub(r'^#(?:include|pragma) .*$', '', source, flags=re.M)
-        start = source.index('#if IS_EMULATOR')
+        start = source.index('#if IS_EMULATOR\nconst u32 kMailbox')
         end = source.index('#endif', start)+len('#endif')
         source = source[:start] + '''const size_t kMailbox=reinterpret_cast<size_t>(&testMailbox);
 const size_t kStaging=reinterpret_cast<size_t>(testStaging);''' + source[end:]

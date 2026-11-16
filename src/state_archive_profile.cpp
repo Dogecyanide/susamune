@@ -18,6 +18,9 @@ unsigned int sFailure;
 bool memory(unsigned int address, unsigned int size) {
     if (address > 0xffffffffu - size) return false;
     return (address >= 0x80000000u && address + size <= 0x81800000u) ||
+#if IS_EMULATOR
+           (address >= 0x81800000u && address + size <= 0x82000000u) ||
+#endif
            (address >= 0x70000000u && address + size <= 0x72000000u) ||
            (address >= 0x90000000u && address + size <= 0x94000000u);
 }
@@ -127,7 +130,7 @@ struct Reader {
         if (!word(address, vt) || (vt != layout.expVtable && vt != layout.solidVtable) ||
             !word(address + 0x30, start) || !word(address + 0x34, limit) ||
             start >= limit || !memory(start, limit - start)) return false;
-        // Mod-owned MEM2 heaps are outside every restore destination. Their
+        // Mod-owned MEM2 and Dolphin GPU heaps are outside restore destinations. Their
         // changing ghosts are independent of the game's persistent owner proof.
         if (!mem1(address, 0x84)) return true;
         if (!idleMutex(address + 0x18)) return false;

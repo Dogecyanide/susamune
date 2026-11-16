@@ -90,6 +90,11 @@ bool advance(State &s) {
     s.phase = nextIl ? NeedCandidates : Ready;
     return true;
 }
+bool endMatch(State &s) {
+    if (s.phase == Lobby || s.phase == Finished || s.phase == Roaming) return false;
+    clearAttempt(s); s.phase = Finished;
+    return true;
+}
 void cancel(State &s) {
     if (s.phase != Racing && s.phase != Ready) return;
     clearAttempt(s); s.phase = Results;

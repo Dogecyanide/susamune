@@ -1,4 +1,6 @@
-﻿/*
+#include "susamune/ghost_memory.h"
+#include "susamune/susamune_cfg.h"
+/*
 
 Nintendont (Kernel) - Playing Gamecubes in Wii mode on a Wii U
 
@@ -37,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "MoonshineNetBridge.h"
 #endif
 #include "ISO.h"
+#include "ISOCacheBanks.h"
 #include "SI.h"
 #include "EXI.h"
 #include "codehandler.h"
@@ -3213,7 +3216,7 @@ void DoPatches( char *Buffer, u32 Length, u32 DiscOffset )
 							if( CurPatterns[j].Patch == DVDGetDriveStatus )
 							{
 								if( (TITLE_ID) != 0x474754 &&	// Chibi-Robo!
-									(TITLE_ID) != 0x475041 )	// Pok駑on Channel
+									(TITLE_ID) != 0x475041 )	// PokÃ©Â§â€˜on Channel
 									break;
 							}
 							if( (CurPatterns[j].Length >> 16) == (FCODES  >> 16) )
@@ -4102,7 +4105,14 @@ static const struct SusamuneModHeader *SusamuneModStaged(void)
         return NULL;
     size = SusamuneModFileSize(hdr);
     sync_before_read((void*)hdr, size);
-    return SusamuneModFileValid(hdr, GAME_ID, size) ? hdr : NULL;
+    if(!SusamuneModFileValid(hdr,GAME_ID,size))return NULL;
+    if((SusamuneModMenuCodeAddress(hdr)==SUSAMUNE_UPPER_MENU_CODE_CONSOLE_PPC_BASE ||
+        SusamuneModMenuCodeAddress(hdr)==SUSAMUNE_TRACE_MENU_CODE_CONSOLE_PPC_BASE) &&
+        !(SUSAMUNE_CFG_PHYS_PTR->flags&MOONSHINE_GHOST_MEMORY_FLAG))return NULL;
+#if !MOONSHINE_GHOST_TRACE
+    if(SusamuneModMenuCodeAddress(hdr)==SUSAMUNE_TRACE_MENU_CODE_CONSOLE_PPC_BASE)return NULL;
+#endif
+    return hdr;
 }
 
 static bool SusamuneShadowAssetValid(
@@ -4332,8 +4342,8 @@ void PatchSusamune(void)
     if ((SusamuneModFileVersion(hdr) == SUSAMUNE_MOD_VERSION_V4 ?
         SusamuneModV4InstallMapped(hdr, fileSize, GAME_ID, 0,
             SUSAMUNE_MEM2_MODBIN_PPC_BASE, (void*)base, SUSAMUNE_MOD_REGION_SIZE, hdr->baseAddr,
-            (void*)(SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE & 0x7FFFFFFFu),
-            SUSAMUNE_MENU_CODE_SIZE, SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE) :
+            (void*)(SusamuneModMenuCodeAddress(hdr) & 0x7FFFFFFFu),
+            SusamuneModV4MenuCapacity(0,SusamuneModMenuCodeAddress(hdr)), SusamuneModMenuCodeAddress(hdr)) :
         SusamuneModInstall(hdr, GAME_ID, fileSize, (void*)base,
             SUSAMUNE_MOD_REGION_SIZE, hdr->baseAddr)) != SUSAMUNE_MOD_V4_OK)
     {
@@ -4361,10 +4371,15 @@ void PatchSusamune(void)
 
     write32(SUSAMUNE_MOD_BOOT_COLD_START, SusamuneModColdAddress(hdr));
     if (SusamuneModMenuCodeSize(hdr))
-        sync_after_write((void*)(SUSAMUNE_MENU_CODE_CONSOLE_PPC_BASE & 0x7FFFFFFFu),
+        sync_after_write((void*)(SusamuneModMenuCodeAddress(hdr) & 0x7FFFFFFFu),
             SusamuneModMenuCodeSize(hdr));
     write32(SUSAMUNE_MOD_BOOT_COLD_LINES, (SusamuneModColdSize(hdr) >> 5) |
-        (SusamuneModMenuCodeSize(hdr) ? SUSAMUNE_MOD_BOOT_MENU_CODE : 0));
+        (SusamuneModMenuCodeSize(hdr) ? SUSAMUNE_MOD_BOOT_MENU_CODE : 0) |
+        (SusamuneModMenuCodeAddress(hdr)==SUSAMUNE_UPPER_MENU_CODE_CONSOLE_PPC_BASE ? SUSAMUNE_MOD_BOOT_UPPER_MENU_CODE : 0) |
+        (SusamuneModMenuCodeAddress(hdr)==SUSAMUNE_TRACE_MENU_CODE_CONSOLE_PPC_BASE ? SUSAMUNE_MOD_BOOT_TRACE_MENU_CODE : 0));
+
+    if(SusamuneModFileVersion(hdr)==SUSAMUNE_MOD_VERSION_V4)
+        ISOAdmitExtraCache(SusamuneModQuickWord((const u8*)hdr+48));
 
 	// The complete mod file is consumed; its tail can now own pristine models.
 	SusamunePreserveGhostModelAssets(hdr);

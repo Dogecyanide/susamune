@@ -305,7 +305,8 @@ def extract_functions(build, region, relocs, original_sections, linked_receipt, 
     return selected, rejected, cluster, sha(path.read_bytes())
 
 
-def write_object(path, functions, gates, external_targets=None, *, shared_tails=False, extension_names=()):
+def write_object(path, functions, gates, external_targets=None, *, shared_tails=False,
+                 extension_names=(), group_extension=False):
     """Minimal big-endian PPC ET_REL; LLD applies every moved branch."""
     external_targets = external_targets or {}
     strings = bytearray(b"\0")
@@ -319,8 +320,24 @@ def write_object(path, functions, gates, external_targets=None, *, shared_tails=
         symbols.append(struct.pack(">IIIBBH", offset, value, size, 0x12, 0, section))
         indices[name] = index
 
+    def extension_prefix(entry):
+        _, function = entry
+        if function["name"] not in extension_names:
+            return b""
+        prefix = bytearray(function["data"][:20])
+        for relocation in function["relocations"]:
+            offset = relocation["site"] - function["old_address"]
+            if relocation["type"] == REL24 and offset < len(prefix):
+                word, = struct.unpack_from(">I", prefix, offset)
+                struct.pack_into(">I", prefix, offset, word & 0xFC000003)
+        return bytes(prefix)
+
     code, extension_code = bytearray(), bytearray()
-    for n, function in enumerate(functions):
+    indexed = list(enumerate(functions))
+    if group_extension:
+        # Keep similar prologues within the boot compressor's match window.
+        indexed.sort(key=extension_prefix, reverse=True)
+    for n, function in indexed:
         extension = function["name"] in extension_names
         body = extension_code if extension else code
         function["cold_offset"] = len(body)
@@ -396,7 +413,7 @@ def link_cold(directory, functions, base, tag, external_targets=None, *, shared_
     if extension_names and not set(extension_names).issubset({f["name"] for f in functions}):
         raise ValueError("Extension selection names an unknown cold function")
     gate_info = write_object(obj, functions, gates, external_targets, shared_tails=shared_tails,
-                             extension_names=extension_names)
+                             extension_names=extension_names, group_extension=tag == "jp")
     layout = directory / f"cold-{tag}.ld"
     extra = (f". = {extension_base:#x}; .extension : {{ *(.text.extension) . = ALIGN(32); }}"
              if extension_names else "")
@@ -545,6 +562,33 @@ def verify_incoming_word(original, offset, relocation):
         raise ValueError("Unrecognized incoming relocation type")
 
 
+# This fixed ABI table is consumed by the separately checked Dolphin service image.
+NATIVE_STORAGE_CALLBACKS = (
+    "read__12DolphinFilesFPCcPvUlUl", "write__12DolphinFilesFPCcPCvUlUl",
+    "create__12DolphinFilesFPCcUl", "remove__12DolphinFilesFPCc",
+    "take__12DolphinFilesFUlPQ212DolphinFiles6Result",
+    "begin__11DolphinHttpFPCcPC19DolphinHttpsRequestPvUi", "update__11DolphinHttpFv",
+    "take__11DolphinHttpFP16DolphinHttpsInfo",
+    "begin__19DolphinGhostLibraryFRC27SusamuneGhostStorageRequest", "update__19DolphinGhostLibraryFv",
+    "take__19DolphinGhostLibraryFP28SusamuneGhostStorageResponse", "seconds__0Fv",
+    "list__12DolphinFilesFPQ212DolphinFiles5EntryUl", "inspectFile__5GhostFPCvUlP23SusamuneGhostFileHeader",
+    "milliseconds__0Fv", "networkState__0Fv", "networkBegin__0Fv", "networkStopIfIdle__0Fv",
+    "resolve__14DolphinNetworkFPCcUi", "dnsResult__14DolphinNetworkFv", "cancelResolve__14DolphinNetworkFv",
+)
+def native_storage_pointer(source, relocation, symbols, target):
+    name = "dolphinStorageCallbacks__0"
+    if (target != "emu" or source.get("owners") != ["dolphin_ghost_account.cpp"] or
+            source.get("symbols") != [name] or source.get("kind") not in ("data", "rodata") or
+            source.get("attribution") != "exclusive" or relocation["type"] != 1 or relocation.get("addend") != 0):
+        return False
+    definitions = [s for s in symbols if s["name"] == name]
+    if len(definitions) != 1 or definitions[0]["size"] != 4 * len(NATIVE_STORAGE_CALLBACKS):
+        return False
+    offset = relocation["site"] - definitions[0]["address"]
+    return (offset >= 0 and offset % 4 == 0 and offset // 4 < len(NATIVE_STORAGE_CALLBACKS) and
+            relocation["symbol"] == NATIVE_STORAGE_CALLBACKS[offset // 4])
+
+
 def audit_incoming(build, region, functions, cluster, relocs, sections, region_budget, timer_receipt, input_target="console", shared_sites=()):
     objects, owners = budget.object_inputs(build, region)
     owners["__modules__"] = set(objects)
@@ -584,6 +628,8 @@ def audit_incoming(build, region, functions, cluster, relocs, sections, region_b
                 kind = "named-call"
             elif r["type"] == 1 and source["kind"] in ("data", "rodata") and all(n.startswith("__vt__") for n in owner_names):
                 kind = "named-vtable"
+            elif native_storage_pointer(source, {**r, "symbol": r["symbol"] or function["name"]}, image.symbols, input_target):
+                kind = "audited-native-storage-callback"
             else:
                 raise ValueError("Incoming reference is not a named call or vtable word: " + repr(r))
         verify_incoming_word(original, file_offset(sections, r["site"], 4), r)

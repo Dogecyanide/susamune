@@ -108,7 +108,7 @@ void fillZero(unsigned char *bytes, unsigned int size) {
 // same compressor/table selection as LZ4_compress_fast_extState, without
 // linking its two additional limited-output compressor specializations.
 __attribute__((noinline, section(".text.moonshineQuickLz4")))
-int quickLz4Block(QuickWorkspace *work, const unsigned char *bytes, unsigned int raw) {
+int quickLz4Block(QuickWorkspace *work, const unsigned char *bytes, unsigned int raw, unsigned int acceleration = 8) {
     work->zero = false;
     if (!raw || raw > kQuickBlock) return 0;
     if (raw >= 32 && zeroBlock(bytes, raw)) {
@@ -128,11 +128,11 @@ int quickLz4Block(QuickWorkspace *work, const unsigned char *bytes, unsigned int
     char *dest = reinterpret_cast<char *>(work->packed);
     if (raw < LZ4_64Klimit)
         return LZ4_compress_generic(ctx, source, dest, raw, NULL, 0,
-            notLimited, byU16, noDict, noDictIssue, 8);
+            notLimited, byU16, noDict, noDictIssue, acceleration);
     const tableType_t table = sizeof(void *) == 4 && (uptrval)source > LZ4_DISTANCE_MAX
         ? byPtr : byU32;
     return LZ4_compress_generic(ctx, source, dest, raw, NULL, 0,
-        notLimited, table, noDict, noDictIssue, 8);
+        notLimited, table, noDict, noDictIssue, acceleration);
 }
 const unsigned int kWorkSize =
     ((sizeof(tdefl_compressor) > sizeof(InflateWorkspace)
@@ -177,7 +177,7 @@ __attribute__((noinline)) Status checkSource(void *workspace, unsigned int works
 Status checkOutput(void *workspace, unsigned int workspaceBytes,
                    const ReadSpan *source, unsigned int sourceCount,
                    const WriteSpan *output, unsigned int outputCount,
-                   unsigned int *total) {
+                   unsigned int *total, bool allowDiscard = false) {
     *total = 0;
     if (!output || !outputCount || outputCount > kMaxSpans ||
         !rangeValid(output, outputCount * sizeof(WriteSpan)) ||
@@ -185,6 +185,11 @@ Status checkOutput(void *workspace, unsigned int workspaceBytes,
         return INVALID_ARGUMENT;
     for (unsigned int i = 0; i < outputCount; ++i) {
         const WriteSpan &span = output[i];
+        if (allowDiscard && isDiscardSpan(span)) {
+            if (span.size > kMaxSize - *total) return INVALID_ARGUMENT;
+            *total += span.size;
+            continue;
+        }
         if (!rangeValid(span.data, span.size) || span.size > kMaxSize - *total ||
             overlaps(span.data, span.size, workspace, workspaceBytes) ||
             overlaps(span.data, span.size, source, sourceCount * sizeof(ReadSpan)) ||
@@ -194,7 +199,8 @@ Status checkOutput(void *workspace, unsigned int workspaceBytes,
             if (overlaps(span.data, span.size, source[j].data, source[j].size))
                 return INVALID_ARGUMENT;
         for (unsigned int j = 0; j < i; ++j)
-            if (overlaps(span.data, span.size, output[j].data, output[j].size))
+            if (!(allowDiscard && isDiscardSpan(output[j])) &&
+                overlaps(span.data, span.size, output[j].data, output[j].size))
                 return INVALID_ARGUMENT;
         *total += span.size;
     }
@@ -238,7 +244,7 @@ struct ScatterSink {
 
     unsigned char *reserve(unsigned int size, DirectBytes direct) {
         while (index < count && offset == spans[index].size) { ++index; offset = 0; }
-        if (index == count || size > spans[index].size - offset) return NULL;
+        if (index == count || isDiscardSpan(spans[index]) || size > spans[index].size - offset) return NULL;
         unsigned char *destination = static_cast<unsigned char *>(spans[index].data) + offset;
         if (copy && (!direct || !direct(context, destination, size))) return NULL;
         offset += size;
@@ -254,9 +260,11 @@ struct ScatterSink {
             if (index == count) return false;
             const unsigned int room = spans[index].size - offset;
             const unsigned int amount = size < room ? size : room;
-            void *destination = static_cast<unsigned char *>(spans[index].data) + offset;
-            if (copy) copy(context, destination, bytes, amount);
-            else memcpy(destination, bytes, amount);
+            if (!isDiscardSpan(spans[index])) {
+                void *destination = static_cast<unsigned char *>(spans[index].data) + offset;
+                if (copy) copy(context, destination, bytes, amount);
+                else memcpy(destination, bytes, amount);
+            }
             bytes += amount;
             size -= amount;
             offset += amount;
@@ -506,6 +514,16 @@ Status inflatePass(void *workspace, const ReadSpan *source,
 __attribute__((section(".foxtrot.text.codecWorkspaceSize")))
 unsigned int workspaceSize() { return kWorkSize; }
 
+__attribute__((section(".text.moonshine_decodeLz4Block")))
+bool decodeLz4Block(const void *packed, unsigned int packedBytes,
+                    void *output, unsigned int rawBytes) {
+    if (!packed || !output || !packedBytes || !rawBytes ||
+        packedBytes > 0x20000u || rawBytes > 0x20000u ||
+        overlaps(packed, packedBytes, output, rawBytes)) return false;
+    return LZ4_decompress_safe(static_cast<const char *>(packed),
+        static_cast<char *>(output), packedBytes, rawBytes) == static_cast<int>(rawBytes);
+}
+
 Result compress(void *workspace, unsigned int workspaceBytes,
                 const ReadSpan *source, unsigned int sourceCount,
                 const WriteSpan *output, unsigned int outputCount, bool compact, bool quick,
@@ -617,7 +635,7 @@ Status prepareQuickSource(void *workspace, unsigned int workspaceBytes,
 }
 
 static void encodePreparedQuickBlockImpl(void *workspace, const PreparedQuickSource &prepared,
-                              unsigned int blockIndex, PreparedQuickBlock &block, bool checksum) {
+                              unsigned int blockIndex, PreparedQuickBlock &block, bool checksum, bool compact = false) {
     QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
     const unsigned int offset = blockIndex * kQuickBlock;
     const unsigned int remaining = prepared.rawBytes - offset;
@@ -628,7 +646,7 @@ static void encodePreparedQuickBlockImpl(void *workspace, const PreparedQuickSou
         ++reader.index;
     }
     const unsigned char *bytes = quickInput(reader, work, offset, raw, prepared.zero);
-    const int packed = quickLz4Block(work, bytes, raw);
+    const int packed = quickLz4Block(work, bytes, raw, compact ? 1 : 8);
     const bool plain = static_cast<unsigned int>(packed) >= raw;
     const unsigned int length = plain ? raw : static_cast<unsigned int>(packed);
     const unsigned int word = plain ? raw | 0x80000000u : length;
@@ -651,6 +669,44 @@ void encodePreparedQuickBlock(void *workspace, const PreparedQuickSource &prepar
 void encodePreparedQuickBlockDeferred(void *workspace, const PreparedQuickSource &prepared,
                               unsigned int blockIndex, PreparedQuickBlock &block) {
     encodePreparedQuickBlockImpl(workspace, prepared, blockIndex, block, false);
+}
+
+__attribute__((section(".text.moonshine_encodePreparedQuickBlockCompactDeferred")))
+void encodePreparedQuickBlockCompactDeferred(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, PreparedQuickBlock &block) {
+    encodePreparedQuickBlockImpl(workspace, prepared, blockIndex, block, false, true);
+}
+
+__attribute__((section(".text.moonshine_refineQuickBlock")))
+bool refineQuickBlock(void *workspace, unsigned int workspaceBytes,
+                      const void *encoded, unsigned int encodedBytes, PreparedQuickBlock &block) {
+    const ReadSpan source = {encoded, encodedBytes};
+    unsigned int total;
+    if (checkSource(workspace, workspaceBytes, &source, 1, &total) != SUCCESS || encodedBytes < 9 ||
+        overlaps(&block, sizeof(block), workspace, workspaceBytes) ||
+        overlaps(&block, sizeof(block), encoded, encodedBytes)) return false;
+    const unsigned char *p = static_cast<const unsigned char *>(encoded);
+    unsigned int raw = 0, packed = 0;
+    for (unsigned int i = 0; i < 4; ++i) { raw = (raw << 8) | p[i]; packed = (packed << 8) | p[i + 4]; }
+    const bool plain = packed & 0x80000000u;
+    packed &= 0x7fffffffu;
+    if (!raw || raw > kQuickBlock || packed != encodedBytes - 8 ||
+        (plain ? packed != raw : packed >= raw)) return false;
+    QuickWorkspace *work = static_cast<QuickWorkspace *>(workspace);
+    if (plain) StateSlotPoolCopyForward(work->raw, p + 8, raw);
+    else if (LZ4_decompress_safe(reinterpret_cast<const char *>(p + 8),
+        reinterpret_cast<char *>(work->raw), packed, raw) != static_cast<int>(raw)) return false;
+    const int size = quickLz4Block(work, work->raw, raw, 1);
+    if (size <= 0) return false;
+    const bool uncompressed = static_cast<unsigned int>(size) >= raw;
+    const unsigned int length = uncompressed ? raw : static_cast<unsigned int>(size);
+    const unsigned int word = uncompressed ? raw | 0x80000000u : length;
+    for (unsigned int i = 0; i < 4; ++i) {
+        block.header[i] = raw >> (24 - 8 * i); block.header[i + 4] = word >> (24 - 8 * i);
+    }
+    block.payload = uncompressed ? work->raw : work->packed;
+    block.payloadBytes = length; block.rawBytes = raw; block.adler32 = 0;
+    return true;
 }
 
 unsigned int checksumPreparedQuickBlock(void *workspace, const PreparedQuickSource &prepared,
@@ -736,7 +792,7 @@ __attribute__((noinline)) Status validateRestore(void *workspace, unsigned int w
                                 &compressedBytes);
     if (status != SUCCESS) return status;
     status = checkOutput(workspace, workspaceBytes, source, sourceCount,
-                         output, outputCount, &capacity);
+                         output, outputCount, &capacity, true);
     if (status != SUCCESS) return status;
     if (!expectedRaw || capacity != expectedRaw) return INVALID_ARGUMENT;
     return inflatePass(workspace, source, sourceCount, compressedBytes, NULL, 0,
@@ -769,7 +825,7 @@ Status decompressVerified(void *workspace, unsigned int workspaceBytes,
     unsigned int compressedBytes, capacity;
     Status status = checkSource(workspace, workspaceBytes, source, sourceCount, &compressedBytes);
     if (status != SUCCESS) return status;
-    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity);
+    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity, true);
     if (status != SUCCESS) return status;
     if (!expectedRaw || capacity != expectedRaw) return INVALID_ARGUMENT;
     status = inflatePass(workspace, source, sourceCount, compressedBytes,
@@ -786,7 +842,7 @@ Status decompressExperimental(void *workspace, unsigned int workspaceBytes,
     unsigned int compressedBytes, capacity;
     Status status = checkSource(workspace, workspaceBytes, source, sourceCount, &compressedBytes);
     if (status != SUCCESS) return status;
-    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity);
+    status = checkOutput(workspace, workspaceBytes, source, sourceCount, output, outputCount, &capacity, true);
     if (status != SUCCESS) return status;
     if (!expectedRaw || capacity != expectedRaw) return INVALID_ARGUMENT;
     status = quickPass(workspace, source, sourceCount, compressedBytes,
@@ -819,11 +875,11 @@ Status decompressStreamVerified(void *workspace, unsigned int workspaceBytes,
     if (status != SUCCESS) return status;
     if (overlaps(&source, sizeof(source), source.buffer.data, source.buffer.size) ||
         overlaps(output, outputCount * sizeof(WriteSpan), source.buffer.data, source.buffer.size)) return INVALID_ARGUMENT;
-    status = checkOutput(workspace, workspaceBytes, &source.buffer, 1, output, outputCount, &capacity);
+    status = checkOutput(workspace, workspaceBytes, &source.buffer, 1, output, outputCount, &capacity, true);
     if (status != SUCCESS) return status;
     if (capacity != expectedRaw) return INVALID_ARGUMENT;
     for (unsigned int i = 0; i < outputCount; ++i)
-        if (overlaps(output[i].data, output[i].size, &source, sizeof(source))) return INVALID_ARGUMENT;
+        if (!isDiscardSpan(output[i]) && overlaps(output[i].data, output[i].size, &source, sizeof(source))) return INVALID_ARGUMENT;
     status = inflatePass(workspace, NULL, 0, source.packedBytes, output, outputCount,
                         expectedRaw, expectedAdler, copy, copyContext, &source);
     return status == SUCCESS ? SUCCESS : COMMIT_FAILED;

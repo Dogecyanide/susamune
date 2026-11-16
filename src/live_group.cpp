@@ -112,6 +112,7 @@ bool readSnapshot(Room &r, const unsigned char *p, unsigned bytes) {
     }
     const bool start = next.phase == R::Racing && (r.rules.phase != R::Racing || next.round != r.rules.round);
     const bool ended = r.rules.phase == R::Racing && next.phase != R::Racing;
+    const bool hostEnded = r.rules.phase != R::Finished && next.phase == R::Finished && next.winner == R::Nobody;
     if (r.hooks.resetPose) for (unsigned player = 0; player < r.config.rules.players; ++player)
         if ((r.connectedMask & ~p[2]) & (1u << player)) r.hooks.resetPose(r.hooks.context, player);
     r.rules = next; r.receivedSerial = MSRRead32(p + 8); r.connectedMask = p[2];
@@ -120,7 +121,8 @@ bool readSnapshot(Room &r, const unsigned char *p, unsigned bytes) {
         if (!r.hooks.startRace(r.hooks.context, chosen, r.config.playlist ? &r.playlist.plan : nullptr))
             request(r, CancelAction, 0);
     }
-    if (ended) {
+    if (ended || hostEnded) {
+        r.requestAction = 0;
         r.settledAt = r.now; r.outcomeChanged = true;
         if (next.resultMask != everyone(r) && r.hooks.cancelRace) r.hooks.cancelRace(r.hooks.context);
     }
@@ -152,9 +154,15 @@ bool sendNext(Room &r, unsigned peer) {
     } else if (r.config.playlist && r.playlistAt[peer] < r.playlist.plan.count) {
         bytes = LivePlaylist::encode(r.playlist.plan, r.playlistAt[peer], body);
     } else if (sent != r.serial) { snapshotBytes(r, body); bytes = 64; }
+    else if (r.colourPending[peer]) {
+        unsigned player = 0;
+        while (!(r.colourPending[peer] & (1u << player))) ++player;
+        LiveColours::encode(body, player, r.colours[player]); bytes = LiveColours::PacketBytes;
+    }
     if (!bytes || !S::sendReliable(s, MSR_READY, body, bytes, r.rules.generation)) return false;
     if (step <= r.config.rules.players) ++step;
     else if (body[0] == LivePlaylist::Message) r.playlistAt[peer] += body[2];
+    else if (body[0] == LiveColours::Message) r.colourPending[peer] &= ~(1u << body[1]);
     else sent = r.serial;
     return true;
 }
@@ -178,13 +186,16 @@ bool host(Room &r, S::Session &primary, const Config &config, const LivePlaylist
 }
 bool configure(Room &r, const Config &config, const LivePlaylist::Plan *plan) {
     if (!r.active || !r.host || r.config.rules.players != config.rules.players || !configValid(r.config, r.hooks, config) ||
-        (r.rules.phase != R::Finished && r.rules.phase != R::Roaming) || r.rules.generation == ~0u ||
+        !R::canConfigure(r.rules) || r.rules.generation == ~0u ||
         (config.playlist && (!plan || LivePlaylist::hash(*plan) != config.playlistHash))) return false;
     if (!R::begin(r.rules, config.rules, r.rules.generation + 1, config.entry)) return false;
     r.config = config; r.poseMask = 0; r.requestAction = 0; r.outcomeChanged = false;
     r.playlist = {};
     if (plan && config.playlist) { r.playlist.plan = *plan; r.playlist.complete = true; r.playlist.hash = config.playlistHash; }
-    for (unsigned i = 0; i < 3; ++i) { r.syncStep[i] = 0; r.sentSerial[i] = 0; r.playlistAt[i] = 0; }
+    for (unsigned i = 0; i < 3; ++i) {
+        r.syncStep[i] = 0; r.sentSerial[i] = 0; r.playlistAt[i] = 0;
+        r.colourPending[i] = everyone(r) & ~(1u << (i + 1));
+    }
     changed(r);
     return true;
 }
@@ -194,9 +205,9 @@ bool adopt(Room &r, S::Session &primary, const Config &local, const Hooks &hooks
         (p[5] & ~7u) || p[10] || p[11] || MSRRead32(p + 24) || !MSRRead32(p + 16)) return false;
     if (r.active) {
         if (r.host || r.self != p[2]) return false;
-        if (r.rules.generation == MSRRead32(p + 16)) return true;
+        if (r.rules.generation == MSRRead32(p + 16)) { r.ownColourSent = false; return true; }
         if (!MSRSequenceAfter(MSRRead32(p + 16), r.rules.generation) ||
-            (r.rules.phase != R::Finished && r.rules.phase != R::Roaming)) return false;
+            !R::canConfigure(r.rules)) return false;
     }
     Config c = {};
     c.rules = R::Config{p[1], p[3], p[4], (p[5] & 1u) != 0, (p[5] & 2u) != 0};
@@ -231,6 +242,7 @@ bool kickPeer(Room &r, const TWLiveEndpoint &endpoint) {
         S::Session &s = link(r, i);
         if (!sameEndpoint(endpoint, s.info.peer)) continue;
         S::kick(s);
+        r.colours[i + 1] = {};
         r.welcomedMask &= ~(1u << (i + 1));
         r.poseMask &= ~(1u << (i + 1));
         if (r.hooks.resetPose) r.hooks.resetPose(r.hooks.context, i + 1);
@@ -246,6 +258,7 @@ void replacePeer(Room &r, const TWLiveEndpoint &oldPeer, const TWLiveEndpoint &n
         S::Config config = s.config;
         ++config.nonceHigh;
         if (S::init(s, config, s.callbacks)) S::startHost(s, newPeer, now);
+        r.colours[i + 1] = {};
         r.poseMask &= ~(1u << (i + 1));
         if (r.hooks.resetPose) r.hooks.resetPose(r.hooks.context, i + 1);
         return;
@@ -257,8 +270,25 @@ bool control(Room &r, unsigned peer, const MSRHeader &h, const void *data, unsig
     if (h.kind == MSR_GROUP_POSES) { receiveBundle(r, p, bytes); return true; }
     if (h.kind != MSR_READY || h.round != r.rules.generation) return false;
     if (r.host) {
+        if (p[0] == LiveColours::Message) {
+            LiveColours::Palette colours;
+            if (peer >= r.config.rules.players - 1u ||
+                !LiveColours::decode(data, bytes, colours) || p[1] != peer + 1u) return false;
+            if (!LiveColours::same(r.colours[peer + 1], colours)) {
+                r.colours[peer + 1] = colours;
+                for (unsigned i = 0; i < 3; ++i)
+                    if (i != peer) r.colourPending[i] |= 1u << (peer + 1);
+            }
+            return true;
+        }
         if (p[0] != Request || bytes != 20 || p[2] || p[3] || peer >= r.config.rules.players - 1u) return false;
         apply(r, peer + 1, p[1], MSRReadSigned32(p + 16), MSRRead32(p + 4), MSRRead32(p + 8), MSRRead32(p + 12));
+        return true;
+    }
+    if (p[0] == LiveColours::Message) {
+        LiveColours::Palette colours;
+        if (!LiveColours::decode(data, bytes, colours) || p[1] >= r.config.rules.players || p[1] == r.self) return false;
+        r.colours[p[1]] = colours;
         return true;
     }
     if (p[0] == Snapshot) return readSnapshot(r, p, bytes);
@@ -307,6 +337,11 @@ void tick(Room &r, unsigned now) {
             MSRWrite32(body + 12, r.requestRound); MSRWrite32(body + 16, r.requestValue);
             if (S::sendReliable(*r.primary, MSR_READY, body, sizeof(body), r.rules.generation)) r.requestAction = 0;
         }
+        if (!r.ownColourSent && r.primary->info.connected) {
+            unsigned char body[LiveColours::PacketBytes];
+            LiveColours::encode(body, r.self, r.colours[r.self]);
+            r.ownColourSent = S::sendReliable(*r.primary, MSR_READY, body, sizeof(body), r.rules.generation);
+        }
         return;
     }
     unsigned mask = 1;
@@ -319,7 +354,10 @@ void tick(Room &r, unsigned now) {
                 r.poseMask &= ~(1u << (i + 1));
                 if (r.hooks.resetPose) r.hooks.resetPose(r.hooks.context, i + 1);
                 memcpy(r.members[i + 1].name, s.info.remoteName, 17); r.members[i + 1].region = s.info.remoteRegion;
-                for (unsigned j = 0; j < 3; ++j) { r.syncStep[j] = 0; r.sentSerial[j] = 0; r.playlistAt[j] = 0; }
+                for (unsigned j = 0; j < 3; ++j) {
+                    r.syncStep[j] = 0; r.sentSerial[j] = 0; r.playlistAt[j] = 0;
+                    r.colourPending[j] = everyone(r) & ~(1u << (j + 1));
+                }
             }
         } else if (i && (s.info.state == S::FAILED || s.info.state == S::STOPPED)) {
             const S::Endpoint allowed = (r.welcomedMask & (1u << (i + 1))) ? s.info.peer : S::Endpoint{};
@@ -329,7 +367,9 @@ void tick(Room &r, unsigned now) {
         }
     }
     if (mask != r.connectedMask) {
-        if ((r.connectedMask & ~mask) && (r.rules.phase == R::Racing || r.rules.phase == R::Ready)) cancelLocal(r);
+        // A transport outage is not a race cancellation. Reconfirm only the
+        // missing player's scene reservation before starting another race.
+        if (r.rules.phase == R::Ready) r.rules.readyMask &= mask;
         r.connectedMask = mask; r.welcomedMask |= mask; changed(r);
     }
     if (mask == everyone(r)) {
@@ -372,10 +412,22 @@ void tick(Room &r, unsigned now) {
         break;
     }
 }
+void setColours(Room &r, const LiveColours::Palette &colours) {
+    if (!r.active || !LiveColours::valid(colours) || LiveColours::same(r.colours[r.self], colours)) return;
+    r.colours[r.self] = colours; r.ownColourSent = false;
+    if (r.host) for (unsigned i = 0; i < 3; ++i) r.colourPending[i] |= 1;
+}
 bool ready(Room &r, bool value) { return r.rules.phase == R::Ready && (!r.config.playlist || r.playlist.complete) && request(r, ReadyAction, value); }
 bool ban(Room &r, unsigned candidate) { return R::actor(r.rules) == r.self && candidate <= r.config.rules.players && request(r, BanAction, candidate); }
 bool result(Room &r, int qf, bool eligible) { return r.rules.phase == R::Racing && request(r, ResultAction, eligible && qf >= 0 ? qf : qf == MSR_FORFEIT_QF ? MSR_FORFEIT_QF : -1); }
 bool cancel(Room &r) { return request(r, CancelAction, 0); }
+bool endMatch(Room &r) {
+    if (!r.active || !r.host || !R::endMatch(r.rules)) return false;
+    r.requestAction = 0; r.settledAt = r.now; r.outcomeChanged = true;
+    changed(r);
+    if (r.hooks.cancelRace) r.hooks.cancelRace(r.hooks.context);
+    return true;
+}
 unsigned connectedCount(const Room &r) { unsigned n = 0; for (unsigned i = 0; i < 4; ++i) n += (r.connectedMask >> i) & 1; return n; }
 unsigned remoteSlot(const Room &r, unsigned player) { return player < r.self ? player : player - 1; }
 }

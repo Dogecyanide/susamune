@@ -1,0 +1,41 @@
+Moonshine 3.0.0 Timewarp - Prototype 36
+
+Delfino Ghosts browsing follow-up
+
+Ghosts > Get ghosts > Delfino Ghosts.
+A downloads, R advances, L returns to the first page, Y switches between
+Newest and By level, B leaves/cancels. By level groups by the recorded starting
+scene; it does not declare that every ghost in a group has the same IL rules.
+Changing sort starts from the first page. A failed request keeps the last
+successful page visible, so R can retry that page or L can restart the list.
+
+The Wii now waits for network startup/IP assignment, with a separate request
+deadline. Status text distinguishes startup, finding the server, connecting,
+securing the connection and receiving data. The browser keeps its TLS
+connection between pages/downloads. A stale reused connection is retried once
+only when no HTTP response bytes have arrived. HTTP 429/5xx show service errors
+and observe Retry-After or a short default backoff.
+
+Connection logs now include public ghost request paths, stage/result, elapsed
+time, socket/TLS errors and the server's request ID, date and timing headers.
+Find them in Moonshine data/logs/connection_*.log on the launcher's device.
+The same log may contain race connection diagnostics; share it privately for
+debugging. No account linking or upload credentials exist in this version.
+
+Checks to try on Wii
+1. Open the catalogue, then press R several times. Change sort with Y and
+   verify the header says By level. Try R and L in both orders.
+2. Download a ghost and find/watch it in Imported ghosts. A second download
+   of the same file must preserve the existing copy.
+3. Leave and reopen the browser, then try online racing. Local ghost browsing
+   and ordinary storage should still work after leaving the online browser.
+4. If it fails, record the visible status and retain the connection log.
+
+PC checks cover production TLS reuse against the real public server, request
+IDs, file length/hash, HTTP framing and retry handling, deferred IOS ownership,
+startup retries, local storage and cancellation. They are not Wii timing or
+native download/playback proof. Four-player testing remains separate.
+
+Install the matching launcher and regional files together (ghost protocol 7).
+No memory reservation or savestate capacity grows. Shared packages contain no
+personal launcher music/photo. Your existing launcher customisation is kept.

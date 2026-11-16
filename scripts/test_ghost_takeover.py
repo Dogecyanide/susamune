@@ -52,6 +52,7 @@ namespace PracticeSession {
 struct JUTGamePad {enum{START=4096,A=256};};
 struct Binds {int suppressed;void suppressUntilRelease(){++suppressed;}}gBinds;
 namespace GhostModel {void refreshPlayerAfterTakeover(){}}
+namespace GhostVisualProvider {bool active(){return false;}}
 '''+''.join(function((ROOT/'src/ghost.cpp').read_text(), name) for name in ('bool takeoverMomentum(', 'u32 takeoverStatus(', 'bool takeOverObserver()'))+r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(){sPlayback={};sGhostAnimationId=0;sGhostYoshi=sGhostHeldObjectId=0;mario={};director.mCurState=4;gpMarDirector=&director;gpMap=&map;sObserverMario=&mario;

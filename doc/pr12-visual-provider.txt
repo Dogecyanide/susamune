@@ -1,0 +1,137 @@
+Native visual provider bridge — R12, 2026-10-30
+
+Status
+
+The explicit provider path now feeds the existing GhostModel/GhostWater visual
+entry points. Default resident playback remains unchanged; nothing automatically
+installs a provider. No ordinary recorder, Save/Discard/library operation, bank
+address, reservation, native world simulation or main.cpp hook was changed.
+This is a render/input bridge, not completed ordinary playback migration.
+
+New API
+
+include/susamune/ghost_visual_provider.hxx / src/ghost_visual_provider.cpp
+
+The caller zero-initializes Provider, supplies Config and calls prepare(), then
+activate() with the returned generation. Config contains a trusted native context,
+a source-generation validator and nonblocking sample callback, one or two runners,
+and a nonzero recording token. Optional camera/path callbacks are read-only.
+Callbacks and context pointers are never deserialized from recording bytes.
+
+The validator must confirm complete source/cache admission, current source identity
+and live leases. Keep the Provider, context, metadata and backing leases alive
+until stop() succeeds. The module copies sampled frames; it retains no pointer to
+a borrowed stream page. stop() detaches before owners release memory. Generation
+checks refuse stale activation/stopping, and active replacement requires explicit
+stop. Re-preparation copies its configuration before clearing caller-owned state;
+the returned-generation destination cannot overlap the Provider.
+
+Callbacks run at existing render/update sampling points and must not block, do
+synchronous storage work or recycle a live page. They may report a missing cache
+page; the provider then hides that frame without falling back to an unrelated
+resident ghost. A Watch2 refresh publishes both samples or neither, preserving
+the existing common clock and secondary split offset. HISTORY queries must only
+inspect available data and cannot change live seeks/caches or current latches.
+All provider operations are serialized by the controlling game thread. Setup
+worker calls cannot enter sample callbacks; cancellation only detaches ownership
+and does not release any caller storage.
+
+Query carries runner, source segment (unknown for an ordinary race), canonical
+scene, attempt, desired QFT, visual discontinuity token and Watch/history flags.
+It also includes route variant, parent area and route flags. Watch uses existing
+selected-segment metadata; ordinary racing waits for the live route to settle.
+No new clock or split arithmetic is introduced. The current renderer's cosmetic
+clock is unsigned: this bridge admits nonnegative QFT queries. The compact index
+still preserves earlier signed/untimed observations for a future explicit
+frame-clock Watch controller.
+
+fromSample() converts the existing compact sample to VisualState/input. It copies
+position, yaw, animation/phase, held object/key, Yoshi and the eight FLUDD bytes;
+input remains an observation, never controller injection. It validates renderer
+bounds and preserves visibility. The sample callback supplies source run flags,
+allowing TAS labels to follow the installed source. Native queries are available
+through Ghost::playbackInputState() and the provider's input() API.
+
+Native interception points
+
+- updatePlayback and updateObserverVisual bypass resident pose sampling while a
+  provider is active. The latter uses the existing primary QFT plus the existing
+  secondary offset and mirrors ready poses for native observer anchoring.
+- prepareVisual refreshes racing at its existing rendering phase, refuses loading
+  or incomplete setup, and leaves Watch's existing update clock in charge.
+- visualState/secondaryVisualState expose copied latches to the unchanged model
+  and water renderers. observerVisualAt routes historical water reconstruction
+  through the read-only history callback.
+- playbackInput/drawInputs and playbackInputState use latched provider input.
+  playbackIsTas uses source flags. init, stopAll and successful clearPlayback
+  detach the provider; old accepted-PB and observer guards remain intact.
+- renderVisualState preserves group and online-opponent priority. Provider mirrors
+  are also hidden where online owns a slot, preventing fallback markers from
+  bypassing that priority. No changes were made to ghost_model.cpp.
+
+Camera and path
+
+Optional camera callbacks route through Ghost::recordedCameraAvailable/View into
+the existing GhostCamera native camera hook. Returned views pass the existing
+camera encoder's position/quaternion/FOV validation. This reuses existing native
+camera save/apply/restore ownership; the provider never writes camera memory.
+
+GhostCamera::evaluatePair() in ghost_camera_track.cpp factors the existing
+interpolation into a checked two-key (48-byte) API. The caller supplies the
+correct adjacent source keys and whether the last whole-source key was truncated.
+Quaternion sign handling, normalization, position/FOV interpolation, cuts, early
+clamping and truncation remain the existing behavior. Resident evaluate() calls
+the same helper. Equal-time different-scene boundaries remain allowed. This is
+not a file reader: camera-key cache construction/seek requests still belong to
+the controlling storage adapter.
+
+Optional path callbacks fill at most 97 canonical position samples into one
+caller-owned 1,552-byte scratch within Provider. The callback must use the existing
+index-based decimation of the selected source segment, preserving the endpoints.
+The bridge validates count/coordinates and passes the result to the unchanged
+GhostPath::draw, retaining its clipping, colours, +8-unit lift, 96-edge cap and
+1,600-unit discontinuity rule. The path pointer is borrowed only for that draw.
+No full pose bank or new path rendering implementation is needed.
+
+Memory/code and verification
+
+Exact PowerPC sizes: Provider 1,724 bytes (reserve 1,728 when aligned), including
+its path scratch; Config 32; Frame 64; Query 40. The module owns only one active
+pointer and a busy guard (5 allocated BSS bytes before linker alignment).
+The provider object has 3,725 allocated bytes before linking. New ghost.cpp
+helpers and changed function sizes, camera-pair symbols and complete isolated
+object totals are in build/pr48-sd-trace/r12-shared-arena-check/provider-*.json.
+The camera object grows from 3,244 to 3,868 allocated bytes (+624); evaluatePair
+itself is 952 bytes. Those are isolated object costs, not final retained size or
+new MEM1 headroom. Root still owns pinned placement and final linking.
+
+Ten provider tests exercise explicit activation, source/lifetime generations,
+re-preparation aliases, exact frame/input/FLUDD fields, atomic Watch2 readiness,
+history isolation, invalid samples and bounded camera/path callbacks. The native
+renderVisualState body is executed in the host fixture to test online priority.
+Six camera tests include two-key/resident byte-equivalence, invalid keys, shared
+scene-boundary times, cuts and truncation. Existing path/provider (5), takeover (3) and
+savestate-prefix (16) tests preserve the default inactive-provider behavior.
+Earlier arena (11), MSGT index (15) and legacy adapter (13) suites still pass.
+The actual modified ghost.cpp, ghost_camera_track.cpp and new provider source
+compile independently with the real PowerPC compiler/current release flags.
+No shared native build folder, Dolphin/Wii runtime or SD installation was used.
+
+Still required before normal legacy activation
+
+Storage must supply source-bound validated sample/history/camera/path callbacks,
+queue/prefetch small leases outside rendering, and atomically manage cache files.
+The old observer controller still uses resident Track metadata: preparation/import,
+route compatibility, segment range/configuration, warp/source/destination setup,
+stage transitions, timeline/splits/seeking/alignment and completion. These must
+be adapted to the validated stream metadata before the old bank owners can retire.
+Current provider routing skips their sample arrays, not their metadata lifecycle.
+
+Takeover is explicitly refused while a provider is active. takeoverMomentum still
+reads adjacent resident poses and needs a bounded checked trajectory adapter.
+The rest of takeOverObserver owns the hidden Mario baseline, pause/freecam state,
+live ground/collision checks, attachment refusal, native status/animation changes,
+render refresh and assisted-run accounting. Route those existing ownership gates
+with the selected stream identity and pose; do not equate visual observations
+with a complete physics/world restoration. No default user feature should switch
+to this provider until that remaining compatibility is covered and native-tested.

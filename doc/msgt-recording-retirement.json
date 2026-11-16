@@ -1,0 +1,51 @@
+{
+  "name": "MSGT bounded deferred ordinary retirement",
+  "protocol": "Optional PREP2 capability plus primary writer command RETIRE6; primary writer ABI4 and MSGT file format3 retain their existing shapes.",
+  "semantics": {
+    "RETIRE6": "After a fresh same-boot PREP2 HELLO echo, an ordinary unpinned producer may request logical discard. ACK phaseDISCARDED means ownership transferred or conservative synchronous fallback completed; it does not guarantee physical deletion.",
+    "DISCARD3": "Original synchronous close/unlink and ACK semantics are unchanged. Version1/unsupported backends receive this command.",
+    "KEEP": "Normal footer/sync/rename and all retained/pinned eligibility remain unchanged."
+  },
+  "control": {
+    "retire_bytes": 112,
+    "writer_bytes": 3568,
+    "writer_limit_bytes": 3584,
+    "new_reservations": 0,
+    "handles": "Independent third FIL plus nonce/run/headerHash/encodedBytes/phase/preserve/capabilities/referenceGeneration. Recovery retains its independent original328-byte state. Paths are reconstructed only from canonical exact identity. No existing compression metric is repurposed."
+  },
+  "capability": {
+    "version": "New ARM advertises PREP2. New PPC supports PREP1/2 requests and permits using the advertised version. prepareKnown stores the negotiated version byte; it is never collapsed to bool across startCapture.",
+    "freshness": "RETIRE6 requires fresh version2 HELLO echo with nonce/version/ack match; matching stale padding is not support. Version1 retains ordinary warm preparation and physical DISCARD3.",
+    "pending": "C0 response.status bit0x100 signals an owned retirement. Low8bits retain error codes; all unknown flags are rejected, and version1 may not advertise the bit. It permits fresh cleanup grants even while the next prepared file is READY."
+  },
+  "defer_admission": [
+    "active, owned, nonfailed current .part in RECORDING with current request operationSTART",
+    "incoming capabilities match the current source",
+    "canonical filename matches current boot nonce/run",
+    "one retirement slot is empty; no active recovery or queued branch/state operation",
+    "no matching active reader or prepared state pin, and a valid current-generation negative reference summary",
+    "encoded size at least64 and at most1MiB, and at most32 allocation clusters; cluster bytes use the mounted FatFs csize and sector size"
+  ],
+  "logical_handoff": "Copy the exact current FIL and source identity into the slot, clear only current-writer ownership, publish pending status and ACK once. No retirement FAT call occurs in detach, side-message receive or the next warm START; the existing prepared-header verification and patch stay unchanged. Old producer buffers may be reused after ACK; retirement owns no buffer lease. The next capture never waits for slot cleanup.",
+  "conservative_fallback": "Slot/size/resource limits use the existing synchronous path only when protection is proven. For RETIRE6, a pending branch/state job, matching state pin/reader or unknown/positive/noncurrent reference summary marks the source retained before fallback close, preserving .part. Large/full-slot sources with valid references are also preserved. This policy does not alter DISCARD3.",
+  "phases": {
+    "0_NONE": "No retired owner.",
+    "1_HEADER": "Read64 bytes through the moved READ|WRITE FIL; require captured size, exact nonce/run/caps, normal fields and known original headerHash. Parse its actual scene; FENCE may have repurposed current request.scene.",
+    "2_TAIL": "Check the old tail. A possible DONE footer is conservatively preserved. Partial final chunks may be retired because no payload buffers are needed.",
+    "3_CLOSE": "Close only this old FIL. Preserve on any validation uncertainty.",
+    "4_DELETE": "FIL is closed. Immediately before unlink require no late preserve/pending branch/state/matching reader, plus a fresh current-generation checked negative reference proof. No callback/FAT work separates that proof from canonical .part unlink. Unknown proof preserves the file.",
+    "5_CLOSE_FAILED": "Retain old FIL ownership, preserve the file and do not reuse/zero the slot. Error cannot fail the new writer. A matching explicit state-recovery operation may retry preserve-only close; otherwise synchronous fallback remains until boot."
+  },
+  "late_references": "A structurally valid matching BranchStore marks preserve before source validation or any publication attempt, including uncertain failure. StateReferencePrepare likewise protects a matching old parent before Store. Reference-generation/summary changes are rechecked at delete. A preserved closed .part remains recoverable through the existing exact prefix/fence recovery.",
+  "recovery": "Actual recovery busy state excludes retirement. Nonmatching SD operations do not wait for the slot. Matching explicit state recovery first marks preserve and closes only the exact retired FIL under the existing user-authorized state I/O guard, then proceeds through unchanged prefix validation/recovery. Close failure retains the owner and refuses cleanly. Reset/Cancel do not reinterpret or free unrelated retirement state.",
+  "background": "Header/tail/close/delete run only under the same fresh supported offline/normal-time/headroom/read-safe PPC grant and DI idle guard as preparation. Retirement is prioritized ahead of new preparation; real foreground work remains higher priority. Each step is bounded to one source operation. Individual filesystem calls are non-preemptible; no hard zero-latency guarantee is claimed.",
+  "access": "New normal cold traces open READ|WRITE|CREATE_NEW, matching warm traces; this permits exact old-header verification through the original owned FIL without a directory reopen. File format and write results are unchanged.",
+  "diagnostics": "io trace_discard p=6 records the logical handoff/fallback interval. Later io trace_retire records old-owner background phases/size and preservation outcome; new writer errors are not used for old cleanup failures.",
+  "tests": [
+    "scripts/test_ghost_trace_retirement.py",
+    "scripts/test_ghost_trace_retirement_fatfs.py",
+    "scripts/test_ghost_trace_prepare_client.py",
+    "scripts/test_ghost_trace_warm_producer.py"
+  ],
+  "limits": "First private scope defers only small bounded ordinary unsaved sources. Large sources, occupied queue, protection uncertainty and failure cases conservatively fall back. Wii timing and gameplay stability still require hardware validation."
+}

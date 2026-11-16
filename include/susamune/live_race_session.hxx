@@ -42,6 +42,7 @@ struct Session {
     Endpoint allowedPeer;
     unsigned nowMs, startedMs, lastReceiveMs, lastHandshakeMs, lastPingMs;
     unsigned sessionHigh, sessionLow, guestNonceHigh, guestNonceLow;
+    unsigned receiveBudgetMs, receiveTokens;
     unsigned sendSequence, receiveSequence, poseSendSequence, poseReceiveSequence;
     unsigned reliableSentMs, reliableStartedMs, pingSequence, pingSentMs;
     MSRHeader pendingHeader, receivedHeader;

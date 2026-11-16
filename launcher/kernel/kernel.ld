@@ -50,6 +50,9 @@ SECTIONS
 	{
 		*(.text*)
 		*(.text.*)
+		/* Immutable PPC bootstrap is copied, never used as mutable ARM data. */
+		*(.rodata.FakeEntryLoad)
+		*GhostTraceStorage.c.obj(.rodata*)
 		*(.gnu.warning)
 		*(.gnu.linkonce.t*)
 		*(.glue_7)

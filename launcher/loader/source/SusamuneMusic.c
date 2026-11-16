@@ -19,6 +19,7 @@
 static s32 sBufferSize;
 static bool sAudioReady;
 static bool sPlaying;
+static bool sSuspended;
 static char sWarning[MUSIC_WARNING_MAX];
 
 #if SUSAMUNE_THEME_BGM_MAX_SIZE > SUSAMUNE_LAUNCHER_MUSIC_SIZE
@@ -49,7 +50,7 @@ void SusamuneMusicInit(void)
 	ASND_Init();
 	MP3Player_Init();
 	sAudioReady = true;
-	gprintf("Susamune music: ASND/MP3 ready; playback deferred\n");
+	gprintf("Susamune music: ASND/MP3 ready; ready for playback\n");
 }
 
 bool SusamuneMusicLoad(const char *launcherDevice)
@@ -125,14 +126,13 @@ bool SusamuneMusicStart(void)
 	if (sBufferSize <= 0)
 		return false;
 
-	// The IOS reload and Nintendont kernel setup can interrupt the decoder.
-	// The caller waits until both are stable, giving it one lifetime per launch.
+	// One decoder lifetime; pause the mixer while IOS changes underneath it.
 	if (!sAudioReady ||
 	    MP3Player_PlayBuffer(MUSIC_BUFFER, sBufferSize, NULL) < 0)
 	{
 		snprintf(sWarning, sizeof(sWarning),
 			"Theme MP3 could not start.\nContinuing without music.");
-		gprintf("Susamune music: delayed start failed\n");
+		gprintf("Susamune music: start failed\n");
 		return false;
 	}
 	sPlaying = true;
@@ -140,9 +140,15 @@ bool SusamuneMusicStart(void)
 	return true;
 }
 
+void SusamuneMusicPause(bool paused)
+{
+    sSuspended = paused;
+    if (sAudioReady) ASND_Pause(paused ? 1 : 0);
+}
+
 void SusamuneMusicService(void)
 {
-	if (!sPlaying || sBufferSize <= 0 || MP3Player_IsPlaying())
+	if (sSuspended || !sPlaying || sBufferSize <= 0 || MP3Player_IsPlaying())
 		return;
 	if (MP3Player_PlayBuffer(MUSIC_BUFFER, sBufferSize, NULL) < 0)
 	{
@@ -164,6 +170,8 @@ void SusamuneMusicShutdown(void)
 
 		// Disable looping before waiting on the decoder.
 		sPlaying = false;
+		if (sSuspended) ASND_Pause(0);
+		sSuspended = false;
 		// MP3Player_Stop joins its live decoder before ASND and the input vanish.
 		if (shouldStop)
 			MP3Player_Stop();

@@ -27,7 +27,7 @@ const unsigned kDrops = 64;
 struct Drop { TVec3f position, velocity; f32 life; bool splash; u8 type, size; };
 struct Water { Drop drops[kDrops]; u32 qf, token, next; bool ready; TVec3f previous; };
 struct Storage { Water runner[3]; };
-static_assert(sizeof(Storage) <= SUSAMUNE_GHOST_WATER_SIZE, "ghost water exceeds its scalar tail");
+static_assert(sizeof(Storage) <= SUSAMUNE_CAMERA_PATH_OFFSET, "ghost water exceeds its scalar tail");
 static_assert(0x2000u + SUSAMUNE_GHOST_WATER_SIZE <= SUSAMUNE_PRESENTATION_SIZE, "ghost water tail overlap");
 #define sWater (*reinterpret_cast<Storage *>(SUSAMUNE_GHOST_WATER_PPC_BASE))
 TMarDirector *sDirector;
@@ -246,7 +246,7 @@ void draw(JDrama::TGraphics *graphics) {
             // The water pass can precede the player's model-entry cue. Availability
             // must not depend on a submitted latch that is cleared each frame.
             if (!visible || !state.visible || !GhostModel::available() ||
-                !Ghost::displayEnabled() ||
+                !GhostModel::displayEnabled(runner) ||
                 !(state.fludd.mode & (SUSAMUNE_GHOST_FLUDD_PRESENT | SUSAMUNE_GHOST_VISUAL_YOSHI))) {
                 water.ready = false;
                 continue;

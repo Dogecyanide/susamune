@@ -5,6 +5,14 @@ namespace StateCodec {
 
 struct ReadSpan { const void *data; unsigned int size; };
 struct WriteSpan { void *data; unsigned int size; };
+// Restore-only sink for obsolete sidecars; decoding and checksum coverage remain complete.
+inline WriteSpan discardSpan(unsigned int bytes) {
+    return {reinterpret_cast<void *>(~static_cast<__UINTPTR_TYPE__>(0)), bytes};
+}
+inline bool isDiscardSpan(const WriteSpan &span) {
+    return span.data == reinterpret_cast<void *>(~static_cast<__UINTPTR_TYPE__>(0));
+}
+
 struct ZeroRange { unsigned int offset, size; };
 typedef bool (*ReadWindow)(void *context, unsigned int offset, ReadSpan *out);
 struct StreamSource {
@@ -38,6 +46,10 @@ const unsigned int kMaxReadSpans = 257;
 const unsigned int kWorkspaceLimit = 0x4E000;
 const unsigned int kWorkspaceAlignment = 32;
 unsigned int workspaceSize();
+
+// Independent blocks borrow disjoint buffers; no codec workspace or heap.
+bool decodeLz4Block(const void *packed, unsigned int packedBytes,
+                    void *output, unsigned int rawBytes);
 
 // Output spans are capacities, concatenated in order. A null output counts only.
 // OUTPUT_FULL still reports the complete required size; partial output is invalid.
@@ -85,6 +97,11 @@ void encodePreparedQuickBlock(void *workspace, const PreparedQuickSource &prepar
 // supplies a validated raw checksum. The input stays immutable through both calls.
 void encodePreparedQuickBlockDeferred(void *workspace, const PreparedQuickSource &prepared,
                               unsigned int blockIndex, PreparedQuickBlock &block);
+// Denser LZ4 retains the existing independent-block format and decoder.
+void encodePreparedQuickBlockCompactDeferred(void *workspace, const PreparedQuickSource &prepared,
+                              unsigned int blockIndex, PreparedQuickBlock &block);
+bool refineQuickBlock(void *workspace, unsigned int workspaceBytes,
+                      const void *encoded, unsigned int encodedBytes, PreparedQuickBlock &block);
 unsigned int checksumPreparedQuickBlock(void *workspace, const PreparedQuickSource &prepared,
                               unsigned int blockIndex, const PreparedQuickBlock &block);
 

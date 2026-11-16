@@ -1,0 +1,43 @@
+Moonshine 3.0.0 Timewarp PR42
+
+Japanese review build
+The supplied language corrections are applied, including achievement titles.
+On the Japanese package, Display > Menu language switches the menu to English
+or Japanese for this boot. It does not change the game language or need another
+font allocation. The English package retains its existing English interface.
+
+Keyboard
+L/R cycles English letters, symbols and three kana pages. Y changes Latin
+case, or switches hiragana/katakana. B deletes a whole character; X inserts a
+space; Start keeps the text; X+Start cancels; Z clears it. The last kana page
+includes the long sound mark and common punctuation. This is kana entry,
+not a kanji conversion system. Existing limits remain byte limits, so a kana
+character uses two bytes. Network/PB profile identifiers and numeric fields
+retain their Latin keyboard for compatibility.
+Kana works for custom text, Search, ghost descriptions, layout names, SD state
+names and TAS project names. Search matches hiragana and katakana and searches
+both English and Japanese labels, even with the menu in English. Try saving,
+reopening and deleting a mixed English/kana name; publish a kana description
+only on a ghost you intend to share publicly.
+
+Search crash investigation
+The PR40 JP report shows a modified machine instruction in the Savestates row
+label function, also seen in earlier reports. The writer is not yet identified.
+This build is NOT a confirmed fix. A narrowly guarded JP Wii hardware watchpoint
+captures the CPU writer if it changes that instruction. An existing debugger
+watchpoint is left alone. If Search crashes again, retain the new crash files;
+they may now identify the corrupting write instead of the later Search failure.
+The watchpoint does not catch DMA writes and is not active in Dolphin.
+
+Online
+See pr42-online-security-review.txt for the source review. Protocol compatibility
+is unchanged. Existing transport/ghost-service checks pass; this does not
+substitute for the remaining four-player hardware tests.
+
+Dolphin
+Standard Dolphin feature parity remains unfinished. Existing native UDP is
+experimental; native website HTTPS and general ghost/state/TAS storage still
+need implementation and acceptance testing. No full-parity claim is made here.
+
+Memory reservations, savestate capacity and protected timer code are unchanged.
+Shared packages contain no personal themes, sign-in tokens or user data.

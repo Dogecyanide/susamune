@@ -1,0 +1,79 @@
+MSGT ordinary recording and Watch integration (PR64 work in progress)
+
+The native coordinator installs only after the existing memory proof and trace
+backend are admitted. A selected IL departure opens one recording before stage
+setup; the existing finish/save selection supplies title, timing and route metadata.
+The library journal stores a 256-byte MSGM manifest identifying the retained trace.
+Saving or discarding one completed draft cannot change the current recording.
+Finish is queued until the next capture boundary so draw-side events from the last
+frame are retained. When all transient drafts are occupied, a new IL can retire the
+oldest completed, unprotected draft; PBs and in-flight saves are never selected.
+Checkpoint ownership keeps the retained source even when that draft is retired.
+
+Full-world Watch takes its initial destination and previous scene from the checked
+stage record, not the current IL menu selection. Semantic flag validation bounds
+the parent episode before any warp. The native stage hook then verifies the actual
+scene triple and applies the validated initial flags before resource setup. A clip
+without split events is still watchable. Gameplay playback remains same-region.
+
+The Ghosts page exposes Stop replay; physical B + Start also stops. Source TAS
+classification remains separate from replay eligibility. REPLAY is always visible,
+and playback cannot produce live PBs, achievements or streak results.
+
+Control memory remains within the admitted arena: native coordinator +0x3800..4000,
+recording manager +0x2400..3000, report worker +0x3400..3800. The ARM reader control
+is limited to +0x2000..2400. Shared branch replies retain exclusive ownership until
+consumed or cancelled, even after the matching acknowledgement has arrived.
+
+Mailbox protocol 4 adds RELEASE: close a failed writer without unlinking its partial
+file. A checkpoint can still depend on an acknowledged prefix of that file. This
+operation clears the writer so another capture can start; it does not label the
+failed recording as successfully saved. The partial-file recovery scanner retains
+its checksum, boundary and owner checks. Protocol 3 kernels are not admitted by this
+producer. Ship matching boot.dol and regional mod files together. The on-disk MSGT
+container version remains 3; this transport change does not invalidate older files.
+
+Validation:
+- A normal short Ricco 3 recording on PAL Dolphin produced its real manifest.
+  The actual ARM journal implementation saved and loaded that manifest unchanged.
+  File-directed full-world playback completed 260 frames / 1040 MOVE calls with
+  287183 recorded observations checked, starting Watch from Gelato. Storage was a host fixture, not Wii I/O.
+- Native orchestration tests cover splitless clips, region checks, cancellation,
+  shared writer/read buffer ownership and exact-source deletion.
+- Producer/kernel integration verifies a failed write preserves the checkpoint
+  prefix while a subsequent recording starts successfully.
+
+Outstanding before complete replacement:
+- Full Wii menu-to-file-to-menu hardware test of ordinary recording and Watch.
+- Remove remaining legacy Track recording/pose/input buffers and give reclaimed
+  memory to the requested cache. The additional cache is still disabled.
+- Connect streamed racing/Watch2 and their visual index/cache; native load currently
+  refuses those destinations explicitly.
+- Native Dolphin storage backend, full normal import/sharing, recorded-state export,
+  readable exported names, replay takeover and render-only Piantissimo integration.
+- The separately tracked Pinna 1 same-session actor divergence needs another native
+  comparison with the now-complete legacy recorder/model isolation.
+
+PR65 workflow corrections
+-------------------------
+Normal Save latest names the newest issued draft, including its failure or
+already-published state. It never falls back to an older READY recording.
+Protected-PB prompts bind a specific retained file identity, independently of
+resident Track promotion. Their explicit older-PB selection remains available.
+
+Explicit departures finalize/open recording during the exit fade. Stage setup
+waits for the exact recording acknowledgement. A cancelled preparation cannot
+attach to a later warp; a late storage failure marks the new attempt unavailable
+rather than presenting an older recording as latest. A private JP test withheld
+the header acknowledgement for 1.5 seconds: the fade began, the old scene stayed
+until acknowledgement, then recording, journal save/load and replay succeeded.
+
+Replay freecam owns presentation only. The simulation uses its original camera
+and graphics view for movement/animation/clipping, including nested camera calls.
+Intentional warps cancel playback before replay input validation. Native JP tests
+cover old Noki 3 and frame-advanced B3 Secret, a physical menu open/close cycle,
+camera movement, restored camera hooks, and B+D-up cancellation without an error.
+
+SGHF file import/export is retired for the requested MSGT transition. Remaining
+resident pose/input arrays are still in use and are not cache memory yet. The
+large viewer/racing replacement must be completed without stubbing its APIs.

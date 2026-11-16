@@ -25,9 +25,7 @@ class CameraTrackTests(unittest.TestCase):
         compiler = ROOT / 'toolchain/clang++.exe'
         if not compiler.exists():
             raise unittest.SkipTest('Bundled compiler required')
-        parent = ROOT / 'build/pr11-camera-check'
-        parent.mkdir(exist_ok=True)
-        cls.temp = tempfile.TemporaryDirectory(dir=parent)
+        cls.temp = tempfile.TemporaryDirectory(prefix='moonshine-camera-track-')
         cls.addClassCleanup(cls.temp.cleanup)
         cpp = Path(cls.temp.name) / 'camera.cpp'
         cpp.write_text(r'''
@@ -48,6 +46,7 @@ API int encode(const GhostCamera::View*v,unsigned q,unsigned f,void*out){return 
 API void decode(const void*p,GhostCamera::View*out){GhostCamera::decode(*(const SusamuneGhostCameraSample*)p,out);}
 API void capture(const GhostCamera::View*v,unsigned q,unsigned segment){current=*v;GhostCamera::capture(bank,q,(u8)segment);}
 API int evaluate(unsigned q,unsigned segment,GhostCamera::View*out){return GhostCamera::evaluate(bank,q,(u8)segment,out);}
+API int pair(const SusamuneGhostCameraSample*a,const SusamuneGhostCameraSample*b,unsigned q,unsigned segment,int truncated,GhostCamera::View*out){return GhostCamera::evaluatePair(*a,b,q,(u8)segment,truncated!=0,out);}
 API void trim(unsigned q,unsigned segment){GhostCamera::trim(bank,q,(u16)segment);}
 API unsigned count(){return ((SusamuneGhostCameraHeader*)GhostCamera::prefix(bank))->count;}
 API unsigned flags(){return ((SusamuneGhostCameraHeader*)GhostCamera::prefix(bank))->flags;}
@@ -71,6 +70,7 @@ API int valid(const void*p){return SusamuneGhostCameraSampleValid((const u8*)p,0
         cls.lib.decode.argtypes = [C.c_void_p, C.POINTER(View)]
         cls.lib.capture.argtypes = [C.POINTER(View), C.c_uint, C.c_uint]
         cls.lib.evaluate.argtypes = [C.c_uint, C.c_uint, C.POINTER(View)]
+        cls.lib.pair.argtypes = [C.c_void_p, C.c_void_p, C.c_uint, C.c_uint, C.c_int, C.POINTER(View)]
         cls.lib.matrix.argtypes = [C.POINTER(View), C.c_void_p]
 
     def setUp(self):
@@ -123,6 +123,30 @@ API int valid(const void*p){return SusamuneGhostCameraSampleValid((const u8*)p,0
         self.assertEqual(self.lib.evaluate(25, 2, C.byref(out)), 0)
         self.lib.trim(10, 1)
         self.assertEqual(self.lib.count(), 2)
+
+    def test_bounded_pair_matches_resident_evaluation(self):
+        for qf in (0,15,30):
+            self.lib.capture(C.byref(view(qf)),qf,0)
+        keys=[self.sample(view(qf),qf,0x40 if not qf else 0) for qf in (0,15,30)]
+        for qf in range(31):
+            index=min(qf//15,2)
+            expected,actual=View(),View()
+            self.assertEqual(self.lib.evaluate(qf,0,C.byref(expected)),1)
+            self.assertEqual(self.lib.pair(keys[index],keys[index+1] if index<2 else None,qf,0,0,C.byref(actual)),1)
+            self.assertEqual(bytes(actual),bytes(expected))
+        self.assertEqual(self.lib.pair(keys[2],None,31,0,1,C.byref(View())),0)
+        self.assertEqual(self.lib.pair(keys[2],None,30,0,1,C.byref(View())),1)
+
+    def test_bounded_pair_rejects_invalid_keys_and_preserves_equal_scene_boundary(self):
+        first=self.sample(view(0),10,0x40)
+        other=self.sample(view(100),10,0x41)
+        out=View()
+        self.assertEqual(self.lib.pair(first,other,9,0,0,C.byref(out)),1)
+        self.assertEqual(out.position[0],0)
+        broken=C.create_string_buffer(first.raw)
+        broken[13:21]=bytes(8)
+        self.assertEqual(self.lib.pair(broken,None,10,0,0,C.byref(out)),0)
+        self.assertEqual(self.lib.pair(first,None,10,1,0,C.byref(out)),0)
 
     def test_ten_minutes_fit_and_pathological_cut_overflow_is_bounded(self):
         for qf in range(0, 71929, 4):

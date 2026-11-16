@@ -1,0 +1,146 @@
+Legacy streamed visual adapter — R12, 2026-10-30
+
+Implemented, independently tested; runtime ghost.cpp integration is still pending.
+No legacy recorder, bank address, physical reservation, QFT code, kernel backend,
+pinned linking or live game session was changed by this adapter work.
+
+Compatibility
+
+Public SGHF V3–V10 keep their original bounds and semantics. The existing format
+document and all current production validators explicitly reject experimental
+V1/V2 test ghosts. This reader retains that rejection, as agreed with the parent
+integration task. Future versions and unknown required capabilities fail clearly.
+Moonshine release/build numbers are not compatibility keys. Legacy files remain
+visual observations, never full-world state or replay instructions.
+
+Files
+
+include/susamune/ghost_legacy_stream.hxx / src/ghost_legacy_stream.cpp
+include/susamune/ghost_legacy_index.hxx / src/ghost_legacy_index.cpp
+scripts/test_ghost_legacy_stream.py
+
+GhostTraceIndex keeps its 64-byte sample layout. Its two formerly-zero internal
+provenance bytes now distinguish legacy source version and original V10 steering
+flags. They remain zero for MSGT. For legacy rows, frame means cache row ordinal,
+movement means original source sample index, and neither claims a captured native
+frame/tick. Input-only legacy rows carry exact raw input, FLUDD/Yoshi observation,
+and V10 camera yaw/mode provenance; they never fabricate a Mario pose. Public
+recording formats are unchanged. Persisted internal caches must version their
+own layout rather than infer compatibility from this struct alone.
+
+Bounded source reader
+
+GhostLegacyStream::begin(reader, fileBytes, targetGame, buffer, bufferBytes)
+uses caller-owned aligned source scratch between 2 and 16 KiB. nextRead() returns
+only checked offsets, lengths and the supplied destination. Each acceptRead()
+requires the complete pending byte count. Drain next(reader, event) until no
+more events remain before requesting another block. State COMPLETE requires all
+records, section checksums, payload checksum and whole-file checksum to pass.
+
+The source includes the existing GhostCanonical.inc implementation for canonical
+header admission, route/region policy and header CRC; it does not maintain a
+second relaxed header validator. Existing teaching, camera, context, simulation
+settings and FLUDD/Yoshi validators check their corresponding records. Pose and
+segment checks reproduce the existing canonical bounds, coverage, attachment
+indices and exact delta-QF endpoint rules. No input data selects native memory
+addresses. Foreign-region visual imports retain the existing portable-route
+allowlist; they are not rejected merely because the Sunshine region differs.
+
+Metadata retains the original header, <=64 segments, <=8 splits, first-pose RNG
+provenance, and the sizes/flags/offsets for teaching/camera/context sections.
+Each pose/input event contains a normalized compact sample with its exact source
+QFT. Camera and context events expose checked, borrowed raw record bytes and file
+offsets. These bytes remain valid only until the next source read. They are
+available for the camera/context consumer or cache wrapper; this adapter never
+restores them into the game. Those playback consumers still need runtime wiring.
+
+Events and derived pages are provisional until the entire reader is COMPLETE.
+Write any early pages to an unpublished cache transaction, keep the source file
+identity/handle stable during the build, and publish only after reader completion
+and adapter completion. A late checksum/read failure must discard the provisional
+cache without replacing a prior valid cache or changing the selected ghost.
+
+Two exact internal timelines
+
+GhostLegacyIndex::begin() attaches two ordinary GhostTraceIndex builders to the
+reader metadata: pose and observation. Each has its own bounded page directory
+and 8 KiB scratch. Feed source events through feed(); PAGE_READY does not consume
+the event. pendingPage()/pendingData() identify the current target timeline and
+sealed page. Persist it, commitPage(), then retry the same event. Input events
+at shared segment endpoints can belong to both segments; retries retain progress
+so no duplicate is lost or appended twice.
+
+finish(adapter, reader) refuses until the source is fully validated and all pose
+and input events were consumed. It flushes the two final partial pages through
+the same protocol. An empty input timeline is valid for older/empty recordings;
+it must not be opened as a nonempty RaceStream. Directory capacity exhaustion
+fails explicitly and must abort cache publication.
+
+Separating timelines is necessary. Inputs can change at QF 102 between poses at
+100 and 104. Inserting a fabricated pose at 102 changes subsequent integer yaw
+and animation-phase rounding. The adapter instead keeps both original pose
+endpoints and all original input observation times. V10 relative timestamps are
+expanded exactly; the raw controller flag byte is cleared as required by the
+existing playback code, while original steering provenance is retained.
+
+indexSegment() maps an original source segment to either internal timeline's
+segment; some source segments may have no input observations. Use the shared
+GhostTraceRaceStream for the corresponding explicit-QFT query in each timeline,
+then GhostLegacyIndex::sample() combines the two brackets. Position arithmetic,
+shortest-turn yaw interpolation, 4096-phase animation wrap and quantized V4 phase
+expansion match current legacy playback. Attachments/Yoshi state come from the
+preceding pose, and raw input/FLUDD come from the latest eligible observation.
+Before the first observation there is no input. For a truncated teaching stream,
+QFs after the last original observation have no input or FLUDD. Querying outside
+the chosen source segment refuses rather than showing a neighbouring scene.
+
+The returned Observation gives source input index, actual observation QFT, and
+V10 camera yaw/mode with explicit availability. Missing data is not synthesized.
+Original split records remain in metadata for existing split alignment. Watch2
+selects each ghost's segment and offset independently; one user-visible ghost
+still represents the two internal timelines.
+
+Memory and code
+
+Cache construction uses <=16 KiB source scratch, two 8 KiB page scratches,
+bounded directories, and controls. Exact PowerPC sizes:
+  Metadata 2492 bytes (included in Reader)
+  Reader 2672 bytes
+  source Event 88 bytes
+  Adapter 256 bytes
+  sampled Observation 16 bytes
+
+Playback uses two existing two-page RaceStreams per legacy ghost: <=32 KiB of
+page leases, or <=64 KiB for Watch2, plus immutable directories/metadata and
+controls. No full legacy pose/input payload remains resident in this design.
+Legacy V3/V4 with no teaching stream need only the pose RaceStream.
+
+A conservative pose directory bound is ceil(poseCount / 128) + segmentCount - 1.
+An observation directory bound is ceil((inputCount + segmentCount - 1) / 128)
++ segmentCount - 1; equal segment boundaries account for the extra copies.
+Both remain bounded by the canonical counts. Capacity must still be checked.
+Code is not free: isolated PowerPC allocated-section sizes and defined function
+symbols are in build/pr48-sd-trace/r12-shared-arena-check/legacy-*.json. These are
+pre-link figures; no assertion is made about final placement or memory headroom.
+
+Verification and remaining integration
+
+13 focused host tests cover all public versions, refusal of V1/V2/future
+versions, canonical CRC/semantic failures, cross-region route admission, short
+reads, publication gating, exact interpolation unaffected by input keys, raw
+signed inputs, V10 steering provenance, held objects, Yoshi/FLUDD, truncated
+inputs, shared segment endpoints, and page/source-block boundaries.
+
+All 14 existing .smsghost fixtures under build/ pass canonical admission and
+this production streamed path. Sampled positions, yaw, animation, phase and Yoshi
+state are compared to the canonical data at endpoints and intermediate times.
+A four-stream Watch2 test uses the same arena as a simultaneous 64 KiB recording
+lease and returns every page lease on close. Existing MSGT index tests still pass.
+
+No changes were made to ghost.cpp or ghost.hxx. Root integration must connect the
+source/cache I/O transaction, replace permanent legacy payload owners only after
+all consumers migrate, wire existing renderer/Watch/splits/camera/context/path
+features to bounded sources, preserve saved-prefix ownership, register retained
+code for pinned linking, and prove native behavior. Existing banks stay allocated
+until that migration is complete; neither transfer/savestate storage nor any
+unretired prefix is granted to this adapter.

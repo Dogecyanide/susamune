@@ -9,6 +9,7 @@ void SusamuneMusicInit(void);
 bool SusamuneMusicLoad(const char *launcherDevice);
 bool SusamuneMusicStart(void);
 void SusamuneMusicService(void);
+void SusamuneMusicPause(bool paused);
 const char *SusamuneMusicWarning(void);
 void SusamuneMusicShutdown(void);
 

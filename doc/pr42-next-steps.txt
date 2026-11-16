@@ -1,0 +1,14 @@
+Remaining work after PR42
+
+- Obtain a fresh Wii Search crash report if the corruption recurs; identify and
+  fix the actual writer before calling Search reliable.
+- Japanese runner review of corrected wording, kana input and shared strings.
+- Four-player hardware visibility/reconnect/race acceptance.
+- Standard Dolphin without a companion: native persistent ghost/state/TAS
+  storage, DNS/TCP/TLS and Delfino Ghosts integration; Wii crossplay/reconnect
+  acceptance and Linux/macOS checks.
+- Authenticated race transport and explicit trust model; see the PR42 security
+  review. Existing endpoint/session checks do not provide cryptographic identity.
+- Continue whole-project correctness/security/maintainability and menu polish.
+
+No memory reservation or protected timer change is authorized by this list.

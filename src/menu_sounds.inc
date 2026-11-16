@@ -1,4 +1,7 @@
 #include "susamune/menu_sounds.hxx"
+#include "susamune/menu_button_edges.hxx"
+
+static MenuButtonEdges sMenuButtons;
 
 // A root wrapper leaves the fixed constructor/render-helper pool unchanged.
 class MenuSoundsDisplayTab final : public MenuTab {
@@ -11,8 +14,9 @@ public:
     bool fullScreen() const override { return mEditingBackground || mParent->fullScreen(); }
     bool favoriteHint() const override { return mParent->favoriteHint(); }
     void focus() override { mParent->focus(); }
+    static int topRows() { return JapaneseUi::available() ? 3 : 2; }
     static const char *rowName(int row) {
-        return row == 0 ? Settings::name(SETTING_MENU_SOUNDS) : "Menu background";
+        return row == 0 ? Settings::name(SETTING_MENU_SOUNDS) : row == 1 ? "Menu colours" : "Menu language";
     }
 
     void update(Menu *menu, TMarioGamePad *pad) override {
@@ -25,18 +29,20 @@ public:
             mParent->update(menu, pad);
             return;
         }
-        int row = mTopRow < 2 ? mTopRow : mParent->mSel + 2;
+        const int top = topRows();
+        int row = mTopRow < top ? mTopRow : mParent->mSel + top;
         const u32 nav = menu->navigationInput(pad);
-        if (nav & TMarioGamePad::CSTICK_UP) row = wrap(row - 1, mParent->mCount + 2);
-        else if (nav & TMarioGamePad::CSTICK_DOWN) row = wrap(row + 1, mParent->mCount + 2);
-        mTopRow = row < 2 ? row : 2;
-        if (row >= 2) mParent->mSel = row - 2;
+        if (nav & TMarioGamePad::CSTICK_UP) row = wrap(row - 1, mParent->mCount + top);
+        else if (nav & TMarioGamePad::CSTICK_DOWN) row = wrap(row + 1, mParent->mCount + top);
+        mTopRow = row < top ? row : top;
+        if (row >= top) mParent->mSel = row - top;
         if (!(mParent->mNavInput.update() & JUTGamePad::A)) return;
         if (mTopRow == 0) gSettings.cycle(SETTING_MENU_SOUNDS, 1);
         else if (mTopRow == 1) {
             gCreationExtras.beginColorEditor(SUSAMUNE_CREATION_MENU_BG, 1, rowName(1));
             mEditingBackground = true;
         }
+        else if (mTopRow < top) JapaneseUi::toggle();
         else {
             mParent->mPage = mParent->mSel;
             mParent->focus();
@@ -56,13 +62,17 @@ public:
                      gSettings.valueLabel(SETTING_MENU_SOUNDS), mTopRow == 0, false, true);
         drawValueRow(menu, x, y + ROW_H, w, rowName(1), "Edit",
                      mTopRow == 1, false, true);
+        const int top = topRows();
+        if (top == 3) drawValueRow(menu, x, y + 2 * ROW_H, w, rowName(2),
+            JapaneseUi::enabled() ? "Japanese" : "English", mTopRow == 2, false, true);
         for (int i = 0; i < mParent->mCount; ++i)
-            drawValueRow(menu, x, y + (i + 2) * ROW_H, w,
+            drawValueRow(menu, x, y + (i + top) * ROW_H, w,
                          mParent->mChildren[i]->title(), nullptr,
-                         mTopRow == 2 && mParent->mSel == i, false, true);
+                         mTopRow == top && mParent->mSel == i, false, true);
         drawHelpLine(menu, x, y, w, h, mTopRow == 0
             ? "Sunshine sounds when moving through menus and changing options."
             : mTopRow == 1 ? "Original guidebook or your own colours, with a live preview."
+                          : mTopRow < top ? "Switch between English and Japanese menus for this session."
                           : mParent->mChildren[mParent->mSel]->summary());
     }
 
@@ -152,8 +162,10 @@ void Menu::updateWithSounds(TMarioGamePad *pad) {
                 reinterpret_cast<NestedMenuTab *>(sMenuRuntime.displayHub));
     }
     const u16 held = JUTGamePad::mPadStatus[0].mButton;
-    const u16 pressed = held & ~display->mPreviousButtons;
+    sMenuButtons.sample(held);
+    const u16 pressed = sMenuButtons.pressed;
     display->mPreviousButtons = held;
+    if (!mShown || searchActive() || mTabs[mCurTab]->grabsInput()) sMenuButtons.deferred = 0;
     const bool recording = gBinds.recording();
     const bool wasShown = mShown;
     const u32 before = soundState();
@@ -163,7 +175,16 @@ void Menu::updateWithSounds(TMarioGamePad *pad) {
         (pad->mButtons.mRapidInput & (TMarioGamePad::L | TMarioGamePad::R)) ||
         (pressed & (JUTGamePad::DPAD_UP | JUTGamePad::DPAD_DOWN |
                     JUTGamePad::DPAD_LEFT | JUTGamePad::DPAD_RIGHT));
+    // Retail repeat/edge fields may survive a frozen director. Menu actions
+    // use one physical edge, while directional scrolling keeps its repeat.
+    const u32 buttons = JUTGamePad::A | JUTGamePad::B | JUTGamePad::X | JUTGamePad::Y |
+        JUTGamePad::Z | JUTGamePad::START | JUTGamePad::L | JUTGamePad::R;
+    const u32 frame = pad->mButtons.mFrameInput, rapid = pad->mButtons.mRapidInput;
+    pad->mButtons.mFrameInput = (frame & ~buttons) | (pressed & buttons);
+    pad->mButtons.mRapidInput = (rapid & ~buttons) | (pressed & buttons);
     update(pad);
+    pad->mButtons.mFrameInput = frame;
+    pad->mButtons.mRapidInput = rapid;
     MenuSounds::play(MenuSounds::choose({wasShown, mShown, before != soundState(),
         navigation, gSettings.getBool(SETTING_MENU_SOUNDS), recording, pressed}));
 }

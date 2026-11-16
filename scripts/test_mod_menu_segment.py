@@ -26,11 +26,11 @@ def seal(p):
     return p
 
 
-def image(flags=0):
-    menu = bytes(range(256)) * 4
+def image(flags=0, upper=False):
+    menu = bytes(range(256)) * (192 if upper=="trace" else 80 if upper else 4)
     spans = [dict(offset=o, memory_size=64, raw=bytes([i + 1]) * 32)
              for i, (o, _) in enumerate(mt.CAPS)]
-    address = mt.shared_define("SUSAMUNE_MENU_CODE_" +
+    address = mt.shared_define(("SUSAMUNE_TRACE_MENU_CODE_" if upper=="trace" else "SUSAMUNE_UPPER_MENU_CODE_" if upper else "SUSAMUNE_MENU_CODE_") +
         ("DOLPHIN" if flags else "CONSOLE") + "_PPC_BASE", "mem2_map.h")
     p = mt.build_mod_v4(mt.GAMES["jp"], spans, [], flags=flags,
         cold=bytes(range(32)), cold_vma=mt.stage(flags) + 0xC0,
@@ -63,11 +63,13 @@ return SusamuneModV4InstallMapped(p,n,SUSAMUNE_MOD_GAME_ID_JP,f,SusamuneModV4Sta
         C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle))
         cls.temp.cleanup()
 
-    def run_install(self, p, flags, valid, *, pointer=None, cap=CAP, vma=None):
-        _, expected_menu, address = image(flags)
+    def run_install(self, p, flags, valid, *, pointer=None, cap=None, vma=None, upper=False):
+        _, expected_menu, address = image(flags, upper)
+        capacity = 0x50000 if upper=="trace" else 0x8000 if upper else CAP
+        if cap is None: cap = capacity
         src = C.create_string_buffer(bytes(p))
         hot = C.create_string_buffer(bytes([0xA7]) * (0xC0000 + 128))
-        menu = C.create_string_buffer(bytes([0xA7]) * (CAP + 128))
+        menu = C.create_string_buffer(bytes([0xA7]) * (capacity + 128))
         hp = C.addressof(hot) + 64
         mp = (C.addressof(menu) + 63) & ~31
         mo = mp - C.addressof(menu)
@@ -101,6 +103,22 @@ return SusamuneModV4InstallMapped(p,n,SUSAMUNE_MOD_GAME_ID_JP,f,SusamuneModV4Sta
         for flags in (0, 1):
             self.run_install(image(flags)[0], flags, True)
 
+    def test_upper_install_reset_and_rejected_wrong_profiles(self):
+        for flags in (0,1):
+            p,_,address=image(flags,True)
+            self.run_install(p,flags,True,upper=True)
+            for kw in ({"cap":CAP},{"cap":0x8000+32},{"vma":address+32},{"pointer":"hot"}):
+                self.run_install(p,flags,False,upper=True,**kw)
+        build_bootstrap(0x804E5020,0x81000000,mt.stage(1)+0xC0,32,0x80005700,(),(0x71C20000,0x8000))
+
+    def test_trace_scratch_profile_and_neighbor_guards(self):
+        for flags in (0,1):
+            p,_,address=image(flags,"trace")
+            self.run_install(p,flags,True,upper="trace")
+            for kw in ({"cap":0x8000},{"cap":0x10020},{"vma":address+32},{"pointer":"source"}):
+                self.run_install(p,flags,False,upper="trace",**kw)
+        build_bootstrap(0x804E5020,0x81000000,mt.stage(1)+0xC0,32,0x80005700,(),(0x71CB8000,0x10000))
+
     def test_rejects_invalid_mapping_before_any_write(self):
         p, _, address = image()
         for kw in ({"pointer": "null"}, {"pointer": "unaligned"}, {"pointer": "source"},
@@ -122,7 +140,7 @@ return SusamuneModV4InstallMapped(p,n,SUSAMUNE_MOD_GAME_ID_JP,f,SusamuneModV4Sta
         self.run_install(bad, 0, False)
 
     def test_real_ppc_cross_span_branches_exact_and_reachable(self):
-        for flags, extra in ((0, 0x91CF9000), (1, 0x713BA000)):
+        for flags, extra in ((0, 0x91CF9000), (1, 0x713BA000), (0, 0x93400000), (1, 0x71C20000), (0, 0x93498000), (1, 0x71CB8000)):
             functions, targets = fixture()
             original = deepcopy(functions)
             records = [dict(r) for f in original for r in f["relocations"]]

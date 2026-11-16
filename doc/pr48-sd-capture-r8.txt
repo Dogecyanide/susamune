@@ -1,0 +1,61 @@
+R8 - Expanded SD capture test, PAL/US original Wii, 2026-10-29
+
+Changes from r7: sound requests, JPA emitter requests/deletions, every libc rand
+return (lossless batches), FLUDD emission request snapshots, wider Mario runtime
+prefix0x574 and camera0x350, changes to practice settings, disc ID, inline
+wall/roof/floor/water triangle data, camera mode and interpolation object.
+Controller observations still retain all300bytes; changed-word encoding reduces
+repeated data instead of dropping unnamed fields. Ordinary ghosts unchanged.
+
+MSTR v2 preserves v1 chunk/header/footer framing. Kinds3/4/5/8/9 accept a high bit
+in block-length: low31bits=native bytes, then ceil(bytes/128) big-endian masks
+and changed native32bit words in ascending order. Initial data remains literal.
+Kind14 is the complete300byte input; kind20 has u32 size=300, three masks then
+changed words against the preceding input. One observation still exists per
+movement update. Clear reconstruction on scene change.
+Kind15: raw RNG caller/result/post-seed. Kind18: first-post-seed,last-post-seed,
+count,callerCount (u32 each), caller table[u32], then count u8 indices. Rebuild
+seeds with next=seed*1103515245+12345 modulo2^32 and result=(seed>>16)&32767.
+Record order, reseeds and nonstandard returns are preserved. This covers libc
+rand, not every private random generator. Sound/particle records are requests,
+not a complete mixer, particle simulation, or finished full-world replay.
+Kind10/11: subtype,caller,args[8],valid,positions[9],actorFlags,seed (22u32).
+Subtypes1=sound,2=simple emitter,3=emitter,4=delete,5=force delete.
+Kind16: returned acceptance byte widened to u32, native request pointer, then
+TWaterEmitInfo bytes. Kind17: two disc-ID words, trace schema, regional ordinal.
+Kind19: contact role0wall/1roof/2floor/3water, pointer, readable, reserved, then
+72native TBGCheckData bytes. Geometry/type/normal are inline; pointer/owner are
+still capture-local. Kind21: camera pointer, native mode, child pointer, valid
+bits(camera=1,child=2), then72bytes of TCameraInbetween. These records appear on
+change. Capability bits14/15 advertise contacts/camera metadata.
+
+Decoder notes response: position0x10 and rotation0x30 confirmed by compile-time
+offset checks; inherited TPlacement/TActor layouts should accompany samples.
+Camera mode is s32+0x50; in-between pointer+0x6C, remaining frames s32(child+4).
+Matrix+0x1EC is a view matrix (retail C_MTXLookAt), not an eye position. The
+rendered eye is+0x124, target+0x148, up+0x30. World-summary FNV includes native
+pointers/padding; it is NOT a canonical cross-session/region divergence hash.
+
+Private code occupies an already-admitted unused trace gap, not state/ghost or
+ISO cache capacity. All96 protected timer symbols remain unchanged. Native
+hooks exist only while recording and refuse foreign entry patches. Tests cover
+native-word reconstruction, RNG sequences/reseeds/events, boot and intro/reset
+lifecycle, storage faults and code-profile canaries. Actual PPC checks compare
+64 retail RNG outputs and verify all six hook instructions restore afterward.
+R8 physical-Wii performance requires a new test; earlier r6 Wii recordings all
+felt normal. General LZ4 is NOT enabled: offline fast LZ4 reduced those files
+73-74%, but that is not measured Wii compression performance.
+
+Use same app and monitor code. Record after entering the intended stage, Save
+before resetting. Reset discards the temporary attempt. No mailbox messages
+sent; coordination deferred at user's request. Remote controller, full RAM dump,
+normal precise ten-minute ghosts and complete world replay remain separate work.
+
+Final PPC verification: 1,608,865-byte MSTRv2 capture including an intro,
+254director frames,728movement observations,236085RNG calls,5317sound requests,
+152particle-emitter events, contacts and camera metadata. Complete with zero
+producer errors and independent payload/sequence verification. 64retail RNG
+outputs matched expected values; all6patched instructions restored afterward.
+Water request forwarding is included but no water event occurred in this fresh
+save fixture; verify by spraying on the Wii. Native SD performance is still a
+hardware test for this expanded build. No full-world playback claim.

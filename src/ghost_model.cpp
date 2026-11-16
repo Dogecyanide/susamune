@@ -23,6 +23,7 @@
 #include "SMS/MoveBG/ResetFruit.hxx"
 #include "SMS/MarioUtil/ShadowUtil.hxx"
 #include "SMS/Strategic/LiveActor.hxx"
+#include "SMS/Strategic/ObjHitCheck.hxx"
 #include "SMS/Strategic/Strategy.hxx"
 #include "SMS/System/MarDirector.hxx"
 #include "susamune/addresses.hxx"
@@ -34,6 +35,10 @@
 #include "susamune/ghost_storage.h"
 #include "susamune/menu.hxx"
 #include "susamune/settings.hxx"
+#include "susamune/mario_colors.hxx"
+#include "susamune/mario_color_texture.hxx"
+#include "susamune/model_color_draw.hxx"
+#include "susamune/live_colours.hxx"
 
 class TScreenTexture {
 public:
@@ -130,11 +135,12 @@ const u32 kPiantaLoadFlags = 0x10040000u;
 const u32 kShadowWorstCaseUsed = 0x118CDu;
 const u32 kPiantaWorstCaseUsed = 0x11B4Du;
 #if IS_EMULATOR
-const u32 kPrimaryHeapBase = 0x81800000u;
+const u32 kPrimaryHeapBase = SUSAMUNE_DOLPHIN_GHOST_MODEL_PPC_BASE;
 const u32 kSecondaryHeapBase = kPrimaryHeapBase + SUSAMUNE_GHOST_MODEL_HEAP_SIZE;
 const u32 kShadowResourceBase = kSecondaryHeapBase + SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE;
 const u32 kPiantaResourceBase = kShadowResourceBase + SUSAMUNE_GHOST_SHADOW_BMD_SIZE;
-static_assert(kPiantaResourceBase + SUSAMUNE_GHOST_PIANTA_BMD_SIZE <= 0x81850000u &&
+static_assert(kPiantaResourceBase + SUSAMUNE_GHOST_PIANTA_BMD_SIZE <=
+              SUSAMUNE_DOLPHIN_GHOST_MODEL_PPC_BASE + SUSAMUNE_DOLPHIN_GHOST_MODEL_SPAN &&
               SUSAMUNE_GHOST_SHADOW_ASSET_BUFFER_SIZE <= SUSAMUNE_GHOST_MODEL_HEAP_SIZE &&
               SUSAMUNE_GHOST_PIANTA_ASSET_BUFFER_SIZE <= SUSAMUNE_GHOST_SECONDARY_HEAP_SIZE,
               "Dolphin ghost assets exceed their existing model windows");
@@ -237,6 +243,14 @@ static_assert(SUSAMUNE_GHOST_MAX_SAMPLE_DATA_SIZE +
               "Shadow work copy overlaps the record segment table");
 
 ModelSlot sSlots[MODEL_SLOT_COUNT];
+struct ColourState {
+    u8 *atlas;
+    const ResTIMG *source;
+    LiveColours::Palette palette;
+    GXTexObj original, custom;
+    bool ready;
+};
+ColourState sColours[MODEL_SLOT_COUNT];
 Appearance sLoadedAlternative = APPEARANCE_PIANTA;
 JKRExpHeap *sAttachmentHeap;
 const int kAttachments = 9; // held/Yoshi, body, nozzle for each runner
@@ -450,12 +464,24 @@ bool configureOpacity(ModelSlot &slot, bool opaque) {
 }
 
 void bodyPacketCallback(J3DShapePacket *packet, int stage) {
-    if (stage != 0) return;
-    const GXColor *original = *reinterpret_cast<const GXColor **>(
-        reinterpret_cast<u8 *>(packet) + kShapePacketUserAreaOffset);
-    GXColor color = *original;
-    color.a = sGhostColor.a;
-    GXSetChanMatColor(GX_COLOR0A0, color);
+    if (stage == 0) {
+        const GXColor *original = *reinterpret_cast<const GXColor **>(
+            reinterpret_cast<u8 *>(packet) + kShapePacketUserAreaOffset);
+        GXColor color = *original;
+        color.a = sGhostColor.a;
+        GXSetChanMatColor(GX_COLOR0A0, color);
+    }
+    static const u8 parts[] = {0, 0, 0, 0, 1, 8, 8, 16, 16, 6, 64};
+    for (unsigned i = 0; i < MODEL_SLOT_COUNT; ++i) {
+        ColourState &colours = sColours[i];
+        const J3DModel *model = sSlots[i].model;
+        if (!colours.ready || !model) continue;
+        const u32 offset = reinterpret_cast<u32>(packet) - reinterpret_cast<u32>(model->mShapePackets);
+        if (offset >= sizeof(parts) * kShapePacketStride || offset % kShapePacketStride ||
+            !(parts[offset / kShapePacketStride] & colours.palette.mask)) continue;
+        GXLoadTexObj(stage == 0 ? &colours.custom : &colours.original, GX_TEXMAP0);
+        return;
+    }
 }
 
 bool installColorCallbacks(ModelSlot &slot) {
@@ -807,7 +833,7 @@ bool animateYoshi(AttachmentModel &attachment, const Ghost::VisualState &state) 
 }
 #pragma clang section text=""
 
-AttachmentModel *createAttachment(AttachmentModel &attachment, int runner,
+__attribute__((noinline)) AttachmentModel *createAttachment(AttachmentModel &attachment, int runner,
                                   AttachmentKind kind, J3DModel *source) {
     memset(&attachment, 0, sizeof(attachment));
     attachment.data = source ? source->mModelData : nullptr;
@@ -819,7 +845,17 @@ AttachmentModel *createAttachment(AttachmentModel &attachment, int runner,
     if (!validAttachmentSource(source, &estimate)) return nullptr;
     const bool independent = kind == ATTACHMENT_FLUDD || kind == ATTACHMENT_NOZZLE;
     const void *bmd = independent ? source->mModelData->_4 : nullptr;
+    J3DModelData *privateData = nullptr;
     if (independent) {
+        for (int i = 0; i < kAttachments; ++i) {
+            const AttachmentModel &other = sAttachmentModels[i];
+            if (&other == &attachment) break;
+            if (other.model && other.kind == kind && other.sourceData == attachment.sourceData) {
+                privateData = other.data; break;
+            }
+        }
+    }
+    if (independent && !privateData) {
         if (!bmd || memcmp(bmd, "J3D2bmd3", 8) ||
             readBig32(static_cast<const u8 *>(bmd) + 8) > 0x9000u) return nullptr;
         // Bounded retail FLUDD assets; includes loader objects and heap overhead.
@@ -836,11 +872,14 @@ AttachmentModel *createAttachment(AttachmentModel &attachment, int runner,
     JKRHeap *oldHeap = JKRHeap::sCurrentHeap;
     sAttachmentHeap->becomeCurrentHeap();
     const u32 before = sAttachmentHeap->getTotalFreeSize();
-    if (independent) attachment.data = J3DModelLoaderDataBase::load(bmd, 0x10040000u);
+    // FLUDD joints are evaluated synchronously into each model's own matrices.
+    // Share only private source data; retail joints and draw packets stay separate.
+    if (independent) attachment.data = privateData ? privateData
+        : J3DModelLoaderDataBase::load(bmd, 0x10040000u);
     void *storage = sAttachmentHeap->alloc(sizeof(J3DModel), 32);
     if (storage && attachment.data) {
         attachment.model =
-            new (storage) J3DModel(attachment.data, 0, 1);
+            new (storage) J3DModel(attachment.data, independent ? 0x20000u : 0u, 1);
         attachment.model->makeDL();
         installAttachmentCallbacks(attachment);
     }
@@ -958,6 +997,7 @@ void rebuildAttachments(const AttachmentRequest requests[kAttachments]) {
     // The previous frame may still reference these private display lists.
     GXDrawDone();
     sAttachmentHeap->freeAll();
+    memset(sColours, 0, sizeof(sColours));
     memset(sAttachmentModels, 0, sizeof(sAttachmentModels));
     for (int runner = 0; runner < kAttachments; ++runner) {
         if (requests[runner].kind != ATTACHMENT_NONE)
@@ -1140,6 +1180,45 @@ __attribute__((noinline)) ModelSlot &runnerSlot(int runner) {
     return sSlots[selected ^ (runner != 0 ? 1 : 0)];
 }
 
+__attribute__((noinline)) void refreshColours() {
+#if TIMEWARP_LIVE_RACING
+    const bool mario = onlineModel() == LiveRace::MODEL_MARIO && sLoadedAlternative == APPEARANCE_MARIO;
+    const ResTIMG *source = mario ? MarioColors::sourceTexture() : nullptr;
+    for (unsigned runner = 0; runner < (sLoadedGroup ? 3u : 2u); ++runner) {
+        ModelSlot &slot = runnerSlot(runner);
+        ColourState &cache = sColours[&slot - sSlots];
+        const auto *palette = source && (sLoadedGroup || runner == 1)
+            ? LiveRace::opponentColours(sLoadedGroup ? runner : 0) : nullptr;
+        if (!palette || !palette->mask || !slot.model || slot.data->mShapeNum != 11) {
+            cache.ready = false; continue;
+        }
+        if (cache.ready && cache.source == source && LiveColours::same(cache.palette, *palette)) continue;
+        if (!cache.atlas && sLoadedGroup && runner < 2) {
+            // Mario-only groups retire Shadow's working copy. Pristine asset
+            // masters remain intact for the next model/stage reload.
+#if IS_EMULATOR
+            static_assert(2 * MarioColorTexture::kAtlasBytes <= SUSAMUNE_GHOST_PIANTA_BMD_SIZE, "colour copies exceed idle Piantissimo work area");
+            cache.atlas = reinterpret_cast<u8 *>(kPiantaResourceBase) + runner * MarioColorTexture::kAtlasBytes;
+#else
+            static_assert(2 * MarioColorTexture::kAtlasBytes <= SUSAMUNE_GHOST_SHADOW_ASSET_BUFFER_SIZE, "colour copies exceed idle Shadow work area");
+            cache.atlas = const_cast<u8 *>(reinterpret_cast<const volatile u8 *>(
+                SUSAMUNE_GHOST_SHADOW_STAGING_PPC_PTR)) + runner * MarioColorTexture::kAtlasBytes;
+#endif
+        }
+        if (!cache.atlas && sAttachmentHeap)
+            cache.atlas = static_cast<u8 *>(sAttachmentHeap->alloc(MarioColorTexture::kAtlasBytes, 32));
+        if (!cache.atlas) { cache.ready = false; continue; }
+        GXDrawDone();
+        const u8 *pixels = reinterpret_cast<const u8 *>(source) + source->mTextureOffset;
+        MarioColorTexture::recolor(pixels, cache.atlas, palette->rgb, palette->mask);
+        DCStoreRange(cache.atlas, MarioColorTexture::kAtlasBytes); GXInvalidateTexAll();
+        ModelColorDraw::initTexture(cache.original, *source, pixels, 256, 256);
+        ModelColorDraw::initTexture(cache.custom, *source, cache.atlas, 256, 256);
+        cache.source = source; cache.palette = *palette; cache.ready = true;
+    }
+#endif
+}
+
 
 void *lightSetFor(const Ghost::VisualState &state) {
     if (!gpLightManager || !gpMap) return nullptr;
@@ -1166,7 +1245,7 @@ void *lightSetFor(const Ghost::VisualState &state) {
 bool prepareRunner(int runner, const Ghost::VisualState &state) {
     ModelSlot &slot = runnerSlot(runner);
     if (!slot.model || !slot.mtxCalc || !state.visible ||
-        !((sLoadedGroup || runner) && onlineModel() >= 0 ? onlineShown() : Ghost::displayEnabled()) ||
+        !displayEnabled(runner) ||
         (gMenu && gMenu->shown() && !Ghost::observerPaused())) return false;
 
     J3DAnmTransform *animation =
@@ -1351,81 +1430,83 @@ void refreshPlayerPose(JDrama::TGraphics *graphics) {
     rebuildPlayerDrawBuffers();
 }
 
-class GhostView : public JDrama::TViewObj {
-public:
-    GhostView() : JDrama::TViewObj("Moonshine Ghost Models") {}
-
-    virtual void perform(u32 cue, JDrama::TGraphics *graphics) override {
-        if (!sRegistered) return;
-        if ((cue & (kCueCalcView | kCueEntry)) == 0) return;
-        if (cue & kCueCalcView) {
-            refreshPlayerPose(graphics);
-            Ghost::prepareVisual();
-            sGhostColor.a = ghostAlpha();
-            AttachmentRequest requests[kAttachments] = {};
-            for (int appearance = 0; appearance < MODEL_SLOT_COUNT;
-                 ++appearance) {
-                ModelSlot &slot = sSlots[appearance];
-                if (slot.model &&
-                    !configureOpacity(slot, sGhostColor.a == 255)) {
-                    clearLiveModel(slot);
-                }
-            }
-            for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
-#if TIMEWARP_LIVE_RACING
-                sHaveVisualState[runner] = Ghost::renderVisualState(runner, &sVisualStates[runner]);
-#else
-                sHaveVisualState[runner] = runner == 0
-                    ? Ghost::visualState(&sVisualStates[runner])
-                    : Ghost::secondaryVisualState(&sVisualStates[runner]);
-#endif
-                sPrepared[runner] = sHaveVisualState[runner] &&
-                    prepareRunner(runner, sVisualStates[runner]);
-                if (!sPrepared[runner]) continue;
-                ModelSlot &slot = runnerSlot(runner);
-                slot.model->J3DModel::viewCalc();
-                sPrepared[runner] = modelPacketsReady(slot);
-                if (!sPrepared[runner]) continue;
-                if (gpBindShadowManager) {
-                    TCircleShadowRequest shadow = {};
-                    const Ghost::VisualState &state = sVisualStates[runner];
-                    shadow.mTranslation.set(state.x, state.y, state.z);
-                    shadow.mOffsetY = shadow.mOffsetY2 = 55.0f;
-                    shadow.mNeedsProjection = 1;
-                    // Retail projects and bounds this visual-only request;
-                    // no actor, collision response or gameplay input is added.
-                    gpBindShadowManager->request(shadow, 0);
-                }
-                requests[runner * 3] = desiredAttachment(sVisualStates[runner]);
-                desiredFludd(sVisualStates[runner], requests + runner * 3 + 1);
-            }
-            rebuildAttachments(requests);
-            for (int index = 0; index < kAttachments; ++index) {
-                sPreparedAttachments[index] = sPrepared[index / 3]
-                    ? prepareAttachment(index, requests[index],
-                                        sVisualStates[index / 3])
-                    : nullptr;
+// Player-group members must be full actors: retail clears their collision count.
+// Keep the native secondary vtable and give only this object a render callback.
+using GhostView = THitActor;
+void performGhostView(GhostView *, u32 cue, JDrama::TGraphics *graphics) {
+    if (!sRegistered) return;
+    if ((cue & (kCueCalcView | kCueEntry)) == 0) return;
+    if (cue & kCueCalcView) {
+        refreshPlayerPose(graphics);
+        Ghost::prepareVisual();
+        sGhostColor.a = ghostAlpha();
+        AttachmentRequest requests[kAttachments] = {};
+        for (int appearance = 0; appearance < MODEL_SLOT_COUNT;
+             ++appearance) {
+            ModelSlot &slot = sSlots[appearance];
+            if (slot.model &&
+                !configureOpacity(slot, sGhostColor.a == 255)) {
+                clearLiveModel(slot);
             }
         }
-        if (cue & kCueEntry) {
-            for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
-                ModelSlot &slot = runnerSlot(runner);
-                if (!sPrepared[runner] || !modelPacketsReady(slot)) continue;
-                void *lighting = lightSetFor(sVisualStates[runner]);
-                slot.model->J3DModel::entry();
-                for (int part = 0; part < 3; ++part) {
-                    AttachmentModel *attachment = sPreparedAttachments[runner * 3 + part];
-                    if (attachment && attachment->model) entryAttachment(*attachment);
-                }
-                if (lighting) ghostLightExit(lighting);
-                sSubmitted[runner] = true;
+        for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
+#if TIMEWARP_LIVE_RACING
+            sHaveVisualState[runner] = Ghost::renderVisualState(runner, &sVisualStates[runner]);
+#else
+            sHaveVisualState[runner] = runner == 0
+                ? Ghost::visualState(&sVisualStates[runner])
+                : Ghost::secondaryVisualState(&sVisualStates[runner]);
+#endif
+            sPrepared[runner] = sHaveVisualState[runner] &&
+                prepareRunner(runner, sVisualStates[runner]);
+            if (!sPrepared[runner]) continue;
+            ModelSlot &slot = runnerSlot(runner);
+            slot.model->J3DModel::viewCalc();
+            sPrepared[runner] = modelPacketsReady(slot);
+            if (!sPrepared[runner]) continue;
+            if (gpBindShadowManager) {
+                TCircleShadowRequest shadow = {};
+                const Ghost::VisualState &state = sVisualStates[runner];
+                shadow.mTranslation.set(state.x, state.y, state.z);
+                shadow.mOffsetY = shadow.mOffsetY2 = 55.0f;
+                shadow.mNeedsProjection = 1;
+                // Retail projects and bounds this visual-only request;
+                // no actor, collision response or gameplay input is added.
+                gpBindShadowManager->request(shadow, 0);
             }
+            requests[runner * 3] = desiredAttachment(sVisualStates[runner]);
+            desiredFludd(sVisualStates[runner], requests + runner * 3 + 1);
+        }
+        rebuildAttachments(requests);
+        refreshColours();
+        for (int index = 0; index < kAttachments; ++index) {
+            sPreparedAttachments[index] = sPrepared[index / 3]
+                ? prepareAttachment(index, requests[index],
+                                    sVisualStates[index / 3])
+                : nullptr;
         }
     }
-};
+    if (cue & kCueEntry) {
+        for (int runner = 0; runner < (sLoadedGroup ? 3 : 2); ++runner) {
+            ModelSlot &slot = runnerSlot(runner);
+            if (!sPrepared[runner] || !modelPacketsReady(slot)) continue;
+            void *lighting = lightSetFor(sVisualStates[runner]);
+            slot.model->J3DModel::entry();
+            for (int part = 0; part < 3; ++part) {
+                AttachmentModel *attachment = sPreparedAttachments[runner * 3 + part];
+                if (attachment && attachment->model) entryAttachment(*attachment);
+            }
+            if (lighting) ghostLightExit(lighting);
+            sSubmitted[runner] = true;
+        }
+    }
+}
 
+static_assert(sizeof(THitActor) == 0x68, "Retail collision actor size");
+static_assert(__builtin_offsetof(THitActor, mNumObjs) == 0x48, "Retail collision count");
 alignas(32) u8 sViewStorage[sizeof(GhostView)];
 GhostView *sView;
+u32 sViewVtable[0xA4 / sizeof(u32)];
 void **sViewWord;
 
 bool registerView(TMarDirector *director) {
@@ -1434,8 +1515,7 @@ bool registerView(TMarDirector *director) {
         "\x83\x4F\x83\x8B\x81\x5B\x83\x76";
     JDrama::TNameRef *ref = director->mViewObjRoot->search(kPlayerGroup);
     if (!ref) return false;
-    JDrama::TViewObjPtrListT<JDrama::TViewObj> *group =
-        reinterpret_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj> *>(ref);
+    TIdxGroupObj *group = static_cast<TIdxGroupObj *>(ref);
     for (JGadget::TList_pointer_void::iterator it = group->mViewObjList.begin();
          it != group->mViewObjList.end(); ++it) {
         if (*it == sView) {
@@ -1595,6 +1675,7 @@ void loadPendingStage() {
     clearPreparedPackets();
     memset(sAttachmentModels, 0, sizeof(sAttachmentModels));
     if (sAttachmentHeap) sAttachmentHeap->freeAll();
+    memset(sColours, 0, sizeof(sColours));
     clearLiveModel(sSlots[APPEARANCE_SHADOW]);
     clearLiveModel(sSlots[APPEARANCE_PIANTA]);
     clearLiveModel(sSlots[2]);
@@ -1622,6 +1703,7 @@ void loadPendingStage() {
 
 void init() {
     memset(sSlots, 0, sizeof(sSlots));
+    memset(sColours, 0, sizeof(sColours));
     memset(sAttachmentModels, 0, sizeof(sAttachmentModels));
     memset(sPreparedAttachments, 0, sizeof(sPreparedAttachments));
     sRegistered = false;
@@ -1631,7 +1713,12 @@ void init() {
     sQuiescedGeneration = 0;
     sLoadedGeneration = 0;
     sLoadedAlternative = APPEARANCE_PIANTA;
-    sView = new (sViewStorage) GhostView();
+    sView = new (sViewStorage) GhostView("Moonshine Ghost Models");
+    sView->mObjectType = 7; // NO_COLLISION | NO_ATTACK | NO_DAMAGE.
+    // Retail THitActor's table is 0xA4 bytes in JP, US and PAL; perform is +0x20.
+    memcpy(sViewVtable, *reinterpret_cast<void **>(sView), sizeof(sViewVtable));
+    sViewVtable[8] = reinterpret_cast<u32>(&performGhostView);
+    *reinterpret_cast<u32 **>(sView) = sViewVtable;
     sViewWord = nullptr;
 #if IS_EMULATOR
     if (!prepareDolphinModelMemory()) return;
@@ -1680,6 +1767,10 @@ void onStageSetup(TMarDirector *director) {
 bool available() {
     return sRegistered && (sSlots[APPEARANCE_SHADOW].model ||
                            sSlots[APPEARANCE_PIANTA].model);
+}
+
+bool displayEnabled(unsigned runner) {
+    return (sLoadedGroup || runner) && onlineModel() >= 0 ? onlineShown() : Ghost::displayEnabled();
 }
 
 bool submitted(bool secondary) {

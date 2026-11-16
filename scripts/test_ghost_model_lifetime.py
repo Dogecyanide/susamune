@@ -55,7 +55,7 @@ class GhostModelLifetimeTests(unittest.TestCase):
 
     def test_unregistered_view_cannot_submit_retired_packets(self) -> None:
         perform = SOURCE[
-            SOURCE.index("virtual void perform(u32 cue"):
+            SOURCE.index("void performGhostView(GhostView *"):
             SOURCE.index("alignas(32) u8 sViewStorage")
         ]
         self.assertRegex(perform, r"if \(!sRegistered\) return;")
@@ -65,7 +65,7 @@ class GhostModelLifetimeTests(unittest.TestCase):
         self.assertIn("kShapePacketDrawMtxOffset = 0x18u", SOURCE)
         self.assertIn("kShapePacketNrmMtxOffset = 0x1Cu", SOURCE)
         perform = SOURCE[
-            SOURCE.index("virtual void perform(u32 cue"):
+            SOURCE.index("void performGhostView(GhostView *"):
             SOURCE.index("alignas(32) u8 sViewStorage")
         ]
         self.assertRegex(

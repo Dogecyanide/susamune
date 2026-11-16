@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-30",
+  "working_revision": "PR59 (R12; original PR48 experimental baseline plus eleven revisions)",
+  "requirements": [
+    "Replace new ordinary ghost recording with automatic streamed MSGT and preserve Save/Discard, names, library, splits, PB ownership and race/watch workflows.",
+    "Full-world on-board replay is required; Mario-only drawing is insufficient. Initial world state and replay fidelity must be proved.",
+    "Recording, playback and racing share one bounded MEM2 arena. Concurrent recording/racing lease different live chunks in that common arena.",
+    "Fix missed launcher D-pad presses.",
+    "Allocate an additional 1.5 MiB to game loading/cache only after the legacy payload owners have migrated.",
+    "Benchmark an additional 500 KiB for savestate saving on the user Wii. Retain only if it saves at least two game frames; otherwise allocate it to loading/cache."
+  ],
+  "measurement": "Sirena 4 baseline in pr12-sirena4-baseline.json. Only same-Wii comparisons establish loading/savestate speed; Dolphin tests establish correctness.",
+  "compatibility": {
+    "moonshine_version": "Informational; not a rejection key. Compatible future releases must read earlier recordings.",
+    "format": "Versioned schemas and required capabilities; unknown optional records can be skipped. Changes to required semantics need explicit migration/rejection.",
+    "racing": "Recorded motion/animation does not interact with the live world. Preserve cross-region visual racing.",
+    "full_world": "Final user decision 2026-10-30: full-world playback requires the same Sunshine region (JP to JP, US to US, PAL to PAL). This supersedes the proposed cross-region disclaimer policy. Visual racing remains cross-region. Moonshine release number alone must never invalidate an otherwise compatible recording.",
+    "native_checkpoints": "Optional native snapshots need explicit layout compatibility and cannot be the sole portable representation. Never restore file-supplied pointers without owner/range validation.",
+    "known_differences_source": "User report 2026-10-30; not yet independently audited in regional binaries.",
+    "known_differences": [
+      {
+        "stage": "Pianta 1",
+        "jp": "Hover immediately extinguishes chomplets.",
+        "us_pal": "Hover does not extinguish them immediately."
+      },
+      {
+        "stage": "Pinna 1",
+        "jp": "Rocket collisions can occur.",
+        "us_pal": "Rocket collisions cannot occur."
+      },
+      {
+        "stage": "Sirena 6",
+        "difference": "Goop-cleaning completion threshold differs."
+      },
+      {
+        "stage": "EYG",
+        "jp": "Fruit storage and instant remount unavailable.",
+        "us_pal": "Fruit storage and instant remount possible."
+      },
+      {
+        "stage": "Delfino Plaza",
+        "difference": "US/PAL has additional fruit not present on JP; starting actor roster differs."
+      },
+      {
+        "stage": "Noki 4",
+        "jp": "Air-damage invulnerability lasts one frame.",
+        "us_pal": "Air-damage invulnerability lasts multiple seconds."
+      },
+      {
+        "stage": "Pianta 100 coins",
+        "difference": "A Yoshi clip works only on JP."
+      }
+    ],
+    "timing_difference": "User reports PAL fadeouts two game frames shorter than US at 60 Hz. Suspected 50 Hz origin is unverified. This affects transitions even when gameplay physics match.",
+    "legacy": "Preserve existing .smsghost Watch and racing with their original visual playback, sharing the arena. Missing historical world data cannot be recovered; do not advertise legacy files as full-world replays.",
+    "watch_two": "Preserve Watch 2, split alignment and scrubbing as visual comparison, using the shared arena. Full-world playback drives one recorded world at a time."
+  },
+  "memory": "pr11-memory-estimate.json is a planning estimate, not already-free memory. It predates the full-world replay requirement and must be revalidated. Preserve all three savestate slots and unrelated legacy bank tails.",
+  "additional_observation": "User reports a pause after the IL menu closes, predating MSGT and seeming longer recently. Native departure uses a 0.4-second wipe with movement stopped. Additional I/O delay is not yet measured."
+}

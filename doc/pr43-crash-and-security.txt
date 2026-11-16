@@ -1,0 +1,47 @@
+PR43 crash diagnosis and bounded Online hardening
+
+Evidence: moonshine_crash_00000005.txt, PR42 JP build E06B69CB.
+PC 80115064, instruction B0830048 (sth r4,0x48(r3)); r3=8047AFA0,
+r4=0, DAR=8047AFE8, DSISR=02400000. The guarded DABR watchpoint
+caught clearHitNum__12TObjHitCheckFv writing to sViewStorage+0x48.
+That storage was only 16 bytes. The target was instruction word 11 of
+rowName__13SavestatesTabFib, explaining the earlier 40820010 -> 00000010
+Search faults. No Search operation is required to trigger the corrupting store.
+
+The player group is TIdxGroupObj<TViewObjPtrListT<THitActor>>, not a generic
+TViewObj list. Native code clears mColCount at +0x48 before checking collision
+flags and also reads actor fields while constructing collision lists.
+Fix: construct the full retail THitActor (0x68), set NO_COLLISION|NO_ATTACK|
+NO_DAMAGE, and privately replace its perform callback. The original JStage
+secondary interface remains retail. The primary table copy is 0xA4 bytes in
+all three retail maps; only its +0x20 perform slot changes. The scene-list node
+and savestate keep binding remain unchanged. No per-frame allocation is added.
+The compiler's inherited multi-base thunk emission cannot be used as-is here;
+using the native object preserves its retail interfaces without new ABI thunks.
+
+Decomp references (source, not instructions):
+https://github.com/doldecomp/sms/blob/main/src/Strategic/ObjHitCheck.cpp
+https://github.com/doldecomp/sms/blob/main/src/Strategic/HitActor.cpp
+https://github.com/doldecomp/sms/blob/main/include/Strategic/HitActor.hpp
+
+Security implementation
+Each admitted peer has a 32-packet burst allowance refilled at one packet per
+8 ms. Invalid endpoints/session identifiers cannot consume another peer's
+allowance. Handshake replies are at most one per 250 ms after the first reply.
+Movement remains unqueued; normal 30 Hz poses are below the allowance. This
+bounds processing/replies; it is not protection against saturating a router.
+Duplicate reliable controls may be acknowledged but do not refresh liveness.
+Host-side invitation permission now gates every session packet, not only HELLO.
+The existing kick clears that invitation; explicitly entering a code admits it
+again. Failed sessions are reinitialized with fresh session identifiers.
+
+A race-wide assistance latch survives scene retries/network outages and feeds
+both IL and playlist eligibility. Local PracticeSession assistance is checked
+again at result submission. Remote clients still report their own eligibility;
+this is TAS rejection by the official client, not adversarial anti-cheat.
+
+Unfinished: race packet authentication/encryption. No home-grown encryption or
+13-bit PSK scheme is added. A vetted handshake with adequately strong keys or
+appropriate password authentication is required before advertising that claim.
+Wii ghost-service HTTPS remains separate and unchanged. Direct endpoint privacy
+requires an optional relay; its availability cannot become a play requirement.

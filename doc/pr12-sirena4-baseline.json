@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-30",
+  "source": "User measurements before cache changes",
+  "benchmark": "Sirena4 full",
+  "units": "seconds",
+  "external": {
+    "reset": 1.334,
+    "hotel": 1.635,
+    "casino": 1.167,
+    "secret": 0.6
+  },
+  "finish_breakdown": {
+    "reset": null,
+    "hotel": 1.655,
+    "casino": 1.206,
+    "secret": 0.657
+  },
+  "measurement_method": "User timing method to keep consistent; not inferred from breakdown",
+  "platform": "User Wii",
+  "comparison_rule": "Only before/after on the same Wii, region, ISO, SD and settings. Dolphin is correctness-only, not speed evidence.",
+  "savestate_threshold": "At least two user-measured game frames saved on Wii; otherwise reassign proposed500KiB to cache."
+}

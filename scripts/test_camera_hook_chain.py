@@ -36,7 +36,8 @@ namespace JDrama {struct TGraphics {};}
 using Perform=void(*)(CPolarSubCamera*,u32,JDrama::TGraphics*);
 static CPolarSubCamera camera,other,*gpCamera=&camera,*sCamera=&camera;
 static bool sFreeCamera,sCameraApplied,previewWanted,previewApplied,recordedAvailable;
-static bool ghostApplied;
+static bool ghostApplied,viewerAvailable;
+static unsigned barriers,graphicsSaves;
 static int practiceSaved,previewSaved,ghostSaved,captured,lastView;
 static unsigned retailCalls,retailCue,practiceApplies,previewApplies,ghostApplies;
 static unsigned captures,recordedQueries,flushes,setups;
@@ -48,7 +49,9 @@ static void retailPerform(CPolarSubCamera*c,u32 cue,JDrama::TGraphics*) {
 }
 static Perform kCameraPerform=&retailPerform;
 void DCFlushRange(void*,unsigned){++flushes;}
+void GXDrawDone(){++barriers;}
 void applyCamera(){if(!sCameraApplied){practiceSaved=camera.view;camera.view=1;sCameraApplied=true;++practiceApplies;}}
+namespace PracticeSession {void cameraPathUpdate(){}}
 namespace ModelEditorPreview {
 bool wanted(){return previewWanted;}
 void apply(CPolarSubCamera*c){if(!previewApplied){previewSaved=c->view;c->view=2;previewApplied=true;++previewApplies;}}
@@ -66,6 +69,10 @@ void apply(CPolarSubCamera*c,const View&v){restore();ghostSaved=c->view;c->view=
 void readRendered(CPolarSubCamera*c){captured=c->view;++captures;}
 void onStageSetup(){++setups;}
 }
+namespace ReplayCamera {
+bool view(GhostCamera::View &v){v.view=4;return viewerAvailable;}
+void saveGraphics(JDrama::TGraphics*){++graphicsSaves;}
+}
 namespace Ghost {
 bool recordedCameraView(GhostCamera::View*v){++recordedQueries;v->view=3;return recordedAvailable;}
 }
@@ -73,15 +80,18 @@ bool recordedCameraView(GhostCamera::View*v){++recordedQueries;v->view=3;return 
 '''
         code += function(practice, 'extern "C" void susamunePracticeCameraPerform(')
         code += "\nnamespace ModelEditorPreview {\n"
+        code += function(preview, "void performCamera(") + "\n"
         code += function(preview, "void perform(") + "\n}\n"
         code += "namespace GhostCamera {\n"
+        code += function(ghost, "void performCamera(") + "\n"
         code += function(ghost, 'extern "C" void susamuneGhostCameraPerform(')
         code += "\n" + install + "\n}\n"
         code += r'''
 #define API extern "C" __declspec(dllexport)
 API void reset(unsigned flags){
  camera.view=other.view=0;gpCamera=sCamera=&camera;
- sFreeCamera=flags&1;previewWanted=flags&2;recordedAvailable=flags&4;
+ sFreeCamera=flags&1;previewWanted=flags&2;recordedAvailable=flags&4;viewerAvailable=flags&16;
+ barriers=graphicsSaves=0;
  gSettings.choice=(flags&8)?1:0;sCameraApplied=previewApplied=ghostApplied=false;
  retailCalls=retailCue=practiceApplies=previewApplies=ghostApplies=0;
  captures=recordedQueries=flushes=setups=0;captured=lastView=-1;
@@ -94,6 +104,7 @@ API void reinstall(){GhostCamera::init();}
 API unsigned flushCount(){return flushes;}
 API void dispatch(unsigned cue,unsigned foreign){reinterpret_cast<Perform>(hookTable[8])(foreign?&other:&camera,cue,nullptr);}
 API unsigned counts(){return retailCalls|practiceApplies<<4|previewApplies<<8|ghostApplies<<12|captures<<16|recordedQueries<<20;}
+API unsigned viewerCounts(){return barriers|(graphicsSaves<<8);}
 API int rendered(){return captured;}
 API int retailView(){return lastView;}
 API int currentView(){return camera.view;}
@@ -141,6 +152,16 @@ API unsigned rejectUnknown(){
         self.assertEqual(self.dll.currentView(), 0)
         self.assertEqual(self.dll.retailView(), 0)
         self.assertEqual(self.dll.counts(), 0x111002)
+
+    def test_replay_camera_saves_native_graphics_before_visual_override(self):
+        self.dll.reset(16 | 4 | 8)
+        self.dll.dispatch(0x14, 0)
+        self.assertEqual(self.dll.rendered(), 4)
+        self.assertEqual(self.dll.retailView(), 4)
+        self.assertEqual(self.dll.viewerCounts(), 0x101)
+        self.dll.dispatch(1, 0)
+        self.assertEqual(self.dll.currentView(), 0)
+        self.assertEqual(self.dll.retailView(), 0)
 
     def test_colour_preview_takes_priority_over_free_and_recorded_cameras(self):
         for flags in (1 | 2, 1 | 2 | 4 | 8):

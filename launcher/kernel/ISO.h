@@ -26,5 +26,7 @@ void ISOClose();
 void ISOSetupCache();
 const u8 *ISORead(u32* Length, u32 Offset);
 void ISOSeek(u32 Offset);
+/* Diagnostic snapshots only; the DI thread updates these counters. */
+void ISOReadTiming(u32 *out);
 
 #endif

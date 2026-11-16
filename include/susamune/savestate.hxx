@@ -85,9 +85,14 @@ public:
     bool saveSlotExplicit(u32 slot, bool forceRng = false, bool omitPracticeTake = false);
     bool loadState();
     // Replay loads its original slot even if the menu selection changed.
+    // Prepare an MSGT continuation across frames before the synchronous restore.
+    // Returns -1 on refusal, 0 while storage is pending, and 1 when ready.
+    int prepareSlotLoad(u32 slot, u32 expectedGeneration);
+    static void cancelPreparedLoad();
     bool loadSlot(u32 slot, u32 expectedGeneration);
 
 private:
+    bool saveSlotManual(u32 slot);
     bool loadOrdinarySlot(u32 slot, u32 expectedGeneration);
     void feedback(const char *debug, const char *message);
     bool beginSDExport(u32 slot, u32 expectedGeneration, const char *name,

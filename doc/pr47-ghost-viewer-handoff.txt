@@ -1,0 +1,74 @@
+Moonshine PR47 / SGHF V10 integration handoff
+Status: implementation + host/ARM validation; final regional/runtime acceptance is separate.
+V10 detailed recording is intended to remain opt-in while the service supports only V3-V9.
+Do not advertise V10 accepted until service/viewer validators are updated together.
+
+Unchanged: 256-byte SGHF header; fixed 64x32-byte segment table;16-byte poses;
+24-byte input stride;8 FLUDD/Yoshi bytes per input;12-byte splits;SGCA v1 sparse
+rendered-camera keys. Duration71928QF,17983poses,36000inputs,5312camera keys.
+V3-V9 keep their original byte meanings and remain readable. V10 requires
+requiredFeatures=127 exactly. The first segment still has V9's FIRST_POSE RNG
+observation at words24/28; that seed is NOT the new pre-setup seed.
+
+SGTI v4 (paired only with SGHF10)
+Header32 and count/flags/checksum fields unchanged. For every24-byte input:
+ bytes0..1: relative QF low16, BE.
+ bytes2..3: exact camera yaw signed16, BE.
+ bytes4..14: all11 original controller bytes unchanged (buttons,sticks,analogs,error).
+ byte15: bit7=relativeQF bit16; low7=camera mode0..73.127 means unknown and requires yaw0.
+ bytes16..23: original FLUDD/Yoshi observation unchanged.
+ absolute QF = SGHF.startQf + BE16(bytes0..1) + ((byte15&128)<<9).
+ Relative QF must be<=71928 and within inclusive file QF bounds. Inputs remain
+ strictly increasing. Camera is a once-per-input observation of the last observed
+ Mario movement tick, NOT four samples/frame or a deterministic replay guarantee.
+ Clear byte15 back to0 when reconstructing the old logical controller structure.
+ Old SGTI versions keep full QF32 and reserved zero byte15 exactly as before.
+
+SGCX v1 follows counted SGCA
+Calculate SGCA size as32+count*24; it no longer necessarily consumes all remaining
+bytes in a V10 file. The exact remainder must be one SGCX section.
+Header32 (all integers BE):
+ 0:u32 magic0x53474358;4:u16 version1;6:u16 headerSize32;
+ 8:u32 recordCount<=169;12:u32 flags(TRUNCATED1 only);16:u32 CRC32 of records;
+ 20:u16 recordSize96;22:u16 settingsSchema1;24/28:u32 reserved0.
+Record96:
+ 0:u32 actual captureQf;4:u32 associated input stream position<=inputCount;
+ 8:u32 source frame serial (advisory; explicit restores can change its origin);
+ 12:u32 movementTicks;16:u32 directorTicks;20:u32 preSetupSeed;
+ 24:u16 segment;26:u8 kind;27:u8 flags;28:s16 cameraYaw;30:u16 cameraMode;
+ 32..95: exact64-byte simulation snapshot (see ghost_simulation.hxx and
+ ghost_simulation_settings.h for named schema1 ordinals and bounds).
+Kinds:SEGMENT1,SETTINGS2,INPUT_GAP3,RESTORE4,HELD_END5,INTERPOLATED_END6.
+Flags:SEED_KNOWN1,AGE_KNOWN2,CAMERA_KNOWN4,YAW_VARIED8,SYNTHETIC_START16,
+ RESTORED32,BEFORE_INPUTS64. Unknown seed/age/camera fields must all be0;
+ YAW_VARIED requires CAMERA_KNOWN. BEFORE_INPUTS requires inputIndex0.
+ SYNTHETIC_START is allowed only on SEGMENT. RESTORE requires RESTORED.
+Each record's captureQf lies in its segment; segments/QFs are nondecreasing.
+Input indices are nondecreasing except an explicit RESTORE may establish a new
+position. At most one SEGMENT event per segment, and it must be its first event.
+Synthetic endpoint markers are annotations; this recorder leaves their stage age,
+seed and camera unknown, since the endpoint may be backdated.
+A held/interpolated endpoint equals segment.endQf and is the last event for that
+segment. Equal QFs for distinct observations are valid. Missing records are not
+invented; the bounded TRUNCATED flag signals capacity exhaustion.
+
+Capture provenance
+The first observed sample may be held back to QF0. SGCX captureQf records when the
+observation was actually made, so never derive stage age from that synthetic anchor.
+preSetupSeed is latched immediately before TMarDirector::setup, before its resource
+worker begins. movementTicks is +0x58 (paused movement excluded); directorTicks is
++0x5c (paused director ticks included). Values are sampled at the actual retained
+observation, with unknown flags after a state restore until a genuine stage load. This handoff does not claim the
+reported NB6 offset has been reproduced or hardcode a21-frame compensation.
+
+Storage/compatibility
+Maximum SGCX size16256 and max current V10 file1297936 bytes. This stays below the
+existing game/file reservation1298016 and supplied service ceiling1297992. Full
+length, CRC and bounded semantic validation remain required; unknown versions or
+fields are rejected. The existing service contract rejects V10 until updated.
+No posted/uploaded fixtures are needed: four synthetic files plus independent
+validator reports are in build/pr47/context-fixtures. Production ARM and host
+validation tests are scripts/test_ghost_context.py. scripts/validate_ghost.py is the
+independent parser; shared C rules are ghost_teaching.h,ghost_context.h and
+ ghost_simulation_settings.h. Test all older versions and malformed/new-boundary
+cases as well as valid V10. No private token, personal ghost, or ISO is included.

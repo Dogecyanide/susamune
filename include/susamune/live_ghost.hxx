@@ -4,6 +4,7 @@
 
 #if TIMEWARP_LIVE_RACING
 namespace LiveGhost {
+void init();
 void reset();
 bool setName(const char *name, unsigned int length);
 // Reset on a new session; sequence, milliseconds and scene epoch wrap modulo 32.

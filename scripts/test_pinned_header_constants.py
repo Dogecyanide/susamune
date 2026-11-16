@@ -75,6 +75,37 @@ blr
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, "partial contribution"):
                 owned.verify_parts(changed, proof, {"sections": []})
 
+    def test_simulation_limits_are_exact_new_owner_copies(self):
+        assembly = self.folder / "simulation.s"
+        assembly.write_text(f"""
+.section .text.reader,"ax",@progbits
+.type reader,@function
+reader:
+lis 3,{constants.SIM_SYMBOL}@ha
+addi 3,3,{constants.SIM_SYMBOL}@l
+blr
+.size reader,.-reader
+.section {constants.SIM_NAME},"a",@progbits
+.type {constants.SIM_SYMBOL},@object
+{constants.SIM_SYMBOL}:
+.byte {','.join(map(str,constants.SIM_PAYLOAD))}
+.size {constants.SIM_SYMBOL},.-{constants.SIM_SYMBOL}
+""", encoding="utf-8")
+        obj = self.folder / "simulation.o"
+        subprocess.run([str(pinned.ROOT / "toolchain/clang.exe"),
+                        "--target=powerpc-gecko-ibm-kuribo-eabi", "-c", str(assembly),
+                        "-o", str(obj)], check=True, capture_output=True)
+        for owner in constants.SIM_OWNERS:
+            self.assertTrue(self.check(obj, owner, [constants.SIM_NAME]))
+        self.assertFalse(self.check(obj, "ghost.cpp", [constants.SIM_NAME]))
+        with self.assertRaises(ValueError): self.check(obj, "qft_timer.cpp")
+        with obj.open("rb") as stream:
+            offset = ELFFile(stream).get_section_by_name(constants.SIM_NAME)["sh_offset"]
+        data = bytearray(obj.read_bytes());data[offset] ^= 1
+        bad = self.folder / "simulation-bad.o";bad.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "immutable payload"):
+            self.check(bad, "ghost_trace_decode.cpp", [constants.SIM_NAME])
+
     def test_existing_frozen_or_unknown_owner_is_rejected(self):
         self.assertTrue(self.check())
         for args in ({"owner": "qft_timer.cpp"}, {"frozen": [constants.NAME]}):

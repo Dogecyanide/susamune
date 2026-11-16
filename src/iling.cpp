@@ -1,7 +1,11 @@
+#include "susamune/replay_session.hxx"
+#include "susamune/ghost_replay_test.hxx"
 #include "susamune/hoverless.hxx"
 #include "susamune/ghost_fludd.hxx"
 #include "susamune/practice_session.hxx"
 #include "susamune/iling.hxx"
+#include "susamune/features.hxx"
+#include "susamune/stage_transition.hxx"
 #include "susamune/finish_breakdown.hxx"
 #if TIMEWARP_LIVE_RACING
 #include "susamune/live_race.hxx"
@@ -36,6 +40,8 @@
 #include "susamune/emulator_persistence.hxx"
 #endif
 #include "susamune/warp_wheel.hxx"
+
+extern "C" void susamuneILCardSave(TFlagManager *, JSUMemoryOutputStream *);
 
 namespace {
 #if TIMEWARP_LIVE_RACING
@@ -1387,12 +1393,21 @@ TMapObjBase *findCoverFruit() {
     return nullptr;
 }
 
+bool temporaryProgressionActive() {
+    return isPlazaEntry(sSelectedEntry) || sOverlayCount != 0 || sHavePlazaStoryFlags;
+}
+
+bool sCardSaveGuardInstalled;
+
 void clearAttempt() {
     const bool hadAttempt = sRunning;
     restorePlazaSetupState();
     restorePlazaStoryFlags();
     restoreOverlayFlags(isPlazaEntry(sSelectedEntry));
     if (sTemporaryRocketActive) {
+        // moveStage may publish the live nozzle again after this cleanup.
+        sSavedBowserNozzleFlag = sSavedSecondNozzleFlag;
+        sBowserNozzleShieldActive = true;
         if (TFlagManager::smInstance) {
             TFlagManager::smInstance->setFlag(0x40004,
                                               sSavedSecondNozzleFlag);
@@ -1420,6 +1435,24 @@ void clearAttempt() {
         StageLoader::onILAttemptEnded();
         SplitStats::onILAttemptEnded();
     }
+}
+
+bool installCardSaveGuard() {
+    const u32 sites[] = {
+        SUSAMUNE_MEM1_ADDR(0x8021ae74u, 0x801599d0u, 0x8014ea1cu),
+        SUSAMUNE_MEM1_ADDR(0x8021af78u, 0x80159ad4u, 0x8014eb20u),
+        SUSAMUNE_MEM1_ADDR(0x8021b2d8u, 0x80159e34u, 0x8014ee80u),
+        SUSAMUNE_MEM1_ADDR(0x8021be68u, 0x8015a9d0u, 0x8014fa1cu),
+        SUSAMUNE_MEM1_ADDR(0x8021bfc8u, 0x8015ab30u, 0x8014fb7cu),
+        SUSAMUNE_MEM1_ADDR(0x8021c37cu, 0x8015aee4u, 0x8014ff30u),
+    };
+    const u32 original = SUSAMUNE_MEM1_ADDR(0x800e6e18u, 0x8029385cu, 0x8028b674u);
+    for (u32 site : sites)
+        if (*reinterpret_cast<volatile const u32 *>(site) != (branchWord(site, original) | 1u))
+            return false;
+    for (u32 site : sites)
+        writeGameCode(site, branchWord(site, reinterpret_cast<u32>(&susamuneILCardSave)) | 1u);
+    return true;
 }
 
 void clearAttemptForRetry() {
@@ -1456,7 +1489,7 @@ void captureGhostRace(int entry) {
 }
 
 u8 liveGlobalAssistReasons() {
-    return (gSettings.getBool(SETTING_STAGE_INTRO_SKIP) ||
+    return (ReplaySession::blocksResults() || gSettings.getBool(SETTING_STAGE_INTRO_SKIP) ||
             gSettings.getBool(SETTING_GAMEPLAY_SPEED) ||
             actionsFastForwardActive() || PracticeSession::assisted())
                ? Assist::OTHER
@@ -1464,10 +1497,11 @@ u8 liveGlobalAssistReasons() {
 }
 
 u8 liveRejectionCause() {
+    if(ReplaySession::blocksResults())return REJECT_GHOST_WATCH;
     if (gSettings.getBool(SETTING_STAGE_INTRO_SKIP)) return REJECT_INTRO_SKIP;
     if (actionsFastForwardActive()) return REJECT_FAST_FORWARD;
     if (PracticeSession::assisted()) return REJECT_TAS;
-    if (Ghost::observerActive()) return REJECT_GHOST_WATCH;
+    if (Ghost::observerActive() || ReplaySession::blocksResults()) return REJECT_GHOST_WATCH;
     if (gQFTTimer.practiceAssisted()) return REJECT_POSITION_LOAD;
     return REJECT_PRACTICE;
 }
@@ -1547,6 +1581,7 @@ bool secretAttemptUsedFludd() {
 }
 
 bool recordPB(int entry, s32 qf) {
+    if(ReplaySession::blocksResults())return false;
     if (!attemptPBRecordingEnabled()) {
         return false;
     }
@@ -1592,7 +1627,9 @@ bool recordPB(int entry, s32 qf) {
 }
 
 void recordResult(int entry, s32 qf) {
+    GhostReplayTest::finished();
     FinishBreakdown::finish(entry, qf);
+    if(ReplaySession::blocksResults())return;
 #if TIMEWARP_LIVE_RACING
     LiveRace::onILResult(entry, qf, (sRecordsEligible ||
         (sChildRetryContinuation && LiveRace::racingEntry(entry) && sAssistReasons == 0)) &&
@@ -1646,6 +1683,12 @@ void recordResult(int entry, s32 qf) {
 
 }  // namespace
 
+// CardSave serializes only after the player confirms an actual save.
+extern "C" void susamuneILCardSave(TFlagManager *flags, JSUMemoryOutputStream *stream) {
+    if (temporaryProgressionActive()) clearAttempt();
+    flags->save(*stream);
+}
+
 namespace ILing {
 
 void formatTime(s32 qf, char *out, u32 size, const char *format) {
@@ -1656,6 +1699,7 @@ void formatTime(s32 qf, char *out, u32 size, const char *format) {
 
 void init() {
     Hoverless::init();
+    sCardSaveGuardInstalled = installCardSaveGuard();
     memset(&sILingRuntime, 0, sizeof(sILingRuntime));
     resetPBProfiles();
     sSelectedEntry = -1;
@@ -1669,6 +1713,13 @@ void onPersistenceReady() {
 }
 
 int count() { return kEntryCount; }
+
+u32 ghostBrowseFilter(int entry) {
+    if (!validEntry(entry)) return 0;
+    const LevelWarp::Dest start = selectedStart(entry);
+    return (u32)(start.area + 1) | ((u32)(start.episode + 1) << 8) |
+           ((u32)(entry + 1) << 16);
+}
 
 bool canChooseEpisode(int entry) { return episodeChoiceIndex(entry) >= 0; }
 
@@ -2191,6 +2242,20 @@ void resetAfterObserver() {
     clearAttempt();
 }
 
+void onDeparture() {
+    if (gpApplication.mContext != TApplication::CONTEXT_DIRECT_STAGE ||
+        !gpMarDirector || !gpMarDirector->_260) return;
+    // This is after retail moveStage, but before the next stage creates Mario.
+    if (TFlagManager::smInstance) {
+        if (sTemporaryRocketActive)
+            TFlagManager::smInstance->setFlag(0x40004, sSavedSecondNozzleFlag);
+        else if (sBowserNozzleShieldActive)
+            TFlagManager::smInstance->setFlag(0x40004, sSavedBowserNozzleFlag);
+    }
+    sTemporaryRocketActive = sBowserNozzleShieldActive = false;
+    sRocketEquipPending = sBowserNozzleShieldPending = false;
+}
+
 void beforeStageSetup() {
     const TGameSequence &scene = gpApplication.mCurrentScene;
 
@@ -2308,6 +2373,12 @@ void onStageSetup() {
         sSelectedEntry == kEntryGelato4Inside;
     sBowserNozzleShieldPending = atStart && validEntry(sSelectedEntry) &&
         sSelectedEntry == kEntryBowser;
+    if (sBowserNozzleShieldPending && TFlagManager::smInstance) {
+        // An intro can be left before the first ordinary gameplay update.
+        sSavedBowserNozzleFlag = TFlagManager::smInstance->getFlag(0x40004);
+        sBowserNozzleShieldActive = true;
+        sBowserNozzleShieldPending = false;
+    }
 }
 
 const char *sirenaPineappleLabel() {
@@ -2332,6 +2403,24 @@ void toggleSirenaPineapple() {
     TFlagManager::smInstance->setBool(!show, 0x1038B);
     invalidateForAssist();
     Ghost::invalidateForAssist();
+}
+
+bool resultPendingForDeparture() {
+    if(!sRunning||sAwaitingStageSetup||!sAttemptReady||sFinishKind!=FINISH_SHINE||!stageObjectsLive())return false;
+    s32 qf;bool stopped=false;
+    if(gQFTTimer.currentQf(&qf,&stopped)&&stopped)return true;
+    return gpMarioOriginal&&gpMarioOriginal->mState==TMario::STATE_SHINE_C&&
+        gpMarioOriginal->mGrabTarget&&gpMarioOriginal->mGrabTarget->mObjectID==0x20000013u;
+}
+
+static bool consumeSelectedTransition(s32 &qf) {
+    if (!sRunning || !sAttemptReady || sAwaitingStageSetup || sTransitionPending ||
+        !validEntry(sSelectedEntry) || sFinishKind != FINISH_TRANSITION) return false;
+    s32 entryQf;
+    u16 target;
+    if (!gQFTTimer.transitionEntryQf(&entryQf, &target) ||
+        StageTransition::area(target) != kEntries[sSelectedEntry].result) return false;
+    return gQFTTimer.consumeTransition(&qf, &target);
 }
 
 void update() {
@@ -2389,19 +2478,12 @@ void update() {
                                           sSavedBowserNozzleFlag);
     }
 
-    if (sRunning && !sTransitionPending && validEntry(sSelectedEntry) &&
-        sFinishKind == FINISH_TRANSITION) {
-        s32 qf;
-        u16 target;
-        if (gQFTTimer.consumeTransition(&qf, &target)) {
-            if ((u8)target == kEntries[sSelectedEntry].result) {
-                recordResult(sSelectedEntry, qf);
-            }
-            // Keep Plaza setup flags alive until the committed stage takes
-            // over, but never let another portal event record this attempt.
-            sTransitionPending = true;
-            return;
-        }
+    s32 transitionQf;
+    if (consumeSelectedTransition(transitionQf)) {
+        recordResult(sSelectedEntry, transitionQf);
+        // Keep route flags until departure, without accepting another endpoint.
+        sTransitionPending = true;
+        return;
     }
 
     if ((sOverlayCount != 0 || sHavePlazaStoryFlags ||
@@ -2437,13 +2519,10 @@ void update() {
         return;
     }
 
-    const bool temporaryProgression = isPlazaEntry(sSelectedEntry) ||
-                                      sOverlayCount != 0 ||
-                                      sHavePlazaStoryFlags;
-    if (temporaryProgression && stageObjectsLive() &&
+    if (!sCardSaveGuardInstalled && temporaryProgressionActive() && stageObjectsLive() &&
         (gpMarDirector->mCurState == TMarDirector::STATE_PAUSE_MENU ||
          gpMarDirector->mCurState == TMarDirector::STATE_SAVE_CARD)) {
-        // Never let temporary route progression reach a card save.
+        // Keep the conservative fallback if the native save sites differ.
         clearAttempt();
         return;
     }
@@ -2586,6 +2665,24 @@ void onSavestateSaved() {
     sSavedAttemptState = sAttemptState;
     sSavedPinnaEygRestart = sPinnaEygRestart;
     sHaveSavedAttempt = true;
+}
+
+int activeEntry() { return sRunning?sSelectedEntry:-1; }
+
+void captureTraceContext(unsigned words[6]) {
+    words[0] = sActivePbProfile;
+    words[1] = sRunning && validEntry(sSelectedEntry) ? unsigned(sSelectedEntry + 1) : 0;
+    words[2] = gSettings.getBool(SETTING_ILING_RECORDING) ? 128u : 0u;
+    words[3] = words[4] = words[5] = 0;
+    if (!sRunning) return;
+    words[2] |= 1u | (sAttemptReady ? 2u : 0u) |
+        (sAwaitingStageSetup ? 4u : 0u) | (sRecordsEligible ? 8u : 0u) |
+        (sSecretOnly ? 16u : 0u) | (sChildRetryContinuation ? 32u : 0u) |
+        (sessionStartChanged() ? 64u : 0u);
+    words[3] = (unsigned(sAttemptStart.area) << 24) |
+        (unsigned(sAttemptStart.episode) << 16) | sAttemptStart.gameInt3;
+    words[4] = sAssistReasons;
+    words[5] = rejectionCause();
 }
 
 void captureSavestate(SavestateData &out) {

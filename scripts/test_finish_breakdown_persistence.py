@@ -89,12 +89,12 @@ class BreakdownCardTests(unittest.TestCase):
         MarioColorPersistenceTests.setUpClass.__func__(cls)
 
     def test_v12_v13_upgrade_and_v14_transaction_preserve_previous_payloads(self):
-        for version in (12, 13, 14):
+        for version in (12, 13, 14, 15):
             with self.subTest(version=version):
                 self.assertEqual(self.lib.cardFinishBreakdown(version, 0), 0)
 
     def test_corrupt_new_record_falls_back_and_legacy_tail_is_ignored(self):
-        for version in (12, 13, 14):
+        for version in (12, 13, 14, 15):
             with self.subTest(version=version):
                 self.assertEqual(self.lib.cardFinishBreakdown(version, 1), 0)
 

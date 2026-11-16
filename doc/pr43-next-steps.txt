@@ -1,0 +1,12 @@
+PR43 next steps
+
+1. Confirm the collision-object fix on JP/PAL Wii, including Search, ghosts,
+   stage transitions and savestates. Retain any new crash reports.
+2. Run the planned standard Dolphin/Wii native-UDP crossplay test with a fresh
+   room code. Then finish four-player hardware acceptance.
+3. Implement vetted authenticated key establishment and packet protection.
+   Current code secrets are too short for direct cryptographic use. Measure
+   handshake cost, code size and four-player load before changing the wire.
+   A friend's Raspberry Pi may provide an optional relay; direct play must
+   remain available when it is offline. No relay is deployed by this build.
+4. Continue Dolphin website HTTPS and file-service parity after crossplay.

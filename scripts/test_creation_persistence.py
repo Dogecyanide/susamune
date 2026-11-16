@@ -59,6 +59,10 @@ API int run(){
  if(c.words[0].reserved!=0x95||t.reserved[0]!=5)return 2;
  e.adopt(&c);q.adopt(&t);e.stageInto(&c);q.stageInto(&t);
  if(c.words[0].reserved!=0x95||c.reservedAchievement0!=0xd5||c.words[0].rgb[16][2]!=254||t.reserved[0]!=5||t.textRgb[4][2]!=240)return 3;
+ ApplyCreationKey(&c,"native_timer_gradient_stops","6");e.adopt(&c);
+ if(e.mNativeGradient!=0x40)return 40;
+ e.stageInto(&c);if(c.reservedAchievement0!=0xd6)return 41;
+ ApplyCreationKey(&c,"native_timer_gradient_stops","7");if(c.reservedAchievement0!=0xd6)return 42;
  for(unsigned i=0;i<6;++i)gSettings.values[i]=i%3?2:1;
  q.stageInto(&t);memset(gSettings.values,0,6);q.adopt(&t);
  for(unsigned i=0;i<6;++i)if(gSettings.values[i]!=(i%3?2:1))return 4;

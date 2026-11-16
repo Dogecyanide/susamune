@@ -996,6 +996,9 @@ DWORD get_fat (	/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFFF:Cluste
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 	FATFS* fs,		/* Corresponding file system object */
 	DWORD clst,		/* FAT index number (cluster number) to be changed */
@@ -1166,6 +1169,9 @@ FRESULT fill_fat_chain (
 /* FAT handling - Remove a cluster chain                                 */
 /*-----------------------------------------------------------------------*/
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT remove_chain (	/* FR_OK(0):succeeded, !=0:error */
 	_FDID* obj,			/* Corresponding object */
 	DWORD clst,			/* Cluster to remove a chain from */
@@ -1246,6 +1252,9 @@ FRESULT remove_chain (	/* FR_OK(0):succeeded, !=0:error */
 /* FAT handling - Stretch a chain or Create a new chain                  */
 /*-----------------------------------------------------------------------*/
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 DWORD create_chain (	/* 0:No free cluster, 1:Internal error, 0xFFFFFFFF:Disk error, >=2:New cluster# */
 	_FDID* obj,			/* Corresponding object */
 	DWORD clst			/* Cluster# to stretch, 0:Create a new chain */
@@ -1354,8 +1363,8 @@ DWORD clmt_clust (	/* <2:Error, >=2:Cluster number */
 #ifndef __PPC__
 /* The kernel's read-only ISO already has a checked cluster link map. Read
  * adjacent clusters in the same extent together instead of selecting the SD
- * card again at every cluster boundary. Keep the existing 64 KiB maximum FAT
- * transfer size; do not infer adjacency across different extents. */
+ * card again at every cluster boundary. Bound batches at 128 KiB and never
+ * infer adjacency across different extents; drivers retain their DMA limits. */
 static
 UINT clmt_read_sectors (FIL* fp, UINT requested)
 {
@@ -1363,7 +1372,7 @@ UINT clmt_read_sectors (FIL* fp, UINT requested)
 	DWORD* tbl = fp->cltbl + 1;
 	DWORD cl = (DWORD)(fp->fptr / SS(fs) / fs->csize);
 	DWORD count;
-	UINT limit = 65536 / SS(fs);
+	UINT limit = 131072 / SS(fs);
 	UINT csect = (UINT)(fp->fptr / SS(fs) & (fs->csize - 1));
 	if (requested > limit) requested = limit;
 	for (;;) {
@@ -1391,6 +1400,9 @@ UINT clmt_read_sectors (FIL* fp, UINT requested)
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_sdi (	/* FR_OK(0):succeeded, !=0:error */
 	DIR* dp,		/* Pointer to directory object */
 	DWORD ofs		/* Offset of directory table */
@@ -1440,6 +1452,9 @@ FRESULT dir_sdi (	/* FR_OK(0):succeeded, !=0:error */
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DENIED:Could not stretch */
 	DIR* dp,		/* Pointer to the directory object */
 	int stretch		/* 0: Do not stretch table, 1: Stretch table if needed */
@@ -1510,6 +1525,9 @@ FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DENIED:Cou
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_alloc (	/* FR_OK(0):succeeded, !=0:error */
 	DIR* dp,		/* Pointer to the directory object */
 	UINT nent		/* Number of contiguous entries to allocate */
@@ -1710,6 +1728,10 @@ void put_lfn (
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+/* Avoid unrolling the filename CRC; metadata I/O dominates this path. */
+__attribute__((optimize("Os")))
+#endif
 void gen_numname (
 	BYTE* dst,			/* Pointer to the buffer to store numbered SFN */
 	const BYTE* src,	/* Pointer to SFN */
@@ -1979,6 +2001,9 @@ FRESULT load_obj_dir (
 /* exFAT: Store the directory block to the media */
 /*-----------------------------------------------*/
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT store_xdir (
 	DIR* dp				/* Pointer to the direcotry object */
 )
@@ -2053,6 +2078,9 @@ void create_xdir (
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_read (
 	DIR* dp,		/* Pointer to the directory object */
 	int vol			/* Filtered by 0:file/directory or 1:volume label */
@@ -2130,6 +2158,10 @@ FRESULT dir_read (
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+/* Directory lookup is I/O-bound; keep streaming reads optimized separately. */
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_find (	/* FR_OK(0):succeeded, !=0:error */
 	DIR* dp			/* Pointer to the directory object with the file name */
 )
@@ -2209,6 +2241,10 @@ FRESULT dir_find (	/* FR_OK(0):succeeded, !=0:error */
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+/* Metadata publication is I/O-bound; keep streaming reads optimized separately. */
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too many SFN collision, FR_DISK_ERR:disk error */
 	DIR* dp				/* Target directory with object name to be created */
 )
@@ -2254,12 +2290,13 @@ FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too many S
 	mem_cpy(sn, dp->fn, 12);
 	if (sn[NSFLAG] & NS_LOSS) {			/* When LFN is out of 8.3 format, generate a numbered name */
 		dp->fn[NSFLAG] = NS_NOLFN;		/* Find only SFN */
-		for (n = 1; n < 100; n++) {
+		/* Hash first: repeated recording prefixes otherwise rescan ~1 through ~5. */
+		for (n = 6; n < 105; n++) {
 			gen_numname(dp->fn, sn, fs->lfnbuf, n);	/* Generate a numbered name */
 			res = dir_find(dp);				/* Check if the name collides with existing SFN */
 			if (res != FR_OK) break;
 		}
-		if (n == 100) return FR_DENIED;		/* Abort if too many collisions */
+		if (n == 105) return FR_DENIED;		/* Abort if too many collisions */
 		if (res != FR_NO_FILE) return res;	/* Abort if the result is other than 'not collided' */
 		dp->fn[NSFLAG] = sn[NSFLAG];
 	}
@@ -2312,6 +2349,10 @@ FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too many S
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+/* Directory retirement is I/O-bound; keep streaming I/O optimized separately. */
+__attribute__((optimize("Os")))
+#endif
 FRESULT dir_remove (	/* FR_OK:Succeeded, FR_DISK_ERR:A disk error */
 	DIR* dp				/* Directory object pointing the entry to be removed */
 )
@@ -2360,6 +2401,9 @@ FRESULT dir_remove (	/* FR_OK:Succeeded, FR_DISK_ERR:A disk error */
 /*-----------------------------------------------------------------------*/
 
 static
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 void get_fileinfo (		/* No return code */
 	DIR* dp,			/* Pointer to the directory object */
 	FILINFO* fno	 	/* Pointer to the file information to be filled */
@@ -3448,6 +3492,9 @@ FRESULT f_mount (
 /* Open or Create a File                                                 */
 /*-----------------------------------------------------------------------*/
 
+#if defined(__arm__) && defined(__GNUC__)
+__attribute__((optimize("Os")))
+#endif
 FRESULT f_open (
 	FIL* fp,			/* Pointer to the blank file object */
 	const TCHAR* path,	/* Pointer to the file name */
@@ -3543,6 +3590,10 @@ FRESULT f_open (
 						res = remove_chain(&dj.obj, cl, 0);
 						if (res == FR_OK) {
 							res = move_window(fs, dw);
+#if defined(MOONSHINE_FATFS_FORWARD_ALLOC_HINT) && !defined(__PPC__)
+							/* Low-cluster replacements must not rewind a valid allocation cursor. */
+							if (fs->last_clst >= fs->n_fatent || fs->last_clst <= cl)
+#endif
 							fs->last_clst = cl - 1;		/* Reuse the cluster hole */
 						}
 					}

@@ -1,0 +1,51 @@
+R9 - On-Wii lossless capture compression, 2026-10-30
+
+The Wii storage processor now compresses each16KiB slice using the vendored
+LZ4 fast encoder, acceleration1. Incompressible slices remain raw. The game-side
+PAL/US binaries are byte-for-byte identical to Wii-tested r8; only the launcher
+storage backend and host reader changed. No new recording/playback features.
+
+Workspace:64KiB reserved at physical0x134A8000, immediately after the private
+trace-code span and before the second capture buffer. Encoder state is below
++0x5000; bounded output is at+0x5000. Compile-time checks prevent overlap. No
+heap allocation; the existing1MiB capture buffers, states and disc cache stay
+unchanged. Work still runs only through the existing no-disc-read-in-flight
+storage branch. Each slice writes at most16KiB plus framing. RAW and stored file
+sizes both retain a2GiB-minus-limit. Existing nonce, ACK, CRC/hash, file ownership,
+discard, short-write and final-publication protections remain.
+
+MSTR FILE FORMAT V3; recording mailbox ABI remains2.
+Header stays64B, version word is3. Logical chunk header stays32B; words0..5
+are unchanged (including RAW payload size/hash). Word6=1 denotes framed LZ4,
+word7=0x4000 specifies maximum raw sub-block. Each sub-block has two big-endian
+u32s: raw length and stored length. Bit31 of stored length marks LZ4; its low31
+bits are payload length. Compressed payload must be strictly smaller than raw.
+Raw blocks have flag0 and equal lengths. Blocks are independent; LZ4 offsets
+are little-endian as required by LZ4. Records may cross16KiB storage boundaries,
+but still never cross their logical512KiB chunk. Decompress the logical chunk
+before parsing the existing v2 records. Its original FNV1a hash still applies.
+
+DONE footer words0..4 are unchanged. Word3 counts PHYSICAL bytes before footer.
+Word5=maximum compression ticks,6=total compression ticks,7=block count. Timer
+frequency is1898437 ticks/sec. These measure elapsed ARM compression time,
+including interruptions, not a pure cycle count. Error/capability bits unchanged.
+The standard-library-only inspect_trace.py accepts v1/v2/v3, validates bounded
+LZ4 and all previous fields, and reports compression timing. For existing v2
+consumers, --unpack output.msgt writes equivalent uncompressed v2 and never
+overwrites. It preserves every decoded record and native value.
+
+Validation:12 storage/codec failure+boundary tests, four word-delta tests and
+RNG batching tests pass. Production C writer/compressor replayed all four real
+r8 Wii files against memory-backed FatFS. Every decoded byte was identical;
+--unpack restored the ENTIRE original files with matching SHA256, including
+headers and footers. Replays:11.27->4.59MB,7.75->3.48MB,9.51->3.78MB,
+13.07->5.65MB. Host replay timings and synthetic footer timers are not Wii
+performance evidence. Physical Wii compression cost remains to be measured.
+Kernel builds within its fixed text/data limits. Original captures and all
+prior share packages preserved.
+
+Test: same Memory Monitor app/code. Record a busy level with water spraying,
+then Stop and save. Compare captured vs written size and report any stuttering.
+Return the SD after testing so the recorded compression timings can be checked.
+This remains diagnostic capture; new-trace playback/full-world replay is not
+implemented. November5 release deadline: finish/test current work first.

@@ -31,6 +31,8 @@ struct Sound {
  void pauseOff(u8 sound){++offs;lastArg=sound;for(unsigned i=0;i<9;++i)if(i!=4)volumes[i]=1;}
 };
 static Sound sound,*gpMSound;
+enum {MS_TRACE_AUDIO_PAUSE_ON=2,MS_TRACE_AUDIO_PAUSE_OFF=4};
+namespace GhostRecording {static void noteContinuationAudio(unsigned){}}
 ''' + function_source(SOURCE, "void reconcilePauseAudio(") + r'''
 #define API extern "C" __declspec(dllexport)
 API void run(unsigned oldState,unsigned state,unsigned demo,unsigned present){

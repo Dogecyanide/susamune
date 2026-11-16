@@ -1,0 +1,19 @@
+Moonshine 3.0.0 Timewarp - Prototype 39
+
+Z now opens Upload to Delfino Ghosts from the saved-ghost action screen.
+The action screen shares one input setup on initial entry and after returning
+from Watch 2 or an unsaved-PB confirmation. Held buttons still require release.
+Select a personal saved ghost, press A, then Z; review and confirm publication.
+Imported ghosts remain ineligible for upload.
+
+Check link now preserves an account that is already linked. It no longer
+mistakes the completed one-time code for an expired account link or polls
+that consumed code again. Actual authorization failures during upload still
+require relinking.
+
+The user confirmed PR38 downloads, repeated browser reopening and linking
+work on Wii. This build retains that connection behavior. Actual uploading
+still needs the user's hardware/account test; development does not publish
+ghosts to the live service.
+
+Personal data, account journals, themes and savestate capacity stay unchanged.

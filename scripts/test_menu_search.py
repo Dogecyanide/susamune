@@ -21,7 +21,7 @@ class MenuSearchTests(unittest.TestCase):
         raw = (ROOT / "include/susamune/raw_prompt_input.hxx").read_text()
         raw = raw[raw.index("class RawPromptInput"):raw.index("#endif")]
         state = function(header, "namespace MenuSearch")
-        matcher = source[source.index("static char lower"):source.index("\nenum Kind")]
+        matcher = source[source.index("SEARCH_CODE(character)"):source.index("\nenum Kind")]
         methods = "\n".join(function(source, signature) for signature in (
             "bool Menu::searchActive() const",
             "void Menu::openSearch()",
@@ -29,6 +29,8 @@ class MenuSearchTests(unittest.TestCase):
             "void Menu::updateSearch(TMarioGamePad *pad)",
         ))
         code = r'''
+#include "susamune/kana_text.h"
+namespace JapaneseUi {bool available(){return true;}const char *translated(const char*p){return p;}}
 using u8=unsigned char;using u16=unsigned short;using u32=unsigned;
 extern "C" void *memset(void *p,int c,decltype(sizeof(0)) n){
  volatile unsigned char *b=(unsigned char*)p;for(decltype(n)i=0;i<n;++i)b[i]=c;return p;
@@ -62,7 +64,7 @@ struct Runtime{MenuSearch::State search;}sMenuRuntime;
 const char gCreationSymbols[]="0123456789.,:;!?+-*/()[]{}<>_=@#$%";
 const char gCreationLettersLower[33]="abcdefghijklmnopqrstuvwxyz012345";
 const char gCreationLettersUpper[33]="ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";
-''' + function(keyboard, "bool updateCreationKeyboardButtons(") + r'''
+''' + '\n'.join(function(keyboard, sig) for sig in ('int keyboardPages(', 'int keyboardCount(', 'void keyboardGlyph(', 'bool updateCreationKeyboardButtons(')) + r'''
 struct Menu {
  bool available=true;int opened=-1,opens=0;unsigned rowCount=4,visits=0;
  bool searchAvailable()const{return available&&!searchActive();}
@@ -124,7 +126,7 @@ API unsigned storage(){return sizeof(MenuSearch::State);}
         built = subprocess.run([str(ROOT / "toolchain/clang++.exe"), "-std=c++17", "-shared",
                         "--target=x86_64-pc-windows-msvc", "-nostdlib", "-fuse-ld=lld",
                         "-Wl,/noentry", "-fno-rtti", "-fno-exceptions", "-O2",
-                        "-Wno-unknown-pragmas", str(path / "test.cpp"), "-o", str(dll)],
+                        "-Wno-unknown-pragmas", "-I"+str(ROOT/"include"), str(path / "test.cpp"), "-o", str(dll)],
                        capture_output=True, text=True)
         if built.returncode:
             raise AssertionError(built.stdout + built.stderr)
@@ -161,6 +163,28 @@ API unsigned storage(){return sizeof(MenuSearch::State);}
         self.lib.press(0x10, 0)
         self.assertEqual(self.lib.text(), b"")
         self.assertLessEqual(self.lib.storage(), 296)
+
+    def test_kana_keyboard_deletes_whole_characters_and_respects_capacity(self):
+        self.lib.press(0x20,0); self.lib.press(0x20,0)
+        self.lib.press(0x100,0)
+        self.assertEqual(self.lib.text(), "ぁ".encode('cp932'))
+        self.lib.press(0x800,0); self.lib.press(0x100,0)
+        self.assertEqual(self.lib.text(), "ぁァ".encode('cp932'))
+        self.lib.press(0x200,0)
+        self.assertEqual(self.lib.text(), "ぁ".encode('cp932'))
+        for _ in range(20): self.lib.press(0x100,0)
+        self.assertEqual(len(self.lib.text()),30)
+        self.lib.press(0x100,0)
+        self.assertEqual(len(self.lib.text()),30)
+        self.lib.press(0x400,0)
+        self.assertEqual(len(self.lib.text()),31)
+        self.assertEqual(self.lib.text().decode('cp932'), "ぁ"+"ァ"*14+" ")
+
+    def test_search_kana_equivalence_without_folding_trail_bytes(self):
+        for query in ("せーぶ", "セーブ"):
+            self.assertTrue(self.lib.match(query.encode('cp932'), "セーブ設定".encode('cp932'),None,None,None))
+        self.assertFalse(self.lib.match(b"A", "ア".encode('cp932'),None,None,None))
+        self.assertFalse(self.lib.match("ウ".encode('cp932'), "ア".encode('cp932'),None,None,None))
 
     def test_select_opens_once_and_waits_for_release(self):
         self.lib.query(b"factory")

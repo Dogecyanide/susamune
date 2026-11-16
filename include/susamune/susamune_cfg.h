@@ -300,7 +300,7 @@ struct SusamuneCreationCfg {
     unsigned char  savestatePadding;
     unsigned char  savestateTextRgb[3];
     // Position/scale-only achievement banner style in the old reserved tail.
-    unsigned char  reservedAchievement0; // 0xd0 | native gradient stop count
+    unsigned char  reservedAchievement0; // 0xd0 | stop count; 6 marks a preset spanning visible digits
     unsigned short achievementStyleMagic;
     unsigned short achievementX;
     unsigned short achievementY;
@@ -536,7 +536,8 @@ struct SusamuneQftDisplayCfg {
 #define SUSAMUNE_METADATA_STYLE_COLUMNS     (1u << 12)
 #define SUSAMUNE_METADATA_STYLE_COMPACT     (1u << 13)
 #define SUSAMUNE_METADATA_STYLE_VALUE_GAP   (1u << 14)
-#define SUSAMUNE_METADATA_STYLE_ALL         ((1u << 15) - 1u)
+#define SUSAMUNE_METADATA_STYLE_EXTRA_FIELDS (1u << 15)
+#define SUSAMUNE_METADATA_STYLE_ALL         0xFFFFu
 
 struct SusamuneMetadataStyleCfg {
     unsigned int   magic;
@@ -1484,8 +1485,25 @@ struct SusamuneOnlineNameCfg {
     unsigned char friendCode[8];      // online_friend: ip, port, secret of the last friend
     unsigned short scoreX, scoreY;    // online_score: score bar position and scale
     unsigned char scoreScale;
-    unsigned char reserved[39];
+    unsigned char contactsAbi;        // 1 when the kernel owns the named-code block
+    unsigned char reserved[38];
 };
+// PPC-owned after boot; fills the existing gap before progress data.
+#define SUSAMUNE_ONLINE_CONTACTS_OFFSET 0x1F20u
+#define SUSAMUNE_ONLINE_CONTACTS_MAGIC 0x534F4331u
+#define SUSAMUNE_ONLINE_CONTACTS_COUNT 8u
+struct SusamuneOnlineContact {
+    char name[16];
+    unsigned char code[8];
+};
+struct SusamuneOnlineContacts {
+    unsigned int magic;
+    unsigned char reserved[28];
+    struct SusamuneOnlineContact rows[SUSAMUNE_ONLINE_CONTACTS_COUNT];
+};
+#define SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR ((struct SusamuneOnlineContacts *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_ONLINE_CONTACTS_OFFSET))
+#define SUSAMUNE_ONLINE_CONTACTS_PPC_PTR ((struct SusamuneOnlineContacts *)(SUSAMUNE_MEM2_CFG_PPC_BASE + SUSAMUNE_ONLINE_CONTACTS_OFFSET))
+typedef char susamune_contacts_gap[(SUSAMUNE_ONLINE_NAME_CFG_OFFSET + sizeof(struct SusamuneOnlineNameCfg) == SUSAMUNE_ONLINE_CONTACTS_OFFSET && SUSAMUNE_ONLINE_CONTACTS_OFFSET + sizeof(struct SusamuneOnlineContacts) == SUSAMUNE_PROGRESS_CFG_OFFSET) ? 1 : -1];
 #define SUSAMUNE_ONLINE_NAME_PHYS_PTR \
     ((struct SusamuneOnlineNameCfg *)(SUSAMUNE_MEM2_CFG_PHYS_BASE + SUSAMUNE_ONLINE_NAME_CFG_OFFSET))
 #define SUSAMUNE_ONLINE_NAME_PPC_PTR \

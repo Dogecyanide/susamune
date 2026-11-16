@@ -116,8 +116,7 @@ public:
     void drawEditor(Menu *menu) const;
     bool editing() const { return mEditor.editing() || mKeyboard; }
     bool editingMenuBackground() const {
-        return mEditMode == EDIT_COLOR && mEditFirst == SUSAMUNE_CREATION_MENU_BG &&
-            mEditor.editing();
+        return mEditMode == EDIT_MENU_PALETTE && mEditor.editing();
     }
 
     bool dirty() const { return mDirty; }
@@ -143,6 +142,7 @@ private:
         EDIT_HEALTH,
         EDIT_PRACTICE_DISPLAY,
         EDIT_FAILURE_BANNER,
+        EDIT_MENU_PALETTE,
     };
 
     static CreationStyle defaultWordStyle(int index);

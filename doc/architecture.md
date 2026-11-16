@@ -32,7 +32,7 @@ must be initialized through `onAppInit`.
 | Savestate capture / restore | `savestate.cpp`, `state_store.cpp`, `state_codec.cpp`, `state_quick_replay.cpp` | Preserve hardware-owned state and GX barrier; `test_state_store`, `test_state_codec`, `test_state_quick_replay` |
 | Named states / sharing | `state_storage.cpp`, `state_import.cpp`; ARM `SusamuneStateStorage.c` | `state_work_lease.cpp`, `transfer_lease.cpp`; `test_state_import_pipeline`, `test_state_storage_kernel` |
 | Ghost recording / Watch | `ghost.cpp`, `ghost_scrub.cpp`, `ghost_camera.cpp`, `ghost_camera_track.cpp`, `ghost_path.cpp` | Observer lifetimes, scene segments, independent playback cursors; `test_ghost_initial_rng`, `test_ghost_takeover`, `test_ghost_path` |
-| Ghost visuals | `ghost_model.cpp`, `ghost_fludd.cpp`, `ghost_water.cpp` | GPU-visible model memory and immutable asset masters; `test_live_ghost`, `test_ghost_format`; actual rendering checks |
+| Ghost visuals | `ghost_model.cpp`, `ghost_fludd.cpp`, `ghost_water.cpp` | GPU-visible model memory and immutable asset masters; [online colour ownership](online-colours.md); `test_live_ghost`, `test_live_colours`; actual rendering checks |
 | Ghost files / library | `ghost_storage.cpp`, ARM `SusamuneGhost.c`, `ghost_format.h`, `ghost_storage.h` | [Format](ghost_format.md), `validate_ghost.py`; `test_ghost_storage`, `test_ghost_storage_paging` |
 | Timers / splits / eligibility | `qft_timer.cpp`, `split_events.cpp`, `split_stats.cpp`, `iling.cpp`, `hoverless.cpp` | Protected timing code; displays read results rather than replacing measurement; timer guard and applicable lifecycle tests |
 | Playlists / streaking | `stage_loader.cpp`, `stage_targets.cpp` | Completion/report ownership before departure; online playlists advance independently |
@@ -42,7 +42,7 @@ must be initialized through `onAppInit`.
 | Creation / HUD styling | `creation.cpp`, `creation_extras.cpp`, `layout_editor.cpp`, `gradient_motion.cpp`, individual display owners | Shared editor, per-feature persistent styles; `test_creation_menu_routes`, `test_creation_persistence`, `test_gradient_motion` |
 | Collision / wireframe | `practice_visuals.cpp`, `game_wireframe.cpp` | GX state restoration, stage geometry lifetimes; runtime tests with/without free camera |
 | Online match | `live_race.cpp`, `live_group.cpp`, `live_group_rules.cpp`, `live_draft.cpp`, `live_playlist.cpp`, `live_invites.cpp` | [Start reservation](online-start.md), [guest invitations](online-invites.md); `test_live_race_match`, `test_live_group`, `test_live_race_join` |
-| Online transport / smoothing | `live_race_session.cpp`, `live_transport.cpp`, `live_ghost.cpp`; ARM `MoonshineNet.c` | `test_live_p2p`, `test_live_ghost`, `test_moonshine_net_worker`, `test_dolphin_live_transport` |
+| Online transport / smoothing | `live_race_session.cpp`, `live_transport.cpp`, `live_ghost.cpp`; ARM `MoonshineNet.c`; Dolphin `dolphin_bba.cpp` / `dolphin_network.cpp` | `test_live_p2p`, `test_live_ghost`, `test_moonshine_net_worker`, `test_dolphin_network`; native Dolphin currently provides UDP, not HTTPS or file storage |
 | Release / distribution | `scripts/release_prerelease.py`, `package_timewarp_dolphin.py`, launcher super-build | Source receipts, protected-code guard, fixed-memory checks, ZIP and SD readback |
 
 Paths without a directory above are under `src/` for implementations and

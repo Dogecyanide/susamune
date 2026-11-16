@@ -10,8 +10,10 @@ set(_sources
     Patch.c PatchTimers.c TRI.c PatchWidescreen.c ISO.c Stream.c adp.c
     EXI.c SRAM.c GCNCard.c SI.c HID.c diskio.c Config.c SusamuneCfg.c
     SusamuneGhost.c SusamuneCrash.c SusamuneStateStorage.c SusamuneTransfer.c MoonshineLayout.c
+    GhostServiceHttp.c GhostServiceJson.c GhostServiceTls.c GhostServiceNative.c GhostServiceAccount.c
     utils_asm.S ES.c NAND.c
-    main.c syscalls.s ReadSpeed.c vsprintf.c string.c prs.c
+    main.c MoonshineGhostMemory.c GhostTraceStorage.c GhostTraceReadStorage.c GhostReplayReport.c
+    GhostTraceReadGrant.c GhostTraceCompression.c syscalls.s ReadSpeed.c vsprintf.c string.c prs.c
     SDI.c usb.c usbstorage.c wdvd.c
     lwbt/bte.c lwbt/btmemb.c lwbt/btmemr.c lwbt/btpbuf.c lwbt/hci.c lwbt/l2cap.c
     lwbt/physbusif.c BT.c)
@@ -22,6 +24,17 @@ if(TIMEWARP_LIVE_RACING)
 endif()
 
 add_executable(kernel ${_sources})
+file(GLOB_RECURSE _bearssl_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bearssl/src/*.c")
+add_library(ghost_bearssl STATIC ${_bearssl_sources})
+target_include_directories(ghost_bearssl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bearssl/inc")
+target_include_directories(ghost_bearssl PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bearssl/src")
+target_compile_options(ghost_bearssl PRIVATE -mbig-endian -mcpu=arm926ej-s -mthumb -mthumb-interwork
+    -msoft-float -mfloat-abi=soft -Os -std=c99 -ffunction-sections -fdata-sections)
+target_compile_definitions(ghost_bearssl PRIVATE BR_USE_UNIX_TIME=0 BR_USE_URANDOM=0 BR_USE_WIN32_RAND=0)
+set_source_files_properties(SusamuneStateStorage.c MoonshineNetLog.c SusamuneTransfer.c SusamuneCrash.c SusamuneCfg.c SusamuneGhost.c MoonshineLayout.c GhostServiceHttp.c GhostServiceJson.c GhostServiceTls.c GhostServiceNative.c GhostServiceAccount.c
+    PROPERTIES COMPILE_OPTIONS "-Os;-mthumb;-mthumb-interwork;-std=gnu99")
+set_source_files_properties(GhostTraceStorage.c GhostTraceReadStorage.c
+    GhostTraceReadGrant.c GhostTraceCompression.c GhostReplayReport.c PROPERTIES COMPILE_OPTIONS "-Os;-mthumb;-mthumb-interwork;-std=gnu99")
 set_target_properties(kernel PROPERTIES OUTPUT_NAME kernel SUFFIX ".elf")
 
 target_compile_options(kernel PRIVATE
@@ -34,6 +47,8 @@ target_compile_options(kernel PRIVATE
 
 target_compile_definitions(kernel PRIVATE
     TIMEWARP_LIVE_RACING=$<BOOL:${TIMEWARP_LIVE_RACING}>
+    MOONSHINE_GHOST_TRACE=$<BOOL:${MOONSHINE_GHOST_TRACE}>
+    MOONSHINE_LOADING_DIAGNOSTICS=$<BOOL:${MOONSHINE_LOADING_DIAGNOSTICS}>
     $<$<BOOL:${LAUNCHER_DISABLE_SUSAMUNE_PATCH}>:LAUNCHER_DISABLE_SUSAMUNE_PATCH>)
 
 target_include_directories(kernel PRIVATE
@@ -43,6 +58,7 @@ target_include_directories(kernel PRIVATE
     "${LAUNCHER_GEN_DIR}")         # codehandler.h + asm/*.h blob headers
 
 target_link_libraries(kernel PRIVATE
+    ghost_bearssl
     fatfs-arm
     "${CMAKE_CURRENT_SOURCE_DIR}/be/libc.a"
     "${CMAKE_CURRENT_SOURCE_DIR}/be/libgcc.a")

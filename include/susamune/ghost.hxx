@@ -6,6 +6,7 @@
 #include "susamune/state_codec.hxx"
 #include "susamune/ghost_fludd.h"
 
+struct SusamuneGhostFileHeader;
 class Menu;
 class TMarDirector;
 namespace GhostCamera { struct View; }
@@ -69,13 +70,16 @@ void afterDirect(s32 appState);
 void update();
 void draw(Menu *menu);
 void onSavestateLoaded();
-enum { kSavestateSpanCount = 4 };
+enum { kSavestateSpanCount = 5 };
 struct SavestateData { u32 words[128]; };
 // Prefix bytes join the game snapshot; metadata never supplies restore addresses.
 bool captureSavestate(SavestateData &out,
                       StateCodec::ReadSpan (&spans)[kSavestateSpanCount]);
 bool savestateRestoreSpans(const SavestateData &data,
                           StateCodec::WriteSpan (&spans)[kSavestateSpanCount]);
+// The fixed opaque block also retains mod-owned crane state, outside the retail heap.
+int savestateRngStatus(const SavestateData &data); // -1 malformed, 0 legacy/unknown, 1 complete
+bool restoreSavestateRng(const SavestateData &data);
 void restoreSavestate(const SavestateData &data);
 void invalidateForAssist();
 void captureInput(const SusamunePracticeInput &input);
@@ -83,12 +87,15 @@ void captureSplit(u16 route, u8 endpoint, s32 absoluteQf);
 bool comparisonSplit(u16 route, u8 endpoint, s32 *out);
 bool comparisonDelta(u16 route, u8 endpoint, s32 absoluteQf, s32 *out);
 void drawInputs(Menu *menu, u8 mode);
+// Current latched provider input, or the existing resident visual playback input.
+bool playbackInputState(unsigned runner, SusamunePracticeInput *out);
 
 // Canonical SGHF bridge used by the asynchronous ARM storage service.
 // Import validates the complete file before replacing the active playback.
 bool exportLatest(void *out, u32 capacity, u8 sourceProfile,
                   const char *profileName, u32 *outSize,
                   u32 *outRecordToken);
+bool inspectFile(const void *data, u32 size, SusamuneGhostFileHeader *header);
 bool importPlayback(const void *data, u32 size, bool imported);
 // Frozen when a pinned library opponent begins a matching QFT attempt.
 bool raceContext(RaceContext *out);
@@ -150,6 +157,9 @@ bool renderVisualState(unsigned int runner, VisualState *out);
 // Rendering runs inside director->direct(), one QF after the normal update.
 // Refresh only the playback cursor there; recording remains post-direct.
 void prepareVisual();
+// Finalize a departing ordinary stream without touching the resident prefix.
+void prepareStreamDeparture();
+void prepareStreamDeparture(bool keepIncomplete);
 bool hasSaveableTrack();
 bool copySaveableName(char *out, u32 size);
 bool copySaveableName(char *out, u32 size, u32 *outToken);

@@ -42,6 +42,7 @@ struct BTPadCont {
 void FPAD_Init( void );
 void FPAD_Update( void );
 
+// true queries held state; false consumes a fresh press of this button only.
 bool FPAD_Up( bool ILock );
 bool FPAD_Down( bool ILock );
 bool FPAD_Left( bool ILock );

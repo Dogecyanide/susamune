@@ -12,6 +12,7 @@ typedef _Bool bool;
 #include "susamune/ghost_camera.h"
 #include "susamune/data_paths.h"
 #include "susamune/mod_bin.h"
+#include "susamune/ghost_service.h"
 typedef unsigned char u8;
 typedef signed char s8;
 typedef unsigned short u16;
@@ -27,7 +28,7 @@ typedef struct { u32 position; char path[128]; } DIR;
 typedef struct { WCHAR fname[256]; u32 fsize; u8 fattrib; } FILINFO;
 enum { FR_OK, FR_DISK_ERR, FR_NOT_READY, FR_NO_FILE, FR_NO_PATH,
        FR_WRITE_PROTECTED, FR_DENIED, FR_INVALID_DRIVE, FR_NO_FILESYSTEM,
-       FR_EXIST };
+       FR_EXIST, FR_INVALID_OBJECT };
 enum { FA_READ=1, FA_WRITE=2, FA_OPEN_EXISTING=0, FA_CREATE_ALWAYS=4,
        FA_CREATE_NEW=8, AM_DIR=16 };
 void *memcpy(void *d,const void *s,size_t n) { u8 *a=d; const u8 *b=s; while(n--) *a++=*b++; return d; }
@@ -36,6 +37,9 @@ int memcmp(const void *a,const void *b,size_t n) { const u8 *x=a,*y=b; while(n--
 int strcmp(const char *a,const char *b) { while(*a && *a==*b) { ++a; ++b; } return (u8)*a-(u8)*b; }
 static u32 length(const char *s) { u32 n=0; while(s[n]) ++n; return n; }
 static void copystr(char *d,const char *s) { do { *d++=*s; } while(*s++); }
+static size_t strlen(const char *s) { return length(s); }
+static char *strcpy(char *d,const char *s) { copystr(d,s);return d; }
+static char *strcat(char *d,const char *s) { copystr(d+length(d),s);return d; }
 static int _sprintf(char *dst,const char *fmt,...) {
  char *out=dst; va_list args; va_start(args,fmt);
  while(*fmt) {
@@ -98,6 +102,11 @@ static int f_close(FIL *f) { (void)f; return FR_OK; }
 static int f_sync(FIL *f) { (void)f; return failSync?FR_DISK_ERR:FR_OK; }
 static int f_unlink_char(const char *path) { int i=lookup(path); if(i<0) return FR_NO_FILE; testFiles[i].live=0; return FR_OK; }
 static int f_stat_char(const char *path,FILINFO *info) { int i=lookup(path); if(i<0) return FR_NO_FILE; memset(info,0,sizeof(*info)); info->fsize=testFiles[i].size; return FR_OK; }
+static int f_mkdir_char(const char *path) { (void)path;return directoryResult; }
+static int f_rename_char(const char *old,const char *dest) {
+ int i=lookup(old);if(i<0)return FR_NO_FILE;if(lookup(dest)>=0)return FR_EXIST;
+ copystr(testFiles[i].path,dest);return FR_OK;
+}
 static int f_opendir_char(DIR *dir,const char *path) { if(directoryResult) return directoryResult; dir->position=0; copystr(dir->path,path); return FR_OK; }
 static int f_closedir(DIR *dir) { (void)dir; return FR_OK; }
 static int f_readdir(DIR *dir,FILINFO *info) {
@@ -127,11 +136,40 @@ static u8 testPayload[SUSAMUNE_GHOST_STORAGE_PAYLOAD_SIZE];
 #define SUSAMUNE_GHOST_STORAGE_DATA_PHYS_PTR testPayload
 
 static u32 get_fattime(void) { return (46u<<25)|(9u<<21)|(6u<<16); }
+static u32 GetCurrentTime(void) { return 1792900000u; }
+#ifndef ALIGNED
+#define ALIGNED(n) __attribute__((aligned(n)))
+#endif
+static bool webEnabled,webHold,webCancelled;
+static const u8 *webData;
+static u32 webSize,webRead,webRelease;
+static int webResult;
+static int GhostServiceStart(void *stage,unsigned size,const char *region,unsigned time,const struct GhostServiceEntry *entry,void *session) {
+ (void)stage;(void)size;(void)region;(void)time;(void)entry;webRead=webRelease=0;webCancelled=false;return webEnabled;
+}
+static void GhostServiceCancel(void) { webCancelled=true; }
+struct GhostAccountSecret { char access[48],refresh[48],user[48]; };
+struct GhostAccount { struct GhostAccountSecret secret; char device[48],code[12]; unsigned expires,nextPoll,interval,changed; };
+static int GhostAccountSecretValid(const struct GhostAccountSecret *s){return !memcmp(s->access,"dga_",4) && !memcmp(s->refresh,"dgr_",4) && !s->access[47] && !s->refresh[47];}
+static int GhostServiceAction(void *stage,unsigned size,unsigned time,unsigned action,unsigned bytes,struct GhostAccount *account,void *session,const struct GhostServiceUpload *upload){
+ (void)action;(void)bytes;(void)account;return GhostServiceStart(stage,size,"jp",time,NULL,session);
+}
+static void GhostServiceForget(void) { }
+static unsigned GhostServiceProgress(void) { return GHOST_WEB_HTTP; }
+static int GhostServicePoll(unsigned *bytes) {
+ if(webHold)return 0;*bytes=webSize;return webCancelled?GHOST_SERVICE_CANCELLED:webResult?webResult:1;
+}
+static unsigned GhostServiceRead(void **data) {
+ unsigned n=webSize-webRead;if(n>16384)n=16384;if(webHold || webCancelled)n=0;
+ *data=(void*)(webData+webRead);return n;
+}
+static void GhostServiceReadAck(unsigned n) { webRead+=n; }
+static void GhostServiceRelease(void) { ++webRelease; }
 
 #ifndef TEST_TRANSFER_EXTERNAL
 #include "susamune/transfer_layout.h"
 #include "susamune/state_storage.h"
-static bool SusamuneTransferActive(void) { return false; }
+static bool SusamuneTransferActive(void) { return webEnabled; }
 static bool SusamuneTransferAllows(u32 owner,u32 seq,u32 session,u32 command) {
  (void)owner;(void)seq;(void)session;(void)command;return true;
 }

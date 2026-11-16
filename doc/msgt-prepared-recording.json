@@ -1,0 +1,148 @@
+{
+  "name": "MSGT prepared recording transport",
+  "version": 2,
+  "scope": "Optional private PPC/ARM optimization. Primary writer ABI4 and MSGT file format3 keep their shapes. PREP2 adds optional RETIRE6; see doc/msgt-recording-retirement.json.",
+  "mailbox": {
+    "base": "MS_TRACE_CONTROL + 0xA0",
+    "bytes": 96,
+    "word_type": "Eight big-endian unsigned32 words per32-byte cache line",
+    "0xA0_request": {
+      "writer": "PPC",
+      "fields": [
+        "magic=0x4D535450",
+        "version=1 or2 matching advertised backend",
+        "bootNonce",
+        "sequence",
+        "operation",
+        "run",
+        "capabilities",
+        "target"
+      ]
+    },
+    "0xC0_response": {
+      "writer": "ARM",
+      "fields": [
+        "magic=0x4D535450",
+        "version=2 on new ARM",
+        "bootNonce",
+        "ack",
+        "phase",
+        "status",
+        "run",
+        "ownerSequence"
+      ]
+    },
+    "0xE0_permit": {
+      "writer": "PPC",
+      "fields": [
+        "magic=0x4D535450",
+        "version matching backend",
+        "bootNonce",
+        "sequence",
+        "flags",
+        "queuedBytes",
+        "recordingFrame",
+        "reserved=0"
+      ]
+    },
+    "ownership": "ARM initializes before PPC release. Subsequently each side flushes only its own32-byte lines. The side mailbox ends at0x100, where the existing two read mailboxes begin."
+  },
+  "operations": {
+    "1_HELLO": "No FAT work. Echo a fresh request sequence and advertise the current slot state.",
+    "2_FILE": "Prepare this exact nonce/run/capability identity; target must be zero.",
+    "3_CANCEL": "Cancel this exact run and FILE ownerSequence; capabilities must be zero. Incomplete files are preserved."
+  },
+  "phases": {
+    "0_IDLE": "No prepared request.",
+    "1_MKDIR": "Ensure recordings directory exists.",
+    "2_CHECK": "Probe completed .msgt conflict read-only.",
+    "3_CREATE": "Create exact .part using READ|WRITE|CREATE_NEW.",
+    "4_HEADER": "Write64-byte placeholder header.",
+    "5_SYNC": "Sync header and first allocated cluster.",
+    "6_READY": "Synced64-byte file and open FIL are owned by this slot.",
+    "7_FAILED": "Preparation failed; preserve file and release only by checked background close.",
+    "8_CANCELED": "Canceled; preserve incomplete file, close in safe background.",
+    "9_CONSUMED": "Identity was taken by normal START, or its ordinary create fallback owns the identity."
+  },
+  "status": {
+    "0_OK": "Accepted/current progress.",
+    "1_PROTOCOL": "Invalid request or same-ID capability mismatch.",
+    "2_IO": "Storage/close failure.",
+    "3_CONFLICT": "A completed source already uses the identity.",
+    "4_SOURCE": "Prepared size/header validation failed.",
+    "5_BUSY": "A different slot still owns a FIL. Temporary cleanup BUSY does not burn the new reservation or disable warming."
+  },
+  "owner_sequence": "Response ownerSequence identifies the FILE request associated with the current slot, including after HELLO, CANCEL or BUSY changes response ack. It is not a header checksum. Full headerHash remains in ARM state and is recomputed for the actual START and FENCE.",
+  "arm_state": {
+    "placement": "TraceWriter within existing control +0x200..+0x1000",
+    "prepared_bytes": 304,
+    "expected_trace_writer_bytes": 3568,
+    "limit_bytes": 3584,
+    "handles": "Current writer, prepared next file, and independent bounded retirement FIL. Neither racing read channel nor the recovery state is borrowed. FIL80/DIR72 are the current ARM FatFs layouts.",
+    "active_values": {
+      "0": "No open handle.",
+      "1": "An open FIL remains owned.",
+      "2": "A failed close still owns the FIL. Do not reset, reuse or zero it. Explicit exact cancellation may retry close; otherwise it remains until boot."
+    },
+    "cleanup": "No unlink or truncate is performed by preparation cleanup. Valid, unexpected and incomplete files are retained. Request receipt has no FAT calls; cleanup is only a guarded background operation."
+  },
+  "run_allocation": {
+    "owner": "GhostRecordingLifecycle::State.nextRun and reservedRun",
+    "identity": "High-bit ordinary IDs are minted monotonically. Reserving increments nextRun but creates no Draft, PB token, owner token or capture.",
+    "consume": "Normal arm and checkpoint child creation consume the exact reserved ID; tokens/serials are allocated only by actual Draft arm.",
+    "abandon": "Consumed/canceled/failed reserved IDs are never reused. An abandoned other-ID warm slot is asynchronously canceled using ownerSequence before preparing the next reservation. Never cancel a current owned run, a pending primary START or a pending checkpoint fork.",
+    "manual": "An unrelated explicit manual/debug START uses normal creation and leaves the ordinary slot intact. If it consumes the reserved identity, the central allocator skips that identity afterward."
+  },
+  "fresh_support": {
+    "rule": "Every producer init clears the HELLO sequence and supported flag, even if all padding already looks valid. A new HELLO sequence is nonzero and different from both observed response ack and previous request sequence; it does not depend on boot tick uniqueness.",
+    "accept": "Support becomes true only after the matching fresh HELLO echo with the current boot nonce. Invalid/new nonce state invalidates support. The small state is preserved across ordinary startCapture resets, not across producer init.",
+    "legacy": "An older backend never echoes the fresh probe. Preparation stays disabled, no future Draft/PB token is reserved, and ordinary START remains available. No departure waits for HELLO or PREPARE."
+  },
+  "header_and_start": {
+    "placeholder": "Exact current game/version/nonce/run/capabilities,64-byte length, scene0xFFFF, normal buffer size, zeros and valid header checksum. READY requires write plus f_sync, so the first cluster is allocated.",
+    "ready_activation": "Match nonce/run/capabilities and owned created FIL; require size64 and read back all64 expected bytes. Move FIL/path once to current writer without closing the moved handle. Seek0, write actual scene and recomputed header hash, and resume at byte64.",
+    "partial_activation": "A received inactive preparation falls through ordinary CREATE_NEW and becomes CONSUMED. An owned0-byte FILE at HEADER can be promoted without a second open. An owned64-byte FILE at SYNC can be checked/promoted before its optional background sync finishes. These partial cases retain ordinary cold/in-flight allocation cost.",
+    "failure": "Wrong size/header/capability or invalid owner is refused and preserved. A failed activation write retains the file so subsequent DISCARD cannot delete a possible genuine MSTR. No CREATE_ALWAYS is used for traces.",
+    "durability": "Normal START does not add a mandatory sync. Existing FENCE still syncs before publishing durable prefix receipts, using the new actual-scene headerHash. Chunks, checksums, KEEP/DONE publication, pins, recovery and retained-source validation remain unchanged."
+  },
+  "admission": {
+    "ppc_required": [
+      "fresh supported backend",
+      "pending preparation or cleanup phase",
+      "completed setup thread and existing readyForOnlineRace whitelist (normal, safe save box, stable retail pause; fade off, no pending departure, CARD idle)",
+      "no mod/practice hold, replay/free camera/TAS ownership or continuation",
+      "normal gameplay speed and no current fast-forward",
+      "offline LiveRace state",
+      "at most0x40000 queued producer bytes, leaving at least0xC0000 total buffer headroom"
+    ],
+    "arm_required": [
+      "two distinct positive permit heartbeats observed within the freshness interval; stale/missing/revoked permit is not admission",
+      "permit age under~250ms",
+      "no active read streams, recovery or queued foreground writer/read/branch/export work",
+      "DI registers polled before optional work, no DI IRQ or unfinished callback, and at least~250ms since the last disc read"
+    ],
+    "service": "One FAT operation per background preparation step; recheck safety between calls. An eligible preparation step precedes optional Bloom work. Dirty canceled/failed close uses the same fresh safe grant. Close is never inherited by an unrelated START.",
+    "limit": "A FAT call already in progress cannot be safely preempted. Very fast resets, cold/in-flight misses and races may retain fallback latency. No Wii elapsed-time claim follows from host work counts."
+  },
+  "busy_and_cancellation": "New FILE behind an owned terminal slot receives temporary BUSY identifying the old owner. Background close publishes progress; the client reissues the new exact FILE afterward. BUSY does not monopolize foreground readers/branches and does not make any warp wait. A failed close keeps its detached FIL owned.",
+  "unchanged_discard": "DISCARD3 is unchanged. Optional RETIRE6 logical acknowledgement is separately documented in doc/msgt-recording-retirement.json.",
+  "implementation": [
+    "include/susamune/ghost_trace_prepare.h",
+    "launcher/kernel/GhostTracePrepareStorage.inc",
+    "launcher/kernel/GhostTraceStorage.c",
+    "src/ghost_trace.cpp",
+    "src/ghost_recording.cpp",
+    "include/susamune/ghost_recording_lifecycle.hxx"
+  ],
+  "tests": [
+    "scripts/test_ghost_trace_prepare.py",
+    "scripts/test_ghost_trace_prepare_client.py",
+    "scripts/test_ghost_trace_warm_producer.py",
+    "scripts/test_ghost_trace_producer.py",
+    "scripts/test_ghost_recording_manager.py"
+  ],
+  "status_flags": {
+    "0x100": "Pending retirement on version2 only; low8bits retain error status. Unknown flags and version1 retirement flag are rejected."
+  },
+  "retirement_reference": "doc/msgt-recording-retirement.json"
+}

@@ -77,6 +77,11 @@ class Harness:
 #else
 #define EXPORT
 #endif
+#if defined(_WIN32)
+EXPORT int quick_decode(const void *p,unsigned n,void *d,unsigned r,unsigned cap) {
+    return SusamuneModQuickDecode(p,n,d,r,cap);
+}
+#endif
 EXPORT int validate(const void *p,unsigned n,unsigned g,unsigned f,unsigned s) {
     return TWModV4Validate(p,n,g,f,s);
 }

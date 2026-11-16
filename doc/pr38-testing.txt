@@ -1,0 +1,43 @@
+Moonshine 3.0.0 Timewarp - Prototype 38
+
+Delfino Ghosts
+
+Get ghosts > Delfino Ghosts now opens a world/level picker. All levels remains
+available. Y returns to the picker while browsing. Filtering uses the ghost's
+starting area and episode; objectives sharing a starting scene can appear
+together. Changing the filter resets pagination.
+
+Get ghosts > Your account > Link account displays a short code. On a phone or
+PC open https://zeldocto.github.io/delfino-ghosts/link, sign in and approve it.
+Return to the Wii and select Check link. The Wii remembers the linked account
+on the launcher's SD/USB device across restarts. No account is needed to browse
+or download. Unlink this Wii removes its local link and attempts server revoke.
+
+To upload: select a personal saved ghost, press A to open its actions, then Z
+for Upload. Review the ghost/account and press A on Publish this ghost.
+Imported ghosts cannot be uploaded through this action. Publishing is public.
+The file is validated locally, then uploaded with its exact length/SHA-256;
+the server validates it before publication. Retrying uses the same content
+hash to avoid duplicate submissions. The actual Wii account/upload path still
+needs hardware testing; automated upload checks use local mock responses.
+
+Account tokens are stored unencrypted in Moonshine data/delfino-link-a.bin
+and delfino-link-b.bin. Keep these files private. They are excluded from Git
+and shared packages. Checked alternate journals preserve the previous file
+until publication. Interrupted token rotation may require relinking; an old
+refresh token is never silently retried after an uncertain reply. Corrupt
+credential files are preserved and reported as storage errors.
+
+PR37's log shows successful reused page requests followed by failed fresh
+handshakes, without HTTP responses. PR38 gives the low-priority TLS worker
+longer scheduling opportunities during a fresh handshake and logs the longest
+processing gap. Test browse > download > race/watch > reopen repeatedly.
+This targets suspected scheduling starvation; it is not a proven Wii fix yet.
+
+The Moonshine heading now uses the actual English cutscene subtitle lettering.
+Check the appearance on light/dark backgrounds and in each region.
+
+Install the matching launcher and regional files together. The protected
+ordinary timer, fixed memory reservations, ghost format and savestate capacity
+remain unchanged. Personal launcher photo/music stays on your SD and is absent
+from the shareable ZIP.

@@ -1,3 +1,6 @@
+#include "susamune/ghost_world_runtime.hxx"
+#include "susamune/ghost_trace.hxx"
+#include "susamune/ghost_simulation.hxx"
 #include "susamune/movement_timing_display.hxx"
 
 #include "Dolphin/mem.h"
@@ -64,6 +67,9 @@ bool grounded(u32 state) {
 }
 
 void perform(TMario *mario, u32 cue, JDrama::TGraphics *graphics) {
+    GhostWorldRuntime::movement(mario, cue);
+    GhostSimulation::observeMovement(mario, cue);
+    GhostTrace::movement(mario, cue);
     if (!sFrameActive || !(cue & 1) || mario != sMario ||
         mario != gpMarioOriginal ||
         *reinterpret_cast<void ***>(mario) != marioTimingVtable ||

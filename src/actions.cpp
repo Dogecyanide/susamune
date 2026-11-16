@@ -13,6 +13,7 @@
 // =====================================================================
 
 #include "susamune/actions.hxx"
+#include "susamune/ghost_trace.hxx"
 #include "susamune/qft_timer.hxx"
 
 #include "susamune/addresses.hxx"  // SUSAMUNE_MEM1_ADDR
@@ -89,6 +90,8 @@ void regrabLastHeldObject() {
         return;
     }
 
+    gQFTTimer.markPracticeAssisted();
+    GhostTrace::practiceAction();
     ILing::invalidateForAssist();
     mario->mGrabTarget = gLastHeldObject;
     mario->mState      = kMarioStatusTake;
@@ -286,6 +289,7 @@ void loadPosition() {
     gpCamera->mHorizontalAngle = gPositionSnapshot.cameraHorizontalAngle;
     gpCamera->mInterpolateDistance = gPositionSnapshot.cameraInterpolateDistance;
     gQFTTimer.markPracticeAssisted();
+    GhostTrace::practiceAction();
     ILing::invalidateForAssist();
 }
 

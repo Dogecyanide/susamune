@@ -1,0 +1,27 @@
+Moonshine 3.0.0 Timewarp PR44
+
+Changes
+- Online characters' water uses their online visibility setting, matching their
+  bodies. Ordinary recorded-ghost visibility no longer hides online spray.
+- An empty host room can change its race setup before the first guest connects.
+  The first handshake sends those options. Existing matches remain protected
+  during temporary disconnects; reconnecting does not silently replace a race.
+- Native Dolphin DNS groundwork for Delfino Ghosts. The website browser and
+  persistent ghost/state/TAS files are still pending on standalone Dolphin.
+
+Checks
+- Focused race/lifecycle and ghost-water/render checks pass.
+- Native Ethernet/UDP/DNS tests include wrong senders, malformed compression,
+  aliases, timeouts, cancellation and unchanged online packet delivery.
+- All regional builds and protected timer/layout checks are required by the
+  release packager. See its receipt for the exact source/build scope.
+
+Hardware follow-up
+1. With ordinary Ghost visible off, verify online water in both directions.
+2. Create an empty room, change its mode/options, then connect a guest and
+   confirm the selected setup. A brief disconnect during a race must retain it.
+3. Four-player hardware acceptance remains outstanding. PR43 two-player native
+   Dolphin/Wii crossplay and Wii Search were accepted by the user; do not treat
+   that as validation of every mode, platform, or new PR44 binary.
+
+Personal themes, account links and recordings are excluded from shared ZIPs.

@@ -67,6 +67,8 @@ void OSRestoreInterrupts(bool){}
 namespace CrashReport { void note(u32,u32,u32){} }
 struct Menu {void toast(const char*){}};static Menu *gMenu;
 namespace ILing {
+    int count(){return 100;}
+    u32 ghostBrowseFilter(int entry){return 3u|(2u<<8)|((entry+1u)<<16);}
     int pbProfile(){return testProfile;}
     const char *pbProfileName(int){return "Profile";}
 }
@@ -98,6 +100,8 @@ namespace Ghost {
         source += re.sub(r'^#include[^\n]*\n', '',
                          (ROOT / 'src/transfer_lease.cpp').read_text(), flags=re.MULTILINE)
         production = (ROOT / "src/ghost_storage.cpp").read_text(encoding="utf-8")
+        production = production.replace('#include "susamune/ghost_catalog_validation.inc"',
+            (ROOT / 'include/susamune/ghost_catalog_validation.inc').read_text())
         source += re.sub(r'^#include[^\n]*\n', '', production, flags=re.MULTILINE)
         source += r'''
 using namespace GhostStorage;

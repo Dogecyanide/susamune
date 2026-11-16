@@ -54,6 +54,7 @@ struct ipcmessage DI_CallbackMsg;
 u32 DI_MessageQueue = 0xFFFFFFFF;
 static u8 *DI_MessageHeap = NULL;
 bool DI_IRQ = false;
+u32 DILastReadTick = 0;
 static u32 DI_Thread = 0;
 s32 DI_Handle = -1;
 u64 ISOShift64 = 0;
@@ -177,6 +178,7 @@ bool DiscCheckAsync( void )
 static void DiscReadAsync(u32 Buffer, u32 Offset, u32 Length, u32 Mode)
 {
 	DIFinishAsync(); //if something is still running
+    DILastReadTick=read32(HW_TIMER);
 	DI_CallbackMsg.result = -1;
 	sync_after_write(&DI_CallbackMsg, 0x20);
 	IOS_IoctlAsync( DI_Handle, Mode, (void*)Offset, 0, (void*)Buffer, Length, DI_MessageQueue, &DI_CallbackMsg );
@@ -963,6 +965,7 @@ u32 DIReadThread(void *arg)
 					ReadSpeed_Setup(di_offset, di_length);
 				}
 				sync_after_write( di_dest, di_length );
+                DILastReadTick=read32(HW_TIMER);
 				mqueue_ack( di_msg, 0 );
 				break;
 

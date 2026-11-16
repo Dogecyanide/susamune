@@ -1,0 +1,13 @@
+Remaining work after PR41
+
+- Hardware acceptance: early launcher music across IOS/kernel startup,
+  connected lobby mode changes, metadata values and guidebook customisation.
+- Four-player hardware sessions and Japanese runner wording review.
+- Standard Dolphin without a companion: native persistent ghost/state/TAS
+  storage, DNS/TCP/TLS and Delfino Ghosts integration; Wii crossplay/reconnect
+  acceptance plus Linux/macOS checks. Native UDP alone is not full parity.
+- Continue the whole-project correctness/security/maintainability review.
+- Revisit outstanding Search and Stageloader reports with current builds.
+
+See v3.0.0-release-polish.txt for the release checklist. No date or successful
+build substitutes for the remaining hardware acceptance.

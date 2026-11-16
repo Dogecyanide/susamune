@@ -23,7 +23,14 @@ extern "C" void *memset(void*d,int c,__SIZE_TYPE__ n){u8*a=(u8*)d;while(n--)*a++
 extern "C" char *strncpy(char*d,const char*s,__SIZE_TYPE__ n){char*r=d;while(n--)*d++=*s?*s++:0;return r;}
 static int snprintf(char*d,__SIZE_TYPE__ n,const char*,...){if(n)*d=0;return 0;}
 struct Header {u32 magic;u8 area_id,episode_id;};
-struct StoredState {Header header;u32 archiveProfile,generation,rawSize,packedSize,parentEpisode,metadataTag;};
+struct GhostCheckpoint {u32 magic;};
+struct StoredState {Header header;u32 archiveProfile,generation,rawSize,packedSize,parentEpisode,metadataTag;GhostCheckpoint trace;};
+namespace GhostRecording {
+static bool checkpointExport(GhostCheckpoint &trace){return !trace.magic;}
+static void checkpointCleared(u32,u32){}
+static const char *statusText(){return "Ghost checkpoint unavailable";}
+}
+#define STORAGE_TEXT(wii, emu) wii
 static StoredState sSlots[3],sCandidate;static StateSlotPool sPool;
 static u8 poolBytes[120000];static StatePoolMemory sPoolMemory;
 static u32 sDurableSlots,sPackedChecksums[3];
@@ -236,7 +243,7 @@ class ExplicitStateSlotTests(unittest.TestCase):
         self.assertIn('captureSavestate(sCandidate.practice, practiceSource, forceRng, omitPracticeTake)',save)
         self.assertIn('sSlots[slot] = sCandidate',save)
         self.assertIn('PracticeSession::onSavestateSaved(slot, sCandidate.generation)',save)
-        self.assertIn('return saveSlotExplicit(sActiveSlot)',function_source(SOURCE,'bool SavestateManager::saveState()'))
+        self.assertIn('return saveSlotManual(sActiveSlot)',function_source(SOURCE,'bool SavestateManager::saveState()'))
 
 
 if __name__=='__main__':unittest.main()

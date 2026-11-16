@@ -60,6 +60,8 @@ still dropped, since those sections are regenerated wholesale.
 #include "ff_utf8.h"
 
 #include "susamune/susamune_cfg.h"
+#include "susamune/menu_palette.h"
+const unsigned char MoonshineMenuDefaults[MENU_COLOUR_COUNT][3] = MOONSHINE_MENU_DEFAULT_VALUES;
 #include "susamune/data_paths.h"
 #include "susamune/layout_profile.h"
 #include "susamune/failure_banner_style.h"
@@ -114,6 +116,13 @@ static const char *const CreationColorKeys[SUSAMUNE_CREATION_COLOR_COUNT] =
 	"timer_rush_4_rgb", "timer_separator_1_rgb", "timer_separator_2_rgb",
 	"timer_separator_3_rgb", "timer_label_rgb", "mario_hat_rgb",
 	"menu_background_rgb"
+};
+
+static const char *const MenuColourKeys[MENU_COLOUR_COUNT] = {
+    "menu_paper_rgb", "menu_header_rgb", "menu_categories_rgb", "menu_sidebar_rgb",
+    "menu_trim_rgb", "menu_trim_light_rgb", "menu_selected_tab_rgb", "menu_highlight_rgb",
+    "menu_text_rgb", "menu_help_text_rgb", "menu_values_rgb", "menu_selected_text_rgb",
+    "menu_title_rgb", "menu_sidebar_text_rgb", "menu_spine_rgb", "menu_footer_rgb"
 };
 
 static const char *const MarioColorKeys[SUSAMUNE_MARIO_COLORS_COUNT] =
@@ -5085,6 +5094,18 @@ static void ApplyQftDisplayKey(struct SusamuneQftDisplayCfg *cfg,
 	}
 }
 
+static void ApplyMenuColourKey(const char *key, const char *text) {
+    struct MoonshineMenuPalette *p = MOONSHINE_MENU_PALETTE_PHYS_PTR;
+    u16 mask; u32 i; u8 rgb[3];
+    if (strcmp(key, "menu_colours_custom") == 0) {
+        // All sixteen custom roles is a valid mask, not the settings unset marker.
+        if (strcmp(text,"65535") == 0) p->custom=0xFFFF;
+        else if (ParseU16(text,&mask)) p->custom=mask;
+    }
+    for (i=0; i<MENU_COLOUR_COUNT; ++i)
+        if (strcmp(key, MenuColourKeys[i]) == 0 && ParseQftRgb(text, rgb)) memcpy(p->rgb[i],rgb,3);
+}
+
 static bool ParseMetadataRgbKey(const char *key, u32 *slot)
 {
 	u32 value = 0;
@@ -5185,7 +5206,7 @@ static void ApplyMetadataStyleKey(struct SusamuneMetadataStyleCfg *cfg,
 		cfg->reserved0[1] = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_ROW_GAP;
 	}
-	else if (strcmp(key, "columns") == 0 && v8 <= 11)
+	else if (strcmp(key, "columns") == 0 && v8 <= 19)
 	{
 		cfg->reserved0[2] = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_COLUMNS;
@@ -5200,6 +5221,7 @@ static void ApplyMetadataStyleKey(struct SusamuneMetadataStyleCfg *cfg,
 		cfg->reserved0[4] = v8;
 		cfg->present |= SUSAMUNE_METADATA_STYLE_VALUE_GAP;
 	}
+	else if (strcmp(key,"extra_fields") == 0) {cfg->reserved0[5]=v8;cfg->present|=SUSAMUNE_METADATA_STYLE_EXTRA_FIELDS;}
 }
 
 static bool ParseCreationWordKey(const char *key, u32 *word, const char **field)
@@ -5245,7 +5267,7 @@ static void ApplyCreationKey(struct SusamuneCreationCfg *cfg,
 	u32 slot;
 	const char *field;
 
-	if (strcmp(key, "native_timer_gradient_stops") == 0 && ParseQftU8(text, &v8) && v8 <= 5)
+	if (strcmp(key, "native_timer_gradient_stops") == 0 && ParseQftU8(text, &v8) && v8 <= 6)
 	{
 		cfg->reservedAchievement0 = 0xd0 | v8;
 		return;
@@ -5641,6 +5663,25 @@ static int ParseOnlineList(const char *s, u32 *out, u32 count)
 	return *s == '\0';
 }
 
+static void ApplyOnlineContactKey(const char *key, const char *text)
+{
+    struct SusamuneOnlineContact *row;
+    u32 v[6], i;
+    if (strncmp(key, "online_contact_", 15) || key[15] < '0' || key[15] > '7' || key[16] != '_') return;
+    row = &SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR->rows[key[15] - '0'];
+    if (strcmp(key + 17, "name") == 0) {
+        if (strlen(text) >= sizeof(row->name) || !OnlineNameValid(text)) return;
+        memset(row->name, 0, sizeof(row->name));
+        memcpy(row->name, text, strlen(text));
+    } else if (strcmp(key + 17, "code") == 0) {
+        if (!ParseOnlineList(text, v, 6) || !v[0] || !v[4] || !v[5] || v[5] > 8191) return;
+        for (i = 0; i < 4; ++i) if (v[i] > 255) return;
+        for (i = 0; i < 4; ++i) row->code[i] = (u8)v[i];
+        row->code[4] = (u8)(v[4] >> 8); row->code[5] = (u8)v[4];
+        row->code[6] = (u8)(v[5] >> 8); row->code[7] = (u8)v[5];
+    }
+}
+
 /* Online prototype 19: per-console room secret and its day, last public
  * endpoint, last friend, opponent model, hide flags and score bar layout. */
 static void ApplyOnlineKey(struct SusamuneOnlineNameCfg *cfg, const char *key, const char *text)
@@ -5673,6 +5714,7 @@ static void ApplyOnlineNameKey(const char *key, const char *text)
 {
 	struct SusamuneOnlineNameCfg *cfg = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
 	u32 length = (u32)strlen(text);
+	ApplyOnlineContactKey(key, text);
 	ApplyOnlineKey(cfg, key, text);
 	if (strcmp(key, "online_name") != 0 || length >= SUSAMUNE_ONLINE_NAME_SIZE ||
 	    !OnlineNameValid(text)) return;
@@ -5943,6 +5985,7 @@ static void ParseIni(char *text, struct SusamuneCfg *cfg)
 		else if (section == SECTION_CREATION)
 		{
 			ApplyCreationKey(&cfg->creation, Trim(line), Trim(eq + 1));
+			ApplyMenuColourKey(Trim(line), Trim(eq + 1));
 			ApplyWallkickStyleKey(&cfg->wallkickStyle, Trim(line), Trim(eq + 1));
 			ApplyMovementStyleKey(&cfg->movementStyle, Trim(line), Trim(eq + 1));
 			ApplyFinishBreakdownKey(Trim(line), Trim(eq + 1));
@@ -6001,7 +6044,20 @@ static void Emit(FIL *f, int *err, const char *s, u32 len);
 /* Keys stay absent until the game first sets them, so older files stay as they were. */
 static void EmitOnline(FIL *f, int *err, const struct SusamuneOnlineNameCfg *o)
 {
-	char line[96];
+    unsigned int i;
+    char line[96];
+    const struct SusamuneOnlineContacts *contacts = SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR;
+    if (contacts->magic == SUSAMUNE_ONLINE_CONTACTS_MAGIC) {
+        for (i = 0; i < SUSAMUNE_ONLINE_CONTACTS_COUNT; ++i) {
+            const struct SusamuneOnlineContact *row = &contacts->rows[i];
+            const unsigned char *c = row->code;
+            if (!row->name[0] || row->name[15] || !OnlineNameValid(row->name) || !c[0] ||
+                !(c[4] | c[5]) || !(c[6] | c[7]) || c[6] > 31) continue;
+            Emit(f, err, line, (u32)_sprintf(line, "online_contact_%u_name = %s\r\n", i, row->name));
+            Emit(f, err, line, (u32)_sprintf(line, "online_contact_%u_code = %u,%u,%u,%u,%u,%u\r\n",
+                i, (u32)c[0], (u32)c[1], (u32)c[2], (u32)c[3], (u32)c[4] << 8 | c[5], (u32)c[6] << 8 | c[7]));
+        }
+    }
 	if (o->magic != SUSAMUNE_ONLINE_NAME_MAGIC) return;
 	if (o->secret && o->secret <= 8191)
 		Emit(f, err, line, (u32)_sprintf(line, "online_secret = %u\r\nonline_day = %u\r\n",
@@ -6219,6 +6275,7 @@ static void EmitMetadataDisplaySection(FIL *f, int *err, const struct SusamuneCf
 	                    SUSAMUNE_METADATA_STYLE_COMPACT);
 	EmitMetadataStyleU8(f, err, "value_gap", s->reserved0[4], s->present,
 	                    SUSAMUNE_METADATA_STYLE_VALUE_GAP);
+	EmitMetadataStyleU8(f,err,"extra_fields",s->reserved0[5],s->present,SUSAMUNE_METADATA_STYLE_EXTRA_FIELDS);
 	for (i = 0; i < SUSAMUNE_METADATA_STYLE_TEXT_SLOTS; i++)
 	{
 		if (s->slotPresent[i >> 3] & (1u << (i & 7)))
@@ -6437,7 +6494,7 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitStr(f, err, "[");
 	EmitStr(f, err, CreationSection);
 	EmitStr(f, err, "]\r\n");
-	if ((d->reservedAchievement0 & 0xf8) == 0xd0 && (d->reservedAchievement0 & 7) <= 5)
+	if ((d->reservedAchievement0 & 0xf8) == 0xd0 && (d->reservedAchievement0 & 7) <= 6)
 		Emit(f, err, line, (u32)_sprintf(line, "native_timer_gradient_stops = %u\r\n", d->reservedAchievement0 & 7));
 
 	for (i = 0; i < SUSAMUNE_CREATION_COLOR_COUNT; i++)
@@ -6578,6 +6635,15 @@ static void EmitCreationSection(FIL *f, int *err,
 	EmitILEpisodes(f, err);
 	EmitPracticeDisplayStyles(f, err);
 	EmitFinishBreakdown(f, err);
+    {
+        const struct MoonshineMenuPalette *palette = MOONSHINE_MENU_PALETTE_PHYS_PTR;
+        if (MoonshineMenuPaletteValid(palette)) {
+            Emit(f, err, line, (u32)_sprintf(line, "menu_colours_custom = %u\r\n", palette->custom));
+            for (i=0; i<MENU_COLOUR_COUNT; ++i)
+                Emit(f, err, line, (u32)_sprintf(line, "%s = %u,%u,%u\r\n", MenuColourKeys[i],
+                    palette->rgb[i][0],palette->rgb[i][1],palette->rgb[i][2]));
+        }
+    }
 	{
 		const struct SusamuneOnlineNameCfg *name = SUSAMUNE_ONLINE_NAME_PHYS_PTR;
 		if (name->magic == SUSAMUNE_ONLINE_NAME_MAGIC && OnlineNameValid(name->name))
@@ -7144,8 +7210,12 @@ void SusamuneCfgInit(void)
 	SUSAMUNE_IL_EPISODES_PHYS_PTR->count = SUSAMUNE_IL_EPISODE_COUNT;
 	SusamunePracticeDisplayStyleInit(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR);
 	SusamuneFinishBreakdownInit(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR);
+	MoonshineMenuPaletteInit(MOONSHINE_MENU_PALETTE_PHYS_PTR);
 	memset(SUSAMUNE_ONLINE_NAME_PHYS_PTR, 0, sizeof(struct SusamuneOnlineNameCfg));
 	SUSAMUNE_ONLINE_NAME_PHYS_PTR->magic = SUSAMUNE_ONLINE_NAME_MAGIC;
+	SUSAMUNE_ONLINE_NAME_PHYS_PTR->contactsAbi = 1;
+	memset(SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR, 0, sizeof(struct SusamuneOnlineContacts));
+	SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR->magic = SUSAMUNE_ONLINE_CONTACTS_MAGIC;
 
 	cfg->magic     = SUSAMUNE_CFG_MAGIC;
 	cfg->version   = SUSAMUNE_CFG_VERSION;
@@ -7164,7 +7234,7 @@ void SusamuneCfgInit(void)
 	                 SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
 	                 SUSAMUNE_CFG_FLAG_IL_EPISODES |
 	                 SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE | SUSAMUNE_CFG_FLAG_SETTINGS_TAIL |
-	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG | SUSAMUNE_ONLINE_NAME_FLAG |
+	                 SUSAMUNE_FINISH_BREAKDOWN_FLAG | SUSAMUNE_ONLINE_NAME_FLAG | MOONSHINE_MENU_PALETTE_FLAG |
 	                 SUSAMUNE_CFG_FLAG_STATE_POOL_EXPANSION |
 	                 SUSAMUNE_CFG_FLAG_STATE_CODEC_RELOCATED |
 	                 MOONSHINE_LAYOUT_CFG_FLAG;
@@ -7263,7 +7333,9 @@ void SusamuneCfgInit(void)
 	sync_after_write(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_after_write(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
 	sync_after_write(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_after_write(MOONSHINE_MENU_PALETTE_PHYS_PTR, sizeof(struct MoonshineMenuPalette));
 	sync_after_write(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
+	sync_after_write(SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR, sizeof(struct SusamuneOnlineContacts));
 	sync_after_write((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	sync_after_write(progress, sizeof(struct SusamuneProgressCfg));
 	sync_after_write(playlists, sizeof(struct SusamuneStagePlaylistsCfg));
@@ -7309,7 +7381,9 @@ void SusamuneCfgService(void)
 	sync_before_read(SUSAMUNE_IL_EPISODES_PHYS_PTR, sizeof(struct SusamuneILEpisodesCfg));
 	sync_before_read(SUSAMUNE_PRACTICE_DISPLAY_STYLE_PHYS_PTR, sizeof(struct SusamunePracticeDisplayStyleCfg));
 	sync_before_read(SUSAMUNE_FINISH_BREAKDOWN_PHYS_PTR, sizeof(struct SusamuneFinishBreakdownCfg));
+	sync_before_read(MOONSHINE_MENU_PALETTE_PHYS_PTR, sizeof(struct MoonshineMenuPalette));
 	sync_before_read(SUSAMUNE_ONLINE_NAME_PHYS_PTR, sizeof(struct SusamuneOnlineNameCfg));
+	sync_before_read(SUSAMUNE_ONLINE_CONTACTS_PHYS_PTR, sizeof(struct SusamuneOnlineContacts));
 	sync_before_read((void *)SUSAMUNE_CFG_SETTINGS_TAIL(cfg), SUSAMUNE_CFG_SETTINGS_TAIL_SIZE);
 	seq = cfg->saveSeq;
 

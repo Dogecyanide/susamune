@@ -1,0 +1,79 @@
+MSGT stage initialization and NPC polling
+========================================
+
+Stage-start schema 2 is schema 1's 960-byte record plus one big-endian u32
+at offset 960. Capability bit 23 requires schema 2 and a 964-byte record.
+The word is the NPC pollution-check starting phase, in the range 0..29.
+Schema 1 remains readable and explicitly reports this observation as absent.
+The file container remains version 3; no Moonshine release-number gate is used.
+
+Retail TBaseNPC::initSinkNpc_ uses a function-static counter to stagger its
+pollution checks. Each NPC inherits the counter, then it advances modulo
+CLBPalFrame(30). It survives stage changes. Replaying the same initial flags,
+inputs and RNG with a different earlier stage history can therefore change
+when NPCs emerge from goop, even before Mario moves.
+
+The counter is read at the existing pre-setup capture boundary. Replay applies
+it at the initial matching-region setup boundary. Later stage boundaries must
+match the captured value before setup; they cannot silently correct a drift.
+It is never written by the recorder or during ordinary gameplay.
+
+Audited retail symbols (NpcInitPrg.cpp):
+JP  0x8040a4a0
+US  0x8040e060
+PAL 0x80405728
+Symbol: sCheckPollutedStartCounter$localstatic0$initSinkNpc___8TBaseNPCFv
+
+Existing captures do not contain this value. Private diagnostic copies of the
+returned PAL Manta and Pianta 6 files use phases 9 and 0 respectively. Those
+were the only candidates among 0..29 to pass the initial NPC-state checks.
+Their original files are preserved; non-stage records are byte-identical.
+These recovered samples are test inputs, not new gameplay recordings.
+Manta later reaches a one-ULP position difference in Dolphin; the recovery
+must not be described as a complete native replay proof. Same-Wii testing is
+still needed. No visual/world comparison tolerances were added.
+
+The RNG replay queue keeps checked caller dictionaries and seed sequences
+packed instead of expanding every call to six words. It uses the same 384 KiB
+lease. randomCapacity still counts 24-byte storage units; randomCount counts
+logical calls. Frame/tick/setup, caller, result and final seed remain checked.
+The returned Pianta 6 startup has 18,921 calls in 20,244 bytes. This addresses
+its capacity failure, independently of the NPC initialization observation.
+
+Current stage schema 3
+----------------------
+Schema 3 appends an observations word at offset 964 (968 bytes total).
+Bit 0 records the boolean GPU occlusion value at its actual camera and
+silhouette consumers. These are literal kind-15 observations in the checked
+ordered call stream; they do not advance RNG. The recorder returns the native
+value. Playback checks the consumer identity, timing and unchanged seed before
+returning the recorded value. Older stages leave these hooks inactive.
+
+Bit 1 requires kind-28 provenance on every recorded frame. Its two big-endian
+words are schema 1 and cumulative run flags. TAS is accumulated from the
+existing practice-assistance latch; continuations retain their TAS/savestate
+attributes. Evidence cannot decrease within a stream. Flat public exports
+summarize the flags at header offset 36 and declare that summary with PRV1 at
+40. Live internal headers stay immutable because checkpoint fences bind their
+hash. A conflicting TAS summary is refused. These consistency checks are not
+a cryptographic signature or proof of an unmodified recorder.
+
+PR65 water-height observation
+-----------------------------
+Bit 2 records the float returned by Bowser's GPU-derived water-height consumer.
+It uses literal kind-15 entries with the float's IEEE-754 binary32 bits in the
+result word. This is a distinct value class from bit 0's Boolean observations:
+playback requires finite values within +/-1,000,000, the exact consumer, an
+unchanged RNG seed, and the original frame/tick order. It still verifies world
+state normally. Capture returns the native value unchanged.
+
+The consumer identifiers are JP 0x801FABF4, US 0x801A90B0 and PAL 0x801A1938.
+The public stage record remains schema 3 / 968 bytes. Existing files retain
+bits 0/1 and keep the water hook inactive. They do not acquire missing water
+observations retroactively; use a fresh Bowser recording to test this fix.
+
+A native JP Dolphin probe compared the adapter against the unmodified return
+path both with recording inactive and active. Both lanes of all 32 floating
+registers, R3..R12, CR, FPSCR, RNG state and return behavior matched. A fresh
+short Bowser recording then passed full playback with world witnesses checked.
+These are private development checks, not a full-fight or Wii timing result.

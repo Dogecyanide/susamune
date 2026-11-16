@@ -1,5 +1,6 @@
 #include "susamune/model_editor_preview.hxx"
 #include "susamune/addresses.hxx"
+#include "susamune/practice_session.hxx"
 #include "susamune/menu.hxx"
 #include "susamune/retail_input.hxx"
 #include "Dolphin/math.h"
@@ -119,7 +120,8 @@ void restoreAll() {
     restorePracticeCamera();
 }
 
-void perform(CPolarSubCamera *camera, u32 cue, JDrama::TGraphics *graphics) {
+__attribute__((noinline)) void performCamera(CPolarSubCamera *camera, u32 cue, JDrama::TGraphics *graphics) {
+    if (camera == gpCamera && (cue & 0x14u)) PracticeSession::cameraPathUpdate();
     if (wanted() && camera == gpCamera && (cue & 0x14u)) {
         if (cue & ~0x14u)
             susamunePracticeCameraPerform(camera, cue & ~0x14u, graphics);
@@ -130,6 +132,10 @@ void perform(CPolarSubCamera *camera, u32 cue, JDrama::TGraphics *graphics) {
         return;
     }
     susamunePracticeCameraPerform(camera, cue, graphics);
+}
+
+void perform(CPolarSubCamera *camera, u32 cue, JDrama::TGraphics *graphics) {
+    performCamera(camera, cue, graphics);
 }
 
 void drawHint(Menu *menu) {

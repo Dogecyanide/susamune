@@ -1,0 +1,27 @@
+{
+  "status": "Planning estimate, not reclaimed yet",
+  "legacy_pose_camera_context_bytes": 863168,
+  "legacy_input_payload_bytes": 1728000,
+  "previously_admitted_extra_bytes": 2359296,
+  "combined_reassignable_MiB": 4.721,
+  "budgets": [
+    {
+      "shared_system_budget_MiB": 2,
+      "additional_free_MiB": 2.721
+    },
+    {
+      "shared_system_budget_MiB": 2.25,
+      "additional_free_MiB": 2.471
+    },
+    {
+      "shared_system_budget_MiB": 2.5,
+      "additional_free_MiB": 2.221
+    }
+  ],
+  "assumptions": [
+    "One shared streaming arena; no full-run resident playback banks",
+    "Preserve savestate/presentation tails, model heaps, catalogue/online metadata and shared transfer/state capacity",
+    "Budget includes recording headroom, actor baselines, codec/control/code workspace and small concurrent playback buffers",
+    "Legacy playback and savestate integration still need migration before old payload regions can be handed to another feature"
+  ]
+}

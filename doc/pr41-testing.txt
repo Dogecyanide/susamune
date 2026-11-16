@@ -1,0 +1,48 @@
+Moonshine 3.0.0 Timewarp - Prototype 41
+
+Guidebook
+Display > Menu colours opens the shared Creation editor. In Colours, X chooses the
+part to edit: paper, header, categories, sidebar, trims, selected tab/row,
+text, help, values, title, spine and footer. Keep/Cancel work as in other
+Creation editors; Original guidebook restores the preset. The selected row
+now uses dark green, a gold trim and cream text by default.
+System's Pianta uses held left/centre/right/centre poses. JP English labels
+now use native slash separators instead of blank ampersand gaps.
+
+Metadata
+Creation > Metadata groups fields into Movement, Position / camera, Ground,
+FLUDD and Other metadata, with a separate Layout / colours page.
+New fields start off: movement direction, horizontal speed gain per normal
+frame, height above floor, action, slope angle, floor type, water percentage,
+and remaining hover quarter-frames. Unsupported/absent values show --.
+Direction is world-space travel, not Mario's facing. Action is Mario's actual
+state; unfamiliar states show their hex ID. Floor type includes its raw ID.
+Vertical lists shrink their rendered type when needed to stay on-screen.
+
+Online setup
+The host can change mode/IL/options in the connected lobby before the first
+round. Changes clear Ready and stale draft choices without dropping guests.
+Once racing has begun, finish the match before replacing its setup.
+Check this with 2, 3 and 4 players; hardware acceptance is still pending.
+
+Launcher music
+A valid custom MP3 starts after its device mounts, before loading the custom
+background and preparing the kernel. Audio pauses for the IOS/kernel change,
+then resumes. Check normal boot, autoboot and cancelling autoboot on Wii.
+Missing/bad music remains nonfatal. No theme or music is in the shared ZIP.
+
+Useful checks
+- Edit several menu colours, Cancel once, Keep once, and reboot.
+- Check readable selection/help text with your own colours on JP and PAL.
+- Enable the new metadata while running, hovering and standing on slopes.
+- Change online mode before Ready, then Ready and finish the intended race.
+- Continue the outstanding four-player visibility/reconnect/race tests.
+
+Dolphin
+Matching English and Japanese review patches are separate packages. Native
+networking remains experimental. Standard Dolphin feature parity is not
+finished: native website HTTPS and general ghost/state/TAS file services
+remain outstanding. This build does not certify Wii crossplay.
+
+Memory reservations, savestate capacity and protected timer code are unchanged.
+Shared packages contain no personal themes, sign-in tokens or user data.

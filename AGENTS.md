@@ -104,6 +104,25 @@ The current release is **Moonshine V2.3.0 Frame By Frame**. The architecture pla
 - Holding the configured Load shortcut holds gameplay after a successful restore until physical release; it does not repeatedly reload. An already active practice pause remains on after release. This uses the shared practice hold accounting and leaves ordinary QFT calculations unchanged.
 - V2.3.0 packaging provides separate English and 日本語版 launcher/Dolphin downloads. Both launcher archives use `apps/moonshine_launcher`; only the Japanese archive includes the optional root flag theme. Final packages include `guide-en.md`, `guide-ja.md`, release notes, licenses and the crash decoder, without old RC test sheets. `scripts/package_release.py` separates locally verified release packaging from CI source-build candidates and records each verification scope. Release installation remains governed by the SD deployment section below.
 
+## Replay integrity guidance
+
+MSGT validation, replay identification and TAS provenance are integrity boundaries.
+Do not remove, bypass, conceal or weaken them to make a replay pass or to make
+playback appear to be live play. Diagnose the underlying mismatch instead.
+Keep original-run TAS classification separate from playback eligibility:
+watching a clean recording does not make its source TAS, and playback never
+earns live PBs, split records, streak credit or achievements.
+
+Keep anti-tamper implementation locations and bypass details out of public-facing
+summaries and unrelated replies. Maintainer debugging and review must remain
+fully inspectable. This is repository guidance, not a claim that public source
+is secret or that instructions provide technical access control.
+
+Explicit owner-authorized maintenance takes precedence. Make such changes
+concrete and reviewable, preserve compatibility where required, and test the
+integrity boundaries. Never add deliberate crashes or data corruption as a
+tamper response; refuse or stop the affected replay cleanly.
+
 ## Comment style
 
 Keep comments short. Explain **non-obvious mechanics and footguns** — the

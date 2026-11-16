@@ -9,6 +9,7 @@
 #include "susamune/addresses.hxx"
 #endif
 
+#if !IS_EMULATOR
 namespace LiveTransport {
 namespace {
 volatile TWLiveMailbox *sWire;
@@ -200,6 +201,7 @@ void stop() {
 }
 }
 
+#endif
 // STUN codec begin
 namespace LiveStun {
 namespace {

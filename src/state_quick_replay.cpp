@@ -4,7 +4,12 @@
 namespace StateQuickReplay {
 namespace {
 const unsigned int kMissing = ~0u;
-struct Recipe { unsigned int id, block; };
+struct Recipe {
+    unsigned int id, block;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    unsigned int spillOffset;
+#endif
+};
 const unsigned int kAdlerCacheOffset = TWR_CONTROL_OFFSET + TWR_CONTROL_BYTES;
 const unsigned int kAdlerCacheEntries = (TW_CHUNK_DIRECTORY_BYTES - kAdlerCacheOffset - 32) / 8;
 const unsigned int kAdlerCacheMagic = 0x54574131;
@@ -26,6 +31,10 @@ struct Plan {
     unsigned int cacheUsable, cacheFingerprint;
     StateCodec::Result encoded;
     unsigned int crc, recipeCount, moveCount;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    SpillCache spill;
+    unsigned int spillUsed;
+#endif
     Stats statistics;
     TWChunkSlot root;
     TWChunk chunks[TW_CHUNK_DESCRIPTORS];
@@ -125,7 +134,13 @@ unsigned int combineAdler(unsigned int a, unsigned int b, unsigned int length) {
     return low | (high << 16);
 }
 const unsigned char *address(const Plan &p, const TWChunk &chunk) {
-    return chunk.offset == kMissing ? nullptr : TWSData(p.store->memory, &chunk);
+    if (chunk.offset != kMissing) return TWSData(p.store->memory, &chunk);
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    const unsigned int recipe = p.recipeForId[&chunk - p.chunks];
+    if (recipe != 65535 && p.recipes[recipe].spillOffset != kMissing)
+        return static_cast<const unsigned char *>(p.spill.data) + p.recipes[recipe].spillOffset;
+#endif
+    return nullptr;
 }
 bool sameBlock(const unsigned char *a, const unsigned char *header,
                const unsigned char *payload, unsigned int size) {
@@ -136,6 +151,9 @@ bool blockValid(const Plan &p, unsigned int index, const StateCodec::PreparedQui
     const unsigned int expected = p.source.rawBytes - index * TW_CHUNK_RAW_BYTES;
     return b.payloadBytes && b.payloadBytes <= TW_CHUNK_RAW_BYTES &&
         TWQuickSeparate(b.payload, b.payloadBytes, &p, sizeof(p)) &&
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+        (!p.spill.bytes || TWQuickSeparate(b.payload, b.payloadBytes, p.spill.data, p.spill.bytes)) &&
+#endif
         TWSExternal(p.store->memory, b.payload, b.payloadBytes) &&
         TWChunkHeader(b.header, b.payloadBytes + 8, &raw) && raw == b.rawBytes &&
         raw == (expected < TW_CHUNK_RAW_BYTES ? expected : TW_CHUNK_RAW_BYTES);
@@ -278,8 +296,8 @@ Status build(Plan &p) {
             const TWChunk &c = p.chunks[i];
             if (!c.refs) { if (freeId == kMissing) freeId = i; continue; }
             if (c.reserved != TW_CHUNK_QUICK || c.size != size || c.hash != hash) continue;
-            if (c.offset != kMissing) {
-                if (sameBlock(address(p, c), header, payload, size)) { selected = i; break; }
+            if (address(p, p.chunks[i])) {
+                if (sameBlock(address(p, p.chunks[i]), header, payload, size)) { selected = i; break; }
             } else {
                 if (!copied) {
                     StateSlotPoolCopyForward(p.comparison, header, 8);
@@ -315,8 +333,20 @@ Status build(Plan &p) {
                 }
             }
             p.recipeForId[selected] = p.recipeCount;
-            p.recipes[p.recipeCount++] = {selected, index};
-            if (c.offset == kMissing) {
+            Recipe &recipe = p.recipes[p.recipeCount++];
+            recipe.id = selected; recipe.block = index;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+            recipe.spillOffset = kMissing;
+            if (c.offset == kMissing && TWChunkAlign(size) <= p.spill.bytes - p.spillUsed) {
+                recipe.spillOffset = p.spillUsed;
+                unsigned char *destination = static_cast<unsigned char *>(p.spill.data) + p.spillUsed;
+                StateSlotPoolCopyForward(destination, header, 8);
+                StateSlotPoolCopyForward(destination + 8, payload, size - 8);
+                p.spillUsed += TWChunkAlign(size);
+                p.statistics.cachedBytes += size;
+            }
+#endif
+            if (!address(p, p.chunks[selected])) {
                 ++p.statistics.spilledBlocks;
                 p.statistics.replayRawBytes += block.rawBytes;
             }
@@ -341,9 +371,88 @@ Status build(Plan &p) {
 }
 }
 
+bool refineRetained(StateStore::Store &s, unsigned int slots, void *workspace, unsigned int workspaceBytes,
+                    void *scratch, unsigned int scratchBytes,
+                    unsigned int (*tag)(unsigned int, unsigned int)) {
+    if (!slots || (slots & ~7u) || !tag || !StateStore::valid(s) || s.pending || s.pin ||
+        !TWRIdle(s.memory) || !scratch || (reinterpret_cast<TWBankAddress>(scratch) & 31u) ||
+        scratchBytes < sizeof(Plan) || !TWSExternal(s.memory, scratch, scratchBytes) ||
+        !TWSExternal(s.memory, workspace, workspaceBytes) ||
+        !TWQuickSeparate(scratch, scratchBytes, workspace, workspaceBytes) ||
+        !TWQuickSeparate(scratch, scratchBytes, &s, sizeof(s)) ||
+        !TWQuickSeparate(scratch, scratchBytes, s.memory, sizeof(*s.memory)) ||
+        !TWQuickSeparate(scratch, scratchBytes, s.memory->pool, sizeof(*s.memory->pool)) ||
+        !TWQuickSeparate(workspace, workspaceBytes, &s, sizeof(s)) ||
+        !TWQuickSeparate(workspace, workspaceBytes, s.memory, sizeof(*s.memory)) ||
+        !TWQuickSeparate(workspace, workspaceBytes, s.memory->pool, sizeof(*s.memory->pool)) ||
+        (s.nativeScratch && (!TWQuickSeparate(scratch, scratchBytes, s.nativeScratch, s.nativeBytes) ||
+            !TWQuickSeparate(workspace, workspaceBytes, s.nativeScratch, s.nativeBytes)))) return false;
+    Plan &p = *static_cast<Plan *>(scratch); clear(&p, sizeof(p)); p.store = &s;
+    const TWStageMemory *memory = s.memory;
+    TWChunkPool *pool = TWChunkDirectory(memory->pool);
+    p.directoryHash = TWChunkHash(reinterpret_cast<const unsigned char *>(pool), sizeof(*pool));
+    for (unsigned int i = 0; i < 3; ++i) {
+        p.generations[i] = s.roots[i].generation;
+        if (s.roots[i].checksum != TWSChecksum(s.memory, &pool->slots[i])) return false;
+        p.identities[i] = s.roots[i];
+        if (slots & (1u << i)) for (unsigned int j = 0; j < pool->slots[i].count; ++j)
+            p.destinations[pool->slots[i].ids[j] - 1] = 1;
+    }
+    bool changed = false;
+    for (unsigned int i = 0; i < TW_CHUNK_DESCRIPTORS; ++i) {
+        p.chunks[i] = pool->chunks[i];
+        const TWChunk &old = pool->chunks[i];
+        if (!p.destinations[i] || old.reserved != TW_CHUNK_QUICK) continue;
+        StateCodec::PreparedQuickBlock block;
+        if (!StateCodec::refineQuickBlock(workspace, workspaceBytes, TWSData(s.memory, &old), old.size, block)) return false;
+        const unsigned int size = block.payloadBytes + 8;
+        if (TWChunkAlign(size) >= TWChunkAlign(old.size)) continue;
+        p.chunks[i].size = size;
+        p.chunks[i].hash = ~crcBytes(p, crcBytes(p, ~0u, block.header, 8), block.payload, block.payloadBytes);
+        changed = true;
+    }
+    if (!changed) return false;
+    for (unsigned int i = 0; i < 3; ++i) if (s.roots[i].kind == StateStore::QUICK && pool->slots[i].count) {
+        unsigned int packed = 8;
+        for (unsigned int j = 0; j < pool->slots[i].count; ++j) packed += p.chunks[pool->slots[i].ids[j] - 1].size;
+        p.identities[i].packed = packed; p.identities[i].tag = tag(i, packed);
+    }
+    if (s.memory != memory || !StateStore::valid(s) || s.pending || s.pin || !TWRIdle(s.memory) ||
+        p.directoryHash != TWChunkHash(reinterpret_cast<const unsigned char *>(pool), sizeof(*pool))) return false;
+    for (unsigned int i = 0; i < 3; ++i)
+        if (s.roots[i].generation != p.generations[i] ||
+            s.roots[i].checksum != TWSChecksum(s.memory, &pool->slots[i])) return false;
+    // Each independent block only shrinks. Frozen, disjoint inputs make this
+    // second encode deterministic; no allocation or callback follows this point.
+    for (unsigned int i = 0; i < TW_CHUNK_DESCRIPTORS; ++i) if (p.chunks[i].size != pool->chunks[i].size) {
+        StateCodec::PreparedQuickBlock block;
+        TWChunk &old = pool->chunks[i];
+        unsigned char *destination = TWSAddressUnchecked(s.memory, old.offset);
+        if (!StateCodec::refineQuickBlock(workspace, workspaceBytes, destination, old.size, block) ||
+            block.payloadBytes + 8 != p.chunks[i].size ||
+            ~crcBytes(p, crcBytes(p, ~0u, block.header, 8), block.payload, block.payloadBytes) != p.chunks[i].hash) __builtin_trap();
+        StateSlotPoolCopyForward(destination, block.header, 8);
+        StateSlotPoolCopyForward(destination + 8, block.payload, block.payloadBytes);
+        old = p.chunks[i];
+    }
+    for (unsigned int i = 0; i < 3; ++i) {
+        pool->slots[i].packedBytes = p.identities[i].packed;
+        pool->slots[i].metadataTag = p.identities[i].tag;
+        p.identities[i].checksum = TWSChecksum(s.memory, &pool->slots[i]);
+        s.roots[i] = p.identities[i];
+    }
+    adlerCache(p).magic = 0;
+    return true;
+}
+
 unsigned int workspaceSize() { return (sizeof(Plan) + 31u) & ~31u; }
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+static Status prepareImpl(StateStore::Store &s, unsigned int slot, const StateStore::Identity &expected,
+               const Source &source, void *scratch, unsigned int scratchBytes, Plan *&out, const SpillCache *spill) {
+#else
 Status prepare(StateStore::Store &s, unsigned int slot, const StateStore::Identity &expected,
                const Source &source, void *scratch, unsigned int scratchBytes, Plan *&out) {
+#endif
     out = nullptr;
     if (!source.encode || !source.admitted || !source.rawBytes || source.rawBytes > 0x2000000u ||
         !scratch || (reinterpret_cast<TWBankAddress>(scratch) & 31u) || scratchBytes < workspaceSize() ||
@@ -353,18 +462,48 @@ Status prepare(StateStore::Store &s, unsigned int slot, const StateStore::Identi
         !TWQuickSeparate(scratch, scratchBytes, s.memory, sizeof(*s.memory)) ||
         !TWQuickSeparate(scratch, scratchBytes, s.memory->pool, sizeof(*s.memory->pool)) ||
         (s.nativeScratch && !TWQuickSeparate(scratch, scratchBytes, s.nativeScratch, s.nativeBytes))) return INVALID;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    if (spill && (!spill->admitted || !spill->data || !spill->bytes || spill->bytes > 500u * 1024u ||
+        ((reinterpret_cast<TWBankAddress>(spill->data) | spill->bytes) & 31u) ||
+        !TWSExternal(s.memory, spill->data, spill->bytes) ||
+        !TWQuickSeparate(spill->data, spill->bytes, scratch, scratchBytes) ||
+        !TWQuickSeparate(scratch, scratchBytes, spill, sizeof(*spill)) ||
+        !TWQuickSeparate(spill->data, spill->bytes, &s, sizeof(s)) ||
+        !TWQuickSeparate(spill->data, spill->bytes, &source, sizeof(source)) ||
+        !TWQuickSeparate(spill->data, spill->bytes, spill, sizeof(*spill)) ||
+        !TWQuickSeparate(spill->data, spill->bytes, s.memory, sizeof(*s.memory)) ||
+        !TWQuickSeparate(spill->data, spill->bytes, s.memory->pool, sizeof(*s.memory->pool)) ||
+        (s.nativeScratch && !TWQuickSeparate(spill->data, spill->bytes, s.nativeScratch, s.nativeBytes)))) return INVALID;
+    if (spill && !spill->admitted(spill->context, spill->data, spill->bytes)) return SOURCE_BUSY;
+#endif
     if (!source.admitted(source.context)) return SOURCE_BUSY;
     if (!StateStore::beginDeferredPayload(s, slot, expected)) return INVALID;
     Plan &p = *static_cast<Plan *>(scratch);
     clear(&p, sizeof(p)); p.store = &s; p.source = source; p.token = s.transaction;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    if (spill) p.spill = *spill;
+#endif
     Status status = build(p);
     if (status == READY && !unchanged(p, false)) status = INVALID;
     if (status == FULL && !unchanged(p, true)) status = INVALID;
     if (status == READY && !source.admitted(source.context)) status = SOURCE_BUSY;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    if (status == READY && p.spill.bytes && !p.spill.admitted(p.spill.context, p.spill.data, p.spill.bytes)) status = SOURCE_BUSY;
+#endif
     if (status != READY) { StateStore::abort(s); return status; }
     p.phase = 1; p.fingerprint = fingerprint(p); out = &p;
     return READY;
 }
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+Status prepare(StateStore::Store &s, unsigned int slot, const StateStore::Identity &expected,
+               const Source &source, void *scratch, unsigned int scratchBytes, Plan *&out) {
+    return prepareImpl(s, slot, expected, source, scratch, scratchBytes, out, nullptr);
+}
+Status prepareWithSpill(StateStore::Store &s, unsigned int slot, const StateStore::Identity &expected,
+               const Source &source, void *scratch, unsigned int scratchBytes, Plan *&out, const SpillCache &spill) {
+    return prepareImpl(s, slot, expected, source, scratch, scratchBytes, out, &spill);
+}
+#endif
 StateCodec::Result result(const Plan &p) { return p.encoded; }
 unsigned int checksum(const Plan &p) { return p.crc; }
 Stats stats(const Plan &p) { return p.statistics; }
@@ -373,17 +512,22 @@ bool abort(Plan &p) {
     p.phase = 2; return true;
 }
 bool commit(Plan &p, const StateStore::Identity &identity) {
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    if (!intact(p) || (p.spill.bytes && !p.spill.admitted(p.spill.context, p.spill.data, p.spill.bytes))) return false;
+#endif
     if (!intact(p) || !identity.generation || identity.kind != StateStore::QUICK ||
         identity.raw != p.encoded.rawBytes || identity.packed != p.encoded.compressedBytes ||
         identity.adler != p.encoded.adler32 || identity.checksum != p.crc || !unchanged(p, true)) return false;
     // Old chunks were covered by the root CRCs; only novel cached bytes need a hash pass.
     for (unsigned int i = 0; i < p.recipeCount; ++i) {
         const TWChunk &c = p.chunks[p.recipes[i].id];
-        if (c.offset == kMissing) continue;
-        const unsigned char *bytes = address(p, c);
-        if (!bytes || ~crcBytes(p, ~0u, bytes, c.size) != c.hash) return false;
+        const unsigned char *bytes = address(p, p.chunks[p.recipes[i].id]);
+        if (bytes && ~crcBytes(p, ~0u, bytes, c.size) != c.hash) return false;
     }
     if (!p.source.admitted(p.source.context)) return false;
+#if SUSAMUNE_SAVE_SPILL_EXPERIMENT
+    if (p.spill.bytes && !p.spill.admitted(p.spill.context, p.spill.data, p.spill.bytes)) return false;
+#endif
     // No fallible allocator, ownership callback or cancellation after this point.
     const TWStageMemory *memory = p.store->memory;
     for (unsigned int i = 0; i < p.moveCount; ++i) {
@@ -395,11 +539,15 @@ bool commit(Plan &p, const StateStore::Identity &identity) {
     for (unsigned int i = 0; i < p.recipeCount; ++i) {
         const unsigned int id = p.recipes[i].id;
         if (p.chunks[id].offset != kMissing) continue;
-        StateCodec::PreparedQuickBlock block;
-        p.source.encode(p.source.context, p.recipes[i].block, block);
         unsigned char *destination = TWSAddressUnchecked(memory, p.destinations[id]);
-        StateSlotPoolCopyForward(destination, block.header, 8);
-        StateSlotPoolCopyForward(destination + 8, block.payload, p.chunks[id].size - 8);
+        const unsigned char *cached = address(p, p.chunks[id]);
+        if (cached) StateSlotPoolCopyForward(destination, cached, p.chunks[id].size);
+        else {
+            StateCodec::PreparedQuickBlock block;
+            p.source.encode(p.source.context, p.recipes[i].block, block);
+            StateSlotPoolCopyForward(destination, block.header, 8);
+            StateSlotPoolCopyForward(destination + 8, block.payload, p.chunks[id].size - 8);
+        }
     }
     TWChunkPool *pool = TWChunkDirectory(memory->pool);
     for (unsigned int i = 0; i < TW_CHUNK_DESCRIPTORS; ++i) {

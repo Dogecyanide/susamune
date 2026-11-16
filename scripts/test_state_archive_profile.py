@@ -66,7 +66,7 @@ __declspec(dllexport) void filtered(StateArchiveProfile::Data *d,void *out,const
         dll=shim.with_suffix('.dll')
         subprocess.run([str(compiler),'--target=x86_64-pc-windows-msvc','-shared','-nostdlib',
             '-fuse-ld=lld','-Wl,/noentry','-O2','-fno-builtin','-mno-stack-arg-probe',
-            '-DSTATE_ARCHIVE_PROFILE_HOST','-I',str(ROOT/'include'),str(shim),
+            '-DSTATE_ARCHIVE_PROFILE_HOST',f'-DIS_EMULATOR={int(getattr(cls, "emulator", False))}','-I',str(ROOT/'include'),str(shim),
             str(production),'-o',str(dll)],check=True)
         cls.lib=C.CDLL(str(dll))
         cls.addClassCleanup(lambda:C.windll.kernel32.FreeLibrary(C.c_void_p(cls.lib._handle)))
@@ -247,6 +247,17 @@ __declspec(dllexport) void filtered(StateArchiveProfile::Data *d,void *out,const
             ok,data=self.capture();self.assertFalse(ok);self.assertEqual(bytes(data),bytes(C.sizeof(data)))
             self.mem[address]=old
 
+    def test_dolphin_gpu_heap_is_recognized_but_never_restored(self):
+        h=0x81800000;m=self.mem;m[self.root+0x44]=2;m[self.root+0x40]=h+0x48
+        m[self.stage+0x54]=h+0x48;m[h+0x48]=h;m[h+0x4c]=self.root+0x3c;m[h+0x50]=self.stage+0x48
+        m[h]=self.layout.expVtable;m[h+0x30]=h+0x90;m[h+0x34]=0x82000000
+        ok,data=self.capture();self.assertEqual(ok,getattr(self,'emulator',False))
+        if ok:
+            self.assertTrue(self.lib.valid(C.byref(data)))
+            self.assertTrue(all(r.address+r.size<=0x81800000 for r in data.keep[:data.keepCount]))
+            m[h+0x7c]=0x81900000;ok,other=self.capture();self.assertTrue(ok)
+            self.assertTrue(self.lib.match(C.byref(data),C.byref(other)))
+
     def test_heap_tree_cycle_and_out_of_bounds_allocation_refuse(self):
         for address,value in ((self.stage+0x44,33),
                               (self.stage+0x3c,self.stage+0x48),
@@ -277,5 +288,8 @@ __declspec(dllexport) void filtered(StateArchiveProfile::Data *d,void *out,const
             for off,n in ((0,8),(17,11),(49,20)):expected[off:off+n]=bytes([0xa5])*n
             self.assertEqual(C.string_at(base,80),bytes(expected))
         finally:k.VirtualFree(base,0,0x8000)
+
+class DolphinArchiveProfileTests(ArchiveProfileTests):
+    emulator=True
 
 if __name__=='__main__':unittest.main()

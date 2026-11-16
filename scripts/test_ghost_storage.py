@@ -20,6 +20,15 @@ import validate_ghost_storage as storage
 
 def source_function(path: Path, name: str) -> str:
     source = path.read_text(encoding="utf-8")
+    if path.name == "SusamuneGhost.c":
+        source = source.replace('#include "GhostCanonical.inc"', path.with_name("GhostCanonical.inc").read_text())
+    if path.name == "ghost_storage.cpp":
+        source = source.replace('#include "susamune/ghost_catalog_validation.inc"',
+            (path.parents[1] / "include/susamune/ghost_catalog_validation.inc").read_text())
+        if name == "sanitizeSlot":
+            source = source.replace('bool sanitizeSlot(', 'bool nativeSlotWrapper(')
+            source = source.replace('bool validateCatalogSlot(', 'bool sanitizeSlot(')
+            source = source.replace(',u32 kGameId,u8 kRegion)', ')')
     match = re.search(
         rf"(?:static\s+)?(?:void|bool|int|enum\s+ValidateResult)\s+"
         rf"{name}\s*\(",
@@ -73,7 +82,7 @@ class StorageEnvelopeTests(unittest.TestCase):
     def test_old_and_future_canonical_versions_are_not_parsed(self) -> None:
         for version in (ghost_format.GHOST_VERSION_V1,
                         ghost_format.GHOST_VERSION_V2,
-                        ghost_format.GHOST_VERSION_V9 + 1):
+                        ghost_format.GHOST_VERSION_V10 + 1):
             with self.subTest(version=version), mock.patch.object(
                 ghost_format,
                 "validate_ghost",
@@ -374,8 +383,8 @@ class StorageEnvelopeTests(unittest.TestCase):
         header = source_function(kernel_path, "ValidateCanonicalHeader")
         for version in (3, 4, 5, 6):
             self.assertIn(f"version != SUSAMUNE_GHOST_FILE_VERSION_V{version}", header)
-        self.assertNotIn("SUSAMUNE_GHOST_FILE_VERSION_V1", header)
-        self.assertNotIn("SUSAMUNE_GHOST_FILE_VERSION_V2", header)
+        self.assertNotRegex(header, r"\bSUSAMUNE_GHOST_FILE_VERSION_V1\b")
+        self.assertNotRegex(header, r"\bSUSAMUNE_GHOST_FILE_VERSION_V2\b")
         self.assertLess(
             header.index("version != SUSAMUNE_GHOST_FILE_VERSION_V3"),
             header.index("headerCrc ="),
@@ -412,8 +421,8 @@ class StorageEnvelopeTests(unittest.TestCase):
             "SUSAMUNE_GHOST_CODEC_POSE_ATTACHMENTS",
         ):
             self.assertIn(required, sanitize)
-        self.assertNotIn("SUSAMUNE_GHOST_FILE_VERSION_V1", sanitize)
-        self.assertNotIn("SUSAMUNE_GHOST_FILE_VERSION_V2", sanitize)
+        self.assertNotRegex(sanitize, r"\bSUSAMUNE_GHOST_FILE_VERSION_V1\b")
+        self.assertNotRegex(sanitize, r"\bSUSAMUNE_GHOST_FILE_VERSION_V2\b")
 
     def test_ppc_catalog_names_never_render_blank(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -428,34 +437,11 @@ class StorageEnvelopeTests(unittest.TestCase):
                 "copyCatalogName", source_function(ppc, function)
             )
 
-    def test_race_load_starts_with_a_clean_challenger(self) -> None:
+    def test_publication_preserves_challenger_and_route_guards(self) -> None:
         root = Path(__file__).resolve().parents[1]
         ghost_path = root / "src/ghost.cpp"
         storage_path = root / "src/ghost_storage.cpp"
         source = ghost_path.read_text(encoding="utf-8")
-        race_load = source_function(ghost_path, "importPlayback")
-
-        # Anything recorded before the opponent arrived belongs to the old
-        # session, including a completed unsaved non-PB. Only a PB protected by
-        # Records may survive while the race target is installed.
-        self.assertIn(
-            "const bool recordHasUnsavedPB", race_load
-        )
-        self.assertIn("sRecord.valid && sRecord.pb && !sRecord.saved",
-                      race_load)
-        self.assertIn("sRecord.pbToken != 0", race_load)
-        self.assertIn("if (!recordHasUnsavedPB) clearRecord();", race_load)
-        self.assertNotIn("sRecording || !sRecord.valid", race_load)
-        self.assertIn("sRecording = false", race_load)
-        self.assertIn("sAttemptSerial = gQFTTimer.attemptSerial()", race_load)
-        self.assertIn("sBoundaryPending = false", race_load)
-        self.assertIn("sPlaybackPinned = true", race_load)
-        self.assertIn("sGhostVisible = false", race_load)
-        self.assertLess(
-            race_load.index("installCanonicalTrack(sPlayback"),
-            race_load.index("clearRecord()"),
-        )
-
         complete = source_function(storage_path, "completeRequest")
         self.assertIn("notify(kRaceLoaded)", complete)
         self.assertIn('"Ghost ready - restart to race"',

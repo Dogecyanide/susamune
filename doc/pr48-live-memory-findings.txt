@@ -1,0 +1,34 @@
+PAL live memory observations, 2026-10-28
+
+Six complete 19-record snapshots: Plaza, Noki 8, Bianco 5, Bianco 3 secret,
+Sirena 1 with split manta (user reported), and Noki 6 secret while falling
+(user reported). Capture metadata cannot independently prove actor/action state.
+All capture completeness flags are clear. Exact records and hashes are in
+build/pr48-live-memory/capture-comparison.json and its referenced source dumps.
+
+Every snapshot has four leaf audio allocations, each identified through the
+retail type and name getter layout. Every allocation size equals its matching
+PAL disc AudioRes/Banks file size. Three banks are shared by all six captures:
+w1stLoad_0.aw 64,512; wScene_16.aw 3,844,736; w2ndLoad_0.aw 11,363,584 bytes.
+Their sum is 15,272,832 bytes (14.565 MiB). A fourth scene bank changes by area.
+These are allocated file-sized blocks, not an empty nested heap reservation.
+This does not establish which sounds are played or how much padding a bank has.
+No raw sound-bank payload was captured from the Wii.
+
+The two nonempty HUD/guidebook archive blocks total 329,152 bytes in every
+snapshot. Their allocator leaves a 440,896-byte (430.5625 KiB) trailing gap at
+Wii 0x90F945C0..0x91000000. This is an additional reclamation candidate, not a
+memory grant. Trace other ARAM allocator users, regional asset extents and
+reset/savestate lifetimes before reserving it. Any reservation must use the
+allocator or formally reduce its extent; writing into its free list is unsafe.
+
+The root MEM1 heap reserves child heaps, explaining its near-full display.
+Bianco 5 uses 14,157,044 bytes of the 14,942,176-byte stage heap, leaving 785,132.
+The split-manta snapshot is smaller than Bianco 5; secrets use considerably less.
+A stable allocated size is expected when game objects are preallocated or pooled.
+These snapshots do not prove global peak or transient allocation bounds.
+
+The Noki 6 secret's physical area is 0x1F (internal RicoEx1); the PC label was
+incorrectly Ricco secret. Raw area IDs in the saved evidence are correct.
+The monitor source/UI label is corrected; the active receiver uses its current
+in-memory labels until its next restart. No recapture is needed.

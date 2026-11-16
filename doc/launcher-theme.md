@@ -76,3 +76,10 @@ finished its ASND cleanup and reports that it is no longer playing. Shutdown
 first disables loop restarts, then stops and joins an active decoder, ends ASND,
 and invalidates the transient window before game handoff, return-to-loader, or
 poweroff.
+
+PR41 starts playback as soon as the launcher's device and valid MP3 are ready,
+before custom PNG decoding. The mixer is suspended before IOS reload and kernel
+startup, and resumed after the kernel is ready. Loop service does nothing while
+suspended. Shutdown resumes a suspended mixer before joining the decoder so a
+paused queue cannot hold up exit. This ordering has host lifecycle coverage;
+Wii audio continuity during the IOS handover still requires console testing.

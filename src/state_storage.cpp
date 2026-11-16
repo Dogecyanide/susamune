@@ -1,13 +1,28 @@
 #include "susamune/state_storage.hxx"
 #include "susamune/state_pool_runtime.hxx"
 #include "susamune/state_export_plan.h"
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+#include "susamune/dolphin_archive.hxx"
+#endif
 #include <Dolphin/OS.h>
 #include <Dolphin/mem.h>
 
+#if IS_EMULATOR
+#pragma clang section rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+#else
 #pragma clang section text=".foxtrot.text" rodata=".foxtrot.rodata" data=".foxtrot.data" bss=".foxtrot.bss"
+#endif
 
 namespace StateStorage {
 namespace {
+inline void invalidateBackend(void *data, u32 size) {
+#if !IS_EMULATOR
+    DCInvalidateRange(data, size);
+#else
+    // Native services run on this CPU; invalidation would discard their writes.
+    (void)data; (void)size;
+#endif
+}
 #if IS_EMULATOR
 const u32 kMailbox = SUSAMUNE_DOLPHIN_STATE_STORAGE_PPC_BASE;
 const u32 kStaging = SUSAMUNE_DOLPHIN_STATE_STAGING_PPC_BASE;
@@ -56,8 +71,8 @@ void finishTransfer() {
 }
 
 void readBackend() {
-#if !IS_EMULATOR
-    DCInvalidateRange(&sMailbox->response, sizeof(sMailbox->response));
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
+    invalidateBackend(&sMailbox->response, sizeof(sMailbox->response));
     const SusamuneStateResponse &r = sMailbox->response;
     sAvailable = r.magic == SUSAMUNE_STATE_STORAGE_MAGIC &&
         r.version == SUSAMUNE_STATE_STORAGE_VERSION && r.available && r.configId &&
@@ -79,7 +94,7 @@ bool transferReady() {
         if (!statePoolSharedMemory(sMemory)) { sTransferFailed = true; return false; }
         readBackend();
         sCatalogReady = false;
-        DCInvalidateRange(&sMailbox->request, sizeof(sMailbox->request));
+        invalidateBackend(&sMailbox->request, sizeof(sMailbox->request));
         sSequence = sMailbox->request.seq;
     }
     return mode == TransferLease::SHARED || TransferLease::legacyAllowed();
@@ -118,7 +133,7 @@ void syncPool(u32 offset, u32 size, bool finished) {
     while (size) {
         StatePoolMemorySpan span;
         if (!StatePoolMemorySpanAt(&memory, offset, size, &span)) __builtin_trap();
-        if (finished) DCInvalidateRange(span.data, span.size);
+        if (finished) invalidateBackend(span.data, span.size);
         else DCFlushRange(span.data, span.size);
         offset += span.size;
         size -= span.size;
@@ -131,7 +146,7 @@ void syncImport(bool finished) {
     const u32 first = sImportSize < capacity ? sImportSize : capacity;
     void *a = static_cast<u8 *>(stagingBase()) + sImportStageOffset;
     if (finished) {
-        DCInvalidateRange(a, first);
+        invalidateBackend(a, first);
     } else {
         DCFlushRange(a, first);
     }
@@ -182,14 +197,17 @@ void init() {
     memset(&sPending, 0, sizeof(sPending));
     sConfig = sImportSize = sImportOffset = sImportStageOffset = sProjectReplyCrc = 0;
     if (!sSharedBackend) sMemory = statePoolMemory();
-#if !IS_EMULATOR
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+    DolphinArchive::initialize();
+#endif
+#if !IS_EMULATOR || TIMEWARP_LIVE_RACING
     if (!transferReady()) return;
     readBackend();
     if (!sAvailable) return;
     const u64 now = OSGetTime();
     sSession = static_cast<u32>(now ^ (now >> 32));
     if (!sSession) sSession = 1;
-    DCInvalidateRange(&sMailbox->request, sizeof(sMailbox->request));
+    invalidateBackend(&sMailbox->request, sizeof(sMailbox->request));
     sSequence = sMailbox->request.seq;
     // A reinjected mod must retire any preceding client's worker before reuse.
     if (!sSharedBackend && sSequence != sMailbox->response.ackSeq)
@@ -198,13 +216,16 @@ void init() {
 }
 
 void update() {
+#if IS_EMULATOR && TIMEWARP_LIVE_RACING
+    DolphinArchive::update();
+#endif
     if (!transferReady()) return;
     finishTransfer();
     if (!sPending.command) return;
     submitTransfer();
-    DCInvalidateRange(&sMailbox->response, sizeof(sMailbox->response));
+    invalidateBackend(&sMailbox->response, sizeof(sMailbox->response));
     if (sMailbox->response.ackSeq != sPending.seq) return;
-    DCInvalidateRange(&sMailbox->receipt, sizeof(sMailbox->receipt));
+    invalidateBackend(&sMailbox->receipt, sizeof(sMailbox->receipt));
     const SusamuneStateReceipt &r = sMailbox->receipt;
     if (r.seq != sPending.seq || r.session != sPending.session ||
         r.command != sPending.command || r.id != sPending.id) return;
@@ -225,8 +246,8 @@ void update() {
     const bool payload = window || sPending.command == SUSAMUNE_STATE_CMD_IMPORT || sPending.command == SUSAMUNE_STATE_CMD_EXPORT;
     if (sResult.status == SUSAMUNE_STATE_OK &&
         (payload || sPending.command == SUSAMUNE_STATE_CMD_RENAME || sPending.command == SUSAMUNE_STATE_CMD_DELETE)) {
-        DCInvalidateRange(&sMailbox->header, sizeof(sMailbox->header));
-        DCInvalidateRange(sMailbox->resultName, sizeof(sMailbox->resultName));
+        invalidateBackend(&sMailbox->header, sizeof(sMailbox->header));
+        invalidateBackend(sMailbox->resultName, sizeof(sMailbox->resultName));
         const SusamuneStateArchiveHeader &h = sMailbox->header;
         if (!headerValid(&h) || (sTapeTransfer && !SusamuneTasTapeHeaderValid(&h)) || h.headerCrc != r.headerCrc ||
             h.metadataSize != r.metadataSize || h.packedSize != r.packedSize ||
@@ -240,7 +261,7 @@ void update() {
             sResult.status = SUSAMUNE_STATE_BAD_FILE;
         } else {
             if (payload) {
-                DCInvalidateRange(sMailbox->metadata, h.metadataSize);
+                invalidateBackend(sMailbox->metadata, h.metadataSize);
                 if (SusamuneStateCrc(sMailbox->metadata, h.metadataSize) != h.metadataCrc)
                     sResult.status = SUSAMUNE_STATE_BAD_FILE;
                 else sResult.metadata = sMailbox->metadata;
@@ -249,7 +270,7 @@ void update() {
                 sResult.header = h;
                 memcpy(sResult.name, sMailbox->resultName, sizeof(sResult.name));
                 if (window) {
-                    DCInvalidateRange(&sMailbox->window, sizeof(sMailbox->window));
+                    invalidateBackend(&sMailbox->window, sizeof(sMailbox->window));
                     sResult.window = sMailbox->window;
                     const u32 size = sPending.reserved & SUSAMUNE_STATE_WINDOW_SIZE_MASK;
                     bool valid = sResult.window.offset == sPending.poolOffset &&
@@ -263,7 +284,7 @@ void update() {
                sPending.command == SUSAMUNE_STATE_CMD_TAS_COMMIT ||
                sPending.command == SUSAMUNE_STATE_CMD_TAS_RENAME) {
         if (sResult.status == SUSAMUNE_STATE_OK) {
-            DCInvalidateRange(&sMailbox->tasProject, sizeof(sMailbox->tasProject));
+            invalidateBackend(&sMailbox->tasProject, sizeof(sMailbox->tasProject));
             const SusamuneTasManifest &project = sMailbox->tasProject;
             if (!projectValid(&project) || project.projectId != sPending.id ||
                 project.projectId != sResult.id || project.checksum != r.headerCrc ||
@@ -283,7 +304,7 @@ void update() {
                sPending.command == SUSAMUNE_STATE_CMD_TAS_CATALOG) {
         sCatalogReady = false;
         if (sResult.status == SUSAMUNE_STATE_OK) {
-            DCInvalidateRange(&sMailbox->catalog, sizeof(sMailbox->catalog));
+            invalidateBackend(&sMailbox->catalog, sizeof(sMailbox->catalog));
             const SusamuneStateCatalog &c = sMailbox->catalog;
             bool valid = c.count <= SUSAMUNE_STATE_CATALOG_COUNT && c.afterId == sPending.id && c.more <= 1;
             u32 prior = c.afterId;

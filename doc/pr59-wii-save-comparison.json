@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-01",
+  "source": "User timing of PR59 save comparison on Wii",
+  "endpoint": "First frozen game frame to first moving game frame",
+  "three_plaza_states_seconds": {
+    "off": [
+      0.4,
+      0.4,
+      0.4
+    ],
+    "extra_500_KiB": [
+      0.434,
+      0.467,
+      0.4
+    ]
+  },
+  "bianco5_noki1_pinna3_seconds": {
+    "off": [
+      0.433,
+      0.467,
+      2.135
+    ],
+    "extra_500_KiB": [
+      0.433,
+      0.467,
+      2.135
+    ]
+  },
+  "correction": "User confirmed final Off value is2.135s, not0.2135s",
+  "decision": "Extra save cache fails >=2game-frame threshold. Assign500KiB to loading/cache afteroldbankretirement.",
+  "extra_game_cache_target_bytes": 2084864,
+  "launcher_dpad": "Still missed presses on direct Wii GameCubeport. Ordered edge queue added afterward;14hosttests pass, hardwarecheckpending."
+}

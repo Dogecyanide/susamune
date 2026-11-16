@@ -1,0 +1,179 @@
+Ghost recording capacity audit â€” 2026-10-28
+
+Recommendation
+
+Keep one new recording format and target the existing ten-minute duration.
+Do not expose a Simple/Precise duration selector. Retain readers for old ghosts.
+The strongest physical lead is 1,966,080 bytes in upper Wii MEM2, but this audit
+has granted ZERO bytes. Combine a verified claim with lossless, independently
+seekable input blocks and separate frame-rate visual observations from QF-rate
+steering. Do not reduce the savestate pool or disc cache to advertise success.
+
+The upper-MEM2 lead
+
+Candidate: PPC 0x93400000..0x935E0000 (1.875 MiB).
+The current PR47 loader map still fixes libogc Arena2Hi at 0x933E0000 and its
+IPC window at 0x933E0000..0x93400000. Ordinary loader malloc excludes MEM2;
+USB storage's 18 KiB allocation goes below that arena ceiling.
+Dolphin's retail-derived IOS58 table places the application arena end at
+0x935E0000, IPC at 0x935E0000..0x93600000, and the reserved IOS interval above it.
+This supports the candidate; it is not a measurement of this Wii's running IOS.
+
+Sources checked:
+https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/VersionInfo.cpp
+https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/IOS/VersionInfo.h
+https://github.com/devkitPro/libogc/blob/v1.8.23/libogc/system.c
+Local: launcher/loader/source/Patches.c, global.c, usbstorage.c; current loader.map.
+
+The loader reloads a patched IOS58. Cached libogc limits are not refreshed by
+AfterIOSReload's IPC reset. The read-only probe therefore captures uncached
+low-memory boundary words before reload, after reload and before game handoff,
+as well as the cached libogc arena/IPC bounds, IOS revision and Wii/vWii/VC flags.
+It reads neither the candidate range nor private user data, writes no memory
+into that range and grants no capability. A successful boot alone is not proof.
+
+Before claiming the bank: verify fresh boundary values, supported IOS/platform,
+all fixed Nintendont owners and IOS allocator/module ownership; define both CPU
+aliases and cache ownership; publish a versioned capability only after existing
+owners retire; handle warm reset and return-to-loader. Initially do not assume
+vWii/VC shares the same safe map. Dolphin needs its corresponding supported
+emulated window, not an arbitrary real-Wii address. Unknown layouts fail closed.
+The standalone Dolphin fake-MEM2 aperture has a different ownership map, so a
+Dolphin-only memory test cannot certify the Wii address.
+
+Accounting: two simultaneously live tracks
+
+Existing input payloads: 864,000 bytes each; 1,728,000 total.
+The file-size limit (~1.3 MB) is not a spare RAM allocation. Pose/camera/context,
+model heaps, metadata and transfer storage have their own owners. Recording
+while racing needs both tracks; Watch 2 already reuses the recording bank.
+
+For a conservative 71,929 QF observations (both duration endpoints):
+- Full 24-byte row every QF: 1,726,296 bytes per track.
+- Extra for TWO tracks: 1,724,592 bytes (about 1.645 MiB).
+- Candidate remaining: 241,488 bytes (235.8 KiB), before new bookkeeping.
+- Independent 64-row blocks with raw fallback and four-byte index entries bound
+  each track to 1,737,540 bytes, leaving 219,000 bytes across both tracks.
+These numbers include neither a new full game snapshot nor full action history.
+
+A deliberately conservative factored sketch uses 16 bytes per movement tick
+(3-byte time, 10 lossless valid-pad bytes, exact signed camera yaw, mode/validity)
+and 12 bytes per visual frame (time/type plus the existing 8 visual bytes).
+Error/flags are zero for accepted new inputs; missing/invalid observations must
+be explicit, never silently repeated. This is a size model, not an implemented
+wire format or a claim that all processing semantics are captured.
+
+At 17,983 visual frames:
+- QF inputs/camera plus frame visuals: 1,366,660 bytes per track.
+- Plus action u32, forward speed f32, vertical speed f32 each frame: 1,582,456.
+- Plus a four-byte floor identity per frame: 1,654,388.
+If the candidate is split evenly, each input track has 1,847,040 bytes. The last
+sketch leaves about 188 KiB per track before indexing/context changes.
+
+Do not quietly replace the current 36,000-input bound with 17,983. At 36,000
+visual frames the factored base is 1,582,864 bytes; adding the 12-byte action/speed
+record makes 2,014,864, exceeding the proposed per-track capacity. PAL cadence,
+fast-forward, slowdown, practice stepping, timer gaps and restore boundaries
+need actual movement-count accounting. Compress or separately bound optional
+telemetry; do not promise every sample/cadence on an average compression ratio.
+Raw PAD samples and Mario's processed controls are distinct. checkController()
+also uses per-tick semantic edges, camera, sink/dizzy state and other game state.
+Keeping raw values does not alone guarantee a deterministic reconstruction.
+
+Measured lossless opportunity
+
+scripts/audit_ghost_capacity.py is a host-only 64-row byte-delta experiment.
+Every block restarts its predictor, has a bounded raw fallback, and has a seek
+index. It round-trips every byte; no analogue precision is reduced. It does
+not modify game files, enable recording, or measure PPC execution time.
+
+Existing input sections, including block/index overhead:
+- Ricco 4 (43.343): 28,416 -> 6,850 bytes; 75.89% saving.
+- Pianta 6 sample: 48,120 -> 18,259 bytes; 62.06% saving.
+- Noki 8 sample: 28,528 -> 7,153 bytes; 74.93% saving.
+- Private V10 fixture: 3,312 -> 1,124 bytes; 66.06% saving.
+28 zero/random boundary and full-length round-trips also passed, including the
+worst-case raw fallback. Input hashes and measured capacities are recorded in
+build/pr48-memory-audit/capacity.json. Existing frame streams are not evidence
+that future per-QF/action data compresses by the same percentage. To save RAM,
+blocks must stay packed in memory and playback must decode a bounded block;
+compressing only exported files would not solve the runtime budget.
+
+Other physical candidates
+
+The current ARM map has only 5,688 bytes before the fixed data section and zero
+data/BSS slack. The linked thread stacks end at 0x12FE4400, leaving 48,128 bytes
+inside the reserved stack aperture, conditional on explicit linker ownership
+and boot/reset retirement. The earlier much larger kernel-hole estimate is
+obsolete. Streaming SplitStatsFileScratch and retiring its two boot migration
+copies has a gross 46,344-byte ceiling before replacement workspace/coordination.
+This would require safe request ownership across reset and journal validation.
+
+The 3 MiB ISO cache could be reduced only as a disc-read performance tradeoff;
+RealDI DMA and optional card backing also use that region. It is not free RAM.
+The 448 KiB DI scratch suffix already belongs to the fifth savestate bank.
+The former staging/transfer space already enlarged that pool to 23,461,888
+bytes. The model vault, codec workspace and live ARAM are still occupied.
+PR47's fixed record-bank tail has just 3,936 bytes before the segment table;
+its new context gaps are already occupied. None is a second megabyte saving.
+
+End-to-end work beyond the bank
+
+A naive larger file can reach 2,160,232 bytes (about 2.06 MiB); the current
+shared transfer window is 1,302,528. Growing it in place would steal savestate
+capacity. Introduce bounded/chunked import/export with existing lease safety,
+complete validation and failure preservation. Update the canonical format,
+ARM/PC/Dolphin validators, savestate prefix handling, seek/scrub readers, and
+the website contract together. Current public service support stops at V9;
+PR47 V10 remains opt-in. One user-facing format does not remove old-file readers.
+
+Best additional observations after exact per-QF steering: action state and
+forward/vertical speed, explicit source frame/tick counts and suppression flags,
+then a stable floor/object identity for diagnosing desyncs. Exact ghost takeover
+also needs velocity components, timers and action-specific/world state; those
+12 bytes alone do not make arbitrary takeovers exact. Portable whole-scene
+start states are a separate, substantially larger feature.
+
+Launcher changes accompanying this audit
+
+JP revision 1 now stops before mod staging/game launch with:
+  This is JP Version 1.1.
+  It is not compatible with Moonshine.
+  Please use JP Version 1.0.
+The selected disc's actual header supplies the revision for disc/ISO, CISO,
+extracted and multi-game paths. The warning supports multiple centered lines.
+JP 1.0 and the US/PAL checks are unaffected by this specific restriction.
+
+MOONSHINE_MEM2_DIAGNOSTICS defaults OFF. When ON, the launcher saves a bounded
+Moonshine data/mem2_probe_XX.log before handoff; up to 100 unique reports preserve
+older evidence. A failed report does not abort boot. Normal builds compile the
+probe out. Both launcher variants build; existing startup/path checks pass and
+36 mocked selected-header checks cover JP/US/PAL plus truncated read failures.
+No new physical memory is used by ghosts, no SD install was performed, and this
+is not a completed per-QF recorder.
+
+Hardware follow-up — PAL on the user's Wii, 2026-10-28
+
+The exact built memory-probe launcher (SHA-256
+4041e4718de27cd987e38d2b40acfada0638b1ad9050eaf30f31e3f9cd8b8522)
+produced a complete 1,039-byte report. IOS58 revision 6176 (0x003A1820),
+Wii (not vWii/VC), reports 64 MiB physical/simulated MEM2. After IOS reload
+and again immediately before game handoff, uncached application Arena2Hi is
+0x935E0000; IOS IPC is 0x935E0000..0x93600000; IOS's reserved interval is
+0x93600000..0x93620000. Libogc retains 0x933E0000 as its arena ceiling and
+0x933E0000..0x93400000 as IPC. All post-reload fields remain identical through
+handoff. This confirms the proposed 1,966,080-byte boundary gap on this Wii.
+The pre-reload zeroed boundary words agree with the loader's RAMInit path.
+PAL selection does not alter this pre-game memory map; JP/US reboots are not
+needed for this boundary measurement.
+
+The report and machine-checked receipt are preserved under
+build/pr48-memory-audit/hardware/pal-wii-20261028/. A fresh address/call-site
+scan found no active fixed launcher/kernel owner inside the candidate; the
+nearby dolPatchBuf at 0x133F1000 has no consumer beyond its declaration.
+Kernel allocations still use IOS heap 0. The IOS application boundary is
+positive ownership evidence, but this report is not a write/stress/reset test
+or proof for other IOS/platform combinations. No ghost capacity, savestate
+capacity, shared ABI or memory grant was changed by processing this report.
+A capability-gated extension must retain the boundary evidence before game
+code overwrites low memory and define its boot/reset/exit lifetime explicitly.

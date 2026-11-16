@@ -1,0 +1,58 @@
+PR42 Online security review - 26 October 2026
+
+Scope
+Source review of the Wii/PowerPC race wire codec, session handshake and reliable
+controls, group authority checks, and Wii Delfino Ghosts HTTPS/account uploads.
+Existing host-side regression checks exercise production parsing/state logic.
+This is not a penetration test, server audit, or proof that all bugs are absent.
+
+Verified controls
+- Race packets are bounded, versioned and checked for exact payload lengths.
+  Pose fields, animation/frame values, FLUDD observations, participant indices
+  and reserved bytes are validated before presentation callbacks.
+- Sessions bind endpoint, region, participant role and session identifiers.
+  The join handshake checks a challenge response and the configured peer.
+  Pose sequences reject stale movement; reliable controls check sequence,
+  payload and matching acknowledgements before replaying or committing.
+- Group setup comes from the host. A guest's colour update is checked against
+  its own slot. These are authority checks after session admission.
+- Ghost-service TLS uses certificate-chain and hostname validation with fixed
+  trusted roots, TLS 1.2 ECDHE/AES-GCM and explicit clock bounds. Entropy comes
+  from IOS58 IOSC_GenerateRand; failure does not fall back to the gameplay RNG.
+- Ghost-service paths use the configured origin, bounded HTTP/JSON parsing and
+  explicit result codes. Upload hashes cover exact canonical ghost bytes.
+  PR42 validates local ASCII/kana descriptions and converts kana to UTF-8 before
+  JSON transmission; quotes/backslashes remain escaped and buffers bounded.
+- Saved account credentials remain in the user-approved SD file and are not
+  packaged. Rotating refresh-token handling clears stale credentials on failure.
+
+Important remaining limits
+1. Race UDP is not cryptographically authenticated or encrypted. Room codes
+   encode an address and a small admission secret; their masking/checksum is
+   not encryption or a MAC. Endpoint and session checks prevent many accidental
+   cross-room/stale packets, but must not be advertised as protection against
+   an on-path attacker or a malicious admitted peer. Timing-derived session
+   nonces do not remedy this. A future protocol revision should use a standard
+   authenticated key exchange, directional keys and authenticated sequence
+   numbers, with bounded replay windows and no custom crypto construction.
+2. Finish times and gameplay are peer-reported. Host authority does not provide
+   anti-cheat or independently verify that a race was completed legitimately.
+3. Direct peer networking reveals participant endpoints to peers. A relay would
+   be required for an address-hiding mode; there is no such guarantee today.
+4. The SD account-token file is not encrypted. Anyone possessing it may use the
+   linked account until revoked. This is the explicitly approved storage design.
+5. Native Dolphin networking currently lacks the website TLS/storage services.
+   The Wii TLS review must not be treated as evidence for those future drivers.
+
+Recommended release work
+Prioritize protocol authentication and malformed/reordered packet fuzzing, then
+repeat multiplayer reconnect/host-kick/draft/forfeit tests on hardware. Maintain
+fixed payload limits and single-writer mailbox ownership. Do not weaken TLS
+validation or reuse game RNG to make connection failures disappear.
+
+Relevant implementation
+include/susamune/live_race_wire.h
+src/live_race_session.cpp; src/live_group.cpp; src/live_race.cpp
+launcher/kernel/GhostServiceTls.c; GhostServiceNative.c; syscalls.s
+launcher/kernel/GhostServiceJson.c; GhostServiceAccount.c
+include/susamune/ghost_service.h; kana_text.h

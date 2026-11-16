@@ -406,6 +406,16 @@ API unsigned roundtripAllRgb(){
         self.lib.resetOptionAt(11)
         self.assertEqual(bytes(self.rgb), bytes([255] * 27))
 
+    def test_native_preset_keeps_a_separate_visible_span_marker(self):
+        self.begin([(11, 22, 33)] * 15, modes=1)
+        self.lib.enableGradient(1, 15)
+        self.lib.options(0, 0)
+        for _ in range(3): self.lib.adjust(11, 1, 0)
+        self.assertEqual(self.lib.getOptions(), 0x40)
+        self.assertEqual(self.lib.mode(), 0)  # Preset does not flatten the native outline.
+        self.lib.resetOptionAt(11)
+        self.assertEqual(self.lib.getOptions(), 0)
+
     def test_native_timer_gradient_maps_digit_groups_and_keeps_image_background(self):
         self.begin([(11, 22, 33)] * 15, modes=1)
         original = bytes(self.rgb)

@@ -1,8 +1,10 @@
+#include "kana_text.h"
 #ifndef SUSAMUNE_STATE_STORAGE_H
 #define SUSAMUNE_STATE_STORAGE_H
 
 #include "susamune/mem2_map.h"
 #include "susamune/tas_storage.h"
+#include "susamune/ghost_state_reference.h"
 
 #define SUSAMUNE_STATE_STORAGE_MAGIC 0x4D535354u
 #define SUSAMUNE_STATE_STORAGE_VERSION 7u
@@ -159,23 +161,22 @@ static inline unsigned int SusamuneStateNameCrc(const struct SusamuneStateNameRe
     return ~SusamuneStateCrcUpdate(crc, p + 52, sizeof(*r) - 52);
 }
 SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateNameValid(const char *name) {
-    unsigned int i;
-    if (!name) return 0;
-    for (i = 0; i < SUSAMUNE_STATE_NAME_BYTES; ++i) {
-        if (!name[i]) return 1;
-        if ((unsigned char)name[i] < 32 || (unsigned char)name[i] > 126) return 0;
-    }
-    return 0;
+    return MoonshineKanaValid(name, SUSAMUNE_STATE_NAME_BYTES);
 }
 SUSAMUNE_STATE_SHARED_INLINE int SusamuneStateGameValid(unsigned int id) {
     return id == 0x474D534Au || id == 0x474D5345u || id == 0x474D5350u;
+}
+static inline int SusamuneStateReferenceHeaderValid(const struct SusamuneStateArchiveHeader*h) {
+    if(!h->reserved[0])return !h->reserved[1];
+    return h->reserved[0]==MS_STATE_TRACE_REFERENCE_MAGIC&&h->metadataSize>=MS_STATE_TRACE_REFERENCE_BYTES&&
+        !(h->reserved[1]&3u)&&h->reserved[1]<=h->metadataSize-MS_STATE_TRACE_REFERENCE_BYTES;
 }
 static inline int SusamuneStateHeaderValidCapacity(const struct SusamuneStateArchiveHeader *h, unsigned int capacity) {
     if (h->magic != SUSAMUNE_STATE_ARCHIVE_MAGIC || h->version != SUSAMUNE_STATE_ARCHIVE_VERSION ||
         h->headerSize != sizeof(*h) || !h->metadataSize || h->metadataSize > SUSAMUNE_STATE_METADATA_SIZE ||
         !h->packedSize || h->packedSize > capacity ||
         !h->rawSize || h->rawSize > 0x02000000u || !SusamuneStateGameValid(h->gameId) ||
-        !h->buildCrc || !h->snapshotVersion || !h->configId || h->reserved[0] || h->reserved[1] ||
+        !h->buildCrc || !h->snapshotVersion || !h->configId || !SusamuneStateReferenceHeaderValid(h) ||
         h->headerCrc != SusamuneStateHeaderCrc(h)) return 0;
     return SusamuneStateNameValid(h->name);
 }

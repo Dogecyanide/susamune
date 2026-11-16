@@ -1,0 +1,35 @@
+PR47 memory and validation notes
+
+No overall MEM1/MEM2 reservation or ghost/savestate capacity increased.
+13,316 bytes of BSS moved into a bounded, fixed physical record-bank tail:
+collision primary bits8448; live room1656; three live presentation states1956;
+recorded-camera scalar backup312; playlist252; group text80; three track metadata
+objects612. GPU models, textures and vertex data did not move. Explicit boot
+initialization replaces BSS zeroing. Logical record/playback swaps do not move
+these physical owners. Shared map bounds stop before the existing segment table.
+Some recovered MEM1 now holds formerly raw cold code so the boot transport can
+compress it. This is gross reclamation, not the final amount left unused.
+
+The detailed-input repack uses 17-bit relative QF, exact signed camera yaw and
+7-bit mode, retaining every controller value and visual byte in24 bytes. Normal
+V10 duration limits are unchanged. Full naive per-QF streams would require about
+1.73 MB/track for10 minutes; current input banks are864000 bytes each. No such
+per-QF recorder is enabled in this build.
+
+Final JP: console651264-byte container (existing ceiling),584 MEM1 bytes free;
+Dolphin647616-byte container,891 MEM1 bytes free. JP remains tight after features.
+All96 protected timer symbols and original timing source pass for every region.
+187 focused ghost/menu/storage/ownership tests plus43 gradient/editor tests pass.
+Private standard Dolphin proves the pre-setup seed against an independent witness,
+stage pause clocks, V9/V10 capture/export/import, retained context after RAM load,
+native file save/reopen/Watch, export-destination navigation and the3DP Rainbow
+preset with unchanged native colour mode. Real Wii and4P acceptance are pending.
+
+Native timer preset span: in-memory marker0x40 is outside editable stop counts;
+wire/INI stop value6 represents that marker. Custom-word animation encoding is
+unchanged. Choosing explicit stops/reset restores ordinary count semantics.
+
+432695937127 bytes in260 approved obsolete images/logs were deleted. Source,
+final archives, screenshots, user data and the protected old PR47 test image
+were retained. Owned new test runs remove their verified disc copy on shutdown;
+new test profiles disable verbose file logging and completed logs are bounded.

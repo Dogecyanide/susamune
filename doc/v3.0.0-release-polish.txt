@@ -1,0 +1,82 @@
+Moonshine 3.0.0 - release polish
+Updated: 25 October 2026
+Target release: 5 November 2026 (target, not an acceptance result)
+Baseline: Prototype 41 implementation; hardware acceptance pending
+
+Purpose
+The core Wii feature set is present. This list records the user's additional
+polish scope and the remaining release checks. Items below are planned unless
+explicitly marked as confirmed; this document does not claim implementation.
+Standard Dolphin without a companion remains a separate unfinished feature.
+
+Requested polish
+[ ] More granular guidebook styling: independently editable trims, section
+    colours and text colours. Keep the original guidebook preset, make the
+    edited target obvious, and retain consistent previews/keep/cancel/reset.
+    Share the style system across the main menu and its smaller editors.
+[implemented; validate] Metadata: movement direction, speed gain/loss, height
+    above floor, action, slope angle, floor type, FLUDD water and hover time,
+    grouped into submenus. Jump height and airtime are excluded.
+[ ] Human and agent maintainability across the ENTIRE project. Update stale
+    architecture/status documentation, clarify owners and lifetimes, and
+    extract coherent responsibilities where it makes changes easier to review.
+    Preserve behaviour with focused checks; avoid a broad release-time rewrite.
+[ ] Online security review: packet lengths and values, peer/session identity,
+    host-only actions, replay/stale-generation handling, bounded work under
+    bad input, remote names/colours and ghost-file validation. Review website
+    account-token handling, TLS checks and diagnostic-log privacy as well.
+    Record actual findings and fixes; do not call the system secure merely
+    because ordinary connection tests pass.
+[ ] General code review across gameplay hooks/input ownership, stage and
+    savestate lifetimes, rendering, storage, UI, launcher and release tools.
+    Prioritize reproducible correctness problems and release blockers.
+[ ] Improve confusing menus using the established Creation editor approach:
+    group related actions, make the current item and available actions clear,
+    keep navigation consistent, and remove redundant paths where useful.
+[ ] Start custom launcher music during startup instead of waiting for all
+    initialization to finish. Handle IOS/audio restart and decoder shutdown
+    explicitly, including absent/bad themes, boot errors and autoboot.
+[ ] Let the host change online mode/setup after players connect and before
+    the first race, without making everyone complete Bianco 1 best-of-three.
+    Changes must reach every peer, invalidate previous Ready/start state and
+    use the new setup consistently. Guests cannot change the host's setup;
+    an in-flight race must not be replaced accidentally. Cover 2/3/4 players.
+[ ] System tab Pianta head: left -> centre -> right -> centre, repeating,
+    using the established held-pose animation style.
+[ ] General visual and interaction polish from tester feedback.
+
+PR41 implementation (hardware acceptance pending)
+Menu role colours, dark-green/gold selection, directional Pianta poses, early
+music and connected first-round setup switching are implemented. See
+pr41-testing.txt for review paths and pr41-display-maintenance.txt for ownership.
+
+Outstanding release validation
+[ ] Four-player hardware sessions: visibility, smoothing, draft, ready/start,
+    results/forfeit, brief loss/reconnect, kicking and area changes.
+[ ] PR40 hardware checks: separate Mario palettes, reconnect preservation,
+    Ready in the draft screen, B/L/R edges and upload descriptions.
+[ ] Japanese runner review and fixes. A matching English Dolphin review
+    package is already available; this does not establish Dolphin parity.
+[ ] Revisit the previously reported Search crashes and Stageloader transition
+    failures until resolved or explicitly assessed as release blockers.
+[ ] Final English/Japanese packages, clean-install/update checks, private-data
+    exclusion, source receipts and SD package readback.
+
+Dolphin scope still outstanding
+Native BBA UDP is demonstrated. Real Wii crossplay/reconnect, general persistent
+file storage, native website HTTPS features, Japanese export acceptance and
+Linux/macOS acceptance remain unfinished. This is the largest schedule unknown;
+keep its acceptance separate from successful Wii tests and offline menu review.
+
+Suggested schedule
+25-29 October: first concrete QoL fixes, theme controls, security/correctness
+review and focused maintainability changes alongside Dolphin work.
+30 October-1 November: finish selected polish, integrate JP review and run the
+remaining online hardware sessions. Validate the chosen metadata fields.
+2 November: intended feature cutoff; reassess release scope using actual results.
+2-4 November: regression fixes and release-candidate testing/packaging.
+5 November: release if the acceptance checks pass. Do not exchange unresolved
+crashes, unsafe persistence or broken online starts for meeting the date.
+
+The dates are a proposed work order, not a scheduled automation. Memory
+reservations, protected timing code and existing user data remain constraints.

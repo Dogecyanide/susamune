@@ -70,9 +70,10 @@ def _validate_canonical_ghost(
                            ghost_format.GHOST_VERSION_V5,
                            ghost_format.GHOST_VERSION_V6,
                            ghost_format.GHOST_VERSION_V7,
-                           ghost_format.GHOST_VERSION_V8, ghost_format.GHOST_VERSION_V9):
+                           ghost_format.GHOST_VERSION_V8, ghost_format.GHOST_VERSION_V9,
+                           ghost_format.GHOST_VERSION_V10):
             raise UnsupportedStorage(
-                f"unsupported ghost version {version}; storage supports 3 through 9"
+                f"unsupported ghost version {version}; storage supports 3 through 10"
             )
     try:
         if running_region is None:

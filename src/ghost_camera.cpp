@@ -1,3 +1,6 @@
+#include "susamune/replay_camera.hxx"
+#include "Dolphin/GX.h"
+#include "susamune/mem2_map.h"
 #include "susamune/ghost_camera.hxx"
 #include "susamune/ghost.hxx"
 #include "susamune/addresses.hxx"
@@ -25,7 +28,8 @@ const void *sHeap;
 u32 sGeneration, sOwnerGeneration, sRenderedGeneration;
 TVec3f sPosition, sTarget, sUp;
 f32 sFovy;
-u8 sRenderSaved[0x138];
+u8 (&sRenderSaved)[0x138] = *reinterpret_cast<u8 (*)[0x138]>(SUSAMUNE_GHOST_CAMERA_BACKUP_PPC_BASE);
+static_assert(sizeof(sRenderSaved) <= SUSAMUNE_GHOST_CAMERA_BACKUP_SIZE, "camera scalar backup");
 View sRendered;
 bool sRenderedValid;
 Mtx sDrawView;
@@ -143,21 +147,33 @@ bool captureView(View *out) {
     return true;
 }
 
-extern "C" void susamuneGhostCameraPerform(CPolarSubCamera *camera, u32 cue,
-                                          JDrama::TGraphics *graphics) {
+__attribute__((noinline)) void performCamera(CPolarSubCamera *camera, u32 cue,
+                                             JDrama::TGraphics *graphics) {
     if (cue & 3u) restore();
     View view;
-    const bool recorded = camera == gpCamera && (cue & 0x14u) && ready() &&
+    const bool viewer = camera == gpCamera && (cue & 0x14u) && ready() && ReplayCamera::view(view);
+    const bool recorded = viewer || (camera == gpCamera && (cue & 0x14u) && ready() &&
         !ModelEditorPreview::wanted() &&
-        gSettings.get(SETTING_GHOST_CAMERA) == 1 && Ghost::recordedCameraView(&view);
+        gSettings.get(SETTING_GHOST_CAMERA) == 1 && Ghost::recordedCameraView(&view));
     if (recorded) {
         if (cue & ~0x14u) ModelEditorPreview::perform(camera, cue & ~0x14u, graphics);
+        if (viewer) {
+            GXDrawDone();
+            restore();
+            reinterpret_cast<void (*)(CPolarSubCamera *, u32, JDrama::TGraphics *)>(kCameraPerform)(
+                camera, cue & 0x14u, graphics);
+            ReplayCamera::saveGraphics(graphics);
+        }
         apply(camera, view);
         // Recorded Watch owns draw only; Free continues through the existing hook.
         reinterpret_cast<void (*)(CPolarSubCamera *, u32, JDrama::TGraphics *)>(kCameraPerform)(
             camera, cue & 0x14u, graphics);
     } else ModelEditorPreview::perform(camera, cue, graphics);
     if (camera == gpCamera && (cue & 0x14u) && ready()) readRendered(camera);
+}
+
+extern "C" void susamuneGhostCameraPerform(CPolarSubCamera *camera, u32 cue, JDrama::TGraphics *graphics) {
+    performCamera(camera,cue,graphics);
 }
 
 void init() {

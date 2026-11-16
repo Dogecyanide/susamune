@@ -146,6 +146,14 @@ bool forcesPeteyRoute(TSpineEnemy *enemy) {
 
 namespace PatternSelector {
 
+void copyPatterns(unsigned char out[3]) {
+    for (unsigned i = 0; i < 3; ++i) out[i] = sPattern[i];
+}
+
+void setPatternsTransient(const unsigned char values[3]) {
+    for (unsigned i = 0; i < 3; ++i) sPattern[i] = values[i];
+}
+
 void update(bool allowInput) {
     const u16 held = JUTGamePad::mPadStatus[0].mButton;
     const u16 pressed = (u16)(held & ~sPreviousButtons);

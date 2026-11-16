@@ -1,8 +1,39 @@
 # Ghost file format
 
-Status: new recordings use V9. V3–V8 remain readable with their original byte
+Status: normal recordings use V9. The session-only Extra replay data option
+selects V10 for new attempts. V3–V9 remain readable with their original byte
 semantics and bounds; V1/V2 test ghosts remain unsupported. Legacy recordings
 keep their original metadata semantics when exported.
+
+
+## V10 optional replay context
+
+V10 is opt-in until Delfino Ghosts accepts it; keep Extra replay data off for
+ordinary website uploads. It preserves the 24-byte input stride, the recording
+limits and every older format's semantics. See `pr47-ghost-viewer-handoff.txt`
+for the complete shared/host validator contract and capture phase.
+
+SGTI v4 packs timestamps relative to the file's start QF into 17 bits. The freed
+bits and previously zero controller flag byte hold exact signed gameplay camera
+yaw and camera mode, observed on the last eligible Mario movement tick of the
+input frame. All original controller values and the eight visual bytes remain
+lossless; reconstructed controller flags must be zero. This is not a record of
+every subframe camera value.
+
+SGCX v1 follows the counted SGCA section. Up to 169 96-byte records carry actual
+capture QF, input position, source-frame sequence, stage movement/director ticks,
+pre-resource-setup RNG, settings snapshots and observation/annotation flags.
+Settings changes, input gaps, restores and synthetic endpoints are explicit.
+The first-pose V9 seed stays unchanged in the first segment's old metadata words.
+A restore invalidates the live stage-load seed until another genuine stage setup;
+restored context prefixes are retained and marked assisted/savestate-used.
+
+Context uses a bounded 16,256-byte suffix in each logical pose bank, followed by
+an eight-byte private tracker. Both fit before the existing model-heap boundary;
+legacy V3–V5 poses can occupy this area, so context access is V10-only. No recording
+or savestate reservation grows. Exhausted context space is marked truncated;
+space for later segment-start observations is reserved. Synthetic endpoint rows
+are annotations with unknown stage/camera observations, not backdated readings.
 
 ## V9 initial RNG observation
 
@@ -97,7 +128,7 @@ after `sampleDataOffset + sampleDataSize`, it appends a big-endian `SGTI` sectio
 | 4 | 2 | Section version 1 |
 | 6 | 2 | Header size 32 |
 | 8 | 4 | Input count, 0–54,000 |
-| 12 | 4 | Split count, 0–6 |
+| 12 | 4 | Split count, 0–8 |
 | 16 | 4 | Flags: bit 0 means input capacity was reached |
 | 20 | 4 | CRC-32 of input and split records |
 | 24 | 8 | Reserved, zero |
@@ -124,8 +155,8 @@ ghost comparison values. Automatic last-attempt and last-success ghosts use
 the same checkpoint comparison as a selected library target.
 
 The main payload/file checksums also cover the complete appended section.
-Maximum V5 size is 1,297,992 bytes: 433,888 bytes of V4 data, 32 bytes of section
-header, 864,000 bytes of inputs and 72 bytes of splits. Parsing validates all
+Maximum V5 size is 1,298,016 bytes: 433,888 bytes of V4 data, 32 bytes of section
+header, 864,000 bytes of inputs and 96 bytes of splits. Parsing validates all
 counts, bounds and checksums before installing runtime data. The ARM validator
 processes at most 16 KiB per service pass and never splits a record across passes.
 
@@ -497,7 +528,7 @@ Personal libraries remain separated by `(running game region, PB profile)`.
 The former 45-personal, 12-imported and ten-hour aggregate limits are removed.
 Libraries grow with available filesystem space. The individual 15-minute
 recording and format bounds remain unchanged. A maximum V5 canonical ghost
-occupies 1,297,992 bytes before its 64-byte personal envelope and filesystem
+occupies 1,298,016 bytes before its 64-byte personal envelope and filesystem
 allocation overhead; imports and share copies contain only canonical bytes.
 
 The kernel retains one working A/B slot and one 16-entry catalog page. The

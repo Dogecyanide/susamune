@@ -1,0 +1,27 @@
+PR40 follow-up
+
+Standard Dolphin without a companion has a working direct-network milestone:
+the game uses the stock Broadband Adapter (HLE), with DHCP, ARP and UDP.
+Actual development tests reached STUN and exchanged UDP in both directions
+without a companion. This is not full feature parity or a verified Wii
+crossplay release. The Wii packages are the test deliverable for this PR.
+
+Still required for Dolphin parity:
+- Real Wii/Dolphin crossplay and reconnect testing using the native transport.
+- A release export/profile path that selects BBA HLE and includes Japanese
+  assets safely. The diagnostic font injection is not disc-export validation.
+- Native persistent ghost, named-state and TAS file storage. Existing Slot B
+  settings/records/layout persistence is not a general file backend.
+- TCP/TLS/DNS and Delfino Ghosts browsing, account linking, downloads and
+  uploads. No native HTTPS backend has been completed yet.
+- Linux/macOS validation with standard Dolphin and source-free packaging.
+
+Online colour ownership is documented in doc/online-colours.md. The actual
+JP three-Mario/FLUDD fixture retained 39,468 attachment-heap bytes after the
+third full-size atlas allocation. More expensive attachment combinations
+still need hardware testing; if an atlas cannot fit, that model keeps its
+native palette rather than touching unrelated memory.
+
+User-confirmed PR39 baseline: Wii uploads/downloads/linking work, three-player
+ghosts stay visible and draft works. Four-player hardware acceptance remains
+outstanding. Do not describe simulations as that missing hardware result.

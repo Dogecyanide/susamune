@@ -1,0 +1,10 @@
+PR34 follow-up
+
+Priorities after hardware testing
+- Verify the save-box and PB-prompt branches of independent online Stageloader progression.
+- Gather a current four-player connection log before changing transport again.
+- Dolphin named-code persistence across boots remains a companion/storage follow-up.
+- Keep the earlier offline search-corruption investigation separate unless evidence connects it.
+
+Storage notes
+Named codes fill the existing 224-byte configuration gap at 0x1F20..0x2000; no MEM1/MEM2 reservation grows. The kernel initializes this PPC-owned block before release and reads it only during an ordinary settings save. Older kernels have no contacts magic and fail closed. Each region retains its own creation-section keys. Names are bounded to 15 visible ASCII characters and eight entries. Remembering peers does not change invitation slots or initiate a connection.

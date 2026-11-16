@@ -1,4 +1,5 @@
 #include "susamune/emulator_persistence.hxx"
+#include "susamune/dolphin_files.hxx"
 
 #if IS_EMULATOR
 
@@ -12,12 +13,13 @@
 #include "susamune/addresses.hxx"
 #include "susamune/layout_profile.h"
 #include "susamune/hoverless.h"
+#include "susamune/menu_palette.h"
 
 namespace EmulatorPersistence {
 namespace {
 
 constexpr u32 kRecordMagic = 0x53554346u;  // 'SUCF'
-constexpr u16 kRecordVersion = 14;
+constexpr u16 kRecordVersion = 15;
 constexpr u32 kCfgSizeV6 = 5144;
 constexpr u32 kCfgSizeV7 = 5152;
 constexpr u32 kRecordPayloadSizeV8 = sizeof(SusamuneCfg) + sizeof(SusamuneMarioColorsCfg);
@@ -26,7 +28,8 @@ constexpr u32 kRecordPayloadSizeV10 = kRecordPayloadSizeV9 + sizeof(SusamuneILEp
 constexpr u32 kRecordPayloadSizeV11 = kRecordPayloadSizeV10 + sizeof(SusamunePracticeDisplayStyleCfg);
 constexpr u32 kRecordPayloadSizeV12 = kRecordPayloadSizeV11 + SUSAMUNE_CFG_SETTINGS_TAIL_SIZE;
 constexpr u32 kRecordPayloadSizeV13 = kRecordPayloadSizeV12 + sizeof(SusamuneHoverlessFile);
-constexpr u32 kRecordPayloadSize = kRecordPayloadSizeV13 + sizeof(SusamuneFinishBreakdownCfg);
+constexpr u32 kRecordPayloadSizeV14 = kRecordPayloadSizeV13 + sizeof(SusamuneFinishBreakdownCfg);
+constexpr u32 kRecordPayloadSize = kRecordPayloadSizeV14 + sizeof(MoonshineMenuPalette);
 constexpr u32 kSectorSize = 0x2000;
 constexpr u32 kFileSize = kSectorSize * 2;
 constexpr char kFileName[] = "susamune_settings";
@@ -47,6 +50,7 @@ struct Record {
     u8 settingsTail[SUSAMUNE_CFG_SETTINGS_TAIL_SIZE];
     SusamuneHoverlessFile hoverless;
     SusamuneFinishBreakdownCfg finishBreakdown;
+    MoonshineMenuPalette menuPalette;
     u8 padding[kSectorSize - 32 - kRecordPayloadSize];
 };
 static_assert(sizeof(Record) == kSectorSize, "card record must fill one sector");
@@ -55,6 +59,7 @@ static_assert(__builtin_offsetof(Record, settingsTail) == 32 + kRecordPayloadSiz
               "V12 settings must follow the complete unchanged V11 payload");
 static_assert(__builtin_offsetof(Record, finishBreakdown) == 32 + kRecordPayloadSizeV13,
               "V14 breakdown must follow the complete unchanged V13 payload");
+static_assert(__builtin_offsetof(Record, menuPalette) == 32 + kRecordPayloadSizeV14, "V15 palette must preserve the V14 prefix");
 
 struct RecordV1 {
     u32 magic;
@@ -189,7 +194,7 @@ void initBlank(SusamuneCfg *cfg) {
                  SUSAMUNE_CFG_FLAG_NATIVE_TIMER_STYLE |
                  SUSAMUNE_CFG_FLAG_MARIO_COLORS | SUSAMUNE_CFG_FLAG_FLUDD_COLORS |
                  SUSAMUNE_CFG_FLAG_IL_EPISODES | SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE |
-                 SUSAMUNE_CFG_FLAG_SETTINGS_TAIL | SUSAMUNE_HOVERLESS_FLAG | SUSAMUNE_FINISH_BREAKDOWN_FLAG;
+                 SUSAMUNE_CFG_FLAG_SETTINGS_TAIL | SUSAMUNE_HOVERLESS_FLAG | SUSAMUNE_FINISH_BREAKDOWN_FLAG | MOONSHINE_MENU_PALETTE_FLAG;
     cfg->ilingPbs.magic = SUSAMUNE_ILING_PB_MAGIC;
     cfg->ilingPbs.version = SUSAMUNE_ILING_PB_VERSION;
     cfg->ilingPbs.count = SUSAMUNE_ILING_PB_LEGACY_SLOT_COUNT;
@@ -488,6 +493,13 @@ bool validV9(const Record *source) {
            checksum(record) == record->checksum;
 }
 
+bool validV14(const Record *source) {
+    Record *record = const_cast<Record *>(source);
+    return record->magic == kRecordMagic && record->version == 14 &&
+        record->payloadSize == kRecordPayloadSizeV14 && record->gameVersion == SUSAMUNE_GAME_VERSION &&
+        record->cfg.magic == SUSAMUNE_CFG_MAGIC && record->cfg.version == SUSAMUNE_CFG_VERSION &&
+        checksum(record) == record->checksum;
+}
 bool validV13(const Record *source) {
     Record *record = const_cast<Record *>(source);
     return record->magic == kRecordMagic && record->version == 13 &&
@@ -620,6 +632,7 @@ s32 writeRecordLocked() {
     memcpy(&record->practiceDisplays, &sState->practiceDisplays, sizeof(sState->practiceDisplays));
     memcpy(record->settingsTail, sState->settingsTail, sizeof(sState->settingsTail));
     record->finishBreakdown = stagedFinishBreakdown();
+    record->menuPalette = *MOONSHINE_MENU_PALETTE_STAGE;
     record->hoverless = sState->hoverless;
     record->checksum = checksum(record);
     OSUnlockMutex(&sState->mutex);
@@ -821,6 +834,7 @@ void initState() {
     initILEpisodes(&sState->ilEpisodes);
     SusamunePracticeDisplayStyleInit(&sState->practiceDisplays);
     SusamuneFinishBreakdownInit(&stagedFinishBreakdown());
+    MoonshineMenuPaletteInit(MOONSHINE_MENU_PALETTE_STAGE);
     memset(sState->settingsTail, SUSAMUNE_CFG_UNSET, sizeof(sState->settingsTail));
     initHoverless(&sState->hoverless);
     publishMarioColors();
@@ -878,6 +892,7 @@ s32 loadRecords(void *mountWork, Record *record) {
                           slot * kSectorSize);
         if (result != CARD_ERROR_READY) break;
         const bool current = valid(record);
+        const bool v14 = !current && validV14(record);
         const bool v13 = !current && validV13(record);
         const bool v12 = !current && validV12(record);
         const bool v11 = !current && validV11(record);
@@ -892,17 +907,17 @@ s32 loadRecords(void *mountWork, Record *record) {
         const bool v2 = !current && !v5 && !v4 && !v3 && validV2(record);
         const bool v1 =
             !current && !v5 && !v4 && !v3 && !v2 && validV1(record);
-        if ((current || v13 || v12 || v11 || v10 || v9 || v8 || v7 || v6 || v5 || v4 || v3 || v2 || v1) &&
+        if ((current || v14 || v13 || v12 || v11 || v10 || v9 || v8 || v7 || v6 || v5 || v4 || v3 || v2 || v1) &&
             (!haveRecord || newer(record->generation, bestGeneration))) {
             initMarioColors(&sState->marioColors);
             initFluddColors(&sState->fluddColors);
             initILEpisodes(&sState->ilEpisodes);
-            if (current || v13 || v12 || v11 || v10 || v9 || v8) {
+            if (current || v14 || v13 || v12 || v11 || v10 || v9 || v8) {
                 memcpy(&sState->cfg, &record->cfg, sizeof(sState->cfg));
                 memcpy(&sState->marioColors, &record->marioColors,
                        sizeof(sState->marioColors));
-                if (current || v13 || v12 || v11 || v10 || v9) memcpy(&sState->fluddColors, &record->fluddColors, sizeof(sState->fluddColors));
-                if (current || v13 || v12 || v11 || v10) memcpy(&sState->ilEpisodes, &record->ilEpisodes, sizeof(sState->ilEpisodes));
+                if (current || v14 || v13 || v12 || v11 || v10 || v9) memcpy(&sState->fluddColors, &record->fluddColors, sizeof(sState->fluddColors));
+                if (current || v14 || v13 || v12 || v11 || v10) memcpy(&sState->ilEpisodes, &record->ilEpisodes, sizeof(sState->ilEpisodes));
             } else if (v7) {
                 migrateRecordV7(&sState->cfg, &sState->marioColors, &record->cfg);
             } else if (v6) {
@@ -918,20 +933,23 @@ s32 loadRecords(void *mountWork, Record *record) {
                                  reinterpret_cast<const u8 *>(&record->cfg),
                                  oldSize, v4 || v5, v5);
             }
-            if (current || v13 || v12 || v11) memcpy(&sState->practiceDisplays, &record->practiceDisplays,
+            if (current || v14 || v13 || v12 || v11) memcpy(&sState->practiceDisplays, &record->practiceDisplays,
                                 sizeof(sState->practiceDisplays));
             else SusamunePracticeDisplayStyleFromWallkick(&sState->practiceDisplays, &sState->cfg.wallkickStyle);
             sState->cfg.flags |= SUSAMUNE_CFG_FLAG_FLUDD_COLORS | SUSAMUNE_CFG_FLAG_IL_EPISODES |
                                 SUSAMUNE_CFG_FLAG_PRACTICE_DISPLAY_STYLE;
-            if (current || v13 || v12) memcpy(sState->settingsTail, record->settingsTail, sizeof(sState->settingsTail));
+            if (current || v14 || v13 || v12) memcpy(sState->settingsTail, record->settingsTail, sizeof(sState->settingsTail));
             else memset(sState->settingsTail, SUSAMUNE_CFG_UNSET, sizeof(sState->settingsTail));
-            sState->cfg.flags |= SUSAMUNE_CFG_FLAG_SETTINGS_TAIL | SUSAMUNE_HOVERLESS_FLAG | SUSAMUNE_FINISH_BREAKDOWN_FLAG;
-            if ((current || v13) && SusamuneHoverlessValid(&record->hoverless, SUSAMUNE_GAME_VERSION))
+            sState->cfg.flags |= SUSAMUNE_CFG_FLAG_SETTINGS_TAIL | SUSAMUNE_HOVERLESS_FLAG | SUSAMUNE_FINISH_BREAKDOWN_FLAG | MOONSHINE_MENU_PALETTE_FLAG;
+            if ((current || v14 || v13) && SusamuneHoverlessValid(&record->hoverless, SUSAMUNE_GAME_VERSION))
                 sState->hoverless = record->hoverless;
             else initHoverless(&sState->hoverless);
-            if (current && SusamuneFinishBreakdownValid(&record->finishBreakdown))
+            if ((current || v14) && SusamuneFinishBreakdownValid(&record->finishBreakdown))
                 stagedFinishBreakdown() = record->finishBreakdown;
             else SusamuneFinishBreakdownInit(&stagedFinishBreakdown());
+            if (current && MoonshineMenuPaletteValid(&record->menuPalette))
+                *MOONSHINE_MENU_PALETTE_STAGE = record->menuPalette;
+            else MoonshineMenuPaletteInit(MOONSHINE_MENU_PALETTE_STAGE);
             bestGeneration = record->generation;
             sState->activeRecord = slot;
             sState->initialSave = !current;
@@ -999,6 +1017,7 @@ InitResult init() {
     layout->magic = MOONSHINE_LAYOUT_MAILBOX_MAGIC;
     layout->version = MOONSHINE_LAYOUT_MAILBOX_VERSION;
     sState->cfg.flags |= MOONSHINE_LAYOUT_CFG_FLAG;
+    DolphinFiles::init();
     sInitResult = INIT_READY;
     return sInitResult;
 }
@@ -1012,7 +1031,8 @@ void service() {
     OSUnlockMutex(&sState->mutex);
     const MoonshineLayoutMailbox *layout = MOONSHINE_LAYOUT_PPC_PTR;
     const bool layoutPending = layout->requestSeq != layout->ackSeq;
-    if (!pending && !layoutPending) {
+    const bool filesPending = DolphinFiles::pending();
+    if (!pending && !layoutPending && !filesPending) {
         sState->idleObserved = false;
         return;
     }
@@ -1040,7 +1060,18 @@ void service() {
     const s32 gameStatus = gpCardManager->mLastStatus;
     s32 result = CARD_ERROR_READY;
     if (pending) result = writeRecordLocked();
-    else layoutProfilesLocked();
+    else if (layoutPending) layoutProfilesLocked();
+    else {
+        gpCardManager->unmount();
+        const s32 mounted=mount(gpCardManager->mCardWorkArea);
+        if(mounted)DolphinFiles::fail(mounted);
+        else {
+            // Repeated mounts dominate archive I/O; finish a bounded chunk per loan.
+            for (unsigned i=0;i<8 && DolphinFiles::pending();++i)
+                DolphinFiles::perform(gpCardManager->mCARDBlock);
+            unmount();
+        }
+    }
     gpCardManager->mLastStatus = gameStatus;
     OSUnlockMutex(&gpCardManager->mMutex);
 

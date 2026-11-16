@@ -10,7 +10,12 @@
 
 #define HID_CFG_FILE 0x93003460
 
-void HIDUpdateRegisters()
+bool HIDConfigurationPending(void)
+{
+	return *(vu32*)HID_CHANGE != 0;
+}
+
+void HIDUpdateRegisters(void)
 {
 	if(*(vu32*)HID_CHANGE == 0)
 		return;

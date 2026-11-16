@@ -2,6 +2,7 @@
 #include <Dolphin/types.h>
 #include "susamune/live_draft.hxx"
 #include "susamune/live_group_rules.hxx"
+#include "susamune/live_colours.hxx"
 
 class Menu;
 
@@ -49,7 +50,7 @@ struct Status {
     u16 localPort;
     u8 localWins, peerWins;
     bool active, connected, hosting, localReady, peerReady, racing, matchDone;
-    bool freeRoam, setupEditable, canForfeit;
+    bool freeRoam, setupEditable, canForfeit, canEndRace;
     bool drafting, draftPending;
     bool reconnecting;         // the link dropped; the room is being restored silently
     bool codeChanged;          // this console's public address or secret changed since last time
@@ -74,6 +75,7 @@ bool guestCode(unsigned slot, char *out);
 void disconnect();
 bool ready();
 bool forfeit();
+bool endRace();
 // A published Ready reserves the local scene until Start or cancellation.
 bool holdingStart();
 bool racingEntry(int entry);
@@ -101,6 +103,7 @@ void setPrefs(const Prefs &prefs);
 // The opponent model while a live opponent is shown, else -1.
 int opponentModel();
 bool opponentShown();
+const LiveColours::Palette *opponentColours(unsigned channel);
 // The last friend's code (CODE_CHARS + NUL, no dashes) or false.
 bool lastFriend(char *out);
 }

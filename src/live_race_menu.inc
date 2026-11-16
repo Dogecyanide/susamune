@@ -1,3 +1,4 @@
+#include "susamune/live_contacts.hxx"
 #pragma clang section text=""
 namespace {
 // Named arrays keep new text out of the fixed menu literal pools.
@@ -30,11 +31,11 @@ static const char draftPeerBan[] = "Opponent is banning";
 static const char draftPeerPick[] = "Opponent is choosing";
 static const char draftBanHelp[] = SUSAMUNE_GLYPH_A " Ban selected IL    " SUSAMUNE_GLYPH_B " Online setup";
 static const char draftPickHelp[] = SUSAMUNE_GLYPH_A " Choose selected IL    " SUSAMUNE_GLYPH_B " Online setup";
-static const char draftBackHelp[] = SUSAMUNE_GLYPH_B " Online setup / Ready / Disconnect";
+static const char draftBackHelp[] = SUSAMUNE_GLYPH_A " Ready / Cancel ready    " SUSAMUNE_GLYPH_B " Online setup";
 static const char draftBanned[] = "BANNED";
 static const char draftChosen[] = "CHOSEN";
 static const char draftAvailable[] = "Available";
-static const char draftSelectedHelp[] = "IL chosen - both choose Ready.";
+static const char draftSelectedHelp[] = "IL chosen - everyone choose Ready below.";
 static const char draftWaitingHelp[] = "You can leave this list.";
 static const char draftScoreFormat[] = "Set: %u - %u  (Bo%u)   |   IL rounds: %u - %u  (Bo3)";
 static const char draftSummaryFormat[] = "Set: %u - %u  (Bo%u)   |   Rounds: %u - %u";
@@ -70,8 +71,8 @@ static const char leave[] = "Leave session";
 static const char hostHelp[] = "Create or join a room, swap codes.";
 static const char roomHelp[] = "Both players choose Ready to start.";
 static const char codePrompt[] = "Friend's code (14 characters)";
-static const char codeHelp[] = SUSAMUNE_GLYPH_A " Type   " SUSAMUNE_GLYPH_X " Delete   " SUSAMUNE_GLYPH_Y " Last friend   START Enter";
-static const char codeBack[] = SUSAMUNE_GLYPH_B " Back to Online";
+static const char codeHelp[] = SUSAMUNE_GLYPH_A " Type   " SUSAMUNE_GLYPH_B " Delete   " SUSAMUNE_GLYPH_Y " Saved codes   START Enter";
+static const char codeBack[] = SUSAMUNE_GLYPH_X " Back to Online";
 static const char scoreTitle[] = "Online score bar";
 static const char modelNames[] = "Shadow Mario\0Piantissimo\0Mario";
 static const char codeChanged[] = "Your code changed - resend it";
@@ -103,7 +104,7 @@ static const char offlineSteps[] = "Choose a name, then create or join a room.";
 static const char guestSetup[] = "The host chooses the next race setup.";
 static const char lockedSetup[] = "This match is in progress; setup is locked.";
 static const char savedSetup[] = "Options saved. Create or join when ready.";
-static const char applySteps[] = "Choose the next mode or IL, then Apply next setup.";
+static const char applySteps[] = "Before racing, changes apply to everyone and clear Ready. After a match, choose Apply.";
 static const char roamSteps[] = "Explore together. Race setup starts a new match.";
 static const char connectionSteps[] = "NAT test runs offline. Details help diagnose a connection.";
 static const char displaySteps[] = "Choose what you see. Score visibility and style are separate.";
@@ -128,7 +129,7 @@ public:
     const char *title() const override { return OnlineText::title; }
     bool grabsInput() const override { return mMode != NONE || LiveRace::holdingStart(); }
     bool suppressesBinds() const override { return true; }
-    bool fullScreen() const override { return mMode != NONE && mMode != ENTRY && mMode != PLAYLIST && mMode != FORFEIT && mMode != KICK; }
+    bool fullScreen() const override { return mMode != NONE && mMode != ENTRY && mMode != PLAYLIST && mMode != FORFEIT && mMode != END_RACE && mMode != KICK; }
     // After each online IL: Ready, or the draft list while a set is drafting.
     void openAfterRound() {
         const LiveRace::Status status = LiveRace::status();
@@ -158,6 +159,11 @@ public:
             if (pressed & JUTGamePad::A) { LiveRace::kickGuest(mSel - GUEST1_ROW); back(); }
             return;
         }
+        if (mMode == END_RACE) {
+            if (!status.canEndRace || (pressed & JUTGamePad::B)) { back(); return; }
+            if (pressed & JUTGamePad::A) { LiveRace::endRace(); back(); }
+            return;
+        }
         if (mMode == FORFEIT) {
             if (!status.canForfeit || (pressed & JUTGamePad::B)) { back(); return; }
             if (pressed & JUTGamePad::A) { LiveRace::forfeit(); back(); }
@@ -173,9 +179,15 @@ public:
             const u32 nav = menu->navigationInput(pad);
             const auto *group = LiveRace::groupState();
             const unsigned count = group ? group->config.players + 1 : LiveDraft::CANDIDATE_COUNT;
-            if (nav & TMarioGamePad::CSTICK_UP) mCursor = wrap(mCursor - 1, count);
-            else if (nav & TMarioGamePad::CSTICK_DOWN) mCursor = wrap(mCursor + 1, count);
+            const bool canReady = draftReady(status);
+            if (canReady) mCursor = count;
+            else if (nav & TMarioGamePad::CSTICK_UP) mCursor = wrap(mCursor - 1, count + 1);
+            else if (nav & TMarioGamePad::CSTICK_DOWN) mCursor = wrap(mCursor + 1, count + 1);
             if (!(pressed & JUTGamePad::A)) return;
+            if (mCursor == count) {
+                if (!canReady || !LiveRace::ready()) menu->toast(status.race);
+                return;
+            }
             if (!draftTurn(status) || status.draftPending ||
                 (group ? group->candidates[mCursor] : status.draft.candidates[mCursor]) >= (unsigned)ILing::count() ||
                 ((group ? group->bannedMask : status.draft.bannedMask) & (1u << mCursor))) {
@@ -211,8 +223,19 @@ public:
             }
             return;
         }
+        if (mMode == CONTACTS) {
+            if (pressed & JUTGamePad::X) { beginEdit(FRIEND); mLength = strlen(mCode); return; }
+            const u32 nav = menu->navigationInput(pad);
+            if (nav & TMarioGamePad::CSTICK_UP) mCursor = wrap(mCursor - 1, 8);
+            if (nav & TMarioGamePad::CSTICK_DOWN) mCursor = wrap(mCursor + 1, 8);
+            if (pressed & JUTGamePad::Z) LiveContacts::forget(mCursor);
+            if ((pressed & JUTGamePad::A) && LiveContacts::copy(mCursor, mCode)) {
+                beginEdit(FRIEND); mLength = LiveP2P::CODE_CHARS;
+            }
+            return;
+        }
         if (mMode == FRIEND) {
-            if (pressed & JUTGamePad::B) { back(); return; }
+            if (pressed & JUTGamePad::X) { back(); return; }
             if ((pressed & JUTGamePad::START) &&
                 (JUTGamePad::mPadStatus[0].mButton & JUTGamePad::X)) { back(); return; }
             if (!status.active || (status.connected && !(status.hosting && LiveRace::groupState()))) { back(); return; }
@@ -224,10 +247,10 @@ public:
             if ((pressed & JUTGamePad::DPAD_UP) || (nav & TMarioGamePad::CSTICK_UP)) row = (row + 3) & 3;
             if ((pressed & JUTGamePad::DPAD_DOWN) || (nav & TMarioGamePad::CSTICK_DOWN)) row = (row + 1) & 3;
             mCursor = static_cast<u8>(row * 8 + col);
-            if (pressed & JUTGamePad::X) {
+            if (pressed & JUTGamePad::B) {
                 if (mLength) mCode[--mLength] = 0;
             } else if (pressed & JUTGamePad::Y) {
-                if (LiveRace::lastFriend(mCode)) mLength = LiveP2P::CODE_CHARS;
+                beginEdit(CONTACTS); return;
             } else if ((pressed & JUTGamePad::A) && mLength < LiveP2P::CODE_CHARS) {
                 mCode[mLength++] = LiveP2P::symbol(mCursor); mCode[mLength] = 0;
                 if (mLength < LiveP2P::CODE_CHARS) return;
@@ -353,6 +376,7 @@ public:
             focus();
             return;
         }
+        if (mSel == END_RACE_ROW && status.canEndRace) { mMode = END_RACE; focus(); return; }
         if (mSel == FORFEIT_ROW && status.canForfeit) { mMode = FORFEIT; focus(); return; }
         if (mSel == DISCONNECT_ROW) { LiveRace::disconnect(); return; }
         if (mSel == HOST_ROW && !status.active) accepted = LiveRace::host();
@@ -392,9 +416,26 @@ public:
             return;
         }
         if (mMode == FRIEND) { drawCode(menu); return; }
+        if (mMode == CONTACTS) {
+            menu->fillMenuBox(0, 0, 640, 480, cBackdrop());
+            MenuTheme::panel(menu, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, "Saved codes", MenuThemeAssets::Boat);
+            for (unsigned i = 0; i < 8; ++i) {
+                const char *name = LiveContacts::name(i);
+                drawValueRow(menu, PANEL_X + PAD, PANEL_Y + 56 + i * 32,
+                    PANEL_W - PAD * 2, name ? name : "Empty", nullptr, i == mCursor, false, true);
+            }
+            drawFooterText(menu, "Players are saved when they connect. Codes may change.", PANEL_X + PAD, PANEL_Y + PANEL_H - 52);
+            drawFooterText(menu, SUSAMUNE_GLYPH_A " Load code   " SUSAMUNE_GLYPH_Z " Forget   " SUSAMUNE_GLYPH_X " Back", PANEL_X + PAD, PANEL_Y + PANEL_H - 28);
+            return;
+        }
         if (mMode == KICK) {
             drawHelpLine(menu, x, y + 32, w, 60, "Remove this guest? They cannot rejoin until you enter their code again.");
             drawFooterText(menu, SUSAMUNE_GLYPH_A " Kick guest   " SUSAMUNE_GLYPH_B " Cancel", x + 4, y + 120);
+            return;
+        }
+        if (mMode == END_RACE) {
+            drawHelpLine(menu, x, y + 32, w, 90, "End the whole match or playlist? Everyone stays in the room. No winner is awarded.");
+            drawFooterText(menu, SUSAMUNE_GLYPH_A " End race   " SUSAMUNE_GLYPH_B " Keep racing", x + 4, y + 140);
             return;
         }
         if (mMode == FORFEIT) {
@@ -572,8 +613,8 @@ private:
                NAT_ROW, INPUTS_ROW, SHOW_ROW,
                MODEL_ROW, SCORE_ROW,
                DIAGNOSTICS_ROW, SCORE_VISIBLE_ROW, RACE_PAGE_ROW, OPPONENT_PAGE_ROW, CONNECTION_PAGE_ROW, PLAYERS_ROW, LOCAL_CODE_ROW,
-               GUEST1_ROW, GUEST2_ROW, GUEST3_ROW, FORFEIT_ROW, ROW_COUNT };
-    enum Mode { NONE, NAME, FRIEND, ENTRY, DRAFT_PICK, SCORE, PLAYLIST, FORFEIT, KICK };
+               GUEST1_ROW, GUEST2_ROW, GUEST3_ROW, FORFEIT_ROW, END_RACE_ROW, ROW_COUNT };
+    enum Mode { NONE, NAME, FRIEND, ENTRY, DRAFT_PICK, SCORE, PLAYLIST, FORFEIT, KICK, CONTACTS, END_RACE };
     enum Section { HOME, SETUP, OPPONENT, CONNECTION };
     bool visible(int row, const LiveRace::Status &status) const {
         const LiveRace::Options &options = LiveRace::options();
@@ -584,6 +625,7 @@ private:
         if (row == LOCAL_CODE_ROW) return (mSection == HOME || mSection == CONNECTION) &&
             status.localCode[0] && status.active && (!status.connected || (status.hosting && LiveRace::groupState()));
         if (row == FORFEIT_ROW) return mSection == HOME && status.canForfeit;
+        if (row == END_RACE_ROW) return mSection == HOME && status.canEndRace;
         if (mSection == HOME) {
             if (row >= RACE_PAGE_ROW && row <= CONNECTION_PAGE_ROW) return true;
             if (!status.active) return row == NAME_ROW || row == PLAYERS_ROW || row == HOST_ROW || row == JOIN_ROW;
@@ -595,7 +637,7 @@ private:
         }
         if (mSection == SETUP) {
             if (row == MODE_ROW) return true;
-            if (row == SETUP_ROW) return status.connected;
+            if (row == SETUP_ROW) return status.connected && (status.matchDone || status.freeRoam);
             if (options.freeRoam) return false;
             if (options.playlist) return row == ENTRY_ROW;
             if (options.draft) return row == POOL_ROW || row == SET_LENGTH_ROW;
@@ -607,7 +649,7 @@ private:
     }
     int rowAt(int index, const LiveRace::Status &status) const {
         static const u8 order[] = {NAME_ROW, PLAYERS_ROW, HOST_ROW, JOIN_ROW, CODE_ROW, LOCAL_CODE_ROW, FRIEND_ROW,
-            GUEST1_ROW, GUEST2_ROW, GUEST3_ROW, READY_ROW, DRAFT_ROW, FORFEIT_ROW,
+            GUEST1_ROW, GUEST2_ROW, GUEST3_ROW, READY_ROW, DRAFT_ROW, FORFEIT_ROW, END_RACE_ROW,
             MODE_ROW, ENTRY_ROW, EPISODE_ROW, BEST_ROW, POOL_ROW, SET_LENGTH_ROW, SETUP_ROW,
             SHOW_ROW, MODEL_ROW, INPUTS_ROW, SCORE_VISIBLE_ROW, SCORE_ROW, NAT_ROW, DIAGNOSTICS_ROW,
             RACE_PAGE_ROW, OPPONENT_PAGE_ROW, CONNECTION_PAGE_ROW, DISCONNECT_ROW};
@@ -665,6 +707,7 @@ private:
 
     static const char *rowName(int row) {
         if (row == FORFEIT_ROW) return "Forfeit race";
+        if (row == END_RACE_ROW) return "End race";
         if (row >= GUEST1_ROW && row <= GUEST3_ROW) return PackedText::at("Guest 1 code\0Guest 2 code\0Guest 3 code", row - GUEST1_ROW);
         if (row == LOCAL_CODE_ROW) return "Same-network code";
         if (row == PLAYERS_ROW) return "Room size";
@@ -677,6 +720,11 @@ private:
     static bool draftTurn(const LiveRace::Status &status) {
         if (const auto *group = LiveRace::groupState()) return LiveGroupRules::actor(*group) == LiveRace::groupPlayer();
         return status.drafting && LiveDraft::currentActor(status.draft) == (status.hosting ? 0 : 1);
+    }
+    static bool draftReady(const LiveRace::Status &status) {
+        if (const auto *group = LiveRace::groupState()) return group->phase == LiveGroupRules::Ready;
+        return status.connected && status.draft.phase == LiveDraft::IL_MATCH &&
+            !status.racing && !status.matchDone;
     }
     static bool draftPicking(const LiveDraft::State &draft) {
         return draft.phase == LiveDraft::OPENING_HOST_PICK || draft.phase == LiveDraft::COUNTER_LOSER_PICK;
@@ -733,7 +781,11 @@ private:
             menu->drawMenuText(mark, x + w - Menu::textWidth(mark, 12) - 8, ry + 6, 12, 12,
                            banned ? cRowDim() : chosen ? cValue() : cRow());
         }
-        small(menu, status.draft.phase == LiveDraft::IL_MATCH ? OnlineText::draftSelectedHelp :
+        const bool ready = draftReady(status);
+        drawValueRow(menu, x, y + 270, w, "Ready",
+            status.localReady ? "Ready - press A to cancel" : ready ? "Press A" : "Choose an IL first",
+            mCursor == (group ? group->config.players + 1u : LiveDraft::CANDIDATE_COUNT), false, false);
+        small(menu, ready ? OnlineText::draftSelectedHelp :
                     OnlineText::draftWaitingHelp, x + 4, y + h - 34, w - 8);
         drawFooterText(menu, turn && !status.draftPending ?
             (picking ? OnlineText::draftPickHelp : OnlineText::draftBanHelp) : OnlineText::draftBackHelp,
@@ -792,7 +844,7 @@ private:
     }
     void beginEdit(u8 mode) {
         mMode = mode;
-        mCursor = mPage = 0;
+        mCursor = 0; mPage = 0x80;
         mUpper = false;
         mLength = mode == NAME ? strlen(mDraft.name) : 0;
         mInput.begin(JUTGamePad::A | JUTGamePad::B | JUTGamePad::X | JUTGamePad::Y |
@@ -869,6 +921,7 @@ bool Menu::openOnline() {
     if (mShown && mCurTab == mNumTabs - 1 &&
         static_cast<OnlineTab *>(mTabs[mCurTab])->mMode == OnlineTab::DRAFT_PICK) return true;
     if (mShown && mTabs[mCurTab]->grabsInput()) return false;
+    if (WarpWheel::requestOnlineMenu()) return false;
     mCurTab = mNumTabs - 1;
     mTabFirst = 0;
     mCRepeatFrames = 0;

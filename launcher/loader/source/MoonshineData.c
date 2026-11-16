@@ -389,7 +389,7 @@ static FRESULT MigrateData(const char *device)
     return FR_OK;
 }
 
-FRESULT MoonshineDataPrepare(const char *device)
+static FRESULT PrepareLegacyData(const char *device)
 {
     char path[64], temporary[64], marker[4];
     FIL file;
@@ -431,4 +431,30 @@ FRESULT MoonshineDataPrepare(const char *device)
         if (result == FR_OK) result = f_rename_char(temporary, path);
     }
     return result;
+}
+
+FRESULT MoonshineDataPrepare(const char *device)
+{
+    char oldPath[96], newPath[96], parent[96];
+    FILINFO oldInfo, newInfo;
+    FRESULT result = PrepareLegacyData(device), oldResult, newResult;
+    if (result != FR_OK) return result;
+    snprintf(parent, sizeof(parent), "%s:" MOONSHINE_DATA_ROOT MOONSHINE_GHOSTS_DIR, device);
+    result = EnsureDataDirectory(parent);
+    if (result != FR_OK) return result;
+    snprintf(oldPath, sizeof(oldPath), "%s:" MOONSHINE_DATA_ROOT "/traces", device);
+    snprintf(newPath, sizeof(newPath), "%s:" MOONSHINE_DATA_ROOT MOONSHINE_RECORDINGS_DIR, device);
+    oldResult = f_stat_char(oldPath, &oldInfo);
+    if (oldResult == FR_NO_FILE || oldResult == FR_NO_PATH)
+        return EnsureDataDirectory(newPath);
+    if (oldResult != FR_OK) return oldResult;
+    if (!(oldInfo.fattrib & AM_DIR)) return FR_EXIST;
+    newResult = f_stat_char(newPath, &newInfo);
+    if (newResult == FR_NO_FILE || newResult == FR_NO_PATH)
+        return f_rename_char(oldPath, newPath);
+    if (newResult != FR_OK) return newResult;
+    // Two independent stores can reuse identities; never merge them blindly.
+    sDataOperation = "Both traces and ghost recordings exist";
+    snprintf(sDataPath, sizeof(sDataPath), "%s", oldPath);
+    return FR_EXIST;
 }

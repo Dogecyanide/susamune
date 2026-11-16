@@ -273,5 +273,12 @@ svc_write:
 	svc #0xab
 	bx lr
 
+	.global GhostServiceRandom
+	.type GhostServiceRandom STT_FUNC
+GhostServiceRandom:
+	/* IOS58 IOSC_GenerateRand; never substitute the gameplay RNG. */
+	.long 0xe6000e70
+	bx lr
+
 	.pool
 	.end

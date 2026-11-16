@@ -1,0 +1,17 @@
+Moonshine 3.0.0 Timewarp - Online Prototype 34
+
+Changes
+- Online menu opening resolves pending PB ghosts first using the existing save policy.
+- Online Stageloader preserves its next IL and the host-selected episode while a PB save/discard prompt is pending.
+- Native save boxes count as ready for online starts once CARD is idle. Loads, fades and queued departures still block readiness.
+- Successful connections save up to eight named codes. Y opens Saved codes from code entry; A loads the selected code, then Start submits it. Z forgets a code.
+- Code keyboard: B deletes, X goes back. Loading a saved code never joins automatically.
+- Saved codes persist in the current region's Wii settings when the menu closes. Dolphin retains them for the current game boot, like its existing online preferences.
+- Standard package: no custom music or photo.
+
+Hardware checks
+1. Online PB finish: open the menu and resolve the ghost prompt before Ready/draft.
+2. Start races with either player on a save box; never interrupt a real card write.
+3. Fast any%: finish Bianco 1 with a new PB on the guest. Save or continue unsaved; both advance independently to Bianco 3.
+4. Reopen code entry: B deletes one character; X returns without leaving the room. Y loads a named code. Reboot Wii to verify saved names.
+5. Four-player stability still needs a new hardware session and connection logs. PR33 two-player success does not prove four-player smoothness.

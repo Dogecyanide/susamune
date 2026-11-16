@@ -3,6 +3,7 @@
 
 #include <Dolphin/types.h>
 #include "susamune/ghost_storage.h"
+#include "susamune/ghost_service.h"
 
 namespace GhostStorage {
 
@@ -27,6 +28,21 @@ bool refresh();
 bool refreshImported();
 bool refreshPage(bool imported, u32 offset);
 bool scanImports();
+// -2 keeps the current filter; -1 browses all levels.
+bool browseOnline(bool nextPage = false, int level = -2);
+bool downloadOnline(int row);
+bool accountAction(unsigned action);
+const GhostServiceAccountInfo *accountInfo();
+bool uploadOnline(const Identity &identity);
+struct UploadDraft {
+    GhostServiceUpload upload, backup;
+    u8 length, page, cursor;
+    bool uppercase;
+};
+UploadDraft &uploadDraft();
+bool beginUploadDraft();
+void closeOnline();
+const struct GhostServicePage *onlinePage();
 u32 pageOffset(bool imported);
 u32 pageCount(bool imported);
 u32 totalCount(bool imported);
